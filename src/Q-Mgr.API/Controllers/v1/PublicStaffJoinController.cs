@@ -156,23 +156,29 @@ public class PublicStaffJoinController : ControllerBase
         var email = (request.Email ?? "").Trim();
         var normalized = RegistrationIdentity.NormalizeEmail(email);
 
-        if (firstName.Length is 0 or > 100 || lastName.Length is 0 or > 100)
-            return Problem400("Enter your first and last name");
-        if (normalized == null || !email.Contains('@') || email.Length > 256)
+        // The client checks every one of these too, and that is the point: a client-side check is
+        // a courtesy, this is the control. They are kept field by field rather than as one
+        // "invalid details" so the page can say which box to fix.
+        if (NameProblem(firstName, "first name") is { } firstProblem) return Problem400(firstProblem);
+        if (NameProblem(lastName, "surname") is { } lastProblem) return Problem400(lastProblem);
+        if (normalized == null || email.Length > 256 || !LooksLikeEmail(email))
             return Problem400("Enter a valid email address");
         if (!DomainAllowed(policy, email))
             return Problem400("Use your school email address", $"Only addresses at {string.Join(", ", policy.AllowedEmailDomains)} can join.");
+        var submittedCode = (request.EmailCode ?? "").Trim();
+        if (submittedCode.Length != 6 || !submittedCode.All(char.IsAsciiDigit))
+            return Problem400("The code is six digits");
+        if (string.IsNullOrEmpty(request.Password))
+            return Problem400("Choose a password");
         if (request.Password != request.ConfirmPassword)
             return Problem400("The passwords do not match");
-        if ((request.Phone?.Length ?? 0) > 30 || (request.EmployeeNumber?.Length ?? 0) > 50 || (request.JobTitle?.Length ?? 0) > 100)
-            return Problem400("One of the details is too long");
 
         var orgName = await OrganizationNameAsync(orgId);
         var validation = await _passwords.ValidatePasswordAsync(request.Password ?? "", email.Split('@')[0], email, orgName);
         if (!validation.IsValid)
             return Problem400("Choose a stronger password", validation.ErrorMessage);
 
-        var (verified, codeMessage) = await _emailCodes.VerifyAndConsumeAsync(email, request.EmailCode ?? "");
+        var (verified, codeMessage) = await _emailCodes.VerifyAndConsumeAsync(email, submittedCode);
         if (!verified)
             return Problem400("The email code did not work", codeMessage);
 
@@ -209,9 +215,9 @@ public class PublicStaffJoinController : ControllerBase
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
             FirstName = firstName,
             LastName = lastName,
-            Phone = string.IsNullOrWhiteSpace(request.Phone) ? null : request.Phone.Trim(),
-            EmployeeNumber = string.IsNullOrWhiteSpace(request.EmployeeNumber) ? null : request.EmployeeNumber.Trim(),
-            JobTitle = string.IsNullOrWhiteSpace(request.JobTitle) ? null : request.JobTitle.Trim(),
+            // Phone, employee number and job title are deliberately NOT here: the join form asks
+            // for the least it can, and what a school calls somebody is the school's record to
+            // make, on the staff directory, where it is audited. See JoinApplicationRequest.
             RoleId = viewer.Id,
             AssignedBranchId = branchId,
             IsActive = false,
@@ -252,6 +258,32 @@ public class PublicStaffJoinController : ControllerBase
             return (null, NotFound(new ProblemDetails { Title = "This join link is not valid", Detail = "It may have expired or been replaced. Ask the school for the current link.", Status = StatusCodes.Status404NotFound }));
         }
         return (resolved, null);
+    }
+
+    /// <summary>
+    /// A person's name: two to a hundred characters of letters, spaces, hyphens, apostrophes and
+    /// full stops. Ugandan names carry all four; none of them carries a digit. Mirrored exactly by
+    /// JoinStaff.razor so the form and the API cannot disagree about what is acceptable.
+    /// </summary>
+    private static string? NameProblem(string value, string label)
+    {
+        if (value.Length == 0) return $"Enter your {label}";
+        if (value.Length < 2) return $"That {label} is too short";
+        if (value.Length > 100) return $"That {label} is too long";
+        if (value.Any(c => !char.IsLetter(c) && c != ' ' && c != '-' && c != '\'' && c != '.'))
+            return $"A {label} has no numbers or symbols in it";
+        return null;
+    }
+
+    /// <summary>One '@', a dot in the domain, no whitespace. Shape only — the code in the email is what proves it.</summary>
+    private static bool LooksLikeEmail(string email)
+    {
+        var at = email.IndexOf('@');
+        if (at <= 0 || at == email.Length - 1) return false;
+        if (email.IndexOf('@', at + 1) >= 0) return false;
+        if (email.Any(char.IsWhiteSpace)) return false;
+        var domain = email[(at + 1)..];
+        return domain.Contains('.') && !domain.StartsWith('.') && !domain.EndsWith('.');
     }
 
     private static bool DomainAllowed(StaffOnboardingPolicyDto policy, string email)
@@ -297,8 +329,7 @@ public class PublicStaffJoinController : ControllerBase
     {
         try
         {
-            var saas = await _platformSettings.GetSettingsAsync<SaasSettings>("SaaS");
-            var baseUrl = (saas?.BaseUrl ?? "https://qmgr.app").TrimEnd('/');
+            var baseUrl = await _platformSettings.GetPublicWebBaseUrlAsync();
             var html = EmailTemplates.Layout("You already have an account", null, new[]
             {
                 $"Someone used this address to ask to join {EmailTemplates.B(orgName)} on {EmailTemplates.AppName}, but it already has an account.",

@@ -43,6 +43,7 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
     private readonly IStaffProfileChangeNotifier _profileChanges;
     private readonly INotificationHubService _hub;
     private readonly ILogger<StaffOnboardingController> _logger;
+    private readonly QMgr.Infrastructure.Email.IEmailBrandService _emailBrands;
 
     /// <summary>A bulk re-issue is synchronous (each password is hashed on the request), so it is capped.</summary>
     private const int MaxReissue = 200;
@@ -59,9 +60,11 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
         IPlatformSettingsService platformSettings,
         IStaffProfileChangeNotifier profileChanges,
         INotificationHubService hub,
+        QMgr.Infrastructure.Email.IEmailBrandService emailBrands,
         ILogger<StaffOnboardingController> logger)
         : base(db, tenantAccessor, staffScope, activity)
     {
+        _emailBrands = emailBrands;
         _policy = policy;
         _billing = billing;
         _notifications = notifications;
@@ -398,7 +401,7 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
                     current = limit.CurrentUsage,
                     limit = limit.MaxAllowed,
                     message = $"Your plan allows {limit.MaxAllowed} users and {limit.CurrentUsage} are in use. Free a seat or add capacity before approving.",
-                    upgradeUrl = "/billing/modules"
+                    upgradeUrl = BillingLinks.Modules
                 });
                 return;
             }
@@ -468,11 +471,12 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
         try
         {
             var orgName = await OrganizationDisplayNameAsync(orgId.Value);
+            var brand = await _emailBrands.ForOrganizationAsync(orgId.Value);
             var html = EmailTemplates.Layout("Your request was not approved", applicant.FirstName, new[]
             {
-                $"Your request to join {EmailTemplates.B(orgName)} on {EmailTemplates.AppName} was not approved.",
+                $"Your request to join {EmailTemplates.B(orgName)} was not approved.",
                 string.IsNullOrWhiteSpace(request?.Reason) ? "If you think this is a mistake, speak to the school's administrator." : $"The administrator wrote: {EmailTemplates.P(request!.Reason!.Trim())}"
-            });
+            }, brand: brand);
             await _email.SendAsync(applicant.Email, $"Your request to join {orgName}", html);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Could not send the rejection email"); }
@@ -486,15 +490,16 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
         {
             var orgName = await OrganizationDisplayNameAsync(orgId);
             var baseUrl = await BaseUrlAsync();
+            var brand = await _emailBrands.ForOrganizationAsync(orgId);
             var html = EmailTemplates.Layout("Your account is approved", firstName, new[]
             {
-                $"Your request to join {EmailTemplates.B(orgName)} on {EmailTemplates.AppName} has been approved.",
+                $"Your request to join {EmailTemplates.B(orgName)} has been approved.",
                 "Sign in with the email address and password you chose when you applied."
-            }, "Sign in", EmailTemplates.Link(baseUrl, "/login"));
-            await _email.SendAsync(email, $"Your {EmailTemplates.AppName} account is approved", html);
+            }, "Sign in", EmailTemplates.Link(baseUrl, "/login"), brand: brand);
+            await _email.SendAsync(email, $"Your {brand.Name} account is approved", html);
 
             if (!string.IsNullOrWhiteSpace(phone))
-                await _notifications.SendSmsAsync(orgId, phone, $"Your {EmailTemplates.AppName} account is approved. Sign in at {baseUrl}/login");
+                await _notifications.SendSmsAsync(orgId, phone, $"Your {brand.Name} account is approved. Sign in at {baseUrl}/login");
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Could not tell an approved applicant"); }
     }
@@ -622,12 +627,13 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
                 await Db.SaveChangesAsync();
 
                 var link = $"{baseUrl}/reset-password?email={Uri.EscapeDataString(user.Email)}&token={Uri.EscapeDataString(user.PasswordResetToken)}";
+                var brand = await _emailBrands.ForOrganizationAsync(orgId);
                 var html = EmailTemplates.Layout($"Your access to {orgName}", user.FirstName, new[]
                 {
-                    $"A new invitation to {EmailTemplates.B(orgName)}'s {EmailTemplates.AppName} workspace, signed in as {EmailTemplates.B(user.Username)}.",
+                    $"A new invitation to {EmailTemplates.B(orgName)}'s workspace, signed in as {EmailTemplates.B(user.Username)}.",
                     "Choose your password with the button below. The link is valid for 7 days, and any earlier link or temporary password no longer works."
-                }, "Set my password", link, showLinkFallback: true);
-                var sent = await _email.SendAsync(user.Email, $"Your {EmailTemplates.AppName} invitation", html);
+                }, "Set my password", link, showLinkFallback: true, brand: brand);
+                var sent = await _email.SendAsync(user.Email, $"Your {brand.Name} invitation", html);
                 if (!sent) messages.Add($"{user.FullName}: the invitation email could not be sent.");
 
                 await Activity.RecordAsync(ActivityActions.InvitationIssued, "User", user.Id, user.Id,
@@ -689,13 +695,5 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
     private async Task<string> OrganizationDisplayNameAsync(Guid orgId)
         => await Db.Organizations.IgnoreQueryFilters().Where(o => o.Id == orgId).Select(o => o.BrandName ?? o.Name).FirstOrDefaultAsync() ?? "your organization";
 
-    private async Task<string> BaseUrlAsync()
-    {
-        try
-        {
-            var saas = await _platformSettings.GetSettingsAsync<SaasSettings>("SaaS");
-            return (saas?.BaseUrl ?? "https://qmgr.app").TrimEnd('/');
-        }
-        catch { return "https://qmgr.app"; }
-    }
+    private Task<string> BaseUrlAsync() => _platformSettings.GetPublicWebBaseUrlAsync();
 }

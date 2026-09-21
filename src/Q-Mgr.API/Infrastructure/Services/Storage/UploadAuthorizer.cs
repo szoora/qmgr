@@ -27,7 +27,13 @@ public enum UploadOwnerKind
     /// <summary>A member of staff's own profile photograph (duty rota plan §12.3). Readable by signed-in staff of the same organization; never public.</summary>
     StaffPhoto = 8,
     /// <summary>Evidence on a duty report (plan §4.3). Readable exactly by those who may read the report.</summary>
-    DutyReportAttachment = 9
+    DutyReportAttachment = 9,
+    /// <summary>
+    /// An organization's own logo or favicon. PUBLIC BY INTENT — the same rung as signage media,
+    /// because a kiosk, a public display and a sign-in page all fetch it with no login at all. A
+    /// tenant that white-labels its sign-in page is publishing that logo by definition.
+    /// </summary>
+    Branding = 10
 }
 
 /// <summary>
@@ -211,6 +217,17 @@ public class UploadAuthorizer : IUploadAuthorizer
             .FirstOrDefaultAsync(ct);
         if (broadcast != null)
             return new UploadClassification(UploadOwnerKind.BroadcastAttachment, IsPublic: true, broadcast.OrganizationId);
+
+        // 5b. An organization's logo or favicon. Public by intent: the sign-in page, the kiosk and
+        //     every public display fetch it anonymously. Matched on the same two columns the
+        //     branding endpoints write, so a link a tenant typed by hand into LogoUrl (the older
+        //     free-text field, still supported) classifies the same way an uploaded one does.
+        var branding = await _db.Organizations.IgnoreQueryFilters().AsNoTracking()
+            .Where(o => (o.LogoUrl != null && o.LogoUrl.EndsWith(suffix)) || (o.FaviconUrl != null && o.FaviconUrl.EndsWith(suffix)))
+            .Select(o => new { o.Id })
+            .FirstOrDefaultAsync(ct);
+        if (branding != null)
+            return new UploadClassification(UploadOwnerKind.Branding, IsPublic: true, branding.Id);
 
         // 6. Help-centre images: the cover column, or embedded in an article body. The help
         //    centre is readable without a login, so its images are too. Written only by a

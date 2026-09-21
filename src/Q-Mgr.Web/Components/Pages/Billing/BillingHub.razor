@@ -1,0 +1,82 @@
+@page "/billing"
+@using QMgr.Domain.Constants
+@using QMgr.Web.Services
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+
+@*
+    The Billing hub (2026-09-19). Overview, Modules, Invoices, Payment Methods and Usage & Limits
+    were five sidebar entries and five routes about one subject — what this account pays for — and
+    they were the last pages still on the old layout: an icon in the title, a "Billing/Usage"
+    breadcrumb on a second line, a wine hero, cards of every height. The sections have no @page (see
+    CLAUDE.md, "A hub owns the route; its sections own nothing"); the five old routes are deleted,
+    not aliased. Every address into billing comes from QMgr.Domain.Constants.BillingLinks.
+
+    MODULES IS OPEN TO EVERYONE SIGNED IN, the other four need billing.view. Every module gate in
+    the app sends a person who lacks a module to BillingLinks.Modules, whoever they are — gating that
+    tab on billing.view would turn "this is not part of your plan" into "you are not allowed here".
+    The tab itself shows its Add / Pay / Remove buttons only to a holder of billing.manage.
+*@
+
+<PageTitle>Billing - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Billing<QInfo Text="What this account pays for: the modules it holds, the invoices it has been sent, how it pays, and what it has used this month." Label="Billing" /></h1>
+            <p class="subtitle">What this account pays for, how it pays, and what it has used.</p>
+        </div>
+        <div class="header-actions">
+            @* The open section's own buttons land here — see QPageActions. *@
+            <SectionOutlet SectionId="QPageActions.Id" />
+        </div>
+    </div>
+
+    <QTabs Tabs="@tabs" @bind-ActiveKey="@hubTab" IdPrefix="bl" AriaLabel="Billing sections" />
+
+    @if (hubTab == BillingLinks.ModulesTab) { <Modules Embedded="true" /> }
+    else if (hubTab == BillingLinks.InvoicesTab) { <Invoices Embedded="true" /> }
+    else if (hubTab == BillingLinks.PaymentTab) { <PaymentMethods Embedded="true" /> }
+    else if (hubTab == BillingLinks.UsageTab) { <Usage Embedded="true" /> }
+    else if (hubTab == BillingLinks.OverviewTab) { <Overview Embedded="true" /> }
+</div>
+
+@code {
+    private static readonly HubTabs.Section[] Sections =
+    {
+        new(new QTab(BillingLinks.OverviewTab, "Overview", "grid"), Permissions.BillingView),
+        new(new QTab(BillingLinks.ModulesTab, "Modules", "grid-3x3-gap-fill")),
+        new(new QTab(BillingLinks.InvoicesTab, "Invoices", "receipt"), Permissions.BillingView),
+        new(new QTab(BillingLinks.PaymentTab, "Payment", "wallet2"), Permissions.BillingView),
+        new(new QTab(BillingLinks.UsageTab, "Usage", "bar-chart-line"), Permissions.BillingView),
+    };
+
+    private IReadOnlyList<QTab> tabs = Array.Empty<QTab>();
+    private string hubTab = BillingLinks.OverviewTab;
+
+    [SupplyParameterFromQuery(Name = BillingLinks.TabKey)] public string? TabParam { get; set; }
+
+    /// <summary>The last ?tab= this hub acted on — see HubTabs.FollowQuery.</summary>
+    private string? appliedTab;
+
+    protected override async Task OnInitializedAsync()
+    {
+        tabs = await HubTabs.VisibleAsync(PermissionService, null, Sections);
+        if (tabs.Count == 0)
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        hubTab = HubTabs.Resolve(tabs, TabParam);
+        appliedTab = TabParam;
+    }
+
+    /// <summary>A link from one tab to another — Overview's "Manage", an invoice number, a module
+    /// gate while already on the hub — changes ?tab= without changing the route. The rule lives in
+    /// HubTabs.</summary>
+    protected override void OnParametersSet()
+    {
+        HubTabs.FollowQuery(tabs, TabParam, ref appliedTab, ref hubTab);
+    }
+}

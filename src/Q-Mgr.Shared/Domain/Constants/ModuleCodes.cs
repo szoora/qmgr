@@ -39,6 +39,20 @@ public static class ModuleCodes
     public const string IntegrationsApi = "integrations-api";
 
     /// <summary>
+    /// "White-Label Plus" — an ADD-ON, not a functional module. It carries exactly one
+    /// entitlement, <c>FeatureCodes.RemoveAttribution</c>: "Powered by SACC Software" comes off the
+    /// tenant's sign-in pages, the Q-Mgr line comes out of the shell footer, and their outbound
+    /// email stops signing itself with our name.
+    ///
+    /// It is a catalogue row rather than a switch so that it is billed, purchased, renewed,
+    /// grandfathered and shown on the Modules tab by machinery that already exists and is already
+    /// tested — no new billing path. It gates no routes and appears in no
+    /// <c>ModuleRouteMap</c> entry, which is why <see cref="Functional"/> exists beside
+    /// <see cref="All"/>.
+    /// </summary>
+    public const string WhiteLabelPlus = "white-label-plus";
+
+    /// <summary>
     /// Staff Performance as a module of its own, 2026-09-16 to 2026-09-17: built, never deployed, then
     /// folded into <see cref="StudentWelfare"/>. Kept only so the migration that removes its catalog row
     /// and any dev grants has a name to point at. Nothing gates on it.
@@ -58,6 +72,24 @@ public static class ModuleCodes
 
     /// <summary>Everything currently purchasable, in catalog display order.</summary>
     public static readonly string[] All =
+    {
+        CoreQueue,
+        EngagementCommunications,
+        VisitorManagement,
+        StudentWelfare,
+        IntegrationsApi,
+        WhiteLabelPlus
+    };
+
+    /// <summary>
+    /// The modules that are a PRODUCT — the ones that open screens. <see cref="WhiteLabelPlus"/> is
+    /// purchasable but is not one of these: it removes a line of text and nothing else.
+    ///
+    /// The distinction is load-bearing in <c>FeatureFlagService.ApplyModuleGrants</c>, where
+    /// "holds any module" turns ads off and grants report exports. A tenant who paid to take our
+    /// name off their footer has not thereby bought a reporting feature.
+    /// </summary>
+    public static readonly string[] Functional =
     {
         CoreQueue,
         EngagementCommunications,

@@ -307,9 +307,9 @@
     .ss-import-actions { margin-top: 12px; justify-content: space-between; }
     .ss-search { flex: 1 1 260px; min-width: 0; }
     .ss-person { display: flex; align-items: center; gap: 10px; min-width: 0; }
-    .ss-sub { font-size: 12px; color: var(--qm-text-muted); }
-    .ss-lede { color: var(--qm-text-secondary); font-size: 13px; line-height: 1.55; margin: 12px 0; max-width: 78ch; }
-    .ss-lede code { font-family: var(--qm-font-mono); font-size: 12px; }
+    .ss-sub { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
+    .ss-lede { color: var(--qm-text-secondary); font-size: var(--qm-text-base); line-height: 1.55; margin: 12px 0; max-width: 78ch; }
+    .ss-lede code { font-family: var(--qm-font-mono); font-size: var(--qm-text-sm); }
     .ss-retired { opacity: .65; }
     .ss-gap { margin-left: 6px; }
     .ss-row-error td { background: rgba(var(--qm-danger-rgb), .06); }
@@ -317,16 +317,16 @@
     .ss-import-input { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
     .ss-delivery { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 10px 14px; margin: 12px 0 0; display: grid; gap: 8px; }
     .ss-delivery legend { font-size: var(--q-control-font-sm); font-weight: 600; padding: 0 4px; width: auto; float: none; margin: 0; }
-    .ss-radio { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; cursor: pointer; }
+    .ss-radio { display: flex; gap: 8px; align-items: flex-start; font-size: var(--qm-text-base); cursor: pointer; }
     .ss-radio input { margin-top: 3px; }
     .ss-warn { color: var(--qm-warning); }
-    .ss-slips-cta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px; margin: 8px 0; border: 1px solid var(--qm-warning); border-radius: var(--qm-radius-md); font-size: 13px; }
+    .ss-slips-cta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px; margin: 8px 0; border: 1px solid var(--qm-warning); border-radius: var(--qm-radius-md); font-size: var(--qm-text-base); }
     .ss-coverage { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 14px; }
     .ss-cov { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); padding: 12px 14px; background: var(--qm-bg-card); min-width: 0; }
-    .ss-cov h4 { margin: 0 0 8px; font-size: 13px; font-family: var(--qm-font-display); }
-    .ss-cov ul { margin: 0; padding-left: 18px; font-size: 13px; }
+    .ss-cov h4 { margin: 0 0 8px; font-size: var(--qm-text-base); font-family: var(--qm-font-display); }
+    .ss-cov ul { margin: 0; padding-left: 18px; font-size: var(--qm-text-base); }
     .ss-cov li { margin: 2px 0; }
-    .ss-cov--ok { color: var(--qm-success); font-size: 13px; margin: 0; }</style>
+    .ss-cov--ok { color: var(--qm-success); font-size: var(--qm-text-base); margin: 0; }</style>
 
 @code {
     private const int PageSize = 25;
@@ -433,7 +433,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
-            Navigation.NavigateTo("/billing/modules");
+            Navigation.NavigateTo(BillingLinks.Modules);
             return;
         }
 

@@ -1,3 +1,4 @@
+@using QMgr.Application.DTOs
 @page "/platform/tenants"
 @using System.Text.Json
 @using QMgr.Web.Services
@@ -7,6 +8,7 @@
 @inject IToastService NotificationService
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
 
 <PageTitle>Tenant Management - Q-Mgr</PageTitle>
 
@@ -149,44 +151,48 @@
 </div>
 
 <!-- Tenant Details Modal -->
-<QModal @bind-Visible="showDetailsModal" Title="Tenant Details" Size="lg">
+@* xl (1140px) rather than lg (800px): this dialog carries eight sections in two columns, and at
+   800px every one of them wrapped. The prose that used to sit in them has moved into QInfo — the
+   standing rule is that permanent explanation belongs in a popover beside the thing it explains,
+   and that only a sentence which changes what somebody DOES stays on the page. *@
+<QModal @bind-Visible="showDetailsModal" Title="Tenant Details" Size="xl">
     <ChildContent>
         @if (tenantDetails != null)
         {
             <div class="details-grid">
                 <div class="detail-section">
                     <h4>Organization Info</h4>
-                    <div class="detail-item">
+                    <div class="tenant-row">
                         <label>Name:</label>
                         <span>@tenantDetails.Name</span>
                     </div>
-                    <div class="detail-item">
+                    <div class="tenant-row">
                         <label>Slug:</label>
                         <span>@tenantDetails.Slug</span>
                     </div>
-                    <div class="detail-item">
+                    <div class="tenant-row">
                         <label>Brand Name:</label>
                         <span>@(tenantDetails.BrandName ?? "N/A")</span>
                     </div>
-                    <div class="detail-item">
+                    <div class="tenant-row">
                         <label>Status:</label>
                         <QBadge Text="@tenantDetails.Status.ToString()" Variant="@GetStatusVariant(tenantDetails.Status)" />
                     </div>
-                    <div class="detail-item">
+                    <div class="tenant-row">
                     </div>
                 </div>
 
                 <div class="detail-section">
                     <h4>Contact Info</h4>
-                    <div class="detail-item">
+                    <div class="tenant-row">
                         <label>Email:</label>
                         <span>@(tenantDetails.ContactEmail ?? "N/A")</span>
                     </div>
-                    <div class="detail-item">
+                    <div class="tenant-row">
                         <label>Phone:</label>
                         <span>@(tenantDetails.ContactPhone ?? "N/A")</span>
                     </div>
-                    <div class="detail-item">
+                    <div class="tenant-row">
                         <label>Billing Email:</label>
                         <span>@(tenantDetails.BillingEmail ?? "N/A")</span>
                     </div>
@@ -194,37 +200,35 @@
 
                 <div class="detail-section">
                     <h4>Usage Statistics</h4>
-                    <div class="detail-item">
+                    <div class="tenant-row">
                         <label>Branches:</label>
                         <span>@tenantDetails.BranchCount / @tenantDetails.Usage?.MaxBranches</span>
                     </div>
-                    <div class="detail-item">
+                    <div class="tenant-row">
                         <label>Users:</label>
                         <span>@tenantDetails.UserCount</span>
                     </div>
-                    <div class="detail-item">
+                    <div class="tenant-row">
                         <label>Tokens (this month):</label>
                         <span>@tenantDetails.Usage?.TokensCreated.ToString("N0") / @tenantDetails.Usage?.MaxTokens.ToString("N0")</span>
                     </div>
-                    <div class="detail-item">
+                    <div class="tenant-row">
                         <label>API Calls (this month):</label>
                         <span>@tenantDetails.Usage?.ApiCalls.ToString("N0") / @tenantDetails.Usage?.MaxApiCalls.ToString("N0")</span>
                     </div>
-                    <div class="detail-item">
+                    <div class="tenant-row">
                         <label>Storage:</label>
                         <span>@tenantDetails.Usage?.StorageUsedMb.ToString("N0") MB / @tenantDetails.Usage?.MaxStorageMb.ToString("N0") MB</span>
                     </div>
                 </div>
 
                 <div class="detail-section">
-                    <h4>Storage Quota Override</h4>
-                    <p class="section-hint">
-                        Content should mostly live on external platforms (YouTube, Vimeo, Google Drive,
-                        TikTok) that this app links to rather than hosts — direct uploads are capped per
-                        plan (@tenantDetails.Usage?.MaxStorageMb.ToString("N0") MB by default). Set an
-                        override here only for a tenant that genuinely needs more local storage room.
-                    </p>
-                    <div class="detail-item">
+                    <h4>
+                        Storage Quota Override
+                        <QInfo Label="the storage override"
+                               Text="@($"Content should mostly live on external platforms — YouTube, Vimeo, Google Drive, TikTok — that this app links to rather than hosts. Direct uploads are capped per plan, {tenantDetails.Usage?.MaxStorageMb.ToString("N0")} MB by default. Set an override only for a tenant that genuinely needs more local room.")" />
+                    </h4>
+                    <div class="tenant-row">
                         <label>Override (MB):</label>
                         <div class="storage-quota-editor">
                             <input type="number" min="0" class="form-control" style="max-width:140px;"
@@ -240,23 +244,284 @@
                     </div>
                 </div>
 
+                @* ---- Lifecycle and deletion --------------------------------------------
+                   An unpaid account does not sit here for ever. It moves Suspended -> Closed ->
+                   Scheduled -> deleted on published clocks (Terms §8a), and the tenant is emailed
+                   before each step. A purge is the END of that, never a shortcut through it. *@
+                <div class="detail-section">
+                    <h4>Lifecycle</h4>
+                    @{ var life = tenantDetails.Lifecycle; }
+                    <div class="tenant-row">
+                        <label>Stage:</label>
+                        <span>@(life?.Status ?? tenantDetails.Status.ToString())</span>
+                    </div>
+                    @if (life?.NextStatus != null && life.DaysUntilNextTransition != null)
+                    {
+                        <div class="tenant-row">
+                            <label>Next:</label>
+                            <span>
+                                becomes <strong>@life.NextStatus</strong> in @life.DaysUntilNextTransition day(s)@(life.NextTransitionDueAt is { } d ? $" — {QDateFormat.D(d)}" : "")
+                            </span>
+                        </div>
+                    }
+                    @if (life?.HasFinancialRecords == true)
+                    {
+                        @* State, not explanation: it changes what a purge of THIS tenant will leave behind,
+                           so the fact stays on the page and only the reasoning moves into the popover. *@
+                        <div class="tenant-row">
+                            <label>Has paid:</label>
+                            <span>
+                                invoices kept 5 years
+                                <QInfo Label="statutory retention"
+                                       Text="Uganda's Tax Procedures Code requires tax records for five years. A purge keeps this tenant's invoices and payments — amounts, dates and references — and blanks the contact details on them. Everything else still goes. A tenant that never paid has no such record and purges whole." />
+                            </span>
+                        </div>
+                    }
+
+                    @if (!string.IsNullOrEmpty(lifecycleError))
+                    {
+                        <div class="validation-error">@lifecycleError</div>
+                    }
+
+                    <div class="action-buttons-vertical" style="margin-top:8px;">
+                        @if (tenantDetails.Status != TenantStatus.Cancelled && tenantDetails.Status != TenantStatus.PendingDeletion)
+                        {
+                            <QButton Text="Close account" Icon="door-closed" Variant="outline-danger" Size="sm"
+                                     Disabled="@isSavingLifecycle" OnClick="@(() => SetLifecycle(tenantDetails.Id, "Cancelled"))" />
+                        }
+                        @if (tenantDetails.Status == TenantStatus.Cancelled)
+                        {
+                            <QButton Text="Schedule deletion" Icon="calendar-x" Variant="danger" Size="sm"
+                                     Disabled="@isSavingLifecycle" OnClick="@(() => SetLifecycle(tenantDetails.Id, "PendingDeletion"))" />
+                        }
+                        @if (tenantDetails.Status == TenantStatus.PendingDeletion)
+                        {
+                            <QButton Text="Cancel the deletion" Icon="arrow-counterclockwise" Variant="secondary" Size="sm"
+                                     Disabled="@isSavingLifecycle" OnClick="@(() => SetLifecycle(tenantDetails.Id, "Cancelled"))" />
+                        }
+                    </div>
+
+                    @if (life?.History is { Count: > 0 })
+                    {
+                        <p class="section-hint" style="margin-top:10px;">
+                            @foreach (var e in life.History.Take(5))
+                            {
+                                <span class="lifecycle-line">@QDateFormat.D(e.OccurredAt) — @(e.FromStatus ?? "new") → @e.ToStatus, by @e.Actor@(string.IsNullOrWhiteSpace(e.Reason) ? "" : $" ({e.Reason})")</span>
+                            }
+                        </p>
+                    }
+                </div>
+
+                @* ---- What this tenant IS, and removing it -------------------------------- *@
+                <div class="detail-section">
+                    <h4>
+                        Data &amp; deletion
+                        <QInfo Label="a purge"
+                               Text="A purge removes every record this organisation owns, every uploaded file and every queued background job, then re-reads the database to verify nothing is left. If anything is, the whole thing is rolled back and nothing is deleted." />
+                    </h4>
+                    @* A warning is not a hint and stays on the page. *@
+                    <p class="domain-last-error">This cannot be undone.</p>
+
+                    <div class="tenant-row">
+                        <label>Holdings:</label>
+                        <div class="storage-quota-editor">
+                            <QButton Text="@(residue == null ? "Count it" : "Recount")" Icon="search" Variant="secondary" Size="sm"
+                                     Disabled="@isCountingResidue" OnClick="@(() => LoadResidue(tenantDetails.Id))" />
+                            @if (residue != null)
+                            {
+                                <span class="override-note">
+                                    @residue.TotalRows row(s) in @residue.RowsByTable.Count table(s) ·
+                                    @residue.Files.Count file(s) · @residue.BackgroundJobs job(s)@(residue.RetainedByTable.Count > 0 ? $" · {residue.RetainedByTable.Values.Sum()} retained under statute" : "")
+                                </span>
+                            }
+                        </div>
+                    </div>
+
+                    @if (residue?.ExternalReferences is { Count: > 0 })
+                    {
+                        <p class="section-hint">Outside this system: @string.Join("; ", residue.ExternalReferences)</p>
+                    }
+
+                    @if (tenantDetails.Status == TenantStatus.PendingDeletion)
+                    {
+                        <div class="tenant-row">
+                            <label>Type the name:</label>
+                            <div class="storage-quota-editor">
+                                <input type="text" class="form-control" style="max-width:260px;"
+                                       placeholder="@tenantDetails.Name" @bind="purgeConfirmName" />
+                                <QButton Text="Purge permanently" Icon="trash3-fill" Variant="danger" Size="sm"
+                                         Disabled="@isPurging" OnClick="@(() => PurgeTenant(tenantDetails.Id, tenantDetails.Name))" />
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="section-hint">
+                            Schedule the deletion first.
+                            <QInfo Label="why the purge is not offered"
+                                   Text="A purge is the end of the lifecycle, not a way round it. Close the account, then schedule its deletion; only then can it be purged, and the organisation's name has to be typed back to confirm." />
+                        </p>
+                    }
+
+                    @if (!string.IsNullOrEmpty(purgeMessage))
+                    {
+                        <p class="@(purgeFailed ? "domain-last-error" : "section-hint")">@purgeMessage</p>
+                    }
+                </div>
+
+                @* ---- Custom domain ------------------------------------------------------
+                   Platform-only by decision: bringing a domain live touches the web server, so
+                   a tenant does not self-serve this. Nothing here issues a certificate — this
+                   server carries one, shared with the other applications on it, and a domain it
+                   does not cover is REFUSED rather than served behind a browser warning. Every
+                   failure below names the STEP — "we could not find the DNS record" sends
+                   somebody to their registrar, "the certificate does not cover this domain"
+                   sends them to whoever maintains it, and a single "failed" would send them to
+                   the wrong one. *@
+                <div class="detail-section">
+                    <h4>Custom Domain</h4>
+                    @{ var domain = tenantDetails.CustomDomainStatus ?? new CustomDomainStatusDto(); }
+
+                    @if (!string.IsNullOrEmpty(domainError))
+                    {
+                        <div class="validation-error">@domainError</div>
+                    }
+
+                    @if (domain.State == CustomDomainState.None)
+                    {
+                        <p class="section-hint">
+                            A subdomain, e.g. <strong>dashboard.theirschool.com</strong>.
+                            <QInfo Label="tenant domains"
+                                   Text="It has to be a subdomain: DNS forbids a CNAME at a domain's root, so an apex can only be pointed here with a provider-specific ALIAS record that many registrars do not offer. The tenant creates a TXT record to prove ownership, then we issue the certificate; nothing is routed until both are done." />
+                        </p>
+                        <div class="tenant-row">
+                            <label>Domain:</label>
+                            <div class="storage-quota-editor">
+                                <input type="text" class="form-control" style="max-width:260px;" placeholder="dashboard.theirschool.com" @bind="domainInput" />
+                                <QButton Text="Request domain" Icon="globe2" Variant="primary" Size="sm"
+                                         Disabled="@isSavingDomain" OnClick="@(() => RequestDomain(tenantDetails.Id))" />
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="tenant-row">
+                            <label>Status:</label>
+                            <QBadge Text="@DomainStateLabel(domain.State)" Variant="@DomainStateVariant(domain.State)" />
+                        </div>
+                        <div class="tenant-row">
+                            <label>Domain:</label>
+                            <span>@(domain.Domain ?? domain.PendingDomain)</span>
+                        </div>
+
+                        @if (domain.State is CustomDomainState.Pending or CustomDomainState.Verified)
+                        {
+                            @* The exact record, name and value, ready to be copied. A DNS record
+                               retyped from a screenshot is the single most common way this step
+                               fails, so it is selectable text and a copy button, never an image. *@
+                            <p class="section-hint">
+                                Ask the tenant to add this record, then Check now.
+                                <QInfo Label="the TXT record"
+                                       Text="It goes at their DNS provider, exactly as shown — name and value. DNS changes can take up to an hour to appear, so a first check often finds nothing; that is normal. Once it matches we issue the certificate and only then does anything route to the domain." />
+                            </p>
+                            <div class="tenant-row">
+                                <label>TXT name:</label>
+                                <div class="storage-quota-editor">
+                                    <code class="dns-value">@domain.VerificationRecordName</code>
+                                    <QButton Icon="clipboard" Variant="ghost" Size="sm" OnClick="@(() => CopyAsync(domain.VerificationRecordName))" />
+                                </div>
+                            </div>
+                            <div class="tenant-row">
+                                <label>TXT value:</label>
+                                <div class="storage-quota-editor">
+                                    <code class="dns-value">@domain.VerificationRecordValue</code>
+                                    <QButton Icon="clipboard" Variant="ghost" Size="sm" OnClick="@(() => CopyAsync(domain.VerificationRecordValue))" />
+                                </div>
+                            </div>
+                            @if (domain.State == CustomDomainState.Verified)
+                            {
+                                <p class="section-hint">Ownership is proved. The domain is not being served yet — press Check now to put it on this server's certificate.</p>
+                            }
+                        }
+
+                        @if (domain.VerifiedAt.HasValue)
+                        {
+                            <div class="tenant-row"><label>Verified:</label><span>@QDateFormat.D(domain.VerifiedAt.Value)</span></div>
+                        }
+                        @if (domain.ServingSince.HasValue)
+                        {
+                            @* No renewal date: this server’s certificate is shared with the other
+                               applications on it and is maintained outside Q-Mgr, so a date here would
+                               be a guess and an implied promise to watch it. *@
+                            <div class="tenant-row"><label>Served since:</label><span>@QDateFormat.D(domain.ServingSince.Value)</span></div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(domain.LastError))
+                        {
+                            <p class="domain-last-error">@domain.LastError</p>
+                        }
+                        @if (domain.GaveUp)
+                        {
+                            @* The daily sweep has stopped. Said out loud, because otherwise a
+                               domain simply goes quiet and nobody knows it needs a hand. *@
+                            <p class="domain-last-error">Automatic checking has stopped after @domain.Attempts attempts. Press Check now once the DNS record is in place.</p>
+                        }
+
+                        <div class="action-buttons-vertical" style="margin-top:8px;">
+                            @if (domain.State != CustomDomainState.Live)
+                            {
+                                <QButton Text="Check now" Icon="arrow-clockwise" Variant="primary" Size="sm"
+                                         Disabled="@isSavingDomain" OnClick="@(() => VerifyDomain(tenantDetails.Id))" />
+                            }
+                            <QButton Text="Release domain" Icon="x-circle" Variant="outline-danger" Size="sm"
+                                     Disabled="@isSavingDomain" OnClick="@(() => ReleaseDomain(tenantDetails.Id))" />
+                        </div>
+                    }
+                </div>
+
+                @* ---- Negotiated entitlements --------------------------------------------
+                   What a customer actually gets is recorded on their own row, never inferred from
+                   a catalogue row — the same reasoning as the agreed price. These can only turn a
+                   flag ON: taking away something a module grants is a refund question. *@
+                <div class="detail-section">
+                    <h4>
+                        Feature Overrides
+                        <QInfo Label="feature overrides"
+                               Text="Granted by hand, outside any module this tenant holds — for a negotiated deal. Switching one off only removes the override: a tenant keeps whatever their modules give them, because taking that away is a refund question rather than a switch." />
+                    </h4>
+                    @foreach (var feature in OverridableFeatures)
+                    {
+                        var on = tenantDetails.FeatureOverrides.TryGetValue(feature.Code, out var v) && v;
+                        <div class="tenant-row">
+                            <label>@feature.Label:</label>
+                            <div class="storage-quota-editor">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" checked="@on"
+                                           disabled="@isSavingOverride"
+                                           @onchange="@(e => SetOverride(tenantDetails.Id, feature.Code, (bool?)e.Value == true))" />
+                                </div>
+                                <QInfo Label="@feature.Label" Text="@feature.Note" />
+                            </div>
+                        </div>
+                    }
+                </div>
+
                 @if (tenantDetails.Subscription != null)
                 {
                     <div class="detail-section">
                         <h4>Subscription</h4>
-                        <div class="detail-item">
+                        <div class="tenant-row">
                             <label>Plan:</label>
                             <span>@tenantDetails.Subscription.PlanName</span>
                         </div>
-                        <div class="detail-item">
+                        <div class="tenant-row">
                             <label>Status:</label>
                             <QBadge Text="@tenantDetails.Subscription.Status.ToString()" Variant="primary" />
                         </div>
-                        <div class="detail-item">
+                        <div class="tenant-row">
                             <label>Billing Cycle:</label>
                             <span>@tenantDetails.Subscription.BillingCycle</span>
                         </div>
-                        <div class="detail-item">
+                        <div class="tenant-row">
                             <label>Current Period Ends:</label>
                             <span>@QDateFormat.D(tenantDetails.Subscription.CurrentPeriodEnd)</span>
                         </div>
@@ -266,21 +531,21 @@
                 <div class="detail-section">
                     <h4>Actions</h4>
                     <div class="action-buttons-vertical">
-                        <QButton Text="Manage Modules" Icon="grid-3x3-gap-fill" Variant="secondary"
+                        <QButton Text="Manage Modules" Icon="grid-3x3-gap-fill" Variant="secondary" Size="sm"
                                  OnClick="@(async () => { showDetailsModal = false; await ShowModulesDialog(MapToSummary(tenantDetails)); })" />
                         @if (tenantDetails.TrialEndsAt.HasValue)
                         {
-                            <QButton Text="Extend Trial" Icon="calendar-plus-fill" Variant="secondary"
+                            <QButton Text="Extend Trial" Icon="calendar-plus-fill" Variant="secondary" Size="sm"
                                      OnClick="@(() => ShowExtendTrialDialog(tenantDetails.Id))" />
                         }
                         @if (tenantDetails.Status == TenantStatus.Active || tenantDetails.Status == TenantStatus.Trialing)
                         {
-                            <QButton Text="Suspend Tenant" Icon="pause-circle-fill" Variant="warning"
+                            <QButton Text="Suspend Tenant" Icon="pause-circle-fill" Variant="outline-danger" Size="sm"
                                      OnClick="@(() => { showDetailsModal = false; ShowSuspendDialog(MapToSummary(tenantDetails)); })" />
                         }
                         else if (tenantDetails.Status == TenantStatus.Suspended)
                         {
-                            <QButton Text="Reactivate Tenant" Icon="play-circle-fill" Variant="success"
+                            <QButton Text="Reactivate Tenant" Icon="play-circle-fill" Variant="success" Size="sm"
                                      OnClick="@(async () => { showDetailsModal = false; await ReactivateTenant(MapToSummary(tenantDetails)); })" />
                         }
                     </div>
@@ -426,7 +691,8 @@
         }
     }
 
-    .loading-state, .error-state, .empty-state {
+    .loading-state,
+    .error-state {
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -450,7 +716,7 @@
         align-items: center;
         gap: 8px;
         margin: 0;
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
         color: var(--qm-text-primary);
     }
 
@@ -469,7 +735,7 @@
         background: var(--qm-bg-elevated);
         color: var(--qm-text-muted);
         font-weight: 600;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         text-transform: uppercase;
         letter-spacing: 0.05em;
         border-bottom: 2px solid var(--qm-border);
@@ -500,19 +766,19 @@
     }
 
     .tenant-slug {
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-primary);
         font-family: monospace;
     }
 
     .tenant-email {
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-muted);
     }
 
     .date-cell {
         color: var(--qm-text-secondary);
-        font-size: 14px;
+        font-size: var(--qm-text-base);
     }
 
     .date-cell.expired {
@@ -544,24 +810,55 @@
     .detail-section h4 {
         margin: 0 0 16px;
         color: var(--qm-text-primary);
-        font-size: 16px;
+        font-size: var(--qm-text-md);
         border-bottom: 1px solid var(--qm-border);
         padding-bottom: 8px;
     }
 
-    .detail-item {
-        display: flex;
-        justify-content: space-between;
+    .tenant-row {
+        display: grid;
+        grid-template-columns: minmax(96px, auto) minmax(0, 1fr);
         align-items: center;
-        padding: 8px 0;
+        padding: 6px 0;
         gap: 12px;
     }
 
     .section-hint {
         margin: 0 0 12px;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
     }
+
+    /* --qm-bg-subtle DOES NOT EXIST. This read `var(--qm-bg-subtle, #f4f4f5)`, so it always took
+       the literal — a light grey panel — while the text colour was inherited from the theme. On the
+       dark theme that is light text on a light background: the DNS record a tenant has to copy was
+       INVISIBLE. Reported 2026-09-20.
+
+       The lesson is the one this file already carries elsewhere: a fallback literal turns a wrong
+       token name into something that looks deliberate. Real tokens only, and the colour is set
+       explicitly rather than inherited, because the whole point of a panel is that it differs from
+       what is behind it. */
+    .dns-value {
+        font-family: var(--qm-font-mono);
+        font-size: var(--qm-text-sm);
+        background: var(--qm-bg-secondary);
+        color: var(--qm-text-primary);
+        border: 1px solid var(--qm-border);
+        padding: 4px 8px;
+        border-radius: var(--qm-radius-sm);
+        user-select: all;
+        word-break: break-all;
+    }
+
+    .domain-last-error {
+        font-size: var(--qm-text-sm);
+        color: var(--qm-danger);
+        margin: 6px 0 0;
+    }
+
+    .override-note { font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
+
+    .lifecycle-line { display: block; font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
 
     .storage-quota-editor {
         display: flex;
@@ -569,16 +866,20 @@
         gap: 8px;
     }
 
-    .detail-item label {
+    .tenant-row > label {
         font-weight: 500;
         color: var(--qm-text-muted);
-        font-size: 14px;
+        font-size: var(--qm-text-base);
     }
 
-    .detail-item span {
+    .tenant-row > span {
         color: var(--qm-text-primary);
-        font-size: 14px;
+        font-size: var(--qm-text-base);
     }
+
+    /* A control in the value column sits at the start of it, beside its label, rather than
+       drifting to the far edge of the section. */
+    .tenant-row .storage-quota-editor { justify-content: flex-start; }
 
     .action-buttons-vertical {
         display: flex;
@@ -595,7 +896,7 @@
         background: var(--qm-bg-elevated);
         border-radius: var(--qm-radius-md);
         color: var(--qm-text-secondary);
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         line-height: 1.5;
     }
 
@@ -635,7 +936,7 @@
         position: absolute;
         cursor: pointer;
         inset: 0;
-        background-color: var(--qm-border-strong, var(--qm-border));
+        background-color: var(--qm-border);
         border-radius: var(--qm-radius-lg);
         transition: background-color 0.15s;
     }
@@ -677,6 +978,185 @@
     private TenantDetails? tenantDetails;
     private int? storageQuotaInput;
     private bool isSavingStorageQuota = false;
+
+    private TenantResidueDto? residue;
+    private bool isCountingResidue, isSavingLifecycle, isPurging, purgeFailed;
+    private string? lifecycleError, purgeMessage;
+    private string purgeConfirmName = string.Empty;
+
+    private async Task SetLifecycle(Guid tenantId, string status)
+    {
+        isSavingLifecycle = true;
+        lifecycleError = null;
+        try
+        {
+            var response = await Http.PostAsJsonAsync($"api/v1/admin/tenants/{tenantId}/lifecycle", new { status, reason = "set by a platform administrator" });
+            if (!response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+                lifecycleError = body.TryGetProperty("title", out var t) ? t.GetString() : $"That did not work ({(int)response.StatusCode}).";
+            }
+            await ViewTenant(tenantId);
+        }
+        catch (Exception ex) { lifecycleError = ex.Message; }
+        finally { isSavingLifecycle = false; }
+    }
+
+    private async Task LoadResidue(Guid tenantId)
+    {
+        isCountingResidue = true;
+        try { residue = await Http.GetFromJsonAsync<TenantResidueDto>($"api/v1/admin/tenants/{tenantId}/residue", JsonOptions); }
+        catch (Exception ex) { NotificationService.Notify(ToastSeverity.Error, "Error", ex.Message); }
+        finally { isCountingResidue = false; }
+    }
+
+    /// <summary>
+    /// The name has to be typed back. A purge is irreversible and there is no copy to go back to,
+    /// so a misclick must not be able to reach it — the API refuses a mismatch too, which is what
+    /// actually enforces it.
+    /// </summary>
+    private async Task PurgeTenant(Guid tenantId, string tenantName)
+    {
+        isPurging = true;
+        purgeMessage = null;
+        purgeFailed = false;
+        try
+        {
+            var response = await Http.PostAsJsonAsync($"api/v1/admin/tenants/{tenantId}/purge",
+                new { confirmName = purgeConfirmName, reason = "removed by a platform administrator" });
+            var result = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+
+            if (response.IsSuccessStatusCode && result.TryGetProperty("verificationPassed", out var ok) && ok.GetBoolean())
+            {
+                var rows = result.TryGetProperty("totalRowsDeleted", out var r) ? r.GetInt32() : 0;
+                var files = result.TryGetProperty("filesDeleted", out var f) ? f.GetInt32() : 0;
+                NotificationService.Notify(ToastSeverity.Success, "Purged",
+                    $"{tenantName} is gone: {rows} row(s) and {files} file(s) removed, and the check found nothing left.");
+                showDetailsModal = false;
+                residue = null;
+                purgeConfirmName = string.Empty;
+                await LoadTenants();
+                return;
+            }
+
+            purgeFailed = true;
+            purgeMessage = result.TryGetProperty("error", out var e) ? e.GetString()
+                : result.TryGetProperty("message", out var m) ? m.GetString()
+                : $"The purge did not complete ({(int)response.StatusCode}).";
+        }
+        catch (Exception ex) { purgeFailed = true; purgeMessage = ex.Message; }
+        finally { isPurging = false; }
+    }
+
+    private string domainInput = string.Empty;
+    private bool isSavingDomain;
+    private string? domainError;
+    private bool isSavingOverride;
+
+    private sealed record OverridableFeature(string Code, string Label, string Note);
+
+    /// <summary>
+    /// Deliberately a short list, not every constant on FeatureCodes — and it must match the
+    /// API's own allow-list, which is what actually enforces it. An override is for a negotiated
+    /// deal; anything that is simply part of a module should be sold as that module.
+    /// </summary>
+    private static readonly OverridableFeature[] OverridableFeatures =
+    [
+        new("white_label", "White-label branding", "The tenant's own name, logo and colours across the whole app, its kiosk and display screens, and its outbound email."),
+        new("remove_attribution", "Remove SACC attribution", "Takes \"Powered by SACC Software\" off their sign-in pages, the Q-Mgr line out of the app footer, and our name out of the email they send. Needs white-label branding switched on as well, or it removes our name from a product that still says Q-Mgr everywhere.")
+    ];
+
+    private static string DomainStateLabel(CustomDomainState state) => state switch
+    {
+        CustomDomainState.Pending => "Waiting for DNS",
+        CustomDomainState.Verified => "Verified, not yet served",
+        CustomDomainState.Live => "Live",
+        _ => "None"
+    };
+
+    private static string DomainStateVariant(CustomDomainState state) => state switch
+    {
+        CustomDomainState.Live => "success",
+        CustomDomainState.Verified => "info",
+        CustomDomainState.Pending => "warning",
+        _ => "secondary"
+    };
+
+    private async Task CopyAsync(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        try { await JS.InvokeVoidAsync("navigator.clipboard.writeText", value); }
+        catch { /* A browser that refuses the clipboard still leaves the text selectable (user-select: all). */ }
+    }
+
+    private async Task RequestDomain(Guid tenantId)
+    {
+        if (string.IsNullOrWhiteSpace(domainInput)) { domainError = "Enter the domain first."; return; }
+        await RunDomainStepAsync(tenantId, () => Http.PutAsJsonAsync(
+            $"api/v1/admin/tenants/{tenantId}/custom-domain", new RequestCustomDomainRequest { Domain = domainInput.Trim() }));
+    }
+
+    private Task VerifyDomain(Guid tenantId)
+        => RunDomainStepAsync(tenantId, () => Http.PostAsync($"api/v1/admin/tenants/{tenantId}/custom-domain/verify", null));
+
+    private Task ReleaseDomain(Guid tenantId)
+        => RunDomainStepAsync(tenantId, () => Http.DeleteAsync($"api/v1/admin/tenants/{tenantId}/custom-domain"));
+
+    /// <summary>
+    /// A refusal here is NOT a dead end — it names the step that failed and the tenant is re-read
+    /// either way, so the panel shows where the claim now stands and the same button is pressed
+    /// again once the DNS record appears.
+    /// </summary>
+    private async Task RunDomainStepAsync(Guid tenantId, Func<Task<HttpResponseMessage>> call)
+    {
+        isSavingDomain = true;
+        domainError = null;
+        try
+        {
+            var response = await call();
+            if (!response.IsSuccessStatusCode)
+            {
+                var problem = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+                domainError = problem.TryGetProperty("title", out var title) ? title.GetString()
+                    : problem.TryGetProperty("message", out var message) ? message.GetString()
+                    : $"The request failed ({(int)response.StatusCode}).";
+            }
+            else
+            {
+                domainInput = string.Empty;
+            }
+            await ViewTenant(tenantId);
+        }
+        catch (Exception ex)
+        {
+            domainError = ex.Message;
+        }
+        finally
+        {
+            isSavingDomain = false;
+        }
+    }
+
+    private async Task SetOverride(Guid tenantId, string code, bool enabled)
+    {
+        isSavingOverride = true;
+        try
+        {
+            var response = await Http.PutAsJsonAsync(
+                $"api/v1/admin/tenants/{tenantId}/feature-overrides/{code}", new { enabled });
+            if (!response.IsSuccessStatusCode)
+                NotificationService.Notify(ToastSeverity.Error, "Error", $"Could not change that override ({(int)response.StatusCode}).");
+            await ViewTenant(tenantId);
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", ex.Message);
+        }
+        finally
+        {
+            isSavingOverride = false;
+        }
+    }
 
     private bool showDetailsModal = false;
     private bool showSuspendModal = false;
@@ -1052,7 +1532,10 @@
     // so this was a live bug, not a theoretical one. Values now match the real enum exactly
     // (name and int) — see that file for the authoritative definition; this is still a local
     // duplicate copy, not a Q-Mgr.Shared type, since Web doesn't reference the API project.
-    private enum TenantStatus { Pending = 0, Trialing = 1, Active = 2, Suspended = 3, Cancelled = 4, Deleted = 5 }
+    // Values match the real enum exactly (name and int). PendingDeletion (6) is the last,
+    // reversible window before a purge; Deleted (5) is legacy and nothing writes it — a purged
+    // tenant has no row here at all.
+    private enum TenantStatus { Pending = 0, Trialing = 1, Active = 2, Suspended = 3, Cancelled = 4, Deleted = 5, PendingDeletion = 6 }
     private enum SubscriptionStatus { Active, Canceled, PastDue, Trialing, Incomplete }
     private enum BillingCycle { Monthly, Annual }
 
@@ -1083,8 +1566,17 @@
         public string? ContactPhone { get; init; }
         public string? BillingEmail { get; init; }
         public string? BillingPhone { get; init; }
-        public string PreferredCurrency { get; init; } = "USD";
+        public string PreferredCurrency { get; init; } = "UGX";
         public string? CustomDomain { get; init; }
+
+        // These two ride the SHARED types (Q-Mgr.Shared) rather than being copied out again like
+        // everything above them. The records above are a local duplicate of the API's shapes, kept
+        // because this page has always had them; adding two more hand-copied shapes to it would be
+        // the DTO-duplication bug this codebase has now hit seven times.
+        public CustomDomainStatusDto? CustomDomainStatus { get; init; }
+        public TenantLifecycleStatusDto? Lifecycle { get; init; }
+        public Dictionary<string, bool> FeatureOverrides { get; init; } = new();
+
         public string? StripeCustomerId { get; init; }
         public DateTime? VerifiedAt { get; init; }
         public int OnboardingStep { get; init; }

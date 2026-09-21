@@ -14,20 +14,18 @@
 
 
 <div class="campaigns-page">
-    <!-- Toolbar -->
-    <QCard Class="toolbar-card">
-        <div class="toolbar">
-            <div class="toolbar-left">
-                <QInput TValue="string" @bind-Value="@searchTerm" Placeholder="Search campaigns..." IconLeft="search" />
-            </div>
-            <div class="toolbar-right">
-                @if (canCreate)
-                {
-                    <QButton Text="New Campaign" Icon="plus-lg" Variant="primary" OnClick="@ShowCreateDialog" />
-                }
-            </div>
-        </div>
-    </QCard>
+    <QPageActions Embedded="@Embedded">
+        <Actions>
+            @if (canCreate)
+            {
+                <QButton Text="New Campaign" Icon="plus-lg" Variant="primary" OnClick="@ShowCreateDialog" />
+            }
+        </Actions>
+    </QPageActions>
+
+    <QFilterBar>
+        <QInput TValue="string" @bind-Value="@searchTerm" Placeholder="Search campaigns..." IconLeft="search" />
+    </QFilterBar>
 
     @if (isLoading)
     {
@@ -51,7 +49,7 @@
     else
     {
         <div class="campaigns-grid">
-            @foreach (var campaign in FilteredCampaigns)
+            @foreach (var campaign in PagedCampaigns)
             {
                 <QCard Class="campaign-card">
                     <div class="campaign-icon">
@@ -88,6 +86,7 @@
                 </QCard>
             }
         </div>
+        <QPager Count="@(FilteredCampaigns.Count())" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="campaigns" />
     }
 </div>
 
@@ -146,11 +145,8 @@
         }
         else if (stats == null)
         {
-            <div class="stats-empty">
-                <QIcon Name="exclamation-triangle" />
-                <h4>Couldn't load impressions</h4>
-                <p>Try a different date range or reload the page.</p>
-            </div>
+            <QEmptyState Icon="exclamation-triangle" Title="Couldn't load impressions"
+                         Text="Try a different date range or reload the page." />
         }
         else if (stats.TotalImpressions == 0)
         {
@@ -242,7 +238,7 @@
         gap: var(--q-row-gap, 8px);
     }
 
-    .loading-container, .empty-state {
+    .loading-container {
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -251,27 +247,6 @@
         gap: 16px;
         color: var(--qm-text-secondary);
         text-align: center;
-    }
-
-    .empty-state {
-        background: var(--qm-bg-card);
-        border-radius: var(--qm-radius-xl);
-        padding: 80px 20px;
-    }
-
-    .empty-state .rzi {
-        font-size: 64px;
-        color: var(--qm-text-muted);
-    }
-
-    .empty-state h3 {
-        margin: 0 0 8px;
-        color: var(--qm-text-primary);
-    }
-
-    .empty-state p {
-        margin: 0 0 24px;
-        max-width: 480px;
     }
 
     .campaigns-grid {
@@ -298,7 +273,7 @@
     }
 
     .campaign-icon .rzi {
-        font-size: 28px;
+        font-size: var(--qm-text-stat);
         color: var(--qm-text-on-primary);
     }
 
@@ -316,13 +291,13 @@
 
     .campaign-title-row h3 {
         margin: 0;
-        font-size: 16px;
+        font-size: var(--qm-text-md);
         font-weight: 600;
     }
 
     .campaign-info p {
         margin: 0 0 12px;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
         white-space: nowrap;
         overflow: hidden;
@@ -339,12 +314,12 @@
         display: flex;
         align-items: center;
         gap: 4px;
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-secondary);
     }
 
     .meta-item .rzi {
-        font-size: 14px;
+        font-size: var(--qm-text-base);
     }
 
     .campaign-actions {
@@ -358,7 +333,7 @@
         display: block;
         margin-bottom: 6px;
         font-weight: 500;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
     }
 
     .checkbox-group {
@@ -386,7 +361,7 @@
         display: flex;
         flex-direction: column;
         gap: 4px;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-muted);
     }
 
@@ -400,13 +375,13 @@
         align-items: center;
         justify-content: center;
         gap: 10px;
-        padding: 48px 20px;
+        padding: var(--qm-empty-pad);
         text-align: center;
         color: var(--qm-text-secondary);
     }
 
     .stats-empty .rzi {
-        font-size: 48px;
+        font-size: var(--qm-empty-icon);
         color: var(--qm-text-muted);
     }
 
@@ -418,7 +393,7 @@
     .stats-empty p {
         margin: 0;
         max-width: 460px;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
     }
 
     /* The summary figures are QStatTile/QStatRow (q-components.css). */
@@ -437,7 +412,7 @@
 
     .stats-chart-card h4, .stats-table-card h4 {
         margin: 0 0 12px;
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         font-weight: 600;
         color: var(--qm-text-primary);
     }
@@ -504,6 +479,14 @@
     private IEnumerable<CampaignDto> FilteredCampaigns => campaigns
         .Where(c => string.IsNullOrEmpty(searchTerm) || c.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
 
+    // ---- Paging (list-page sweep, plan Phase 2) --------------------------------------------
+    // Every row here is a component subtree Blazor Server diffs and ships down the circuit, so
+    // a page of them is drawn rather than the whole list.
+    private const int PageSize = 24;
+    private int pageIndex;
+    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (FilteredCampaigns.Count() - 1) / PageSize));
+    private IEnumerable<CampaignDto> PagedCampaigns => FilteredCampaigns.Skip(SafePageIndex * PageSize).Take(PageSize);
+
     protected override async Task OnInitializedAsync()
     {
         if (!await PermissionService.HasPermissionAsync(Permissions.ContentView))
@@ -515,7 +498,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
         {
-            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            Navigation.NavigateTo(BillingLinks.Modules, forceLoad: false);
             return;
         }
 

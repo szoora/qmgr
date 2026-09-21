@@ -2,6 +2,7 @@ using Mediator;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using QMgr.Application.Commands.Registration;
+using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
 
 namespace QMgr.API.Controllers.v1;
@@ -19,6 +20,7 @@ public class RegistrationController : ControllerBase
     private readonly IPlatformSettingsService _platformSettingsService;
     private readonly IRegistrationGuardService _registrationGuard;
     private readonly IPhoneVerificationService _phoneVerification;
+    private readonly IOrganizationHintService _organizationHint;
     private readonly ILogger<RegistrationController> _logger;
 
     /// <summary>The platform's own organization, whose SMS configuration sends sign-up codes.</summary>
@@ -30,10 +32,12 @@ public class RegistrationController : ControllerBase
         IPlatformSettingsService platformSettingsService,
         IRegistrationGuardService registrationGuard,
         IPhoneVerificationService phoneVerification,
+        IOrganizationHintService organizationHint,
         ILogger<RegistrationController> logger)
     {
         _registrationGuard = registrationGuard;
         _phoneVerification = phoneVerification;
+        _organizationHint = organizationHint;
         _mediator = mediator;
         _provisioningService = provisioningService;
         _platformSettingsService = platformSettingsService;
@@ -50,6 +54,24 @@ public class RegistrationController : ControllerBase
     /// note). The platform's actual base domain belongs entirely to Platform Settings; nothing in
     /// application code should assume what it is.
     /// </summary>
+    /// <summary>
+    /// "Does the organization behind this email address already use Q-Mgr?" (2026-09-20).
+    ///
+    /// <para>The registration form asks this before somebody creates a SECOND copy of their own
+    /// school. It answers only for a tenant that switched staff self-sign-up on and listed the
+    /// domain ITSELF — see <see cref="IOrganizationHintService"/> for why that consent is the whole
+    /// design, and why the join code is never part of the answer.</para>
+    ///
+    /// <para>Anonymous by necessity, like every other step of sign-up, and charged against the same
+    /// IP budget. It reveals strictly less than the join link it points at, which is a URL anybody
+    /// holding it can already open.</para>
+    /// </summary>
+    [HttpGet("organization-hint")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(OrganizationHintDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetOrganizationHint([FromQuery] string? email, CancellationToken cancellationToken)
+        => Ok(await _organizationHint.LookUpAsync(email, cancellationToken));
+
     [HttpGet("trial-info")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
@@ -154,7 +176,9 @@ public class RegistrationController : ControllerBase
             LastName = request.LastName,
             ClientAddress = clientAddress,
             HoneypotValue = request.ContactReference,
-            FormRenderedAt = request.FormRenderedAt
+            FormRenderedAt = request.FormRenderedAt,
+            AcknowledgedExistingOrganization = request.AcknowledgedExistingOrganization,
+            AcknowledgedOrganizationName = request.AcknowledgedOrganizationName
         };
 
         var assessment = await _registrationGuard.AssessAsync(riskInput);
@@ -183,7 +207,7 @@ public class RegistrationController : ControllerBase
             Phone = request.Phone,
             ContactPhone = request.ContactPhone,
             IndustryType = request.IndustryType,
-            PreferredCurrency = request.PreferredCurrency ?? "USD",
+            PreferredCurrency = request.PreferredCurrency ?? "UGX",
             AcceptTerms = request.AcceptTerms,
             Source = "web",
             ReferralCode = request.ReferralCode,
@@ -392,6 +416,16 @@ public record RegisterRequest
     /// a client can lie about it, which is why it contributes to a score rather than blocking.
     /// </summary>
     public DateTime? FormRenderedAt { get; init; }
+
+    /// <summary>
+    /// The form told them an organization at their email domain already uses Q-Mgr — by name,
+    /// because that school published the domain itself — and they chose to register a new one.
+    /// Raises the risk score; never blocks. A second campus is a real thing (2026-09-20).
+    /// </summary>
+    public bool AcknowledgedExistingOrganization { get; init; }
+
+    /// <summary>The name they were shown, for the reviewer. Never trusted as a fact about the caller.</summary>
+    public string? AcknowledgedOrganizationName { get; init; }
 
     /// <summary>Organization/Company name</summary>
     public string OrganizationName { get; init; } = string.Empty;

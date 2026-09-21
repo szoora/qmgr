@@ -1,631 +1,161 @@
-@page "/billing/usage"
+@using System.Globalization
 @using System.Text.Json
 @inject HttpClient Http
-@inject IPermissionService PermissionService
-@inject NavigationManager Navigation
 @inject JsonSerializerOptions JsonOptions
 
-<PageTitle>Usage & Limits - Q-Mgr</PageTitle>
+@*
+    Usage — a section of the Billing hub (/billing?tab=usage). No @page of its own.
 
-<div class="page-header">
-    <div class="header-left">
-        <h1>
-            <QIcon Name="bar-chart-line-fill" Size="32" />
-            Usage & Limits
-        </h1>
-        <div class="breadcrumb">
-            <a href="/billing/overview">Billing</a>
-            <span>/</span>
-            <span>Usage</span>
-        </div>
-    </div>
-    <div class="header-right">
-        <QButton Icon="arrow-repeat"
-                 Text="Refresh"
-                 Variant="secondary"
-                 OnClick="@LoadData"
-                 Disabled="@isLoading" />
-    </div>
-</div>
+    Rebuilt 2026-09-19. Each limit was a full-width bordered card about 120px tall, five of them a
+    screen of nothing, with the bar drawn backwards (the UNUSED part in wine, the used part green, so
+    5% looked nearly full). It is one QBarList now — a row per limit, the bar is the share used, and
+    colour carries state. Three real bugs went with the old page:
+
+      * STORAGE WAS SHOWN A THOUSAND-FOLD SMALL. The API sends megabytes (StorageUsedMb, and the
+        limits endpoint's "storage" in MB); the page formatted them as BYTES, so 6 MB read "6 B" and a
+        5,000 MB limit "4.88 KB". FormatMb below is the only formatter, and it takes megabytes.
+      * A RAW KEY REACHED THE PAGE. The label map expected "apiCalls"; the API sends "api_calls", so
+        the row was titled "api_calls". LimitLabel is keyed on what the API actually sends.
+      * "API calls" is INTEGRATION traffic only since 2026-09-17 (people signed in to the product are
+        never metered), and the label says so.
+*@
+
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1>Usage</h1>
+        <p class="subtitle">What this account has used this month against its limits.</p>
+    </Title>
+    <Actions>
+        <QButton Icon="arrow-repeat" Text="Refresh" Variant="secondary" OnClick="@LoadData" Disabled="@isLoading" />
+    </Actions>
+</QPageActions>
 
 @if (isLoading)
 {
-    <div class="loading-overlay">
-        <div class="webster-spinner"></div>
-        <span class="loading-text">Loading usage data...</span>
-    </div>
+    <div class="loading-container"><QSpinner Size="lg" /><span>Loading usage...</span></div>
 }
 else if (hasError)
 {
-    <div class="error-card">
-        <QIcon Name="exclamation-triangle-fill" Size="48" />
-        <h3>Failed to Load Usage Data</h3>
-        <p>@errorMessage</p>
-        <QButton Text="Try Again" Icon="arrow-repeat" Variant="primary" OnClick="@LoadData" />
-    </div>
+    <QEmptyState Icon="exclamation-triangle-fill" Title="Usage could not be loaded" Text="@errorMessage">
+        <Action><QButton Text="Try again" Icon="arrow-repeat" Variant="primary" OnClick="@LoadData" /></Action>
+    </QEmptyState>
 }
 else
 {
-    <!-- Current Usage Overview -->
-    <div class="usage-overview">
-        <div class="overview-header">
-            <h2>
-                <QIcon Name="speedometer2" Size="24" />
-                Current Period Usage
-            </h2>
-            <span class="period-badge">
-                @currentUsage?.Month/@currentUsage?.Year
-            </span>
-        </div>
+    <QCard Title="Limits" Icon="speedometer2" Subtitle="@PeriodLabel">
+        <QBarList Items="@LimitBars" Max="100" MinPercent="1" EmptyText="No limits apply to this account." />
+    </QCard>
 
-        <div class="limits-grid">
-            @if (limits != null)
-            {
-                @foreach (var limit in limits)
-                {
-                    <div class="limit-card @GetLimitStatus(limit.Value.percentUsed)">
-                        <div class="limit-header">
-                            <div class="limit-info">
-                                <QIcon Name="@GetLimitIcon(limit.Key)" Size="24" />
-                                <div>
-                                    <span class="limit-label">@GetLimitLabel(limit.Key)</span>
-                                    <span class="limit-value">@FormatLimitValue(limit.Key, limit.Value.current) / @FormatLimitValue(limit.Key, limit.Value.max)</span>
-                                </div>
-                            </div>
-                            <span class="limit-percentage @GetPercentageClass(limit.Value.percentUsed)">
-                                @limit.Value.percentUsed.ToString("F1")%
-                            </span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="progress-fill @GetProgressClass(limit.Value.percentUsed)"
-                                 style="width: @Math.Min(limit.Value.percentUsed, 100)%"></div>
-                        </div>
-                        @if (!limit.Value.withinLimit)
-                        {
-                            <div class="limit-warning">
-                                <QIcon Name="exclamation-circle-fill" />
-                                <span>Limit exceeded</span>
-                            </div>
-                        }
-                        else if (limit.Value.percentUsed >= 80)
-                        {
-                            <div class="limit-warning warning">
-                                <QIcon Name="exclamation-triangle-fill" />
-                                <span>Approaching limit (@limit.Value.remaining remaining)</span>
-                            </div>
-                        }
-                    </div>
-                }
-            }
-        </div>
-    </div>
+    <QStatRow>
+        <QStatTile Icon="ticket-perforated-fill" Variant="primary" Value="@N(currentUsage?.TokensServed)" Label="Tokens served" Sub="This month" />
+        <QStatTile Icon="chat-dots-fill" Variant="info" Value="@N(currentUsage?.SmsSent)" Label="SMS sent" Sub="This month" />
+        <QStatTile Icon="envelope-fill" Variant="secondary" Value="@N(currentUsage?.EmailsSent)" Label="Emails sent" Sub="This month" />
+        <QStatTile Icon="megaphone-fill" Variant="warning" Value="@N(currentUsage?.AdImpressions)" Label="Ad impressions" Sub="This month" />
+    </QStatRow>
 
-    <!-- Usage Trends Chart -->
-    <div class="usage-trends">
-        <div class="trends-header">
-            <h2>
-                <QIcon Name="graph-up" Size="24" />
-                Usage Trends
-            </h2>
-            <div class="trends-filters">
-                <QSelect TValue="string" TItem="(string Value, string Text)" @bind-Value="selectedMetric"
-                         Items="@MetricOptions" ValueSelector="@(o => o.Value)" TextSelector="@(o => o.Text)" />
-            </div>
-        </div>
-
-        @if (usageHistory != null && usageHistory.Any())
-        {
-            <div class="chart-container">
-                <div class="chart-area">
-                    @{
-                        var maxValue = GetMaxValueForMetric(selectedMetric);
-                        var historyData = usageHistory.OrderBy(u => u.Year).ThenBy(u => u.Month).ToList();
-                    }
-
-                    <div class="chart-bars">
-                        @foreach (var usage in historyData)
-                        {
-                            var value = GetMetricValue(usage, selectedMetric);
-                            var heightPercent = maxValue > 0 ? (value / maxValue * 100) : 0;
-
-                            <div class="chart-bar-container">
-                                <div class="chart-bar"
-                                     style="height: @heightPercent%"
-                                     title="@GetMonthName(usage.Month) @usage.Year: @FormatMetricValue(selectedMetric, value)">
-                                    <div class="chart-bar-fill"></div>
-                                </div>
-                                <span class="chart-label">@GetMonthName(usage.Month).Substring(0, 3)</span>
-                            </div>
-                        }
-                    </div>
-
-                    <div class="chart-stats">
-                        <div class="stat-item">
-                            <span class="stat-label">Current</span>
-                            <span class="stat-value">@FormatMetricValue(selectedMetric, GetMetricValue(currentUsage, selectedMetric))</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-label">Average</span>
-                            <span class="stat-value">@FormatMetricValue(selectedMetric, CalculateAverage(selectedMetric))</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-label">Peak</span>
-                            <span class="stat-value">@FormatMetricValue(selectedMetric, maxValue)</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        }
-        else
-        {
-            <div class="empty-state">
-                <QIcon Name="graph-up" Size="48" />
-                <p>No historical data available</p>
-            </div>
-        }
-    </div>
-
-    <!-- Additional Metrics -->
-    <div class="additional-metrics">
-        <h2>
-            <QIcon Name="list-check" Size="24" />
-            Additional Metrics
-        </h2>
-
-        <div class="metrics-grid">
-            <div class="metric-card">
-                <div class="metric-icon sms">
-                    <QIcon Name="chat-dots-fill" Size="24" />
-                </div>
-                <div class="metric-content">
-                    <span class="metric-label">SMS Sent</span>
-                    <span class="metric-value">@currentUsage?.SmsSent.ToString("N0")</span>
-                    <span class="metric-period">This month</span>
-                </div>
-            </div>
-
-            <div class="metric-card">
-                <div class="metric-icon email">
-                    <QIcon Name="envelope-fill" Size="24" />
-                </div>
-                <div class="metric-content">
-                    <span class="metric-label">Emails Sent</span>
-                    <span class="metric-value">@currentUsage?.EmailsSent.ToString("N0")</span>
-                    <span class="metric-period">This month</span>
-                </div>
-            </div>
-
-            <div class="metric-card">
-                <div class="metric-icon tokens">
-                    <QIcon Name="ticket-perforated-fill" Size="24" />
-                </div>
-                <div class="metric-content">
-                    <span class="metric-label">Tokens Served</span>
-                    <span class="metric-value">@currentUsage?.TokensServed.ToString("N0")</span>
-                    <span class="metric-period">This month</span>
-                </div>
-            </div>
-
-            <div class="metric-card">
-                <div class="metric-icon ads">
-                    <QIcon Name="megaphone-fill" Size="24" />
-                </div>
-                <div class="metric-content">
-                    <span class="metric-label">Ad Impressions</span>
-                    <span class="metric-value">@currentUsage?.AdImpressions.ToString("N0")</span>
-                    <span class="metric-period">This month</span>
-                </div>
-            </div>
-        </div>
-    </div>
+    <QCard Title="Last 12 months" Icon="graph-up">
+        <HeaderActions>
+            <QSelect TValue="string" TItem="(string Value, string Text)" @bind-Value="selectedMetric"
+                     Items="@MetricOptions" ValueSelector="@(o => o.Value)" TextSelector="@(o => o.Text)" />
+        </HeaderActions>
+        <ChildContent>
+            <QBarList Items="@HistoryBars" EmptyText="No earlier months recorded yet." />
+        </ChildContent>
+    </QCard>
 }
 
-<style>
-    .usage-overview {
-        background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-        padding: 24px;
-        margin-bottom: 24px;
-    }
-
-    .overview-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 24px;
-    }
-
-    .overview-header h2 {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        margin: 0;
-        font-size: 20px;
-        font-weight: 600;
-    }
-
-    .period-badge {
-        background: var(--qm-bg-elevated);
-        padding: 6px 16px;
-        border-radius: var(--qm-radius-full);
-        font-size: 13px;
-        font-weight: 600;
-        color: var(--qm-text-secondary);
-    }
-
-    .limits-grid {
-        display: grid;
-        gap: 20px;
-    }
-
-    .limit-card {
-        background: var(--qm-bg-elevated);
-        border: 2px solid var(--qm-border);
-        border-radius: var(--qm-radius-lg);
-        padding: 20px;
-        transition: all 0.3s ease;
-    }
-
-    .limit-card.danger {
-        border-color: var(--qm-danger);
-        background: color-mix(in srgb, var(--qm-danger) 15%, transparent);
-    }
-
-    .limit-card.warning {
-        border-color: var(--qm-warning);
-        background: color-mix(in srgb, var(--qm-warning) 15%, transparent);
-    }
-
-    .limit-card.success {
-        border-color: var(--qm-border);
-        background: var(--qm-bg-elevated);
-    }
-
-    .limit-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 12px;
-    }
-
-    .limit-info {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
-
-    .limit-info > div {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-    }
-
-    .limit-label {
-        font-weight: 600;
-        font-size: 14px;
-        color: var(--qm-text-primary);
-    }
-
-    .limit-value {
-        font-size: 13px;
-        color: var(--qm-text-secondary);
-    }
-
-    .limit-percentage {
-        font-size: 24px;
-        font-weight: 700;
-    }
-
-    .limit-percentage.success {
-        color: var(--qm-success);
-    }
-
-    .limit-percentage.warning {
-        color: var(--qm-warning);
-    }
-
-    .limit-percentage.danger {
-        color: var(--qm-danger);
-    }
-
-    .progress-bar {
-        height: 10px;
-        background: var(--qm-bg-elevated);
-        border-radius: var(--qm-radius-full);
-        overflow: hidden;
-        margin-bottom: 8px;
-    }
-
-    .progress-fill {
-        height: 100%;
-        transition: width 0.3s ease;
-    }
-
-    .progress-fill.success {
-        background: var(--qm-success);
-    }
-
-    .progress-fill.warning {
-        background: var(--qm-warning);
-    }
-
-    .progress-fill.danger {
-        background: var(--qm-danger);
-    }
-
-    .limit-warning {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-size: 13px;
-        font-weight: 600;
-        color: var(--qm-danger);
-    }
-
-    .limit-warning.warning {
-        color: var(--qm-warning);
-    }
-
-    .usage-trends,
-    .additional-metrics {
-        background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-        padding: 24px;
-        margin-bottom: 24px;
-    }
-
-    .trends-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 24px;
-    }
-
-    .trends-header h2 {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        margin: 0;
-        font-size: 20px;
-        font-weight: 600;
-    }
-
-    .trends-filters select {
-        min-width: 150px;
-    }
-
-    .chart-container {
-        margin-top: 24px;
-    }
-
-    .chart-area {
-        background: var(--qm-bg-elevated);
-        border-radius: var(--qm-radius-lg);
-        padding: 24px;
-    }
-
-    .chart-bars {
-        display: flex;
-        align-items: flex-end;
-        justify-content: space-between;
-        height: 250px;
-        gap: 8px;
-        margin-bottom: 8px;
-        padding: 16px 0;
-    }
-
-    .chart-bar-container {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        height: 100%;
-        justify-content: flex-end;
-    }
-
-    .chart-bar {
-        width: 100%;
-        min-height: 4px;
-        background: var(--qm-bg-card-hover);
-        border-radius: var(--qm-radius-sm) var(--qm-radius-sm) 0 0;
-        transition: all 0.3s ease;
-        cursor: pointer;
-        position: relative;
-    }
-
-    .chart-bar:hover {
-        opacity: 0.8;
-    }
-
-    .chart-bar-fill {
-        width: 100%;
-        height: 100%;
-        background: var(--qm-gradient-primary);
-        border-radius: var(--qm-radius-sm) var(--qm-radius-sm) 0 0;
-    }
-
-    .chart-label {
-        font-size: 11px;
-        color: var(--qm-text-muted);
-        margin-top: 8px;
-    }
-
-    .chart-stats {
-        display: flex;
-        justify-content: space-around;
-        padding: 16px 0;
-        border-top: 1px solid var(--qm-border);
-        margin-top: 16px;
-    }
-
-    .stat-item {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 4px;
-    }
-
-    .stat-label {
-        font-size: 12px;
-        color: var(--qm-text-muted);
-        text-transform: uppercase;
-        font-weight: 600;
-    }
-
-    .stat-value {
-        font-size: 20px;
-        font-weight: 700;
-        color: var(--qm-text-primary);
-    }
-
-    .metrics-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr));
-        gap: var(--qm-statcard-gap);
-        margin-top: 18px;
-    }
-
-    .metric-card {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        background: var(--qm-bg-elevated);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-lg);
-        padding: var(--qm-statcard-pad);
-    }
-
-    .metric-icon {
-        width: var(--qm-statcard-icon);
-        height: var(--qm-statcard-icon);
-        border-radius: var(--qm-radius-xl);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-    }
-
-    .metric-icon.sms {
-        background: color-mix(in srgb, var(--qm-info) 15%, transparent);
-        color: var(--qm-info);
-    }
-
-    .metric-icon.email {
-        background: color-mix(in srgb, var(--qm-success) 15%, transparent);
-        color: var(--qm-success);
-    }
-
-    .metric-icon.tokens {
-        /* Deliberately kept as a distinct vivid accent (not a status color) to visually differentiate this metric from the others */
-        background: color-mix(in srgb, var(--qm-accent-pink) 10%, transparent);
-        color: var(--qm-accent-pink);
-    }
-
-    .metric-icon.ads {
-        background: color-mix(in srgb, var(--qm-warning) 15%, transparent);
-        color: var(--qm-warning);
-    }
-
-    .metric-content {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-    }
-
-    .metric-label {
-        font-size: 13px;
-        color: var(--qm-text-secondary);
-        font-weight: 500;
-    }
-
-    .metric-value {
-        font-size: 24px;
-        font-weight: 700;
-        color: var(--qm-text-primary);
-    }
-
-    .metric-period {
-        font-size: 11px;
-        color: var(--qm-text-muted);
-    }
-
-    .empty-state {
-        text-align: center;
-        padding: 64px 24px;
-        color: var(--qm-text-muted);
-    }
-
-    .empty-state i {
-        color: var(--qm-text-muted);
-        margin-bottom: 16px;
-    }
-
-    .error-card {
-        background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-        padding: 48px;
-        text-align: center;
-    }
-
-    .error-card i {
-        color: var(--qm-danger);
-        margin-bottom: 16px;
-    }
-
-    .error-card h3 {
-        margin: 16px 0 8px 0;
-        color: var(--qm-text-primary);
-    }
-
-    .error-card p {
-        color: var(--qm-text-secondary);
-        margin-bottom: 24px;
-    }
-
-    @@media (max-width: 768px) {
-        .limits-grid,
-        .metrics-grid {
-            grid-template-columns: 1fr;
-        }
-
-        .chart-bars {
-            height: 200px;
-        }
-
-        .chart-label {
-            font-size: 9px;
-        }
-    }
-</style>
-
 @code {
+    /// <summary>True when the Billing hub hosts this section (always, since 2026-09-19).</summary>
+    [Parameter] public bool Embedded { get; set; }
+
+    /// <summary>Keyed on what the API sends: GET billing/limits uses these keys. Anything unknown
+    /// falls back to a readable version of the key, never the raw key itself.</summary>
+    private static string LimitLabel(string key) => key switch
+    {
+        "tokens" => "Tokens issued",
+        "api_calls" => "Integration API calls",
+        "storage" => "Storage",
+        "users" => "Active users",
+        "branches" => "Branches",
+        _ => CultureInfo.InvariantCulture.TextInfo.ToTitleCase(key.Replace('_', ' '))
+    };
+
+    private static readonly string[] LimitOrder = { "tokens", "api_calls", "users", "branches", "storage" };
+
     private static readonly (string Value, string Text)[] MetricOptions =
     {
-        ("tokens", "Tokens"), ("apiCalls", "API Calls"), ("users", "Active Users"), ("branches", "Branches"), ("storage", "Storage")
+        ("tokens", "Tokens issued"), ("api_calls", "Integration API calls"), ("users", "Active users"),
+        ("branches", "Branches"), ("storage", "Storage")
     };
 
     private bool isLoading = true;
-    private bool hasError = false;
+    private bool hasError;
     private string errorMessage = "";
     private UsageDto? currentUsage;
     private List<UsageDto> usageHistory = new();
     private Dictionary<string, LimitInfo> limits = new();
     private string selectedMetric = "tokens";
 
-    protected override async Task OnInitializedAsync()
-    {
-        var hasPermission = await PermissionService.HasPermissionAsync("billing.view");
-        if (!hasPermission)
-        {
-            Navigation.NavigateTo("/unauthorized");
-            return;
-        }
+    private string PeriodLabel => currentUsage == null
+        ? "This month"
+        : QDateFormat.MYLong(new DateTime(currentUsage.Year, currentUsage.Month, 1));
 
-        await LoadData();
-    }
+    /// <summary>One row per limit. The bar is the SHARE USED, coloured by state; the figure says how
+    /// much of how much. A limit at or past 80% says how many are left, because that is what somebody
+    /// about to be refused needs to know.</summary>
+    private IReadOnlyList<QBarItem> LimitBars => limits
+        .OrderBy(kv => Array.IndexOf(LimitOrder, kv.Key) is var i && i >= 0 ? i : 99)
+        .Select(kv =>
+        {
+            var v = kv.Value;
+            var unlimited = v.max <= 0;
+            var pct = unlimited ? 0 : Math.Min(100, v.percentUsed);
+            var figure = unlimited
+                ? $"{Format(kv.Key, v.current)} · no limit"
+                : $"{Format(kv.Key, v.current)} of {Format(kv.Key, v.max)} · {v.percentUsed.ToString("0.#", CultureInfo.InvariantCulture)}%";
+            string? hint = unlimited ? null
+                : !v.withinLimit ? "limit reached"
+                : v.percentUsed >= 80 ? $"{Format(kv.Key, v.remaining)} left"
+                : null;
+            return new QBarItem(LimitLabel(kv.Key), (decimal)pct, figure, StateColor(v), Hint: hint);
+        })
+        .ToList();
+
+    private static string StateColor(LimitInfo v) =>
+        !v.withinLimit || v.percentUsed >= 100 ? "var(--qm-danger)"
+        : v.percentUsed >= 80 ? "var(--qm-warning)"
+        : "var(--qm-success)";
+
+    private IReadOnlyList<QBarItem> HistoryBars => usageHistory
+        .OrderBy(u => u.Year).ThenBy(u => u.Month)
+        .Select(u =>
+        {
+            var value = MetricValue(u, selectedMetric);
+            return new QBarItem(QDateFormat.MY(new DateTime(u.Year, u.Month, 1)), value, Format(selectedMetric, (long)value));
+        })
+        .ToList();
+
+    private static decimal MetricValue(UsageDto u, string metric) => metric switch
+    {
+        "tokens" => u.TokensCreated,
+        "api_calls" => u.ApiCalls,
+        "users" => u.ActiveUsers,
+        "branches" => u.ActiveBranches,
+        "storage" => u.StorageUsedMb,
+        _ => 0
+    };
+
+    /// <summary>The one formatter. Storage is MEGABYTES everywhere the API sends it.</summary>
+    private static string Format(string key, long value) =>
+        key == "storage" ? FormatMb(value) : value.ToString("N0", CultureInfo.InvariantCulture);
+
+    private static string FormatMb(long mb) => mb >= 1024
+        ? $"{(mb / 1024d).ToString("0.#", CultureInfo.InvariantCulture)} GB"
+        : $"{mb.ToString("N0", CultureInfo.InvariantCulture)} MB";
+
+    private static string N(int? v) => (v ?? 0).ToString("N0", CultureInfo.InvariantCulture);
+
+    protected override async Task OnInitializedAsync() => await LoadData();
 
     private async Task LoadData()
     {
@@ -635,36 +165,30 @@ else
 
         try
         {
-            // Load current usage
             var usageResponse = await Http.GetAsync("api/v1/billing/usage");
             if (usageResponse.IsSuccessStatusCode)
-            {
                 currentUsage = await usageResponse.Content.ReadFromJsonAsync<UsageDto>(JsonOptions);
-            }
 
-            // Load usage history
             var historyResponse = await Http.GetAsync("api/v1/billing/usage/history?months=12");
             if (historyResponse.IsSuccessStatusCode)
-            {
                 usageHistory = await historyResponse.Content.ReadFromJsonAsync<List<UsageDto>>(JsonOptions) ?? new();
-            }
 
-            // Load limits
             var limitsResponse = await Http.GetAsync("api/v1/billing/limits");
             if (limitsResponse.IsSuccessStatusCode)
             {
                 var limitsData = await limitsResponse.Content.ReadFromJsonAsync<LimitsResponse>(JsonOptions);
-                if (limitsData?.Limits != null)
-                {
-                    limits = limitsData.Limits;
-                }
+                limits = limitsData?.Limits ?? new();
+            }
+            else
+            {
+                hasError = true;
+                errorMessage = await ApiErrorService.GetErrorMessageAsync(limitsResponse, "The limits could not be read.");
             }
         }
         catch (Exception ex)
         {
             hasError = true;
             errorMessage = ex.Message;
-            Console.WriteLine($"Error loading usage data: {ex.Message}");
         }
         finally
         {
@@ -672,100 +196,6 @@ else
         }
     }
 
-    private string GetLimitStatus(double percentUsed)
-    {
-        if (percentUsed >= 100) return "danger";
-        if (percentUsed >= 80) return "warning";
-        return "success";
-    }
-
-    private string GetPercentageClass(double percentUsed) => GetLimitStatus(percentUsed);
-    private string GetProgressClass(double percentUsed) => GetLimitStatus(percentUsed);
-
-    private string GetLimitIcon(string key) => key.ToLower() switch
-    {
-        "tokens" => "ticket-perforated",
-        "apicalls" => "activity",
-        "users" => "people",
-        "branches" => "building",
-        "storage" => "hdd",
-        _ => "speedometer2"
-    };
-
-    private string GetLimitLabel(string key) => key switch
-    {
-        "tokens" => "Tokens Created",
-        "apiCalls" => "API Calls",
-        "users" => "Active Users",
-        "branches" => "Branches",
-        "storage" => "Storage Used",
-        _ => key
-    };
-
-    private string FormatLimitValue(string key, long value)
-    {
-        if (key.ToLower() == "storage")
-        {
-            return FormatBytes(value);
-        }
-        return value.ToString("N0");
-    }
-
-    private string FormatBytes(long bytes)
-    {
-        string[] sizes = { "B", "KB", "MB", "GB", "TB" };
-        double len = bytes;
-        int order = 0;
-        while (len >= 1024 && order < sizes.Length - 1)
-        {
-            order++;
-            len = len / 1024;
-        }
-        return $"{len:0.##} {sizes[order]}";
-    }
-
-    private double GetMetricValue(UsageDto? usage, string metric)
-    {
-        if (usage == null) return 0;
-
-        return metric.ToLower() switch
-        {
-            "tokens" => usage.TokensCreated,
-            "apicalls" => usage.ApiCalls,
-            "users" => usage.ActiveUsers,
-            "branches" => usage.ActiveBranches,
-            "storage" => usage.StorageUsedMb,
-            _ => 0
-        };
-    }
-
-    private double GetMaxValueForMetric(string metric)
-    {
-        if (!usageHistory.Any()) return 0;
-        return usageHistory.Max(u => GetMetricValue(u, metric));
-    }
-
-    private string FormatMetricValue(string metric, double value)
-    {
-        if (metric.ToLower() == "storage")
-        {
-            return $"{value:N0} MB";
-        }
-        return value.ToString("N0");
-    }
-
-    private double CalculateAverage(string metric)
-    {
-        if (!usageHistory.Any()) return 0;
-        return usageHistory.Average(u => GetMetricValue(u, metric));
-    }
-
-    private string GetMonthName(int month)
-    {
-        return QDateFormat.MonLong(new DateTime(2000, month, 1));
-    }
-
-    // DTOs
     private record UsageDto
     {
         public int Year { get; init; }

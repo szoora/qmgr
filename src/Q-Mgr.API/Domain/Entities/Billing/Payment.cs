@@ -23,7 +23,7 @@ public class Payment : BaseEntity
     public decimal Amount { get; set; }
 
     /// <summary>Currency code (USD, UGX)</summary>
-    public string Currency { get; set; } = "USD";
+    public string Currency { get; set; } = "UGX";
 
     /// <summary>Payment method used</summary>
     public PaymentMethod PaymentMethod { get; set; }

@@ -49,7 +49,7 @@
         else
         {
             <div class="broadcast-list">
-                @foreach (var b in broadcasts)
+                @foreach (var b in PagedBroadcasts)
                 {
                     <div class="broadcast-card status-@b.Status.ToString().ToLower()">
                         <div class="broadcast-main">
@@ -140,6 +140,7 @@
                 <QButton Text="Add Contact" Icon="person-plus-fill" Variant="primary" OnClick="@OpenNewContactModal" />
             </PermissionGuard>
         </div>
+        <QPager Count="@(broadcasts.Count)" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="broadcasts" />
 
         @if (isLoadingContacts)
         {
@@ -246,8 +247,7 @@
 <style>.header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .section-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; margin-bottom: 16px; }
 
-    .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
-    .empty-state .q-icon { font-size: 40px; opacity: 0.5; }
+    .loading-container { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
 
     .broadcast-list { display: flex; flex-direction: column; gap: 12px; }
     .broadcast-card { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 14px 18px; }
@@ -256,9 +256,9 @@
     .broadcast-card.status-failed { border-left-color: var(--qm-danger); }
     .broadcast-main { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
     .broadcast-identity { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--qm-text-primary); }
-    .status-badge { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 3px 10px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
-    .broadcast-preview { color: var(--qm-text-muted); font-size: 13px; margin: 8px 0; }
-    .broadcast-stats { display: flex; gap: 16px; font-size: 13px; color: var(--qm-text-muted); }
+    .status-badge { font-size: var(--qm-text-xs); text-transform: uppercase; letter-spacing: .04em; padding: 3px 10px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
+    .broadcast-preview { color: var(--qm-text-muted); font-size: var(--qm-text-base); margin: 8px 0; }
+    .broadcast-stats { display: flex; gap: 16px; font-size: var(--qm-text-base); color: var(--qm-text-muted); }
     .stat { display: inline-flex; align-items: center; gap: 5px; }
     .stat.good { color: var(--qm-success); }
     .stat.bad { color: var(--qm-danger); }
@@ -267,26 +267,26 @@
     .contact-row { display: flex; align-items: center; gap: 16px; background: var(--qm-bg-card); padding: 10px 16px; }
     .contact-row.opted-out { opacity: 0.6; }
     .contact-name { font-weight: 600; min-width: 160px; color: var(--qm-text-primary); }
-    .contact-detail { color: var(--qm-text-muted); font-size: 13px; flex: 1; }
+    .contact-detail { color: var(--qm-text-muted); font-size: var(--qm-text-base); flex: 1; }
 
     .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-    .form-grid label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); }
+    .form-grid label { display: flex; flex-direction: column; gap: 6px; font-size: var(--qm-text-base); color: var(--qm-text-muted); }
     .form-grid label.full-width { grid-column: 1 / -1; }
-    .form-grid input, .form-grid select, .form-grid textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: 14px; background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
+    .form-grid input, .form-grid select, .form-grid textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: var(--qm-text-base); background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
 
-    .field-hint { font-size: 11px; color: var(--qm-text-muted); opacity: 0.8; }
+    .field-hint { font-size: var(--qm-text-xs); color: var(--qm-text-muted); opacity: 0.8; }
     .attachment-selected-list { display: flex; flex-direction: column; gap: 6px; }
-    .attachment-selected { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--qm-text-primary); background: var(--qm-bg-secondary); border-radius: var(--qm-radius-sm); padding: 4px 8px; width: fit-content; }
-    .attachment-error { color: var(--qm-danger); font-size: 12px; }
-    .attachment-sms-note { color: var(--qm-accent-orange); font-size: 12px; }
+    .attachment-selected { display: inline-flex; align-items: center; gap: 6px; font-size: var(--qm-text-base); color: var(--qm-text-primary); background: var(--qm-bg-secondary); border-radius: var(--qm-radius-sm); padding: 4px 8px; width: fit-content; }
+    .attachment-error { color: var(--qm-danger); font-size: var(--qm-text-sm); }
+    .attachment-sms-note { color: var(--qm-accent-orange); font-size: var(--qm-text-sm); }
     .attachment-remove { background: none; border: none; padding: 0; cursor: pointer; color: var(--qm-text-muted); display: inline-flex; align-items: center; }
     .attachment-remove:hover { color: var(--qm-danger); }
 
     .broadcast-attachments { display: flex; flex-direction: column; gap: 4px; margin: 0 0 8px; }
-    .broadcast-attachment { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--qm-text-muted); }
+    .broadcast-attachment { display: flex; align-items: center; gap: 6px; font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
     .broadcast-attachment .attachment-size { opacity: 0.7; }
 
-    .attachment-add-label { position: relative; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--qm-primary); cursor: pointer; width: fit-content; margin-top: 2px; }
+    .attachment-add-label { position: relative; display: inline-flex; align-items: center; gap: 6px; font-size: var(--qm-text-sm); color: var(--qm-primary); cursor: pointer; width: fit-content; margin-top: 2px; }
     .attachment-add-label:hover { text-decoration: underline; }
     .attachment-add-label.busy { color: var(--qm-text-muted); cursor: default; }
     .attachment-add-input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
@@ -307,6 +307,14 @@
 
     private string activeTab = "broadcasts";
     private List<BroadcastDto> broadcasts = new();
+
+    // ---- Paging (list-page sweep, plan Phase 2) --------------------------------------------
+    // Every row here is a component subtree Blazor Server diffs and ships down the circuit, so
+    // a page of them is drawn rather than the whole list.
+    private const int PageSize = 25;
+    private int pageIndex;
+    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (broadcasts.Count() - 1) / PageSize));
+    private IEnumerable<BroadcastDto> PagedBroadcasts => broadcasts.Skip(SafePageIndex * PageSize).Take(PageSize);
     private List<ContactDto> contacts = new();
     private bool isLoadingBroadcasts = true;
     private bool isLoadingContacts = true;
@@ -337,7 +345,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
         {
-            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            Navigation.NavigateTo(BillingLinks.Modules, forceLoad: false);
             return;
         }
 

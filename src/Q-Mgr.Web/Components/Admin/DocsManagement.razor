@@ -130,13 +130,11 @@
 </QModal>
 
 <style>.header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .loading-container, .empty-state {
+    .loading-container {
         display: flex; flex-direction: column; align-items: center; justify-content: center;
         padding: 60px 20px; color: var(--qm-text-muted);
         background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border);
     }
-    .empty-state h3 { margin: 0 0 8px; color: var(--qm-text-primary); }
-    .empty-state p { margin: 0 0 20px; }
 
     .docs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
     .doc-card-admin {
@@ -146,16 +144,16 @@
     .doc-card-admin:hover { box-shadow: var(--qm-shadow-md); border-color: var(--qm-primary); }
     .doc-card-header { display: flex; align-items: center; gap: 8px; }
     .doc-card-actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 2px; }
-    .status-badge { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 8px; border-radius: var(--qm-radius-md); }
+    .status-badge { font-size: var(--qm-text-xs); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 8px; border-radius: var(--qm-radius-md); }
     .status-draft { background: var(--qm-bg-elevated); color: var(--qm-text-muted); }
     .status-published { background: rgba(var(--qm-success-rgb), 0.15); color: var(--qm-success); }
-    .industry-badge { font-size: 11px; padding: 2px 8px; border-radius: var(--qm-radius-md); background: var(--qm-bg-elevated); color: var(--qm-text-secondary); }
-    .doc-card-admin h4 { margin: 0; font-size: 15px; color: var(--qm-text-primary); }
-    .doc-card-summary { margin: 0; font-size: 13px; color: var(--qm-text-muted); flex: 1; }
-    .doc-card-footer { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--qm-text-muted); }
+    .industry-badge { font-size: var(--qm-text-xs); padding: 2px 8px; border-radius: var(--qm-radius-md); background: var(--qm-bg-elevated); color: var(--qm-text-secondary); }
+    .doc-card-admin h4 { margin: 0; font-size: var(--qm-text-md); color: var(--qm-text-primary); }
+    .doc-card-summary { margin: 0; font-size: var(--qm-text-base); color: var(--qm-text-muted); flex: 1; }
+    .doc-card-footer { display: flex; justify-content: space-between; gap: 8px; font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
     .doc-stat { display: flex; align-items: center; gap: 4px; }
 
-    .form-group label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: var(--qm-text-secondary); }
+    .form-group label { display: block; margin-bottom: 6px; font-size: var(--qm-text-base); font-weight: 500; color: var(--qm-text-secondary); }
     .form-control {
         width: 100%; padding: 8px 12px; border-radius: var(--qm-radius-md); border: 1px solid var(--qm-border);
         background: var(--qm-bg-elevated); color: var(--qm-text-primary);

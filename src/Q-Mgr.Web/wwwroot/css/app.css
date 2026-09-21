@@ -573,7 +573,7 @@ html, body {
 
 /* Queue Board */
 .token-badge {
-    font-size: 1.5rem;
+    font-size: var(--qm-text-stat);
     padding: 0.75rem 1.25rem;
     border-radius: var(--qm-radius-md);
     font-family: 'Poppins', sans-serif;
@@ -788,6 +788,32 @@ html, body {
     border-bottom: 1px solid var(--qm-border);
 }
 
+/* `.header-right` is what seven pages call their actions row. Same object, same rule — a band
+   element must not escape the scale by being spelled differently. */
+.page-header .header-right {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--q-row-gap, 8px);
+    margin-left: auto;
+}
+
+/* A PAGE'S BUTTONS SIT TOP RIGHT, ON THE TITLE ROW — everywhere (2026-09-19, "standardise the
+   location of the action buttons"). `margin-left: auto` is what puts them there even when the
+   row has nothing else in it: `.page-header` is space-between, and a lone child of a
+   space-between row sits at the START, which is how the hub sections' buttons came to be on the
+   left. Those sections now render into the hub's own row through QPageActions; this rule is the
+   backstop for any page that still has a band of buttons alone. An outlet with no open section
+   renders nothing, so an empty row takes no space. */
+.page-header .header-actions {
+    margin-left: auto;
+    justify-content: flex-end;
+}
+
+.page-header .header-actions:empty {
+    display: none;
+}
+
 /* THE TITLE AND ITS SUBTITLE SHARE ONE LINE (2026-09-19, second pass). Reported as "the heading
    / title bar is still big and occupying a lot of space, yet it has mainly the page title" — and
    that was right: a 22px title stacked over a 12.5px subtitle is two text lines to say one thing,
@@ -845,13 +871,18 @@ html, body {
 /* ONE LINE, BESIDE THE TITLE. A subtitle explains the page to somebody reading it for the first
    time and then costs every later visit a whole line of the screen for ever. The full sentence
    lives on the QInfo beside the title — see QInfo.razor for why that is a popover and not a
-   tooltip. */
+   tooltip.
+
+   `.breadcrumb` is in this list because eleven pages use it as their strapline rather than as a
+   trail (Billing Overview's read "Manage your subscription, invoices and payment methods"). It is
+   the same element by a different name, so it gets the same rule instead of escaping the band. */
 .page-header .subtitle,
-.page-header .page-subtitle {
+.page-header .page-subtitle,
+.page-header .breadcrumb {
     margin: 0;
     flex: 1 1 auto;
     min-width: 0;
-    font-size: 12.5px;
+    font-size: var(--qm-text-sm);
     line-height: 1.4;
     color: var(--qm-text-muted);
     overflow: hidden;
@@ -871,13 +902,14 @@ html, body {
     }
 
     .page-header h1 i {
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
     }
 
     /* On a phone there is no room for both on one line, and no room to stack them either. The
        QInfo beside the title carries the sentence, so the band is the title alone. */
     .page-header .subtitle,
-    .page-header .page-subtitle {
+    .page-header .page-subtitle,
+    .page-header .breadcrumb {
         display: none;
     }
 }
@@ -906,7 +938,7 @@ html, body {
 
 .form-group label {
     display: block;
-    font-size: 13px;
+    font-size: var(--qm-text-base);
     font-weight: 600;
     color: var(--qm-text-muted);
     margin-bottom: 8px;
@@ -922,7 +954,7 @@ html, body {
     border: 1px solid var(--qm-border);
     border-radius: var(--qm-radius-md);
     color: var(--qm-text-primary);
-    font-size: 15px;
+    font-size: var(--qm-text-md);
     transition: all 0.2s ease;
 }
 
@@ -941,7 +973,7 @@ html, body {
     .form-group .form-control,
     .form-group .form-select {
         padding: 14px 16px;
-        font-size: 16px; /* Prevents iOS zoom on focus */
+        font-size: 16px; /* NOT a scale token: Safari zooms the page when a focused input is under 16px. Prevents iOS zoom on focus */
         border-radius: var(--qm-radius-md);
     }
 }
@@ -955,7 +987,7 @@ html, body {
     gap: 8px;
     padding: 12px 24px;
     border-radius: var(--qm-radius-md);
-    font-size: 14px;
+    font-size: var(--qm-text-base);
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -988,7 +1020,7 @@ html, body {
     .btn-primary,
     .btn-secondary {
         padding: 14px 20px;
-        font-size: 15px;
+        font-size: var(--qm-text-md);
         border-radius: var(--qm-radius-md);
         min-height: 48px;
     }
@@ -1006,15 +1038,27 @@ html, body {
     border-collapse: collapse;
 }
 
+/* A row is a line of data, not a card: 9px, not 14px (2026-09-19, the compaction pass). */
 .data-table th,
 .data-table td {
-    padding: 14px 16px;
+    padding: 9px 12px;
     text-align: left;
+    vertical-align: middle;
     border-bottom: 1px solid var(--qm-border);
 }
 
+.data-table tbody tr:last-child td { border-bottom: 0; }
+
+/* Two cell kinds every table has, defined once. A figure lines up on its right edge with
+   tabular digits so a column can be read down; a row's buttons sit at its right end. */
+.data-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.data-table .row-actions { text-align: right; white-space: nowrap; width: 1%; }
+.data-table .row-muted td { color: var(--qm-text-muted); }
+.data-table .cell-sub { display: block; margin-top: 2px; font-size: var(--qm-text-xs); color: var(--qm-text-muted); }
+.data-table .cell-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+
 .data-table th {
-    font-size: 12px;
+    font-size: var(--qm-text-sm);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -1030,8 +1074,8 @@ html, body {
 
     .data-table th,
     .data-table td {
-        padding: 12px;
-        font-size: 13px;
+        padding: 8px 10px;
+        font-size: var(--qm-text-base);
     }
 }
 
@@ -1082,56 +1126,93 @@ html, body {
     }
 }
 
-/* Empty States - Responsive */
+/* Empty states — the older class. The same sizes as QEmptyState (q-components.css), read from the
+   same --qm-empty-* tokens, so the two families cannot drift apart again. */
 .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     text-align: center;
-    padding: 60px 20px;
+    gap: 4px;
+    padding: var(--qm-empty-pad);
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
     border-radius: var(--qm-radius-lg);
+    color: var(--qm-text-muted);
 }
 
-/* :not(.q-btn__icon) — this selector is meant for the big decorative icon
-   an empty-state shows on its own (e.g. QIcon Name="wallet2" Size="48"), but
-   without scoping it also matched any QButton's *internal* icon whenever that
-   button sat inside an .empty-state block (e.g. "Add Payment Method"), forcing
-   its icon up to this same 64px and blowing the whole button out of shape. */
-.empty-state i:not(.q-btn__icon) {
-    font-size: 64px;
+.q-card .empty-state { border: 0; background: transparent; padding: 12px 8px; }
+
+/* THE ICON SITS BESIDE THE HEADING, NOT ABOVE IT. Stacked, an empty state was four rows tall — icon,
+   title, sentence, button — and a sentence that wrapped made it taller still (157–178px measured).
+   Beside, the icon spans the title and the sentence, so the whole thing is the height of its text.
+   A grid rather than a flex row because the button, when there is one, spans the full width below. */
+.empty-state {
+    display: grid;
+    grid-template-columns: auto minmax(0, max-content);
+    justify-content: center;
+    align-items: center;
+    column-gap: 12px;
+    row-gap: 2px;
+    text-align: left;
+}
+
+.empty-state > i:not(.q-btn__icon),
+.empty-state > .rzi,
+.empty-state > .q-icon,
+.empty-state > .empty-state-icon {
+    grid-row: span 2;
+    align-self: center;
+    margin: 0;
+}
+
+.empty-state > h3,
+.empty-state > h4,
+.empty-state > p {
+    grid-column: 2;
+}
+
+/* Anything else in the block — a button, a link row — sits to the right on the same row, as in
+   QEmptyState; on a phone it goes underneath. */
+.empty-state > :not(i):not(.rzi):not(.q-icon):not(.empty-state-icon):not(h3):not(h4):not(p) {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    margin: 0 0 0 8px;
+}
+
+@media (max-width: 576px) {
+    .empty-state > :not(i):not(.rzi):not(.q-icon):not(.empty-state-icon):not(h3):not(h4):not(p) {
+        grid-column: 1 / -1; grid-row: auto; justify-self: center; margin: 6px 0 0;
+    }
+}
+
+
+/* :not(.q-btn__icon) — this is meant for the decorative icon an empty state shows on its own.
+   Unscoped it also matched a QButton's internal icon inside the block and blew the button up. */
+.empty-state i:not(.q-btn__icon),
+.empty-state .rzi,
+.empty-state > .q-icon,
+.empty-state-icon {
+    font-size: var(--qm-empty-icon);
+    line-height: 1;
     color: var(--qm-text-muted);
     opacity: 0.5;
-    margin-bottom: 16px;
+    margin: 0 0 2px;
 }
 
-.empty-state h3 {
-    margin: 0 0 8px;
-    font-size: 20px;
+.empty-state h3,
+.empty-state h4 {
+    margin: 0;
+    font-size: var(--qm-text-md);
     color: var(--qm-text-primary);
 }
 
 .empty-state p {
     margin: 0;
+    font-size: var(--qm-text-sm);
     color: var(--qm-text-muted);
 }
 
-@media (max-width: 576px) {
-    .empty-state {
-        padding: 40px 16px;
-        border-radius: var(--qm-radius-lg);
-    }
-
-    .empty-state i:not(.q-btn__icon) {
-        font-size: 48px;
-    }
-
-    .empty-state h3 {
-        font-size: 18px;
-    }
-
-    .empty-state p {
-        font-size: 14px;
-    }
-}
 
 /* Action Bars - Mobile Sticky */
 .action-bar {
@@ -1184,7 +1265,7 @@ html, body {
     border: 1px solid var(--qm-border);
     border-radius: var(--qm-radius-md);
     color: var(--qm-text-primary);
-    font-size: 14px;
+    font-size: var(--qm-text-base);
 }
 
 .search-input-group i {
@@ -1202,7 +1283,7 @@ html, body {
 
     .search-input-group input {
         padding: 14px 16px 14px 44px;
-        font-size: 16px; /* Prevents iOS zoom */
+        font-size: 16px; /* NOT a scale token: Safari zooms the page when a focused input is under 16px. Prevents iOS zoom */
         border-radius: var(--qm-radius-md);
     }
 }
@@ -1220,7 +1301,7 @@ html, body {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 24px;
+    font-size: var(--qm-text-stat);
     border: none;
     cursor: pointer;
     box-shadow: 0 4px 20px rgba(var(--qm-primary-rgb), 0.4);
@@ -1316,7 +1397,7 @@ html, body {
     position: fixed;
     width: 100%;
     z-index: 10000;
-    font-size: 14px;
+    font-size: var(--qm-text-base);
 }
 
 #blazor-error-ui .reload {

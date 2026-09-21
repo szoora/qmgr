@@ -56,7 +56,7 @@ public class StripeService : IStripeService
 
         var secretKey = FirstNonEmpty(db?.SecretKey, _configuration["Stripe:SecretKey"]);
         _webhookSecret = FirstNonEmpty(db?.WebhookSecret, _configuration["Stripe:WebhookSecret"]) ?? string.Empty;
-        _enabled = (db?.Enabled ?? true) && !string.IsNullOrWhiteSpace(secretKey);
+        _enabled = (db?.Enabled ?? false) && !string.IsNullOrWhiteSpace(secretKey);
 
         StripeConfiguration.ApiKey = secretKey;
         _configured = true;

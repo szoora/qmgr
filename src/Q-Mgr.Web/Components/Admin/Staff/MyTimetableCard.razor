@@ -27,6 +27,11 @@
             </CellTemplate>
         </QWeekGrid>
         <div class="mytt-actions">
+            @* Their own week, on paper, without a timetable master in the loop: the print route narrows to one
+               sheet by key, and reading a PUBLISHED version needs no permission beyond membership of the branch
+               (TimetableController.GetTimetable carries no permission attribute; only a draft needs manage). *@
+            <QButton Text="Print my timetable" Icon="printer" Variant="ghost" Size="sm"
+                     OnClick="@(() => Navigation.NavigateTo($"/admin/timetable/{detail!.Timetable.Id}/print?by=teacher&key={UserId}"))" />
             <QButton Text="Open the timetable" Icon="box-arrow-in-right" Variant="ghost" Size="sm"
                      OnClick="@(() => Navigation.NavigateTo($"/admin/timetable?t={detail.Timetable.Id}&by=teacher&key={UserId}"))" />
         </div>
@@ -34,9 +39,9 @@
 }
 
 <style>
-    .mytt-lesson { display: flex; flex-direction: column; font-size: 11.5px; line-height: 1.25; padding: 2px 4px; border-left: 3px solid var(--qm-primary); }
+    .mytt-lesson { display: flex; flex-direction: column; font-size: var(--qm-text-xs); line-height: 1.25; padding: 2px 4px; border-left: 3px solid var(--qm-primary); }
     .mytt-lesson span { color: var(--qm-text-secondary); overflow-wrap: anywhere; }
-    .mytt-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
+    .mytt-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--q-row-gap); margin-top: 6px; }
 </style>
 
 @code {

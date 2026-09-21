@@ -28,6 +28,8 @@
             <p class="subtitle">@(canManage ? "Plan the week's duties, name who records each register, and see which registers are still open." : "The duties you are expected at this week, and the registers you take.")</p>
         </div>
         <div class="header-actions">
+            @* The open section's own buttons land here — see QPageActions. *@
+            <SectionOutlet SectionId="QPageActions.Id" />
             @if (canManage && hubTab == "registers")
             {
                 <QButton Text="New duty" Icon="plus-lg" Variant="primary" OnClick="@OpenCreate" Disabled="@(branchId == Guid.Empty)" />
@@ -135,7 +137,13 @@
                                     }
                                     @if (duty.CanIRecord || canManage)
                                     {
-                                        <QButton Text="@(duty.MinutesMediaContentId.HasValue ? "Replace minutes" : "Minutes")" Icon="file-earmark-text" Size="sm" Variant="ghost"
+                                        @* Minutes are written IN Q-Mgr now (2026-09-20), so this opens the record
+                                           rather than a file picker. Attaching a PDF written elsewhere is still
+                                           possible and is the smaller action beside it — a school that already has
+                                           its own minutes template should not be forced to retype it here. *@
+                                        <QButton Text="Minutes" Icon="journal-text" Size="sm" Variant="ghost"
+                                                 OnClick="@(() => Navigation.NavigateTo($"/admin/staff/duties/{duty.Id}/minutes"))" />
+                                        <QButton Text="@(duty.MinutesMediaContentId.HasValue ? "Replace the PDF" : "Attach a PDF")" Icon="file-earmark-pdf" Size="sm" Variant="ghost"
                                                  OnClick="@(() => OpenMinutes(duty))" />
                                     }
                                     @if (canManage)
@@ -236,16 +244,16 @@
     .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
     .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .duty-day { margin-top: 20px; }
-    .duty-day__head { font-size: 15px; font-weight: 600; color: var(--qm-text-primary); margin: 0 0 10px; display: flex; align-items: baseline; gap: 10px; }
-    .duty-day__head small { font-weight: 400; color: var(--qm-text-muted); font-size: 12px; }
+    .duty-day__head { font-size: var(--qm-text-md); font-weight: 600; color: var(--qm-text-primary); margin: 0 0 10px; display: flex; align-items: baseline; gap: 10px; }
+    .duty-day__head small { font-weight: 400; color: var(--qm-text-muted); font-size: var(--qm-text-sm); }
     .duty-list { display: flex; flex-direction: column; gap: 10px; }
     .duty-card--late { border-left: 3px solid var(--qm-danger); }
     .duty-card__row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
     .duty-card__main { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-    .duty-card__title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 15px; }
-    .duty-card__facts { display: flex; gap: 6px 16px; flex-wrap: wrap; font-size: 13px; color: var(--qm-text-secondary); }
+    .duty-card__title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: var(--qm-text-md); }
+    .duty-card__facts { display: flex; gap: 6px 16px; flex-wrap: wrap; font-size: var(--qm-text-base); color: var(--qm-text-secondary); }
     .duty-card__facts span { display: inline-flex; align-items: center; gap: 4px; }
-    .duty-card__desc { margin: 0; font-size: 13px; color: var(--qm-text-muted); white-space: pre-wrap; }
+    .duty-card__desc { margin: 0; font-size: var(--qm-text-base); color: var(--qm-text-muted); white-space: pre-wrap; }
     .duty-card__minutes { display: flex; gap: 6px; flex-wrap: wrap; }
     .duty-card__actions { display: flex; gap: var(--q-row-gap, 8px); flex-wrap: wrap; justify-content: flex-end; }
     .form-row > .form-group { flex: 1 1 200px; min-width: 0; }
@@ -331,7 +339,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
-            Navigation.NavigateTo("/billing/modules");
+            Navigation.NavigateTo(BillingLinks.Modules);
             return;
         }
 

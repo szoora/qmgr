@@ -13,21 +13,18 @@
 }
 
 <div class="admin-page">
-    <div class="page-header">
-        @if (!Embedded)
-        {
-            <div class="header-content">
-                <h1>Kiosk Settings</h1>
-                <p class="subtitle">Configure kiosk behavior and auto-redirect timer</p>
-            </div>
-        }
-        <div class="header-actions">
+    <QPageActions Embedded="@Embedded">
+        <Title>
+            <h1>Kiosk Settings</h1>
+            <p class="subtitle">Configure kiosk behavior and auto-redirect timer</p>
+        </Title>
+        <Actions>
             @if (canEdit)
             {
                 <QButton Text="Save Settings" Icon="check-lg" Variant="primary" OnClick="@SaveSettings" Disabled="@(isSaving || loadFailed)" />
             }
-        </div>
-    </div>
+        </Actions>
+    </QPageActions>
 
     @if (isLoading)
     {

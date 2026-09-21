@@ -3,6 +3,7 @@ using Microsoft.Extensions.Caching.Memory;
 using QMgr.Application.Interfaces;
 using QMgr.Domain.Entities.Platform;
 using QMgr.Infrastructure.Data;
+using QMgr.API.Application.Services;
 
 namespace QMgr.Infrastructure.Services;
 
@@ -25,6 +26,25 @@ public class PlatformSettingsService : IPlatformSettingsService
         _cache = cache;
         _configuration = configuration;
         _logger = logger;
+    }
+
+    public async Task<string> GetPublicWebBaseUrlAsync()
+    {
+        var deployed = PublicWebBase.FromDeployment(_configuration);
+        if (deployed != null) return deployed;
+
+        try
+        {
+            var saas = await GetSettingsAsync<SaasSettings>("SaaS");
+            var fromSetting = PublicWebBase.Clean(saas?.BaseUrl);
+            if (fromSetting != null) return fromSetting;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not read the SaaS settings for the public address; falling back to configuration");
+        }
+
+        return PublicWebBase.Clean(_configuration["SaaS:BaseUrl"]) ?? PublicWebBase.LastResort;
     }
 
     public async Task<T?> GetSettingsAsync<T>(string category) where T : class
@@ -227,7 +247,7 @@ public class PlatformSettingsService : IPlatformSettingsService
                     PublishableKey = "",
                     WebhookSecret = "",
                     TestMode = true,
-                    Enabled = true
+                    Enabled = false
                 }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true })
             },
             new()
@@ -240,7 +260,7 @@ public class PlatformSettingsService : IPlatformSettingsService
                 IsEditable = true,
                 SettingsJson = System.Text.Json.JsonSerializer.Serialize(new MobileMoneySettings
                 {
-                    CrmApiUrl = "",
+                    CrmApiUrl = QMgr.Application.DTOs.SaccGatewayDefaults.BaseUrl,
                     ApiKey = "",
                     Enabled = false
                 }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true })

@@ -467,6 +467,26 @@ public class StaffPortalController : StaffPerformanceControllerBase
             Url = $"/admin/students/{w.StudentId}/welfare"
         }));
 
+        // ---- Minutes: the action points a meeting gave me (2026-09-20) ----
+        // One row per action, not one line for all of them: unlike the unseen-records case above,
+        // each of these is a different thing to do with a different date, and collapsing them would
+        // hide the one that is overdue behind the one that is not.
+        var minuteActions = await Db.StaffMinuteActions.AsNoTracking().Include(a => a.Duty)
+            .Where(a => a.OrganizationId == organizationId && a.BranchId == branchId
+                        && a.AssignedUserId == me.Id && a.Status == MinuteActionStatus.Open)
+            .OrderBy(a => a.DueAt == null).ThenBy(a => a.DueAt)
+            .Take(10)
+            .ToListAsync();
+        openItems.AddRange(minuteActions.Select(a => new PortalItemDto
+        {
+            Kind = "minute-action",
+            Title = Truncate(a.Text, 120),
+            Detail = a.Duty == null ? "From the minutes of a meeting" : $"From the minutes of \"{a.Duty.Title}\"",
+            DueAt = a.DueAt,
+            IsOverdue = a.DueAt.HasValue && a.DueAt.Value < now,
+            Url = $"/admin/staff/duties/{a.DutyId}/minutes"
+        }));
+
         // ---- Names, once ----
         var allRecords = recent.Concat(received).Concat(given).ToList();
         var names = await BuildNamesAsync(allRecords.Select(r => (Guid?)r.LoggedByUserId)

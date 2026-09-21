@@ -21,6 +21,8 @@
             <p class="subtitle">Everyone on this branch's staff, with their department, line manager and this period's band.</p>
         </div>
         <div class="header-actions">
+            @* The open section's own buttons land here — see QPageActions. *@
+            <SectionOutlet SectionId="QPageActions.Id" />
             @if (canCreate)
             {
                 <QButton Text="Log record" Icon="journal-plus" Variant="primary" OnClick="@(() => showRecordDialog = true)" Disabled="@(directory == null)" />
@@ -186,8 +188,8 @@
     .sd-person__text { display: flex; flex-direction: column; min-width: 0; }
     .sd-person__name { font-weight: 600; color: var(--qm-text-primary); text-decoration: none; }
     .sd-person__name:hover { color: var(--qm-primary); }
-    .sd-person__sub { font-size: 12px; color: var(--qm-text-muted); }
-    .sd-muted { color: var(--qm-text-muted); font-size: 12.5px; }
+    .sd-person__sub { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
+    .sd-muted { color: var(--qm-text-muted); font-size: var(--qm-text-sm); }
     .sd-actions { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
 </style>
 
@@ -325,7 +327,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
-            Navigation.NavigateTo("/billing/modules");
+            Navigation.NavigateTo(BillingLinks.Modules);
             return;
         }
 

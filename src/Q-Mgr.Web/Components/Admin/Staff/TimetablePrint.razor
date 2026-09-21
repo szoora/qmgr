@@ -21,6 +21,12 @@
     A timetable on A4 landscape (plan §6.2 "class / teacher / room / master views and prints"): one page per class,
     teacher or room, periods down, cycle days across, breaks as bands. Only a version the caller may read is printed —
     a draft only for a timetable master, as the API decides. The print is logged like every other export (§13.13).
+
+    ?by= picks the axis and ?key= narrows it to one sheet or a chosen few (comma-separated), so an individual
+    extract — one teacher's week — is a deep link rather than 40 pages the reader has to sift. The keys are the
+    SAME ones the editor's views use (teacher = user id, class and room = TimetableCycle.Normalize of the name),
+    so the editor's Print button and the portal's "Print my timetable" can both hand a key straight over. The
+    picker writes the key back into the URL, which is what makes a narrowed sheet shareable and publishable.
 *@
 
 <PageTitle>Timetable Print - Q-Mgr</PageTitle>
@@ -29,7 +35,23 @@
              Ready="@(!isLoading && loadError == null)" BackText="Back to the timetable" OnBack="@(() => Navigation.NavigateTo($"/admin/timetable?t={Id}"))"
              CanPublish="@canPublish" Publishing="@isPublishing" OnPublish="@PublishToLibrary" OnPrint="@Print" Disabled="@(isLoading || loadError != null)">
     <ToolbarStart>
-        <QTabs Tabs="@ByTabs" ActiveKey="@by" ActiveKeyChanged="@(k => by = k)" AriaLabel="Print one page per" />
+        <QTabs Tabs="@ByTabs" ActiveKey="@by" ActiveKeyChanged="@ByChanged" AriaLabel="Print one page per" />
+        @if (detail != null && by == "teacher")
+        {
+            @* A sheet that shows lessons and hides the Friday duty is one somebody will still
+               double-book themselves against. Off is a real choice — a timetable master printing
+               forty sheets for a noticeboard wants the grid alone — so it is a toggle, not a rule.
+               Deliberately NOT in the URL: ?key= is the SELECTION, which has to be linkable; this
+               is a preference about the same selection. *@
+            <QCheckbox Value="@includeDuties" ValueChanged="@(v => includeDuties = v)" Label="Duties" Class="ttp-duties-toggle" />
+        }
+        @if (detail != null)
+        {
+            <QMultiSelect TValue="string" TItem="SheetOption" Class="ttp-pick"
+                          SelectedValues="@chosen.ToList()" SelectedValuesChanged="@ChosenChanged"
+                          Items="@SheetOptions()" ValueSelector="@(o => o.Key)" TextSelector="@(o => o.Label)"
+                          Placeholder="@($"Every {ByLabel.ToLowerInvariant()}")" MaxChipsVisible="2" />
+        }
     </ToolbarStart>
     <ChildContent>
         @if (detail != null)
@@ -37,7 +59,7 @@
             var pages = Pages().ToList();
             @if (!pages.Any())
             {
-                <p class="ttp-muted">Nothing to print for this view.</p>
+                <p class="ttp-muted">@(chosen.Count > 0 ? $"Nothing to print for the chosen {ByLabel.ToLowerInvariant()}." : "Nothing to print for this view.")</p>
             }
             @foreach (var sheet in pages)
             {
@@ -92,6 +114,45 @@
                             }
                         </tbody>
                     </table>
+                    @if (by == "teacher" && includeDuties)
+                    {
+                        var mine = DutiesFor(sheet.Key).ToList();
+                        <section class="ttp-duties">
+                            <h2>Duties @QDateFormat.Range(detail.Timetable.EffectiveFrom, detail.Timetable.EffectiveTo)</h2>
+                            @if (dutiesError != null)
+                            {
+                                <p class="ttp-duties__none">Duties could not be read (@dutiesError). The lessons above are unaffected.</p>
+                            }
+                            else if (!mine.Any())
+                            {
+                                <p class="ttp-duties__none">No duties in this period.</p>
+                            }
+                            else
+                            {
+                                <table class="ttp-duties__table">
+                                    <thead>
+                                        <tr><th>Date</th><th>Time</th><th>Duty</th><th>Where</th><th>Role</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var d in mine.Take(DutyRowCap))
+                                        {
+                                            <tr>
+                                                <td>@QDateFormat.DD(LocalTime(d.StartsAt))</td>
+                                                <td>@QDateFormat.T(LocalTime(d.StartsAt))–@QDateFormat.T(LocalTime(d.EndsAt))</td>
+                                                <td>@d.Title<small>@d.ParameterName</small></td>
+                                                <td>@(string.IsNullOrWhiteSpace(d.Location) ? "—" : d.Location)</td>
+                                                <td>@RoleOn(d, sheet.Key)</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                                @if (mine.Count > DutyRowCap)
+                                {
+                                    <p class="ttp-duties__none">and @(mine.Count - DutyRowCap) more — see Duties &amp; Registers in Q-Mgr.</p>
+                                }
+                            }
+                        </section>
+                    }
                     <footer class="ttp-foot">Printed @QDateFormat.DT(DateTime.Now)@(string.IsNullOrWhiteSpace(generatedBy) ? "" : $" by {generatedBy}"). Timetables change: the one in Q-Mgr is the current version.</footer>
                 </section>
             }
@@ -109,6 +170,16 @@ else if (loadError != null)
 }
 
 <style>
+    .ttp-pick { min-width: 220px; max-width: 340px; }
+    .ttp-duties-toggle { margin-bottom: 0; }
+    .ttp-duties { margin-top: 7mm; break-inside: avoid; }
+    .ttp-duties h2 { font-family: var(--qm-font-display, inherit); font-size: 10pt; font-weight: 700; margin: 0 0 3px; padding-bottom: 2px; border-bottom: 1px solid #14110f; }
+    .ttp-duties__none { font-size: 8pt; color: #5b524d; margin: 0; }
+    .ttp-duties__table { width: 100%; border-collapse: collapse; font-size: 8pt; }
+    .ttp-duties__table th, .ttp-duties__table td { border: 1px solid #8a817c; padding: 2px 4px; text-align: left; vertical-align: top; }
+    .ttp-duties__table thead th { font-weight: 700; border-bottom: 2px solid #14110f; }
+    .ttp-duties__table td small { display: block; color: #5b524d; font-size: 7pt; }
+    .ttp-duties__table tr { break-inside: avoid; }
     .ttp-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 80px 20px; color: var(--qm-text-muted); }
     .ttp-muted { color: #5b524d; }
     .ttp-page { break-after: page; margin-bottom: 18mm; }
@@ -144,25 +215,81 @@ else if (loadError != null)
     [Parameter] public Guid Id { get; set; }
     [SupplyParameterFromQuery(Name = "by")] public string? ByQuery { get; set; }
 
+    /// <summary>The sheets to print, comma-separated. Empty means every sheet on this axis — the old behaviour.</summary>
+    [SupplyParameterFromQuery(Name = "key")] public string? KeyQuery { get; set; }
+
     private Guid branchId, organizationId;
     private bool isLoading = true, isPublishing, canPublish;
+
+    /// <summary>The teacher sheet's duties, and the toggle that puts them on it. Loaded once with the timetable.</summary>
+    private List<StaffDutyDto> duties = new();
+    private bool includeDuties = true;
+    private string? dutiesError;
+
+    /// <summary>A term of a daily rota plus meetings runs long; past this the sheet stops being a sheet.</summary>
+    private const int DutyRowCap = 40;
     private string? loadError, generatedBy;
     private TimetableDetailDto? detail;
     private OrganizationBrandingDto? branding;
     private string by = "class";
 
-    private sealed record PrintPage(string Label, List<TimetableLessonDto> Lessons);
+    /// <summary>The chosen sheet keys. EMPTY MEANS ALL, never none — a print route that defaults to nothing prints nothing.</summary>
+    private readonly HashSet<string> chosen = new(StringComparer.OrdinalIgnoreCase);
+
+    // The last query values ACTED ON, so writing the picker's choice back into the URL does not read
+    // itself back in and fight the picker. Same rule as HubTabs.FollowQuery.
+    private string? lastByActed, lastKeyActed;
+
+    private sealed record PrintPage(string Key, string Label, List<TimetableLessonDto> Lessons);
+    private sealed record SheetOption(string Key, string Label);
 
     private static readonly IReadOnlyList<QTab> ByTabs = new List<QTab> { new("class", "Classes"), new("teacher", "Teachers"), new("room", "Rooms") };
 
     private List<int> Days => detail == null ? new() : Enumerable.Range(1, detail.Timetable.CycleDays).ToList();
     private string ByLabel => by switch { "teacher" => "Teacher", "room" => "Room", _ => "Class" };
-    private string DocTitle => detail == null ? "Timetable" : $"{detail.Timetable.Name} — by {ByLabel.ToLowerInvariant()}";
+    private string ByPlural => by switch { "teacher" => "teachers", "room" => "rooms", _ => "classes" };
+
+    /// <summary>Names what is actually on the paper, so a one-teacher extract is not filed as "by teacher".</summary>
+    private string DocTitle
+    {
+        get
+        {
+            if (detail == null) return "Timetable";
+            if (chosen.Count == 0) return $"{detail.Timetable.Name} — by {ByLabel.ToLowerInvariant()}";
+            var pages = Pages().ToList();
+            return pages.Count == 1
+                ? $"{detail.Timetable.Name} — {pages[0].Label}"
+                : $"{detail.Timetable.Name} — {pages.Count} {ByPlural}";
+        }
+    }
+
+    private string SelectionSummary
+    {
+        get
+        {
+            if (chosen.Count == 0) return $"one page per {ByLabel.ToLowerInvariant()}";
+            var pages = Pages().ToList();
+            return pages.Count == 1 ? $"{ByLabel.ToLowerInvariant()} {pages[0].Label}" : $"{pages.Count} {ByPlural}";
+        }
+    }
+
+    /// <summary>timetable-teacher-savior-muzoora-2026-09-01.pdf rather than forty of timetable-teacher-… .</summary>
+    private string FileSlug
+    {
+        get
+        {
+            var pages = Pages().ToList();
+            if (chosen.Count == 0 || pages.Count != 1) return by;
+            var slug = new string(pages[0].Label.Select(c => char.IsLetterOrDigit(c) ? char.ToLowerInvariant(c) : '-').ToArray());
+            while (slug.Contains("--")) slug = slug.Replace("--", "-");
+            slug = slug.Trim('-');
+            return slug.Length == 0 ? by : $"{by}-{slug}";
+        }
+    }
     private string OrganizationName => !string.IsNullOrWhiteSpace(branding?.BrandName) ? branding!.BrandName! : BranchState.CurrentBranchName ?? "Timetable";
 
     protected override async Task OnInitializedAsync()
     {
-        if (ByQuery is "class" or "teacher" or "room") by = ByQuery;
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
         try
@@ -176,6 +303,7 @@ else if (loadError != null)
                 try { branding = await OrganizationApi.GetOrganizationBrandingAsync(organizationId); } catch { branding = null; }
             }
             detail = await StaffApi.GetTimetableAsync(branchId, Id);
+            await LoadDutiesAsync();
         }
         catch (Exception ex)
         {
@@ -187,7 +315,117 @@ else if (loadError != null)
         }
     }
 
-    private IEnumerable<PrintPage> Pages()
+    protected override void OnParametersSet()
+    {
+        var wantedBy = ByQuery is "class" or "teacher" or "room" ? ByQuery : "class";
+        if (!string.Equals(wantedBy, lastByActed, StringComparison.Ordinal))
+        {
+            lastByActed = wantedBy;
+            if (!string.Equals(by, wantedBy, StringComparison.Ordinal))
+            {
+                // The keys belong to the axis, so a class key means nothing once the axis is teachers.
+                by = wantedBy;
+                chosen.Clear();
+            }
+        }
+
+        var wantedKey = string.IsNullOrWhiteSpace(KeyQuery) ? null : KeyQuery;
+        if (!string.Equals(wantedKey, lastKeyActed, StringComparison.Ordinal))
+        {
+            lastKeyActed = wantedKey;
+            chosen.Clear();
+            foreach (var k in (wantedKey ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                chosen.Add(k);
+        }
+    }
+
+    private void ByChanged(string k)
+    {
+        if (string.Equals(k, by, StringComparison.Ordinal)) return;
+        by = k;
+        chosen.Clear();
+        SyncUrl();
+    }
+
+    private void ChosenChanged(IEnumerable<string> values)
+    {
+        chosen.Clear();
+        foreach (var v in values ?? Enumerable.Empty<string>())
+            if (!string.IsNullOrWhiteSpace(v)) chosen.Add(v);
+        SyncUrl();
+    }
+
+    /// <summary>The URL IS the state: a narrowed sheet has to be linkable, or it cannot be sent to the person it is about.</summary>
+    private void SyncUrl()
+    {
+        var keyPart = chosen.Count == 0 ? null : string.Join(",", chosen);
+        lastByActed = by;
+        lastKeyActed = keyPart;
+        Navigation.NavigateTo(
+            $"/admin/timetable/{Id}/print?by={by}" + (keyPart == null ? string.Empty : $"&key={Uri.EscapeDataString(keyPart)}"),
+            replace: true);
+    }
+
+    private List<SheetOption> SheetOptions() => AllPages().Select(p => new SheetOption(p.Key, p.Label)).ToList();
+
+    private static DateTime LocalTime(DateTime value) => value.Kind == DateTimeKind.Utc ? value.ToLocalTime() : value;
+
+    /// <summary>
+    /// The duties covering the timetable's own period. A failure here NEVER fails the print: the
+    /// timetable is the document and a missing duty list is a degraded sheet, not a broken one —
+    /// the same call as VisitorsController.TryIssueVisitToken.
+    /// </summary>
+    private async Task LoadDutiesAsync()
+    {
+        duties = new();
+        dutiesError = null;
+        if (detail == null) return;
+        try
+        {
+            var from = detail.Timetable.EffectiveFrom.ToDateTime(TimeOnly.MinValue);
+            var to = detail.Timetable.EffectiveTo.ToDateTime(TimeOnly.MaxValue);
+            duties = await StaffApi.GetDutiesAsync(branchId, from, to);
+        }
+        catch (Exception ex)
+        {
+            dutiesError = ex.Message;
+        }
+    }
+
+    /// <summary>
+    /// Whose sheet a duty belongs on. Lessons are excluded — they ARE the grid above, and listing
+    /// them again doubles the page. A null ExpectedUserIds means every member of the branch, which
+    /// is how "all-staff briefing" is stored; a recorder or a supervisor has to be there too, so
+    /// they count even when they are not on the expected list.
+    /// </summary>
+    private IEnumerable<StaffDutyDto> DutiesFor(string key)
+    {
+        if (!Guid.TryParse(key, out var userId)) return Enumerable.Empty<StaffDutyDto>();
+        return duties
+            .Where(d => d.IsActive && d.Kind != DutyKind.Lesson
+                        && (d.ExpectedUserIds == null
+                            || d.ExpectedUserIds.Contains(userId)
+                            || d.RecorderUserIds.Contains(userId)
+                            || d.SupervisorUserIds.Contains(userId)))
+            .OrderBy(d => d.StartsAt);
+    }
+
+    /// <summary>What the person is there to do — the difference between turning up and taking the register.</summary>
+    private static string RoleOn(StaffDutyDto d, string key)
+    {
+        if (!Guid.TryParse(key, out var userId)) return "Expected";
+        var parts = new List<string>();
+        if (d.RecorderUserIds.Contains(userId)) parts.Add("Takes the register");
+        if (d.SupervisorUserIds.Contains(userId)) parts.Add("Supervises");
+        if (parts.Count == 0) parts.Add(d.Kind == DutyKind.Rota ? "On duty" : "Expected");
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>
+    /// Every sheet on the current axis. The keys match the editor's own view keys exactly
+    /// (Timetable.razor InView), so a key handed over from there resolves here.
+    /// </summary>
+    private IEnumerable<PrintPage> AllPages()
     {
         if (detail == null) return Enumerable.Empty<PrintPage>();
         var lessons = detail.Lessons;
@@ -195,13 +433,16 @@ else if (loadError != null)
         {
             "teacher" => lessons.GroupBy(l => l.TeacherUserId).OrderBy(g => g.First().TeacherName, StringComparer.OrdinalIgnoreCase)
                 // A joint lesson prints on the teacher's page with all its classes.
-                .Select(g => new PrintPage(g.First().TeacherName, lessons.Where(l => g.Any(x => x.Id == l.Id) || (l.GroupId != null && g.Any(x => x.GroupId == l.GroupId && x.TeacherUserId == g.Key))).ToList())),
+                .Select(g => new PrintPage(g.Key.ToString(), g.First().TeacherName, lessons.Where(l => g.Any(x => x.Id == l.Id) || (l.GroupId != null && g.Any(x => x.GroupId == l.GroupId && x.TeacherUserId == g.Key))).ToList())),
             "room" => lessons.Where(l => !string.IsNullOrEmpty(l.Room)).GroupBy(l => TimetableCycle.Normalize(l.Room)).OrderBy(g => g.First().Room, StringComparer.OrdinalIgnoreCase)
-                .Select(g => new PrintPage(g.First().Room!, g.ToList())),
+                .Select(g => new PrintPage(g.Key, g.First().Room!, g.ToList())),
             _ => lessons.GroupBy(l => TimetableCycle.Normalize(l.ClassName)).OrderBy(g => g.First().ClassName, StringComparer.OrdinalIgnoreCase)
-                .Select(g => new PrintPage(g.First().ClassName, g.ToList()))
+                .Select(g => new PrintPage(g.Key, g.First().ClassName, g.ToList()))
         };
     }
+
+    private IEnumerable<PrintPage> Pages()
+        => chosen.Count == 0 ? AllPages() : AllPages().Where(p => chosen.Contains(p.Key));
 
     private string CellLine(List<TimetableLessonDto> rows) => by switch
     {
@@ -230,9 +471,9 @@ else if (loadError != null)
             {
                 SheetElementId = "ttp-sheet",
                 OrganizationId = organizationId,
-                FileName = $"timetable-{by}-{detail.Timetable.EffectiveFrom:yyyy-MM-dd}.pdf",
+                FileName = $"timetable-{FileSlug}-{detail.Timetable.EffectiveFrom:yyyy-MM-dd}.pdf",
                 DocumentName = name,
-                Summary = $"{detail.Timetable.Name}, {QDateFormat.Range(detail.Timetable.EffectiveFrom, detail.Timetable.EffectiveTo)}, one page per {ByLabel.ToLowerInvariant()}. Generated {QDateFormat.D(DateTime.UtcNow)} by {generatedBy ?? "Q-Mgr"}.",
+                Summary = $"{detail.Timetable.Name}, {QDateFormat.Range(detail.Timetable.EffectiveFrom, detail.Timetable.EffectiveTo)}, {SelectionSummary}. Generated {QDateFormat.D(DateTime.UtcNow)} by {generatedBy ?? "Q-Mgr"}.",
                 PublishedFrom = $"Timetable — {BranchState.CurrentBranchName}",
                 SubjectNoun = "timetable",
                 Audit = doc => StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest { Kind = StaffExportKinds.Timetable, Published = true, MediaContentId = doc.Id, DocumentName = name, Format = "PDF" })

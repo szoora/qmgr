@@ -20,7 +20,7 @@
     sessionStorage so a reload resumes without a second passcode, and dies with the tab.
 *@
 
-<PageTitle>@(gate?.DocumentName ?? "Shared document") - Q-Mgr</PageTitle>
+<PageTitle>@(gate?.DocumentName ?? "Shared document") - @(gate?.OrganizationName ?? "Q-Mgr")</PageTitle>
 
 @*
     The address of this page IS the capability: /s/{slug} is the whole credential, which is what the
@@ -41,7 +41,22 @@
     @if (stage != Stage.Viewer)
     {
         <div class="sd-card">
-            <div class="sd-brand"><QIcon Name="file-earmark-lock2" /> <span>Shared securely with Q-Mgr</span></div>
+            @* C3: a parent opening their child's school's document sees the school. The logo and
+               the name come from the API already gated on the organization's entitlement — this
+               only renders what it was handed. Attribution falls back to ours, never to nothing. *@
+            <div class="sd-brand">
+                @if (!string.IsNullOrWhiteSpace(gate?.OrganizationLogoUrl))
+                {
+                    <img src="@gate.OrganizationLogoUrl" alt="@gate.OrganizationName" class="sd-brand-logo" />
+                }
+                else
+                {
+                    <QIcon Name="file-earmark-lock2" />
+                }
+                <span>@(gate?.AttributionRemoved == true && !string.IsNullOrWhiteSpace(gate.OrganizationName)
+                    ? $"Shared securely by {gate.OrganizationName}"
+                    : "Shared securely with Q-Mgr")</span>
+            </div>
 
             @if (isLoading)
             {
@@ -187,6 +202,9 @@
     .sd--viewer { padding: 0; align-items: stretch; }
     .sd-card { width: 100%; max-width: 560px; background: #fff; border: 1px solid #e3e3e8; border-radius: 6px; box-shadow: 0 3px 10px rgba(0,0,0,.08); padding: 1.75rem; display: flex; flex-direction: column; gap: 1.1rem; }
     .sd-brand { display: flex; align-items: center; gap: .5rem; color: var(--qm-primary, #7a2847); font-weight: 600; font-size: .85rem; letter-spacing: .02em; text-transform: uppercase; }
+    /* The school's own mark, where they white-label. Sized to the line it sits on rather than to
+       the image: a crest three times the height of its own caption reads as a mistake. */
+    .sd-brand-logo { max-height: 22px; max-width: 120px; object-fit: contain; }
     .sd h1 { font-family: var(--qm-font-display, 'Montserrat', sans-serif); font-size: 1.4rem; margin: 0; }
     .sd-org { font-size: .85rem; color: #666; margin-bottom: .25rem; }
     .sd-summary { margin: .5rem 0 0; color: #444; }

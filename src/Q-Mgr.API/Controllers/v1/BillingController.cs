@@ -1,3 +1,4 @@
+using QMgr.Application.DTOs;
 using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -8,6 +9,7 @@ using QMgr.Application.Interfaces;
 using QMgr.Application.Interfaces.Billing;
 using QMgr.Application.Tenant;
 using QMgr.Domain.Constants;
+using QMgr.Domain.Payments;
 using QMgr.Domain.Entities.Platform;
 using QMgr.Domain.Enums;
 using System.ComponentModel.DataAnnotations;
@@ -25,7 +27,8 @@ public class BillingController : ControllerBase
     private readonly QMgrDbContext _dbContext;
     private readonly IBillingService _billingService;
     private readonly IStripeService _stripeService;
-    private readonly IMobileMoneyService _mobileMoneyService;
+    private readonly ISaccGateway _gateway;
+    private readonly IPaymentLedger _ledger;
     private readonly IUsageTrackingService _usageTrackingService;
     private readonly IModuleAccessService _moduleAccessService;
     private readonly ITenantContextAccessor _tenantContextAccessor;
@@ -37,7 +40,8 @@ public class BillingController : ControllerBase
         QMgrDbContext dbContext,
         IBillingService billingService,
         IStripeService stripeService,
-        IMobileMoneyService mobileMoneyService,
+        ISaccGateway gateway,
+        IPaymentLedger ledger,
         IUsageTrackingService usageTrackingService,
         IModuleAccessService moduleAccessService,
         ITenantContextAccessor tenantContextAccessor,
@@ -48,7 +52,8 @@ public class BillingController : ControllerBase
         _dbContext = dbContext;
         _billingService = billingService;
         _stripeService = stripeService;
-        _mobileMoneyService = mobileMoneyService;
+        _gateway = gateway;
+        _ledger = ledger;
         _usageTrackingService = usageTrackingService;
         _moduleAccessService = moduleAccessService;
         _tenantContextAccessor = tenantContextAccessor;
@@ -57,14 +62,8 @@ public class BillingController : ControllerBase
         _logger = logger;
     }
 
-    // Was IConfiguration-only, completely disconnected from the "SaaS" PlatformSetting row
-    // the admin UI actually edits. GetSettingsAsync is memory-cached (30 min, invalidated on
-    // save), so this is cheap to call per-request.
-    private async Task<string> GetBaseUrlAsync()
-    {
-        var saas = await _platformSettingsService.GetSettingsAsync<SaasSettings>("SaaS");
-        return saas?.BaseUrl ?? _configuration["SaaS:BaseUrl"] ?? "https://qmgr.app";
-    }
+    /// <summary>The public address — see IPlatformSettingsService.GetPublicWebBaseUrlAsync, the one reader.</summary>
+    private Task<string> GetBaseUrlAsync() => _platformSettingsService.GetPublicWebBaseUrlAsync();
 
     private Guid OrganizationId => _tenantContextAccessor.TenantContext?.OrganizationId ?? Guid.Empty;
 
@@ -123,74 +122,6 @@ public class BillingController : ControllerBase
             MaxApiCallsPerMonth = limits.Limits.ContainsKey("apiCalls") ? limits.Limits["apiCalls"].MaxAllowed : 0,
             StorageUsedBytes = usage.StorageUsedBytes,
             MaxStorageBytes = limits.Limits.ContainsKey("storage") ? limits.Limits["storage"].MaxAllowed : 0
-        });
-    }
-
-    #endregion
-
-    #region Subscription Plans
-
-    /// <summary>
-    /// Get all available subscription plans
-    /// </summary>
-    [HttpGet("plans")]
-    [AllowAnonymous]
-    public async Task<IActionResult> GetPlans()
-    {
-        var plans = await _billingService.GetPlansAsync();
-
-        var response = plans.Select(p => new PlanDto
-        {
-            Id = p.Id,
-            Name = p.Name,
-            Code = p.Code,
-            Description = p.Description,
-            MonthlyPriceUsd = p.MonthlyPriceUsd,
-            AnnualPriceUsd = p.AnnualPriceUsd,
-            MonthlyPriceUgx = p.MonthlyPriceUgx,
-            AnnualPriceUgx = p.AnnualPriceUgx,
-            MaxBranches = p.MaxBranches,
-            MaxUsersPerBranch = p.MaxUsersPerBranch,
-            MaxTokensPerMonth = p.MaxTokensPerMonth,
-            MaxApiCallsPerMonth = p.MaxApiCallsPerMonth,
-            ShowAds = p.ShowAds,
-            TrialDays = p.TrialDays,
-            Badge = p.Badge,
-            Features = p.Features
-        });
-
-        return Ok(response);
-    }
-
-    /// <summary>
-    /// Get a specific plan by code
-    /// </summary>
-    [HttpGet("plans/{code}")]
-    [AllowAnonymous]
-    public async Task<IActionResult> GetPlan(string code)
-    {
-        var plan = await _billingService.GetPlanByCodeAsync(code);
-        if (plan == null)
-            return NotFound(new { message = "Plan not found" });
-
-        return Ok(new PlanDto
-        {
-            Id = plan.Id,
-            Name = plan.Name,
-            Code = plan.Code,
-            Description = plan.Description,
-            MonthlyPriceUsd = plan.MonthlyPriceUsd,
-            AnnualPriceUsd = plan.AnnualPriceUsd,
-            MonthlyPriceUgx = plan.MonthlyPriceUgx,
-            AnnualPriceUgx = plan.AnnualPriceUgx,
-            MaxBranches = plan.MaxBranches,
-            MaxUsersPerBranch = plan.MaxUsersPerBranch,
-            MaxTokensPerMonth = plan.MaxTokensPerMonth,
-            MaxApiCallsPerMonth = plan.MaxApiCallsPerMonth,
-            ShowAds = plan.ShowAds,
-            TrialDays = plan.TrialDays,
-            Badge = plan.Badge,
-            Features = plan.Features
         });
     }
 
@@ -267,27 +198,6 @@ public class BillingController : ControllerBase
         });
     }
 
-    /// <summary>
-    /// Open a billing account for this organization — when it is invoiced and how it pays.
-    /// What it is billed for comes from the modules it holds.
-    /// </summary>
-    [HttpPost("subscribe")]
-    [RequirePermission(Permissions.BillingManage)]
-    public async Task<IActionResult> Subscribe([FromBody] SubscribeRequest request)
-    {
-        var result = await _billingService.CreateSubscriptionAsync(
-            OrganizationId,
-            request.BillingCycle,
-            request.PaymentMethod,
-            request.StripePaymentMethodId,
-            request.MobileMoneyPhone);
-
-        if (!result.Success)
-            return BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage });
-
-        return Ok(new { subscriptionId = result.Subscription?.Id, message = "Subscription created successfully" });
-    }
-
 
     /// <summary>
     /// Cancel subscription
@@ -340,37 +250,6 @@ public class BillingController : ControllerBase
     #region Stripe Integration
 
     /// <summary>
-    /// Create Stripe checkout session for subscription
-    /// </summary>
-    [HttpPost("checkout-session")]
-    [RequirePermission(Permissions.BillingManage)]
-    public async Task<IActionResult> CreateCheckoutSession([FromBody] CheckoutRequest request)
-    {
-        var plan = await _billingService.GetPlanByCodeAsync(request.PlanCode);
-        if (plan == null)
-            return NotFound(new { message = "Plan not found" });
-
-        var priceId = request.BillingCycle == BillingCycle.Annual
-            ? plan.StripePriceIdAnnual
-            : plan.StripePriceIdMonthly;
-
-        if (string.IsNullOrEmpty(priceId))
-            return BadRequest(new { message = "Stripe pricing not configured for this plan" });
-
-        var baseUrl = await GetBaseUrlAsync();
-        var successUrl = $"{baseUrl}/billing/success?session_id={{CHECKOUT_SESSION_ID}}";
-        var cancelUrl = $"{baseUrl}/billing/cancelled";
-
-        var result = await _stripeService.CreateCheckoutSessionAsync(
-            OrganizationId,
-            priceId,
-            successUrl,
-            cancelUrl);
-
-        return Ok(new { sessionId = result.SessionId, url = result.Url });
-    }
-
-    /// <summary>
     /// Create Stripe billing portal session
     /// </summary>
     [HttpPost("portal-session")]
@@ -381,7 +260,7 @@ public class BillingController : ControllerBase
         if (subscription == null || string.IsNullOrEmpty(subscription.StripeCustomerId))
             return BadRequest(new { message = "No Stripe customer found" });
 
-        var returnUrl = request?.ReturnUrl ?? $"{await GetBaseUrlAsync()}/billing";
+        var returnUrl = request?.ReturnUrl ?? BillingLinks.Absolute(await GetBaseUrlAsync(), BillingLinks.Payment);
 
         var portalUrl = await _stripeService.CreateBillingPortalSessionAsync(
             subscription.StripeCustomerId,
@@ -458,121 +337,112 @@ public class BillingController : ControllerBase
     }
 
     /// <summary>
-    /// Which payment providers are currently enabled platform-wide. Deliberately returns only
-    /// booleans, not the underlying settings — the real Platform Settings data (secret keys
-    /// included) is SuperAdmin-only (RequirePermission("platform.settings.view")); any
-    /// authenticated tenant user needs to know whether to show "Add Payment Method" at all.
+    /// Which ways to pay a tenant may use right now — the ONE availability rule (2026-09-19). A provider
+    /// is available only when it is switched on AND its credentials are present: Mobile Money and
+    /// cards through the sacc.ug gateway, Stripe only if an administrator has configured it (it is off
+    /// by default). This read the bare Stripe switch before, which defaulted to on, so tenants were
+    /// offered a card option on installs that had never set a Stripe key. Booleans only — the
+    /// settings themselves are SuperAdmin-only.
     /// </summary>
     [HttpGet("payment-providers")]
     public async Task<IActionResult> GetPaymentProviders()
     {
-        var stripe = await _platformSettingsService.GetSettingsAsync<StripeSettings>("Stripe");
-        var mobileMoney = await _platformSettingsService.GetSettingsAsync<MobileMoneySettings>("MobileMoney");
+        var mobileMoney = await _gateway.IsMobileMoneyAvailableAsync();
+        var saccCards = await _gateway.AreCardsAvailableAsync();
+        var stripe = await _stripeService.IsConfiguredAsync();
 
-        return Ok(new
-        {
-            stripeEnabled = stripe?.Enabled ?? false,
-            mobileMoneyEnabled = mobileMoney?.Enabled ?? false
-        });
+        // The gateway's own card channel is preferred: one gateway, one reconciliation.
+        var cardProvider = saccCards ? "sacc" : stripe ? "stripe" : null;
+        return Ok(new PaymentProvidersDto(mobileMoney, cardProvider != null, cardProvider, cardProvider == "stripe"));
     }
 
     #endregion
 
-    #region Mobile Money
+    #region Payments (the sacc.ug gateway, 2026-09-19)
 
     /// <summary>
-    /// Get supported mobile money channels
+    /// The number renewals are charged to — Mobile Money's "payment method on file". It lived on
+    /// <c>Organization.BillingPhone</c>, copied from the admin's phone at sign-up, and no screen showed
+    /// or changed it.
     /// </summary>
-    [HttpGet("mobile-money/channels")]
-    [AllowAnonymous]
-    public IActionResult GetMobileMoneyChannels()
-    {
-        var channels = _mobileMoneyService.GetSupportedChannels();
-        return Ok(channels);
-    }
-
-    /// <summary>
-    /// Validate mobile money phone number
-    /// </summary>
-    [HttpPost("mobile-money/validate")]
+    [HttpGet("renewal-number")]
     [RequirePermission(Permissions.BillingView)]
-    public async Task<IActionResult> ValidatePhone([FromBody] ValidatePhoneRequest request)
+    public async Task<IActionResult> GetRenewalNumber()
     {
-        var result = await _mobileMoneyService.ValidatePhoneAsync(request.PhoneNumber);
-
-        return Ok(new
-        {
-            isValid = result.IsValid,
-            normalizedPhone = result.NormalizedPhone,
-            channel = result.Channel,
-            carrier = result.Carrier,
-            error = result.ErrorMessage
-        });
+        var phone = await _dbContext.Organizations.AsNoTracking()
+            .Where(o => o.Id == OrganizationId).Select(o => o.BillingPhone).FirstOrDefaultAsync();
+        return Ok(ToRenewalNumber(phone));
     }
 
-    /// <summary>
-    /// Initiate mobile money payment
-    /// </summary>
-    [HttpPost("mobile-money/pay")]
+    /// <summary>Change the renewal number. Validated with the gateway's own rule, so a number the
+    /// gateway would refuse is refused here, before a renewal ever tries it.</summary>
+    [HttpPut("renewal-number")]
     [RequirePermission(Permissions.BillingManage)]
-    public async Task<IActionResult> InitiateMobileMoneyPayment([FromBody] MobileMoneyPayRequest request)
+    public async Task<IActionResult> UpdateRenewalNumber([FromBody] UpdateRenewalNumberRequest request)
     {
-        var plan = await _billingService.GetPlanByCodeAsync(request.PlanCode);
-        if (plan == null)
-            return NotFound(new { message = "Plan not found" });
+        var problem = UgandaPhone.Problem(request?.PhoneNumber);
+        if (problem != null)
+            return BadRequest(new { error = "INVALID_PHONE", message = problem });
 
-        var listAmount = request.BillingCycle == BillingCycle.Annual
-            ? plan.AnnualPriceUgx
-            : plan.MonthlyPriceUgx;
+        var organization = await _dbContext.Organizations.FirstOrDefaultAsync(o => o.Id == OrganizationId);
+        if (organization == null) return NotFound(new { message = "Organization not found." });
 
-        // A module purchase collects through ModulesController, which prices from the module's own
-        // agreed price. This endpoint stays for settling an open invoice by Mobile Money, so it
-        // charges what the invoice says rather than looking a price up.
-        var amount = listAmount;
-
-        var narrative = $"Q-Mgr {plan.Name} subscription ({request.BillingCycle})";
-
-        var result = await _mobileMoneyService.CollectPaymentAsync(
-            OrganizationId,
-            request.PhoneNumber,
-            amount,
-            "UGX",
-            narrative);
-
-        if (!result.Success)
-            return BadRequest(new
-            {
-                error = result.ErrorCode,
-                message = result.ErrorMessage,
-                customerMessage = result.CustomerMessage
-            });
-
-        return Ok(new
-        {
-            transactionId = result.TransactionId,
-            status = result.Status.ToString(),
-            message = "Payment initiated. Please check your phone to confirm."
-        });
+        organization.BillingPhone = UgandaPhone.Normalize(request!.PhoneNumber);
+        organization.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync();
+        return Ok(ToRenewalNumber(organization.BillingPhone));
     }
 
-    /// <summary>
-    /// Check mobile money payment status
-    /// </summary>
-    [HttpGet("mobile-money/status/{transactionId}")]
-    [RequirePermission(Permissions.BillingView)]
-    public async Task<IActionResult> CheckMobileMoneyStatus(string transactionId)
+    /// <summary>Remove the renewal number. Renewals then wait for someone to pay the invoice by hand from
+    /// the Invoices tab; nothing is charged to a number the organization no longer wants used.</summary>
+    [HttpDelete("renewal-number")]
+    [RequirePermission(Permissions.BillingManage)]
+    public async Task<IActionResult> ClearRenewalNumber()
     {
-        var result = await _mobileMoneyService.CheckPaymentStatusAsync(transactionId);
+        var organization = await _dbContext.Organizations.FirstOrDefaultAsync(o => o.Id == OrganizationId);
+        if (organization == null) return NotFound(new { message = "Organization not found." });
 
-        return Ok(new
+        organization.BillingPhone = null;
+        organization.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync();
+        return Ok(ToRenewalNumber(null));
+    }
+
+    private static RenewalNumberDto ToRenewalNumber(string? phone) =>
+        string.IsNullOrWhiteSpace(phone)
+            ? new RenewalNumberDto(null, null, null)
+            : new RenewalNumberDto(UgandaPhone.Normalize(phone), UgandaPhone.Display(phone), UgandaPhone.Operator(phone));
+
+    /// <summary>Pay an open invoice by Mobile Money — a renewal the tenant settles by hand. Goes through
+    /// the ledger: a pending payment first, the invoice marked paid only when the gateway confirms.</summary>
+    [HttpPost("invoices/{id:guid}/pay")]
+    [RequirePermission(Permissions.BillingManage)]
+    public async Task<IActionResult> PayInvoice(Guid id, [FromBody] PayInvoiceRequest request, CancellationToken cancellationToken)
+    {
+        if (request is null || string.IsNullOrWhiteSpace(request.PhoneNumber))
+            return BadRequest(new { error = "INVALID_PHONE", message = "Enter the mobile money number to charge." });
+        try
         {
-            transactionId = result.TransactionId,
-            status = result.Status.ToString(),
-            amount = result.Amount,
-            currency = result.Currency,
-            completedAt = result.CompletedAt,
-            error = result.ErrorMessage
-        });
+            var ip = Request.Headers["X-Viewer-Ip"].FirstOrDefault() ?? HttpContext.Connection.RemoteIpAddress?.ToString();
+            var result = await _ledger.StartInvoicePaymentAsync(OrganizationId, id, request.PhoneNumber, ip, cancellationToken);
+            if (result.IsFinal && result.State != PaymentStates.Succeeded)
+                return BadRequest(new { error = "PAYMENT_NOT_STARTED", message = result.Message, referenceId = result.ReferenceId });
+            return Ok(result);
+        }
+        catch (PaymentRequestException ex)
+        {
+            return StatusCode(ex.StatusCode, new { error = ex.Code, message = ex.Message });
+        }
+    }
+
+    /// <summary>Where one of this organization's payments stands. Another organization's payment
+    /// answers 404, never 403.</summary>
+    [HttpGet("payments/{referenceId:guid}")]
+    [RequirePermission(Permissions.BillingView)]
+    public async Task<IActionResult> GetPayment(Guid referenceId, CancellationToken cancellationToken)
+    {
+        var status = await _ledger.GetStatusAsync(OrganizationId, referenceId, refresh: true, cancellationToken);
+        return status == null ? NotFound(new { message = "No such payment." }) : Ok(status);
     }
 
     #endregion
@@ -904,26 +774,6 @@ public class BillingOverviewDto
     public long MaxStorageBytes { get; set; }
 }
 
-public class PlanDto
-{
-    public Guid Id { get; set; }
-    public string Name { get; set; } = string.Empty;
-    public string Code { get; set; } = string.Empty;
-    public string? Description { get; set; }
-    public decimal MonthlyPriceUsd { get; set; }
-    public decimal AnnualPriceUsd { get; set; }
-    public decimal MonthlyPriceUgx { get; set; }
-    public decimal AnnualPriceUgx { get; set; }
-    public int MaxBranches { get; set; }
-    public int MaxUsersPerBranch { get; set; }
-    public int MaxTokensPerMonth { get; set; }
-    public int MaxApiCallsPerMonth { get; set; }
-    public bool ShowAds { get; set; }
-    public int TrialDays { get; set; }
-    public string? Badge { get; set; }
-    public string? Features { get; set; }
-}
-
 public class SubscriptionDto
 {
     /// <summary>Comma-separated codes of the modules held. See BillingOverviewDto.PlanCode.</summary>
@@ -940,14 +790,6 @@ public class SubscriptionDto
     public EffectiveLimits? Limits { get; set; }
 }
 
-public class SubscribeRequest
-{
-    public BillingCycle BillingCycle { get; set; } = BillingCycle.Monthly;
-    public PaymentMethod PaymentMethod { get; set; } = PaymentMethod.Card;
-    public string? StripePaymentMethodId { get; set; }
-    public string? MobileMoneyPhone { get; set; }
-}
-
 
 public class CancelRequest
 {
@@ -955,57 +797,13 @@ public class CancelRequest
     public bool Immediately { get; set; }
 }
 
-public class CheckoutRequest
-{
-    /// <summary>The module code being checked out.</summary>
-    public string PlanCode { get; set; } = string.Empty;
-    [Required]
-    // PlanCode removed with the tier system; modules are bought through ModulesController.
-    public BillingCycle BillingCycle { get; set; } = BillingCycle.Monthly;
-}
-
 public class PortalRequest
 {
     public string? ReturnUrl { get; set; }
 }
 
-public class ValidatePhoneRequest
-{
-    [Required]
-    public string PhoneNumber { get; set; } = string.Empty;
-}
-
-public class MobileMoneyPayRequest
-{
-    /// <summary>The module code the payment is for.</summary>
-    public string PlanCode { get; set; } = string.Empty;
-    [Required]
-    public string PhoneNumber { get; set; } = string.Empty;
-    public BillingCycle BillingCycle { get; set; } = BillingCycle.Monthly;
-}
-
-public class InvoiceDto
-{
-    public Guid Id { get; set; }
-    public string InvoiceNumber { get; set; } = string.Empty;
-    public string Status { get; set; } = string.Empty;
-    public string Currency { get; set; } = string.Empty;
-    public decimal Subtotal { get; set; }
-    public decimal TaxAmount { get; set; }
-    public decimal Total { get; set; }
-    public decimal AmountPaid { get; set; }
-    public DateTime InvoiceDate { get; set; }
-    public DateTime DueDate { get; set; }
-    public DateTime? PaidAt { get; set; }
-    public string? PdfUrl { get; set; }
-    public string? LineItems { get; set; }
-
-    // "Bill To" block — only populated on the single-invoice detail endpoint, not the list.
-    public string? BillingName { get; set; }
-    public string? BillingEmail { get; set; }
-    public string? OrganizationAddress { get; set; }
-    public string? OrganizationPhone { get; set; }
-}
+// InvoiceDto lives in Q-Mgr.Shared (Application/DTOs/InvoiceDto.cs) since 2026-09-19: the Web kept two
+// copies of it, and one of them read an Amount the API never sent, so every recent invoice showed 0.
 
 /// <summary>
 /// One entry in the billing history timeline. Type drives the Web page's timeline-marker color

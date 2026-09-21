@@ -574,17 +574,17 @@
 
     .filter-card { padding: 14px 16px; }
     .filter-row--actions { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--qm-border); justify-content: space-between; }
-    .filter-item label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--qm-text-muted); }
+    .filter-item label { display: flex; flex-direction: column; gap: 4px; font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
     .filter-item input[type=date], .filter-item input[type=text], .filter-item select {
         padding: 6px 9px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm);
-        background: var(--qm-bg-card); color: var(--qm-text-primary); font-size: 13px; min-width: 130px;
+        background: var(--qm-bg-card); color: var(--qm-text-primary); font-size: var(--qm-text-base); min-width: 130px;
     }
     .filter-checks { display: flex; flex-direction: column; gap: 4px; }
-    .inline-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--qm-text-primary); }
+    .inline-check { display: inline-flex; align-items: center; gap: 6px; font-size: var(--qm-text-base); color: var(--qm-text-primary); }
     .filter-actions { display: flex; align-items: center; flex-wrap: wrap; }
 
     .filter-item--range { flex: 1 1 100%; min-width: 0; }
-    .range-caption { margin: 0; font-size: 12.5px; color: var(--qm-text-muted); }
+    .range-caption { margin: 0; font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
     .range-caption strong { color: var(--qm-text-primary); font-weight: 600; }
 
     /* The tab strip is QTabs (q-components.css); the exceptions count is its danger badge. */
@@ -598,22 +598,22 @@
     .report-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
     .report-block { padding: 4px 0; }
     .block-why { margin: 0 0 10px; }
-    .muted { color: var(--qm-text-muted); font-size: 13px; margin: 8px 0 0; }
+    .muted { color: var(--qm-text-muted); font-size: var(--qm-text-base); margin: 8px 0 0; }
 
     .table-scroll { overflow-x: auto; }
-    .report-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .report-table { width: 100%; border-collapse: collapse; font-size: var(--qm-text-base); }
     .report-table th {
         text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--qm-border);
-        font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--qm-text-muted); white-space: nowrap;
+        font-size: var(--qm-text-xs); text-transform: uppercase; letter-spacing: .05em; color: var(--qm-text-muted); white-space: nowrap;
     }
     .report-table td { padding: 8px 10px; border-bottom: 1px solid var(--qm-border); vertical-align: top; }
     .report-table .num { text-align: right; font-variant-numeric: tabular-nums; }
-    .report-table .mono { font-family: var(--qm-font-mono); font-size: 12px; }
+    .report-table .mono { font-family: var(--qm-font-mono); font-size: var(--qm-text-sm); }
     .report-table tr.row-bad td { background: rgba(var(--qm-danger-rgb), 0.07); }
     .report-table tr.row-warn td { background: rgba(var(--qm-warning-rgb), 0.09); }
 
     .rank-list { list-style: none; margin: 0; padding: 0; }
-    .rank-list li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--qm-border); font-size: 13px; }
+    .rank-list li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--qm-border); font-size: var(--qm-text-base); }
     .rank-list li:last-child { border-bottom: 0; }
     .rank-name { color: var(--qm-text-primary); }
     .rank-count { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--qm-text-primary); }
@@ -621,21 +621,21 @@
     .bar-chart { display: flex; align-items: flex-end; gap: 4px; height: 150px; padding-top: 8px; }
     .bar-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; gap: 4px; min-width: 0; }
     .bar { width: 100%; max-width: 34px; background: var(--qm-primary); border-radius: var(--qm-radius-sm) var(--qm-radius-sm) 0 0; min-height: 2px; }
-    .bar-label { font-size: 10px; color: var(--qm-text-muted); white-space: nowrap; }
+    .bar-label { font-size: var(--qm-text-xs); color: var(--qm-text-muted); white-space: nowrap; }
 
     .heatmap { display: flex; flex-direction: column; gap: 3px; overflow-x: auto; padding-top: 6px; }
     .heat-row { display: flex; gap: 3px; align-items: center; }
-    .heat-day { width: 32px; flex-shrink: 0; font-size: 11px; color: var(--qm-text-muted); }
-    .heat-hour-label { flex: 1; min-width: 12px; font-size: 9px; color: var(--qm-text-muted); text-align: center; }
+    .heat-day { width: 32px; flex-shrink: 0; font-size: var(--qm-text-xs); color: var(--qm-text-muted); }
+    .heat-hour-label { flex: 1; min-width: 12px; font-size: var(--qm-text-xs); color: var(--qm-text-muted); text-align: center; }
     .heat-cell { flex: 1; min-width: 12px; height: 15px; border-radius: var(--qm-radius-sm); background: var(--qm-bg-secondary); }
     .heat-cell.on { background: var(--qm-primary); }
     .heat-legend { margin-top: 8px; }
 
     .all-clear { display: flex; gap: 12px; align-items: flex-start; padding: 6px 0; }
-    .all-clear .q-icon { color: var(--qm-success); font-size: 22px; }
+    .all-clear .q-icon { color: var(--qm-success); font-size: var(--qm-text-stat); }
     .all-clear p { margin: 4px 0 0; }
 
-    .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
+    .loading-container { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
 
     .print-only { display: none; }
 

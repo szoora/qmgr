@@ -900,5 +900,98 @@ else
   printf '  \033[33mSKIP\033[0m  node is not installed; section 14 did not run\n'
 fi
 
+# --- 16. Payments through the sacc.ug gateway ---------------------------------------------------
+# Node (scripts/e2e/payments-e2e.mjs): it hosts a local stand-in for the gateway on 127.0.0.1:5099
+# and points the platform's gateway settings at it — allowed for a loopback address in Development
+# only — then switches them back off. No money moves and no phone rings.
+hdr "16. PAYMENTS (Node)"
+if command -v node > /dev/null 2>&1; then
+  PM_OUT=$(API="$API" SA_USER="$SA_USER" SA_PASS="$SA_PASS" node "$(dirname "$0")/payments-e2e.mjs" 2>&1)
+  echo "$PM_OUT" | sed 's/^/  /'
+  PM_PASS=$(echo "$PM_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  PM_FAIL=$(echo "$PM_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$PM_PASS" ]; then bad "payments suite ran to completion" "a summary line" "none (see output above)"
+  else PASS=$((PASS+PM_PASS)); FAIL=$((FAIL+PM_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 16 did not run\n'
+fi
+
+# --- 19. White label: tenant domains, brand assets, attribution -----------------------------------
+# Node (scripts/e2e/white-label-e2e.mjs). It needs the API started with Dns__Stub=true (a TXT
+# lookup answered from memory) and CustomDomains__SkipCertificate=true (certbot is not on this
+# machine) - both Development-only and both checked against the environment as well as the key.
+# Without them the DNS sections print SKIP rather than failing, which is honest: they cannot run.
+# It claims a domain and releases it, uploads two brand assets and removes them, and puts every
+# override and every branding field back as it found them.
+hdr "19. WHITE LABEL (Node)"
+if command -v node > /dev/null 2>&1; then
+  WL_OUT=$(API="$API" SA_USER="$SA_USER" SA_PASS="$SA_PASS" node "$(dirname "$0")/white-label-e2e.mjs" 2>&1)
+  echo "$WL_OUT" | sed 's/^/  /'
+  WL_PASS=$(echo "$WL_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  WL_FAIL=$(echo "$WL_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$WL_PASS" ]; then bad "white-label suite ran to completion" "a summary line" "none (see output above)"
+  else PASS=$((PASS+WL_PASS)); FAIL=$((FAIL+WL_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 19 did not run\n'
+fi
+
+# --- 20. Tenant lifecycle and complete purge ------------------------------------------------------
+# Node (scripts/e2e/tenant-purge-e2e.mjs). It CREATES ITS OWN TENANT and destroys it: it cannot
+# run against the dev tenant, because a successful run ends with the tenant gone. It also resets
+# its own sign-up budget first (Development-only endpoint, 404 elsewhere) because registration is
+# capped at three an hour per address and a suite that creates a tenant to destroy one needs more.
+hdr "20. TENANT PURGE (Node)"
+if command -v node > /dev/null 2>&1; then
+  TP_OUT=$(API="$API" SA_USER="$SA_USER" SA_PASS="$SA_PASS" node "$(dirname "$0")/tenant-purge-e2e.mjs" 2>&1)
+  echo "$TP_OUT" | sed 's/^/  /'
+  TP_PASS=$(echo "$TP_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  TP_FAIL=$(echo "$TP_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$TP_PASS" ]; then printf '  [33mSKIP[0m  section 20 did not report a summary (often the sign-up rate limit)
+'
+  else PASS=$((PASS+TP_PASS)); FAIL=$((FAIL+TP_FAIL)); fi
+else
+  printf '  [33mSKIP[0m  node is not installed; section 20 did not run
+'
+fi
+
+# --- 15, 17, 18: the three Node suites that were only ever run by hand --------------------------
+# Each existed and passed standalone but was never called from here, so a full run under-reported
+# by ~90 assertions and a regression in any of the three would not have shown up in one.
+hdr "15. DUTY ROTA & TIMETABLE (Node)"
+if command -v node > /dev/null 2>&1; then
+  DR_OUT=$(API="$API" BRANCH="$BRANCH" SA_USER="$SA_USER" SA_PASS="$SA_PASS" node "$(dirname "$0")/duty-rota-e2e.mjs" 2>&1)
+  echo "$DR_OUT" | sed 's/^/  /'
+  DR_PASS=$(echo "$DR_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  DR_FAIL=$(echo "$DR_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$DR_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 15 did not report a summary\n'
+  else PASS=$((PASS+DR_PASS)); FAIL=$((FAIL+DR_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 15 did not run\n'
+fi
+
+hdr "17. MINUTES OF MEETINGS (Node)"
+if command -v node > /dev/null 2>&1; then
+  MN_OUT=$(API="$API" BRANCH="$BRANCH" SA_USER="$SA_USER" SA_PASS="$SA_PASS" node "$(dirname "$0")/minutes-e2e.mjs" 2>&1)
+  echo "$MN_OUT" | sed 's/^/  /'
+  MN_PASS=$(echo "$MN_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  MN_FAIL=$(echo "$MN_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$MN_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 17 did not report a summary\n'
+  else PASS=$((PASS+MN_PASS)); FAIL=$((FAIL+MN_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 17 did not run\n'
+fi
+
+hdr "18. THE TWO DOORS (Node)"
+if command -v node > /dev/null 2>&1; then
+  RD_OUT=$(API="$API" BRANCH="$BRANCH" SA_USER="$SA_USER" SA_PASS="$SA_PASS" node "$(dirname "$0")/registration-doors-e2e.mjs" 2>&1)
+  echo "$RD_OUT" | sed 's/^/  /'
+  RD_PASS=$(echo "$RD_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  RD_FAIL=$(echo "$RD_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$RD_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 18 did not report a summary\n'
+  else PASS=$((PASS+RD_PASS)); FAIL=$((FAIL+RD_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 18 did not run\n'
+fi
+
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 exit "$FAIL"

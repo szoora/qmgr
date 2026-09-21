@@ -148,7 +148,7 @@
 
     .branch-selector-card label {
         display: block;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         font-weight: 600;
         color: var(--qm-text-muted);
         margin-bottom: 8px;
@@ -162,7 +162,7 @@
         color: var(--qm-text-primary);
         padding: 12px 16px;
         border-radius: var(--qm-radius-lg);
-        font-size: 15px;
+        font-size: var(--qm-text-md);
         max-width: 400px;
     }
 
@@ -199,7 +199,7 @@
         align-items: center;
         justify-content: center;
         margin-bottom: 16px;
-        font-size: 24px;
+        font-size: var(--qm-text-stat);
     }
 
     .link-card.kiosk .card-icon {
@@ -224,14 +224,14 @@
 
     .card-content h3 {
         margin: 0 0 8px;
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
         font-weight: 600;
         color: var(--qm-text-primary);
     }
 
     .card-content p {
         margin: 0 0 16px;
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-muted);
         line-height: 1.5;
     }
@@ -246,7 +246,7 @@
 
     .link-preview code {
         font-family: 'JetBrains Mono', monospace;
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-primary);
         white-space: nowrap;
     }
@@ -265,7 +265,7 @@
 
     .quick-actions h3 {
         margin: 0 0 16px;
-        font-size: 16px;
+        font-size: var(--qm-text-md);
         font-weight: 600;
         color: var(--qm-text-primary);
     }
@@ -274,33 +274,6 @@
         display: flex;
         flex-wrap: wrap;
         gap: var(--q-row-gap);
-    }
-
-    /* Empty State */
-    .empty-state {
-        text-align: center;
-        padding: 80px 20px;
-        background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-    }
-
-    .empty-state i {
-        font-size: 64px;
-        color: var(--qm-text-muted);
-        opacity: 0.5;
-        margin-bottom: 16px;
-    }
-
-    .empty-state h3 {
-        margin: 0 0 8px;
-        font-size: 20px;
-        color: var(--qm-text-primary);
-    }
-
-    .empty-state p {
-        margin: 0;
-        color: var(--qm-text-muted);
     }
 
     /* Mobile Responsive */

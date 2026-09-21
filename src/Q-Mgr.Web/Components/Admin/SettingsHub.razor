@@ -30,6 +30,10 @@
             <h1>Settings<QInfo Text="How this account is configured: general settings, how messages are delivered, the industry the kiosk speaks for, and what Q-Mgr is connected to." Label="Settings" /></h1>
             <p class="subtitle">How this account is configured: general settings, how messages are delivered, the industry the kiosk speaks for, and what Q-Mgr is connected to.</p>
         </div>
+        <div class="header-actions">
+            @* The open section's own buttons land here — see QPageActions. *@
+            <SectionOutlet SectionId="QPageActions.Id" />
+        </div>
     </div>
 
     <QTabs Tabs="@tabs" @bind-ActiveKey="@hubTab" IdPrefix="st" AriaLabel="Settings sections" />

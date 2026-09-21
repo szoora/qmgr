@@ -1,6 +1,7 @@
 @namespace QMgr.Web.Components.Shared.UI
 
-@* The "nothing here" block: a large muted icon, a heading, a sentence and an optional action. *@
+@* The "nothing here" block: a muted icon beside a heading and a sentence, and an optional action
+   underneath. Compact by design (2026-09-19) — sizes live in --qm-empty-* and q-components.css. *@
 <div class="q-empty @Class" @attributes="AdditionalAttributes">
     <QIcon Name="@Icon" Class="q-empty__icon" />
     <h3 class="q-empty__title">@Title</h3>

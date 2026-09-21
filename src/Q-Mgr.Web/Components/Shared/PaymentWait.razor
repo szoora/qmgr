@@ -1,0 +1,154 @@
+@namespace QMgr.Web.Components.Shared
+@using QMgr.Application.DTOs
+@implements IDisposable
+
+@*
+    Waiting for a payment the gateway holds (2026-09-19) — the module purchase and paying an invoice.
+
+    It only REPORTS. The payment is settled on the server by the gateway's webhook, a status read or the
+    reconciliation job, whether or not this panel is still open — which is what the old purchase dialog
+    got wrong: it activated the module only while the browser kept polling. So the panel says so, and
+    when it stops polling it says the payment will still finish, rather than calling it a failure.
+*@
+
+<div class="pay-wait pay-wait--@Tone" role="status" aria-live="polite">
+    <div class="pay-wait__icon">
+        @if (current is { IsFinal: true })
+        {
+            <QIcon Name="@(current.State == PaymentStates.Succeeded ? "check-circle-fill" : "x-circle-fill")" />
+        }
+        else if (current?.State == PaymentStates.Review)
+        {
+            <QIcon Name="hourglass-split" />
+        }
+        else
+        {
+            <QSpinner Size="sm" />
+        }
+    </div>
+    <div class="pay-wait__body">
+        <strong>@Heading</strong>
+        <span>@Detail</span>
+    </div>
+</div>
+
+<style>
+    .pay-wait { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; margin-top: var(--qm-field-gap, 12px);
+                border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-elevated); }
+    .pay-wait__icon { flex: 0 0 auto; font-size: 18px; line-height: 1; padding-top: 1px; color: var(--qm-text-muted); }
+    .pay-wait__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: var(--qm-text-sm); }
+    .pay-wait__body span { color: var(--qm-text-muted); }
+    .pay-wait--success { border-color: var(--qm-success); }
+    .pay-wait--success .pay-wait__icon { color: var(--qm-success); }
+    .pay-wait--danger { border-color: var(--qm-danger); }
+    .pay-wait--danger .pay-wait__icon { color: var(--qm-danger); }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public Guid ReferenceId { get; set; }
+
+    /// <summary>Reads where the payment stands; null for a read that failed (the next poll tries again).</summary>
+    [Parameter, EditorRequired] public Func<Guid, Task<PaymentStatusDto?>> Poll { get; set; } = default!;
+
+    /// <summary>"mobile" or "card" — only changes the words.</summary>
+    [Parameter] public string Method { get; set; } = PaymentMethodCodes.MobileMoney;
+
+    /// <summary>The number the prompt went to, as shown to the payer.</summary>
+    [Parameter] public string? PhoneDisplay { get; set; }
+
+    /// <summary>Raised once, when the payment reaches a final state.</summary>
+    [Parameter] public EventCallback<PaymentStatusDto> OnSettled { get; set; }
+
+    private static readonly TimeSpan Interval = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan PollFor = TimeSpan.FromMinutes(4);
+
+    private PaymentStatusDto? current;
+    private bool stoppedWaiting;
+    private CancellationTokenSource? cts;
+    private Guid watching;
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceId == watching || ReferenceId == Guid.Empty) return;
+        watching = ReferenceId;
+        current = null;
+        stoppedWaiting = false;
+        cts?.Cancel();
+        cts = new CancellationTokenSource();
+        _ = WatchAsync(ReferenceId, cts.Token);
+    }
+
+    private async Task WatchAsync(Guid referenceId, CancellationToken token)
+    {
+        var started = DateTime.UtcNow;
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                await Task.Delay(Interval, token);
+                var status = await Poll(referenceId);
+                if (token.IsCancellationRequested) return;
+                if (status != null) current = status;
+
+                if (current is { IsFinal: true })
+                {
+                    await InvokeAsync(StateHasChanged);
+                    await InvokeAsync(() => OnSettled.InvokeAsync(current));
+                    return;
+                }
+
+                if (DateTime.UtcNow - started > PollFor)
+                {
+                    stoppedWaiting = true;
+                    await InvokeAsync(StateHasChanged);
+                    return;
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (TaskCanceledException)
+        {
+            // Closed or replaced: nothing to report.
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private bool IsCard => Method == PaymentMethodCodes.Card;
+
+    private string Tone => current switch
+    {
+        { State: PaymentStates.Succeeded } => "success",
+        { IsFinal: true } => "danger",
+        _ => "pending"
+    };
+
+    private string Heading => current?.State switch
+    {
+        PaymentStates.Succeeded => "Payment received",
+        PaymentStates.Failed => "Payment not completed",
+        PaymentStates.Abandoned => "Payment not completed",
+        PaymentStates.Review => "Payment being checked",
+        _ when stoppedWaiting => "Still waiting for the approval",
+        _ => IsCard ? "Waiting for the card payment" : "Approve the prompt on your phone"
+    };
+
+    private string Detail => current?.State switch
+    {
+        PaymentStates.Succeeded => "Thank you — a receipt is on its way by email.",
+        PaymentStates.Failed or PaymentStates.Abandoned => string.IsNullOrWhiteSpace(current.Message) ? "No money was taken. You can try again." : current.Message,
+        PaymentStates.Review => "The amount received differs from the amount due. It is being checked; nothing more is needed from you.",
+        _ when stoppedWaiting => "You can close this. If you approve the prompt, the payment still completes and your account updates on its own.",
+        _ => IsCard
+            ? "Finish the payment on the card page. This updates on its own."
+            : $"A prompt was sent{(string.IsNullOrWhiteSpace(PhoneDisplay) ? "" : $" to {PhoneDisplay}")}. Enter your Mobile Money PIN to approve it. This updates on its own."
+    };
+
+    public void Dispose()
+    {
+        cts?.Cancel();
+        cts?.Dispose();
+    }
+}

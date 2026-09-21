@@ -29,19 +29,16 @@
 *@
 
 <div class="admin-page notices-page">
-<div class="page-header">
-    @if (!Embedded)
-    {
-        <div class="header-content">
-            <h1>Staff notices<QInfo Text="Publish to the whole branch, a department, a role or a staff group; see who has read and who has acknowledged." Label="Staff notices" /></h1>
-            <p class="subtitle">Publish to the whole branch, a department, a role or a staff group; see who has read and who has acknowledged.</p>
-        </div>
-    }
-    <div class="header-actions">
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1>Staff notices<QInfo Text="Publish to the whole branch, a department, a role or a staff group; see who has read and who has acknowledged." Label="Staff notices" /></h1>
+        <p class="subtitle">Publish to the whole branch, a department, a role or a staff group; see who has read and who has acknowledged.</p>
+    </Title>
+    <Actions>
         <QCheckbox @bind-Value="@includeInactive" @bind-Value:after="LoadAsync" Label="Show withdrawn and expired" />
         <QButton Text="New notice" Icon="plus-lg" Variant="primary" OnClick="@OpenCreate" Disabled="@(branchId == Guid.Empty)" />
-    </div>
-</div>
+    </Actions>
+</QPageActions>
 
     @if (isLoading)
     {
@@ -60,8 +57,24 @@
     }
     else
     {
+        @* Chips with counts, a search and paging (plan Phase 2). Notices accumulate for as long as
+           a school runs, and "which are live" is the question the page is opened with. No selection:
+           a notice is written, published and retired one at a time, and the acknowledgement work is
+           inside a notice rather than across several. *@
+        <QBulkBar Filters="@FilterChips" ActiveFilter="@filter" ActiveFilterChanged="@SetFilter"
+                  Search="@search" SearchChanged="@SetSearch" ShowSelection="false"
+                  SearchPlaceholder="Search by title or body" />
+
+        @if (Visible.Count == 0)
+        {
+            <QEmptyState Icon="funnel" Title="Nothing matches" Text="Clear the search or choose a different filter.">
+                <Action><QButton Text="Show everything" Icon="arrow-counterclockwise" Variant="secondary" Size="sm" OnClick="@ClearFilters" /></Action>
+            </QEmptyState>
+        }
+        else
+        {
         <div class="notice-list">
-            @foreach (var n in notices.OrderByDescending(n => n.IsActive).ThenByDescending(n => n.IsPinned).ThenByDescending(n => n.PublishAt))
+            @foreach (var n in Paged)
             {
                 var live = IsLive(n);
                 <QCard Class="@($"notice-card {(n.IsActive ? "" : "notice-card--off")} {(n.IsPinned && live ? "notice-card--pinned" : "")}")">
@@ -116,6 +129,8 @@
                 </QCard>
             }
         </div>
+        <QPager Count="@Visible.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="notices" />
+        }
     }
 </div>
 
@@ -278,18 +293,18 @@
     .notice-card--off { opacity: 0.7; }
     .notice-card__row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
     .notice-card__main { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-    .notice-card__title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 15px; }
-    .notice-card__facts { display: flex; gap: 6px 16px; flex-wrap: wrap; font-size: 13px; color: var(--qm-text-secondary); }
+    .notice-card__title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: var(--qm-text-md); }
+    .notice-card__facts { display: flex; gap: 6px 16px; flex-wrap: wrap; font-size: var(--qm-text-base); color: var(--qm-text-secondary); }
     .notice-card__facts span { display: inline-flex; align-items: center; gap: 4px; }
     .notice-card__ack { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-    .notice-card__ack-text { font-size: 13px; color: var(--qm-text-secondary); }
+    .notice-card__ack-text { font-size: var(--qm-text-base); color: var(--qm-text-secondary); }
     .notice-progress { flex: 1 1 160px; max-width: 320px; height: 8px; border-radius: var(--qm-radius-md); background: var(--qm-bg-secondary); overflow: hidden; }
-    .notice-progress__fill { height: 100%; background: var(--qm-warning); border-radius: var(--qm-radius-md); transition: width var(--qm-transition-base, 0.2s); }
+    .notice-progress__fill { height: 100%; background: var(--qm-warning); border-radius: var(--qm-radius-md); transition: width 0.2s ease; }
     .notice-progress__fill--done { background: var(--qm-success); }
     .notice-card__actions { display: flex; gap: var(--q-row-gap, 8px); flex-wrap: wrap; justify-content: flex-end; }
     .form-row > .form-group { flex: 1 1 200px; min-width: 0; }
-    .form-hint { font-size: 12px; color: var(--qm-text-muted); margin: 6px 0 0; }
-    .notice-attach__label { display: block; font-size: 13px; font-weight: 500; color: var(--qm-text-secondary); margin-bottom: 6px; }
+    .form-hint { font-size: var(--qm-text-sm); color: var(--qm-text-muted); margin: 6px 0 0; }
+    .notice-attach__label { display: block; font-size: var(--qm-text-base); font-weight: 500; color: var(--qm-text-secondary); margin-bottom: 6px; }
     .notice-attach { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     .acks-summary { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
     .acks-summary__export { margin-left: auto; }
@@ -313,6 +328,51 @@
     private Guid branchId;
     private Guid organizationId;
     private List<StaffNoticeDto> notices = new();
+
+    private const int PageSize = 20;
+    private string search = string.Empty;
+    private string filter = "all";
+    private int pageIndex;
+
+    private List<QBulkBar.Filter> FilterChips => new()
+    {
+        new("all", "All", notices.Count),
+        new("live", "Live", notices.Count(n => n.IsActive && IsLive(n))),
+        new("pinned", "Pinned", notices.Count(n => n.IsPinned && n.IsActive)),
+        new("ack", "Needs acknowledgement", notices.Count(n => n.RequiresAcknowledgement && n.IsActive)),
+        new("off", "Withdrawn", notices.Count(n => !n.IsActive)),
+    };
+
+    private List<StaffNoticeDto> Visible
+    {
+        get
+        {
+            IEnumerable<StaffNoticeDto> rows = notices
+                .OrderByDescending(n => n.IsActive).ThenByDescending(n => n.IsPinned).ThenByDescending(n => n.PublishAt);
+            rows = filter switch
+            {
+                "live" => rows.Where(n => n.IsActive && IsLive(n)),
+                "pinned" => rows.Where(n => n.IsPinned && n.IsActive),
+                "ack" => rows.Where(n => n.RequiresAcknowledgement && n.IsActive),
+                "off" => rows.Where(n => !n.IsActive),
+                _ => rows
+            };
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var q = search.Trim();
+                bool Has(string? s) => (s ?? string.Empty).Contains(q, StringComparison.OrdinalIgnoreCase);
+                rows = rows.Where(n => Has(n.Title) || Has(n.BodyHtml));
+            }
+            return rows.ToList();
+        }
+    }
+
+    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (Visible.Count - 1) / PageSize));
+    private IEnumerable<StaffNoticeDto> Paged => Visible.Skip(SafePageIndex * PageSize).Take(PageSize);
+
+    private void SetFilter(string key) { filter = key; pageIndex = 0; }
+    private void SetSearch(string value) { search = value ?? string.Empty; pageIndex = 0; }
+    private void ClearFilters() { filter = "all"; search = string.Empty; pageIndex = 0; }
     private List<DepartmentDto> departments = new();
     private List<RoleOption> roles = new();
     private bool lookupsLoaded;
@@ -378,7 +438,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
-            Navigation.NavigateTo("/billing/modules");
+            Navigation.NavigateTo(BillingLinks.Modules);
             return;
         }
 

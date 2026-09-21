@@ -78,6 +78,12 @@ public class StaffDutyConfiguration : IEntityTypeConfiguration<StaffDuty>
             .HasFilter("\"TimetableLessonId\" IS NOT NULL")
             .HasDatabaseName("ux_staff_duties_lesson_start");
         b.HasIndex(d => d.RecoversDutyId).HasFilter("\"RecoversDutyId\" IS NOT NULL").HasDatabaseName("idx_staff_duties_recovers");
+        // Minutes (2026-09-20). The document is jsonb on the row; its action points have their own table.
+        b.Property(d => d.MinutesJson).HasColumnType("jsonb");
+        // The circulation chase and "minutes outstanding" both read by branch and status.
+        b.HasIndex(d => new { d.BranchId, d.MinutesStatus })
+            .HasFilter("\"MinutesStatus\" <> 0")
+            .HasDatabaseName("idx_staff_duties_minutes_status");
 
         // "What is on this week" and the two sweeps ("starts soon, not reminded", "ended, register not
         // taken") all read by branch and start time.
@@ -282,6 +288,30 @@ public class StaffDutyReportAttachmentConfiguration : IEntityTypeConfiguration<S
         // UploadAuthorizer looks a file up by the tail of FileUrl on every gated fetch.
         b.HasIndex(a => a.FileUrl).HasDatabaseName("idx_staff_duty_report_attachments_file_url");
         b.HasOne(a => a.Report).WithMany(r => r.Attachments).HasForeignKey(a => a.ReportId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+/// <summary>
+/// Action points out of a meeting's minutes. Indexed by ASSIGNEE, which is the whole reason this is
+/// a table rather than a list inside the minutes blob: "my open actions" is a per-person query
+/// across every meeting of the year.
+/// </summary>
+public class StaffMinuteActionConfiguration : IEntityTypeConfiguration<StaffMinuteAction>
+{
+    public void Configure(EntityTypeBuilder<StaffMinuteAction> b)
+    {
+        b.ToTable("StaffMinuteActions");
+        b.HasKey(a => a.Id);
+        b.Property(a => a.Text).HasMaxLength(1000).IsRequired();
+        b.Property(a => a.CompletionNote).HasMaxLength(1000);
+        // The portal's "my actions" and the overdue chase.
+        b.HasIndex(a => new { a.AssignedUserId, a.Status })
+            .HasFilter("\"AssignedUserId\" IS NOT NULL")
+            .HasDatabaseName("idx_staff_minute_actions_assignee");
+        b.HasIndex(a => new { a.BranchId, a.Status, a.DueAt }).HasDatabaseName("idx_staff_minute_actions_branch_due");
+        b.HasIndex(a => a.DutyId).HasDatabaseName("idx_staff_minute_actions_duty");
+        // No meeting, no action: the minutes are the only reason the row exists.
+        b.HasOne(a => a.Duty).WithMany().HasForeignKey(a => a.DutyId).OnDelete(DeleteBehavior.Cascade);
     }
 }
 

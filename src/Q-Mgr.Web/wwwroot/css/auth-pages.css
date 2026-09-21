@@ -101,6 +101,15 @@
     color: white;
 }
 
+/* A tenant's own logo in the sign-in disc. `contain` rather than `cover` because a school's crest
+   is usually taller than it is wide and cropping it is worse than letterboxing it; the disc keeps
+   the tenant's primary colour behind it, so a transparent PNG still reads. */
+.login-container .logo-circle .brand-logo-img {
+    max-width: 64px;
+    max-height: 64px;
+    object-fit: contain;
+}
+
 .login-container .user-avatar {
     width: 80px;
     height: 80px;
@@ -216,6 +225,97 @@
     background-color: color-mix(in srgb, var(--qm-success) 12%, var(--qm-bg-card));
     color: var(--qm-success);
     border: 1px solid color-mix(in srgb, var(--qm-success) 30%, transparent);
+}
+
+/* ---- The two doors, and the duplicate-school warning (2026-09-20) ----------------------------
+   Added with the sign-in page's second door ("use your join link") and the registration warning
+   that names an organization already using Q-Mgr at the same email domain. Shared stylesheet
+   rather than a component <style> block, because these sit on Login, Register and Join alike. */
+
+.login-container .auth-alert-warning {
+    background-color: color-mix(in srgb, var(--qm-warning) 12%, var(--qm-bg-card));
+    color: var(--qm-text-primary);
+    border: 1px solid color-mix(in srgb, var(--qm-warning) 40%, transparent);
+    text-align: left;
+}
+
+.login-container .auth-alert-sub {
+    margin: 4px 0 0;
+    font-size: var(--qm-text-sm);
+    color: var(--qm-text-secondary);
+}
+
+.login-container .auth-alert-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.login-container .btn-login--sm {
+    width: auto;
+    min-height: var(--q-control-h-lg);
+    padding: 0 14px;
+    font-size: var(--q-control-font);
+    margin: 0;
+}
+
+.login-container .btn-ghost-sm {
+    background: none;
+    border: 1px solid var(--qm-border);
+    border-radius: var(--qm-radius-md);
+    color: var(--qm-text-secondary);
+    font: inherit;
+    font-size: var(--q-control-font-sm);
+    min-height: var(--q-control-h);
+    padding: 0 12px;
+    cursor: pointer;
+}
+
+.login-container .btn-ghost-sm:hover:not(:disabled) { border-color: var(--qm-primary); color: var(--qm-text-primary); }
+.login-container .btn-ghost-sm:disabled { opacity: 0.6; cursor: default; }
+
+/* The line under the registration heading that says what this page actually creates. */
+.login-container .auth-subnote {
+    margin: 10px 0 0;
+    font-size: var(--qm-text-sm);
+    color: var(--qm-text-secondary);
+    line-height: 1.45;
+}
+
+.login-container .login-footer__secondary {
+    margin-top: 2px;
+}
+
+/* The two doors, as buttons. Side by side where there is room, stacked on a phone. */
+.login-container .auth-doors {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.login-container .auth-door {
+    flex: 1 1 160px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: var(--q-control-h-lg);
+    padding: 0 14px;
+    border: 1px solid var(--qm-border);
+    border-radius: var(--qm-radius-md);
+    background: var(--qm-bg-card);
+    color: var(--qm-text-primary);
+    font-size: var(--q-control-font);
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.login-container .auth-door:hover {
+    border-color: var(--qm-primary);
+    color: var(--qm-primary);
 }
 
 .login-container .form-group {
@@ -427,6 +527,15 @@
     margin-top: 6px;
     display: block;
     animation: authValidationShake 0.3s ease-in-out;
+}
+
+/* A field the page has marked wrong. Bootstrap ships .is-invalid, but these pages restyle
+   .form-control heavily enough that its border loses, so the rule is stated here rather than
+   relied on. The message under the field says what is wrong; this only says which field. */
+.login-container .form-control.is-invalid,
+.login-container .form-control.is-invalid:focus {
+    border-color: var(--qm-danger);
+    box-shadow: none;
 }
 
 @keyframes authValidationShake {

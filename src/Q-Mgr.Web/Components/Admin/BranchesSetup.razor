@@ -18,122 +18,92 @@
     <PageTitle>Branches - Q-Mgr</PageTitle>
 }
 
-<div class="page-header">
-    @if (!Embedded)
-    {
-        <div class="header-content">
-            <h1><QIcon Name="building-fill" /> Branches</h1>
-            <p class="page-subtitle">Manage organization branches and locations</p>
-        </div>
-    }
-    <div class="header-actions">
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1><QIcon Name="building-fill" /> Branches</h1>
+        <p class="page-subtitle">Manage organization branches and locations</p>
+    </Title>
+    <Actions>
         @if (canCreate)
         {
-            <QButton Text="Add Branch" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" />
+            <QButton Text="Add branch" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" />
         }
-    </div>
-</div>
+    </Actions>
+</QPageActions>
 
-<div class="admin-content">
-    <QCard Class="mb-4" Title="All Branches" Icon="list-ul">
-        <HeaderActions>
-            <span class="branch-count">@branches.Count branches</span>
-        </HeaderActions>
-        <ChildContent>
-            @if (isLoading)
-            {
-                <div class="loading-state">
-                    <QSpinner Size="lg" />
-                    <span>Loading branches...</span>
-                </div>
-            }
-            else if (!branches.Any())
-            {
-                <div class="empty-state">
-                    <QIcon Name="building-fill" Size="xl" />
-                    <h4>No Branches Configured</h4>
-                    <p>Add your first branch to get started.</p>
-                    @if (canCreate)
-                    {
-                        <QButton Text="Add Your First Branch" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" />
-                    }
-                </div>
-            }
-            else
-            {
-                <div class="branches-grid">
+@if (isLoading)
+{
+    <div class="loading-container"><QSpinner Size="lg" /><span>Loading branches...</span></div>
+}
+else if (!branches.Any())
+{
+    <QEmptyState Icon="building" Title="No branches yet" Text="A branch is a place this organization serves from.">
+        <Action>
+            @if (canCreate) { <QButton Text="Add branch" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" /> }
+        </Action>
+    </QEmptyState>
+}
+else
+{
+    @* One row per branch. The queue figures (counters, services, today's tokens) are Core Queue's and
+       read as zeros that mean nothing to a tenant without it, so they show only with the module. *@
+    <QCard NoPadding="true">
+        <div class="table-wrap">
+            <table class="data-table q-stack">
+                <thead>
+                    <tr>
+                        <th>Branch</th><th>Code</th><th>Time zone</th>
+                        @if (hasCoreQueue) { <th class="num">Counters</th><th class="num">Services</th><th class="num">Today</th> }
+                        <th>Status</th><th></th>
+                    </tr>
+                </thead>
+                <tbody>
                     @foreach (var branch in branches)
                     {
-                        <div class="branch-card @(branch.IsActive ? "" : "inactive")">
-                            <div class="branch-header">
-                                <div class="branch-icon">
-                                    <QIcon Name="building-fill" />
-                                </div>
-                                <QBadge Text="@(branch.IsActive ? "Active" : "Inactive")" Variant="@(branch.IsActive ? "success" : "secondary")" />
-                            </div>
-                            <div class="branch-body">
-                                <h4>@branch.Name</h4>
-                                <p class="branch-code">Code: @branch.Code</p>
-                                @if (!string.IsNullOrEmpty(branch.Address))
-                                {
-                                    <p class="branch-address">
-                                        <QIcon Name="geo-alt-fill" />
-                                        @branch.Address
-                                    </p>
-                                }
-                                <p class="branch-timezone">
-                                    <QIcon Name="clock-fill" />
-                                    @branch.Timezone
-                                </p>
-                            </div>
-                            <div class="branch-stats">
-                                <div class="stat">
-                                    <span class="stat-value">@(branchStats.GetValueOrDefault(branch.Id)?.CounterCount ?? 0)</span>
-                                    <span class="stat-label">Counters</span>
-                                </div>
-                                <div class="stat">
-                                    <span class="stat-value">@(branchStats.GetValueOrDefault(branch.Id)?.ServiceCount ?? 0)</span>
-                                    <span class="stat-label">Services</span>
-                                </div>
-                                <div class="stat">
-                                    <span class="stat-value">@(branchStats.GetValueOrDefault(branch.Id)?.TodayTokens ?? 0)</span>
-                                    <span class="stat-label">Today</span>
-                                </div>
-                            </div>
-                            <div class="branch-footer">
+                        var stats = branchStats.GetValueOrDefault(branch.Id);
+                        <tr class="@(branch.IsActive ? "" : "row-muted")">
+                            <td>
+                                <strong>@branch.Name</strong>
+                                @if (!string.IsNullOrEmpty(branch.Address)) { <span class="cell-sub">@branch.Address</span> }
+                            </td>
+                            <td><QChip Text="@branch.Code" Variant="muted" Size="sm" /></td>
+                            <td>@branch.Timezone</td>
+                            @if (hasCoreQueue)
+                            {
+                                <td class="num">@(stats?.CounterCount ?? 0)</td>
+                                <td class="num">@(stats?.ServiceCount ?? 0)</td>
+                                <td class="num">@(stats?.TodayTokens ?? 0)</td>
+                            }
+                            <td><QChip Text="@(branch.IsActive ? "Active" : "Disabled")" Variant="@(branch.IsActive ? "success" : "muted")" Size="sm" /></td>
+                            <td class="row-actions">
                                 @if (canEdit)
                                 {
-                                    <QButton Icon="pencil-fill" Variant="ghost" Size="sm" OnClick="@(() => ShowEditDialog(branch))" Title="Edit" />
+                                    <QButton Icon="pencil" Variant="ghost" Size="sm" OnClick="@(() => ShowEditDialog(branch))" Title="Edit" />
                                 }
-                                @* Opening hours and booking rules, and nothing else lives behind
-                                   this button — so it is shown only to a tenant holding Core Queue.
-                                   Without that module the branch has no bookable slots to describe,
-                                   and this used to be a gear whose only function was a toast saying
-                                   the feature was coming. *@
+                                @* Opening hours and booking rules, and nothing else lives behind this
+                                   button — so it is shown only to a tenant holding Core Queue. *@
                                 @if (canEdit && hasCoreQueue)
                                 {
-                                    <QButton Icon="gear-fill" Variant="ghost" Size="sm" OnClick="@(() => OpenSchedulingDialog(branch))" Title="Opening hours &amp; booking" />
+                                    <QButton Icon="clock" Variant="ghost" Size="sm" OnClick="@(() => OpenSchedulingDialog(branch))" Title="Opening hours &amp; booking" />
                                 }
                                 @if (canEdit)
                                 {
                                     <QButton Icon="@(branch.IsActive ? "toggle-on" : "toggle-off")" Variant="ghost" Size="sm"
-                                              OnClick="@(() => ToggleBranch(branch))" Title="@(branch.IsActive ? "Disable" : "Enable")"
-                                              Class="@(branch.IsActive ? "btn-toggle-on" : "btn-toggle-off")" />
+                                             OnClick="@(() => ToggleBranch(branch))" Title="@(branch.IsActive ? "Disable" : "Enable")" />
                                 }
                                 @if (canDelete)
                                 {
-                                    <QButton Icon="trash-fill" Variant="ghost" Size="sm"
-                                              OnClick="@(() => DeleteBranch(branch))" Title="Delete" Disabled="@(branches.Count <= 1)"
-                                              Class="btn-delete" />
+                                    <QButton Icon="trash" Variant="ghost" Size="sm" OnClick="@(() => DeleteBranch(branch))"
+                                             Title="@(branches.Count <= 1 ? "The last branch cannot be deleted" : "Delete")" Disabled="@(branches.Count <= 1)" />
                                 }
-                            </div>
-                        </div>
+                            </td>
+                        </tr>
                     }
-                </div>
-            }
-        </ChildContent>
+                </tbody>
+            </table>
+        </div>
     </QCard>
-</div>
+}
 
 <!-- Add/Edit Dialog -->
 <QModal @bind-Visible="showDialog" Title="@(editingBranch == null ? "Add Branch" : "Edit Branch")" Size="md">
@@ -260,14 +230,14 @@
     .sched-section h4 {
         margin: 0 0 4px;
         font-family: var(--qm-font-display);
-        font-size: 15px;
+        font-size: var(--qm-text-md);
         font-weight: 700;
         color: var(--qm-text-primary);
     }
 
     .sched-note {
         display: flex; align-items: flex-start; gap: 8px;
-        margin: 8px 0 12px; font-size: 13px; color: var(--qm-text-secondary);
+        margin: 8px 0 12px; font-size: var(--qm-text-base); color: var(--qm-text-secondary);
     }
 
     .sched-days {
@@ -286,7 +256,7 @@
 
     /* Fixed width so the checkboxes and time boxes line up down the column rather than
        stepping in and out with the length of each day's name. */
-    .sched-day-name { min-width: 92px; font-weight: 600; font-size: 13px; }
+    .sched-day-name { min-width: 92px; font-weight: 600; font-size: var(--qm-text-base); }
 
     .sched-time {
         padding: 6px 8px;
@@ -294,11 +264,11 @@
         border-radius: var(--qm-radius-sm);
         background: var(--qm-bg-input);
         color: var(--qm-text-primary);
-        font: inherit; font-size: 13px;
+        font: inherit; font-size: var(--qm-text-base);
     }
 
-    .sched-dash { font-size: 13px; color: var(--qm-text-muted); }
-    .sched-closed-label { font-size: 13px; color: var(--qm-text-muted); font-style: italic; }
+    .sched-dash { font-size: var(--qm-text-base); color: var(--qm-text-muted); }
+    .sched-closed-label { font-size: var(--qm-text-base); color: var(--qm-text-muted); font-style: italic; }
 
     .sched-grid {
         display: grid;
@@ -336,91 +306,14 @@
         align-items: center;
         gap: 8px;
         margin: 0;
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
         color: var(--qm-text-primary);
-    }
-
-    .branch-count {
-        color: var(--qm-text-muted);
-        font-size: 14px;
-    }
-
-    .loading-state, .empty-state {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        padding: 60px 20px;
-        text-align: center;
-        color: var(--qm-text-muted);
-    }
-
-    .empty-state .rzi {
-        font-size: 64px;
-        margin-bottom: 16px;
-        opacity: 0.3;
-    }
-
-    .empty-state h4 {
-        margin: 0 0 8px;
-        color: var(--qm-text-primary);
-    }
-
-    .empty-state p {
-        margin: 0 0 24px;
-    }
-
-    .branches-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-        gap: 20px;
-    }
-
-    .branch-card {
-        background: var(--qm-bg-elevated);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-        overflow: hidden;
-        transition: all 0.3s ease;
-    }
-
-    .branch-card:hover {
-        border-color: var(--qm-primary);
-        box-shadow: var(--qm-shadow-md);
-    }
-
-    .branch-card.inactive {
-        opacity: 0.6;
-    }
-
-    .branch-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 20px;
-        background: var(--qm-bg-card);
-        border-bottom: 1px solid var(--qm-border);
-    }
-
-    .branch-icon {
-        width: 56px;
-        height: 56px;
-        background: var(--qm-gradient-primary);
-        border-radius: var(--qm-radius-xl);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .branch-icon .rzi {
-        font-size: 28px;
-        color: var(--qm-text-on-primary);
     }
 
     .branch-status {
         padding: 6px 14px;
         border-radius: var(--qm-radius-full);
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         font-weight: 600;
     }
 
@@ -432,102 +325,6 @@
     .branch-status.inactive {
         background: color-mix(in srgb, var(--qm-text-muted) 15%, transparent);
         color: var(--qm-text-muted);
-    }
-
-    .branch-body {
-        padding: 20px;
-    }
-
-    .branch-body h4 {
-        margin: 0 0 8px;
-        font-size: 20px;
-        color: var(--qm-text-primary);
-    }
-
-    .branch-code {
-        color: var(--qm-primary);
-        font-weight: 600;
-        font-size: 13px;
-        margin: 0 0 12px;
-    }
-
-    .branch-address, .branch-timezone {
-        display: flex;
-        align-items: flex-start;
-        gap: 8px;
-        color: var(--qm-text-secondary);
-        font-size: 14px;
-        margin: 8px 0;
-    }
-
-    .branch-address .rzi, .branch-timezone .rzi {
-        font-size: 18px;
-        color: var(--qm-text-muted);
-        flex-shrink: 0;
-    }
-
-    .branch-stats {
-        display: flex;
-        justify-content: space-around;
-        padding: 16px 20px;
-        background: var(--qm-bg-card);
-        border-top: 1px solid var(--qm-border);
-        border-bottom: 1px solid var(--qm-border);
-    }
-
-    .branch-stats .stat {
-        text-align: center;
-    }
-
-    .branch-stats .stat-value {
-        display: block;
-        font-size: 24px;
-        font-weight: 700;
-        color: var(--qm-primary);
-    }
-
-    .branch-stats .stat-label {
-        font-size: 11px;
-        color: var(--qm-text-muted);
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-    }
-
-    .branch-footer {
-        display: flex;
-        justify-content: flex-end;
-        padding: 12px 16px;
-    }
-
-    .branch-footer .rz-button {
-        color: var(--qm-text-secondary);
-    }
-
-    .branch-footer .rz-button:hover {
-        color: var(--qm-primary);
-        background: color-mix(in srgb, var(--qm-primary) 10%, transparent);
-    }
-
-    .branch-footer .btn-toggle-on {
-        color: var(--qm-success);
-    }
-
-    .branch-footer .btn-toggle-off {
-        color: var(--qm-text-muted);
-    }
-
-    .branch-footer .btn-delete {
-        color: var(--qm-danger);
-    }
-
-    .branch-footer .btn-delete:hover {
-        color: var(--qm-text-on-primary);
-        background: var(--qm-danger);
-    }
-
-    .branch-footer .btn-delete:disabled {
-        color: var(--qm-text-muted);
-        opacity: 0.5;
     }
 
     /* Dialog */
@@ -582,7 +379,7 @@
         display: block;
         margin-top: 4px;
         color: var(--qm-text-muted);
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
     }
 
     .dialog-footer {

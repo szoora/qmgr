@@ -1,0 +1,112 @@
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+
+@*
+    Minutes settings inside the Scoring Policy page (2026-09-20). Deliberately the same shape as
+    StaffDutyReportSettings beside it: an empty template means the defaults, "Customise" copies them
+    in to edit, and a section KEY is locked once answers are stored under it — the key is a wire
+    format, exactly as it is for a duty report.
+
+    The quorum default is 0 = NOT TRACKED, and that is the right default rather than timidity: a
+    school staff meeting normally has no constitutional quorum, and a page that announced "quorum
+    not met" at every meeting would teach people to ignore the one time it mattered.
+*@
+
+<QCard Title="Minutes" Icon="journal-text" Class="pol-card pol-card--wide">
+    <div class="form-row">
+        <QInput TValue="int" @bind-Value="@Defaults.QuorumPercent" Type="number" Min="0" Max="100" Label="Quorum (% of those expected)"
+                HelperText="0 = not tracked, which suits most staff meetings. Set it where a body has a constitutional quorum." />
+        <QInput TValue="int" @bind-Value="@Defaults.CirculateWithinDays" Type="number" Min="1" Max="60" Label="Circulate the draft within (days)"
+                HelperText="How soon after a meeting its draft minutes should go out for correction." />
+    </div>
+    <QCheckbox @bind-Value="@Defaults.PublishOnApproval" Label="Offer to publish the adopted minutes to the Library" />
+    <small class="pol-help">
+        The PDF is made in the browser, so adoption offers the print-and-publish step rather than doing it silently.
+        Publishing from there also attaches the file to the meeting as its minutes document.
+    </small>
+
+    <div class="drs-template">
+        <div class="drs-template__head">
+            <h4>Minutes sections @(customised ? "" : "(default)")</h4>
+            @if (customised)
+            {
+                <div class="drs-actions">
+                    <QButton Text="Add section" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@AddSection" Disabled="@(Policy.MinutesTemplate.Count >= 20)" />
+                    <QButton Text="Use defaults" Icon="arrow-counterclockwise" Variant="ghost" Size="sm" OnClick="@(() => Policy.MinutesTemplate.Clear())" />
+                </div>
+            }
+            else
+            {
+                <QButton Text="Customise" Icon="pencil" Variant="secondary" Size="sm" OnClick="@Customise" />
+            }
+        </div>
+        <p class="pol-help">Decisions and actions are captured as their own rows on every set of minutes and are not sections here.</p>
+        @foreach (var (section, index) in Shown.Select((s, i) => (s, i)))
+        {
+            var s = section;
+            var i = index;
+            <div class="drs-section">
+                @if (customised)
+                {
+                    <div class="form-row">
+                        <QInput TValue="string" @bind-Value="@s.Title" Label="Title" MaxLength="100" />
+                        <QInput TValue="string" @bind-Value="@s.Key" Label="Key" MaxLength="40" HelperText="Stored with each answer; do not change once minutes use it." Disabled="@originalKeys.Contains(s.Key)" />
+                    </div>
+                    <QInput TValue="string" @bind-Value="@s.Hint" Label="Hint" MaxLength="300" />
+                    <div class="drs-row-foot">
+                        <QCheckbox @bind-Value="@s.Required" Label="Required" />
+                        <QButton Icon="chevron-up" Variant="ghost" Size="sm" Title="Earlier" Disabled="@(i == 0)" OnClick="@(() => Move(i, -1))" />
+                        <QButton Icon="chevron-down" Variant="ghost" Size="sm" Title="Later" Disabled="@(i == Policy.MinutesTemplate.Count - 1)" OnClick="@(() => Move(i, 1))" />
+                        <QButton Icon="trash" Variant="ghost" Size="sm" Title="Remove" OnClick="@(() => Policy.MinutesTemplate.RemoveAt(i))" />
+                    </div>
+                }
+                else
+                {
+                    <div class="drs-readonly"><strong>@s.Title</strong>@if (s.Required) { <QChip Text="Required" Size="sm" Variant="muted" /> } <span class="pol-help">@s.Hint</span></div>
+                }
+            </div>
+        }
+    </div>
+</QCard>
+
+@code {
+    [Parameter, EditorRequired] public StaffPerformancePolicyDto Policy { get; set; } = new();
+
+    /// <summary>The default sections, as the API would use them. Passed in by the page so they are not a hand-typed twin.</summary>
+    [Parameter] public IReadOnlyList<DutyReportSectionDto> DefaultTemplate { get; set; } = Array.Empty<DutyReportSectionDto>();
+
+    private HashSet<string> originalKeys = new();
+    private StaffPerformancePolicyDto? loadedFrom;
+
+    private MinutesDefaultsDto Defaults => Policy.MinutesDefaults ??= new MinutesDefaultsDto();
+    private bool customised => Policy.MinutesTemplate is { Count: > 0 };
+    private IEnumerable<DutyReportSectionDto> Shown => customised ? Policy.MinutesTemplate : DefaultTemplate;
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(loadedFrom, Policy)) return;
+        loadedFrom = Policy;
+        Policy.MinutesTemplate ??= new();
+        originalKeys = Policy.MinutesTemplate.Select(s => s.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void Customise()
+    {
+        Policy.MinutesTemplate = DefaultTemplate.Select(s => s with { Choices = s.Choices.ToList() }).ToList();
+        originalKeys = DefaultTemplate.Select(s => s.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void AddSection()
+    {
+        var n = Policy.MinutesTemplate.Count + 1;
+        Policy.MinutesTemplate.Add(new DutyReportSectionDto { Key = $"section{n}", Title = $"Section {n}" });
+    }
+
+    private void Move(int index, int step)
+    {
+        var list = Policy.MinutesTemplate;
+        var target = index + step;
+        if (target < 0 || target >= list.Count) return;
+        (list[index], list[target]) = (list[target], list[index]);
+    }
+}

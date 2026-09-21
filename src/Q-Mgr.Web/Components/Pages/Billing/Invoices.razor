@@ -1,5 +1,5 @@
-@page "/billing/invoices"
 @using System.Text.Json
+@using QMgr.Application.DTOs
 @using QMgr.Web.Services
 @using QMgr.Web.Components.Shared.UI
 @inject HttpClient Http
@@ -8,184 +8,113 @@
 @inject JsonSerializerOptions JsonOptions
 @inject IJSRuntime JSRuntime
 @inject IToastService NotificationService
+@inject IPaymentApiService PaymentApi
+@using QMgr.Domain.Payments
 
-<PageTitle>Invoices - Q-Mgr</PageTitle>
+@*
+    Invoices — a section of the Billing hub (/billing?tab=invoices). No @page of its own: see
+    CLAUDE.md, "A hub owns the route; its sections own nothing". Rebuilt 2026-09-19 onto the shared
+    parts every other list uses: the filter bar on one row, a data table that stacks on a phone, the
+    shared empty state, and the Refresh button on the hub's title row through QPageActions.
+*@
 
-<div class="page-header">
-    <div class="header-left">
-        <h1>
-            <QIcon Name="receipt" Size="32" />
-            Invoices
-        </h1>
-        <div class="breadcrumb">
-            <a href="/billing/overview">Billing</a>
-            <span>/</span>
-            <span>Invoices</span>
-        </div>
-    </div>
-    <div class="header-right">
-        <QButton Icon="arrow-repeat"
-                 Text="Refresh"
-                 Variant="secondary"
-                 OnClick="@LoadInvoices"
-                 Disabled="@isLoading" />
-    </div>
-</div>
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1>Invoices</h1>
+        <p class="subtitle">Every invoice this account has been sent.</p>
+    </Title>
+    <Actions>
+        <QButton Icon="arrow-repeat" Text="Refresh" Variant="secondary" OnClick="@LoadInvoices" Disabled="@isLoading" />
+    </Actions>
+</QPageActions>
 
 @if (isLoading && !invoices.Any())
 {
-    <div class="loading-overlay">
-        <div class="webster-spinner"></div>
-        <span class="loading-text">Loading invoices...</span>
-    </div>
+    <div class="loading-container"><QSpinner Size="lg" /><span>Loading invoices...</span></div>
 }
 else if (hasError)
 {
-    <div class="error-card">
-        <QIcon Name="exclamation-triangle-fill" Size="48" />
-        <h3>Failed to Load Invoices</h3>
-        <p>@errorMessage</p>
-        <QButton Text="Try Again" Icon="arrow-repeat" Variant="primary" OnClick="@LoadInvoices" />
-    </div>
+    <QEmptyState Icon="exclamation-triangle-fill" Title="Invoices could not be loaded" Text="@errorMessage">
+        <Action><QButton Text="Try again" Icon="arrow-repeat" Variant="primary" OnClick="@LoadInvoices" /></Action>
+    </QEmptyState>
 }
 else
 {
-    <!-- Filters -->
-    <div class="filters-card">
-        <div class="filters-row">
-            <div class="filter-group">
-                <QSelect TValue="string" TItem="string" @bind-Value="filterStatus" @bind-Value:after="ApplyFilters"
-                         Items="@statusOptions" Label="Status" Placeholder="All Statuses" AllowClear="true" />
-            </div>
+    @* All time by default: a billing history is read to find one invoice, not to survey a period. *@
+    <QFilterBar>
+        <QSelect TValue="string" TItem="string" @bind-Value="filterStatus" @bind-Value:after="ApplyFilters"
+                 Items="@statusOptions" Placeholder="All statuses" AllowClear="true" />
+        <QDateRangePicker Range="@filterRange" RangeChanged="@OnRangeChanged"
+                          Presets="@DateRangePresets.WithAllTime" ShowCaption="false" />
+        @if (!string.IsNullOrEmpty(filterStatus) || !filterRange.IsAllTime)
+        {
+            <QButton Text="Clear" Icon="x-lg" Variant="ghost" Size="sm" OnClick="@ClearFilters" />
+        }
+    </QFilterBar>
 
-            @* The shared range control rather than two loose pickers: one change event per edit,
-               a normalized From/To that cannot be inverted, and the same presets every other
-               filtered list in the app offers. Includes "All time", which is the sensible default
-               for a billing history. *@
-            <div class="filter-group filter-group--range">
-                <QDateRangePicker Range="@filterRange"
-                                  RangeChanged="@OnRangeChanged"
-                                  Presets="@DateRangePresets.WithAllTime"
-                                  ShowCaption="false" />
-            </div>
-
-            <div class="filter-group">
-                <label>&nbsp;</label>
-                <QButton Text="Clear Filters"
-                         Icon="x-circle-fill"
-                         Variant="outline-secondary"
-                         OnClick="@ClearFilters" />
-            </div>
-        </div>
-    </div>
-
-    <!-- Invoices Table -->
     @if (filteredInvoices.Any())
     {
-        <div class="invoices-table-card">
-            <div class="table-responsive">
-                <table class="table invoices-table">
+        <QCard NoPadding="true">
+            <div class="table-wrap">
+                <table class="data-table q-stack">
                     <thead>
-                        <tr>
-                            <th>Invoice #</th>
-                            <th>Date</th>
-                            <th>Due Date</th>
-                            <th>Amount</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
+                        <tr><th>Invoice</th><th>Date</th><th>Due</th><th class="num">Amount</th><th>Status</th><th></th></tr>
                     </thead>
                     <tbody>
                         @foreach (var invoice in GetPaginatedInvoices())
                         {
-                            <tr class="invoice-row @(selectedInvoice?.Id == invoice.Id ? "selected" : "")"
-                                @onclick="@(() => SelectInvoice(invoice))">
-                                <td>
-                                    <strong>@invoice.InvoiceNumber</strong>
-                                </td>
+                            var overdue = invoice.Status == "Open" && invoice.DueDate < DateTime.UtcNow;
+                            <tr>
+                                <td><strong>@invoice.InvoiceNumber</strong></td>
                                 <td>@QDateFormat.D(invoice.InvoiceDate)</td>
+                                <td class="@(overdue ? "inv-overdue" : "")">@QDateFormat.D(invoice.DueDate)</td>
+                                <td class="num">@invoice.Currency @invoice.Total.ToString("N2")</td>
                                 <td>
-                                    @if (invoice.Status == "Overdue" && invoice.DueDate < DateTime.UtcNow)
-                                    {
-                                        <span class="text-danger">
-                                            @QDateFormat.D(invoice.DueDate)
-                                            <QIcon Name="exclamation-circle-fill" />
-                                        </span>
-                                    }
-                                    else
-                                    {
-                                        @QDateFormat.D(invoice.DueDate)
-                                    }
-                                </td>
-                                <td>
-                                    <strong>@invoice.Currency @invoice.Total.ToString("N2")</strong>
-                                    @if (invoice.Subtotal != invoice.Total)
-                                    {
-                                        <span class="qm-text-muted small d-block">
-                                            Subtotal: @invoice.Currency @invoice.Subtotal.ToString("N2")
-                                        </span>
-                                    }
-                                </td>
-                                <td>
-                                    <QBadge Variant="@GetStatusBadgeVariant(invoice.Status)" Text="@invoice.Status" />
+                                    <QChip Text="@invoice.Status" Variant="@GetStatusBadgeVariant(invoice.Status)" Size="sm" />
                                     @if (invoice.PaidAt.HasValue)
                                     {
-                                        <span class="qm-text-muted small d-block mt-1">
-                                            Paid @QDateFormat.C(invoice.PaidAt.Value)
-                                        </span>
+                                        <span class="inv-paid">Paid @QDateFormat.C(invoice.PaidAt.Value)</span>
                                     }
                                 </td>
-                                <td>
-                                    <div class="action-buttons">
-                                        <button class="q-btn q-btn--outline-primary q-btn--sm"
-                                                @onclick="@(() => ViewInvoice(invoice))"
-                                                @onclick:stopPropagation="true"
-                                                title="View Details">
-                                            <QIcon Name="eye-fill" />
-                                        </button>
-                                        @if (!string.IsNullOrEmpty(invoice.PdfUrl))
-                                        {
-                                            <button class="q-btn q-btn--outline-secondary q-btn--sm"
-                                                    @onclick="@(() => DownloadInvoice(invoice))"
-                                                    @onclick:stopPropagation="true"
-                                                    title="Download PDF">
-                                                <QIcon Name="download" />
-                                            </button>
-                                        }
-                                    </div>
+                                <td class="row-actions">
+                                    @if (CanPay(invoice))
+                                    {
+                                        <QButton Text="Pay" Icon="phone" Variant="primary" Size="sm" OnClick="@(() => OpenPay(invoice))" />
+                                    }
+                                    <QButton Icon="eye" Variant="ghost" Size="sm" Title="View invoice" OnClick="@(() => ViewInvoice(invoice))" />
+                                    @if (!string.IsNullOrEmpty(invoice.PdfUrl))
+                                    {
+                                        <QButton Icon="download" Variant="ghost" Size="sm" Title="Download PDF" OnClick="@(() => DownloadInvoice(invoice))" />
+                                    }
                                 </td>
                             </tr>
                         }
                     </tbody>
                 </table>
             </div>
+        </QCard>
 
-            <!-- Pagination -->
-            @if (TotalPages > 1)
-            {
-                <QPager Count="@filteredInvoices.Count" PageSize="@pageSize"
-                        PageIndex="@(currentPage - 1)" PageIndexChanged="@(i => currentPage = i + 1)"
-                        ItemLabel="invoices" Class="invoice-pager" />
-            }
-        </div>
+        @if (TotalPages > 1)
+        {
+            <QPager Count="@filteredInvoices.Count" PageSize="@pageSize"
+                    PageIndex="@(currentPage - 1)" PageIndexChanged="@(i => currentPage = i + 1)" ItemLabel="invoices" />
+        }
+    }
+    else if (invoices.Any())
+    {
+        <QEmptyState Icon="funnel" Title="Nothing matches" Text="No invoice matches these filters.">
+            <Action><QButton Text="Clear filters" Icon="x-lg" Variant="secondary" OnClick="@ClearFilters" /></Action>
+        </QEmptyState>
     }
     else
     {
-        <div class="empty-state">
-            <QIcon Name="receipt" Size="64" />
-            <h3>No Invoices Found</h3>
-            <p>@(string.IsNullOrEmpty(filterStatus) ? "You don't have any invoices yet." : "No invoices match your filters.")</p>
-            @if (!string.IsNullOrEmpty(filterStatus) || !filterRange.IsAllTime)
-            {
-                <QButton Text="Clear Filters" Icon="x-circle-fill" Variant="primary" OnClick="@ClearFilters" />
-            }
-        </div>
+        <QEmptyState Icon="receipt" Title="No invoices yet" Text="An invoice appears here each time a module is paid for." />
     }
 }
 
 <!-- Invoice Details Modal -->
 <QModal @bind-Visible="showInvoiceDetails"
-        Title="@(selectedInvoice != null ? $"Invoice Details — {selectedInvoice.InvoiceNumber}" : "Invoice Details")"
+        Title="@(selectedInvoice != null ? $"Invoice {selectedInvoice.InvoiceNumber}" : "Invoice")"
         Icon="receipt"
         Size="lg">
     <ChildContent>
@@ -193,10 +122,7 @@ else
         {
                     @if (isLoadingDetails)
                     {
-                        <div class="text-center py-4">
-                            <div class="webster-spinner"></div>
-                            <p class="qm-text-muted mt-2">Loading invoice details...</p>
-                        </div>
+                        <div class="loading-container"><QSpinner /><span>Loading the invoice...</span></div>
                     }
                     else if (invoiceDetails != null)
                     {
@@ -214,7 +140,7 @@ else
                                     <h6 class="invoice-to-heading">Invoice Information</h6>
                                     <div class="invoice-to-number">
                                         Invoice No: <strong>@invoiceDetails.InvoiceNumber</strong>
-                                        <QBadge Variant="@GetStatusBadgeVariant(invoiceDetails.Status)" Text="@invoiceDetails.Status" />
+                                        <QChip Text="@invoiceDetails.Status" Variant="@GetStatusBadgeVariant(invoiceDetails.Status)" Size="sm" />
                                     </div>
 
                                     @if (!string.IsNullOrEmpty(invoiceDetails.BillingName))
@@ -314,124 +240,77 @@ else
     </ChildContent>
     <FooterContent>
         <QButton Text="Close" Icon="x-lg" Variant="secondary" OnClick="@CloseInvoiceDetails" />
+        @if (selectedInvoice != null && CanPay(selectedInvoice))
+        {
+            <QButton Text="Pay now" Icon="phone" Variant="primary" OnClick="@PayFromDetails" />
+        }
         @if (selectedInvoice != null && !string.IsNullOrEmpty(selectedInvoice.PdfUrl))
         {
-            <QButton Text="Download PDF"
-                     Icon="download"
-                     Variant="primary"
-                     OnClick="@(() => DownloadInvoice(selectedInvoice))" />
+            <QButton Text="Download PDF" Icon="download" Variant="primary" OnClick="@(() => DownloadInvoice(selectedInvoice))" />
+        }
+    </FooterContent>
+</QModal>
+
+<!-- Pay an invoice by Mobile Money -->
+<QModal Visible="@(payTarget != null)" VisibleChanged="@((bool v) => { if (!v) ClosePay(); })" Title="@($"Pay {payTarget?.InvoiceNumber}")" Icon="phone" Size="sm">
+    <ChildContent>
+        @if (payTarget != null)
+        {
+            <p class="form-required-note"><span class="q-input__required">*</span> Required</p>
+            <MobileMoneyNumberField @bind-Value="payPhone" Disabled="@(paySubmitting || payReference != null)" ShowErrors="@payAttempted" ServerError="@payFieldError" />
+            <div class="inv-due">
+                <span>Amount due</span>
+                <strong>@payTarget.Currency @AmountDue(payTarget).ToString("N0")</strong>
+            </div>
+            @if (payReference is { } reference)
+            {
+                <PaymentWait ReferenceId="@reference" Poll="@PaymentApi.GetPaymentAsync" PhoneDisplay="@UgandaPhone.Display(payPhone)" OnSettled="@OnPaySettled" />
+            }
+            else if (!string.IsNullOrEmpty(payError))
+            {
+                <p class="form-error"><QIcon Name="exclamation-circle" /> @payError</p>
+            }
+        }
+    </ChildContent>
+    <FooterContent>
+        @if (payReference != null)
+        {
+            <QButton Text="Close" Variant="secondary" OnClick="@ClosePay" />
+            @if (payFailed)
+            {
+                <QButton Text="Try again" Icon="arrow-repeat" Variant="primary" OnClick="@RetryPay" />
+            }
+        }
+        else
+        {
+            <QButton Text="Cancel" Variant="secondary" OnClick="@ClosePay" Disabled="@paySubmitting" />
+            <QButton Text="@PayButtonText" Icon="phone" Variant="primary" OnClick="@SubmitPay" Loading="@paySubmitting" Disabled="@paySubmitting" />
         }
     </FooterContent>
 </QModal>
 
 <style>
-    .filters-card {
-        background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-        padding: 20px;
-        margin-bottom: 24px;
-    }
+    .inv-due { display: flex; justify-content: space-between; align-items: baseline; margin-top: var(--qm-field-gap, 12px);
+               padding-top: var(--qm-field-gap, 12px); border-top: 1px solid var(--qm-border); font-size: var(--qm-text-sm); }
+    .inv-due strong { font-variant-numeric: tabular-nums; }
+    /* The table itself is the shared .data-table; these are its two notes. */
+    .inv-overdue { color: var(--qm-danger); font-weight: 600; }
+    .inv-paid { display: block; margin-top: 2px; font-size: var(--qm-text-xs); color: var(--qm-text-muted); }
 
-    .filters-row {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 16px;
-    }
 
-    .filter-group {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-    }
-
-    .filter-group label {
-        font-size: 13px;
-        font-weight: 600;
-        color: var(--qm-text-secondary);
-        margin: 0;
-    }
-
-    /* The range control holds two fields and a preset row, so it gets more of the grid than a
-       single select. min-width:0 so it can still shrink — a grid child that refuses to is what
-       makes the whole page scroll sideways. */
-    .filter-group--range {
+    /* The range control holds two fields and a preset row {
         grid-column: span 2;
         min-width: 0;
     }
 
     @@media (max-width: 720px) {
-        .filter-group--range { grid-column: span 1; }
-    }
 
-    .invoices-table-card {
-        background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-        overflow: hidden;
-    }
-
-    .invoices-table {
-        margin: 0;
-        /* Bootstrap's own .table sets --bs-table-bg/--bs-body-color, which render as
-           a plain white table on dark/black text regardless of our dark theme unless
-           explicitly overridden here — this table was rendering white-on-dark-card. */
-        --bs-table-bg: transparent;
-        --bs-table-color: var(--qm-text-primary);
-        color: var(--qm-text-primary);
-        background: transparent;
-    }
-
-    .invoices-table thead {
-        background: var(--qm-bg-elevated);
-    }
-
-    .invoices-table tbody tr {
-        background: transparent;
-        color: var(--qm-text-primary);
-    }
-
-    .invoices-table th {
-        font-weight: 600;
-        color: var(--qm-text-secondary);
-        font-size: 13px;
-        text-transform: uppercase;
-        border-bottom: 2px solid var(--qm-border);
-        padding: 16px;
-        background: transparent;
-    }
-
-    .invoices-table td {
-        padding: 16px;
-        vertical-align: middle;
-        background: transparent;
-        color: var(--qm-text-primary);
-        border-color: var(--qm-border);
-    }
-
-    .invoice-row {
-        cursor: pointer;
-        transition: background 0.2s ease;
-    }
-
-    .invoice-row:hover {
-        background: var(--qm-bg-card-hover);
-    }
-
-    .invoice-row.selected {
-        background: var(--qm-primary-light);
-        border-left: 3px solid var(--qm-primary);
-    }
-
-    .action-buttons {
-        display: flex;
-        gap: 8px;
     }
 
     .badge {
         padding: 6px 12px;
         border-radius: var(--qm-radius-full);
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         font-weight: 600;
         text-transform: uppercase;
     }
@@ -459,52 +338,6 @@ else
     /* QPager, sitting in the card's footer position the hand-rolled pager used to occupy. */
     .invoice-pager { padding: 16px 20px 20px; margin-top: 0; }
 
-    .empty-state {
-        background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-        padding: 64px 24px;
-        text-align: center;
-    }
-
-    .empty-state i {
-        color: var(--qm-text-muted);
-        margin-bottom: 16px;
-    }
-
-    .empty-state h3 {
-        margin: 16px 0 8px 0;
-        color: var(--qm-text-primary);
-    }
-
-    .empty-state p {
-        color: var(--qm-text-secondary);
-        margin-bottom: 24px;
-    }
-
-    .error-card {
-        background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-        padding: 48px;
-        text-align: center;
-    }
-
-    .error-card i {
-        color: var(--qm-danger);
-        margin-bottom: 16px;
-    }
-
-    .error-card h3 {
-        margin: 16px 0 8px 0;
-        color: var(--qm-text-primary);
-    }
-
-    .error-card p {
-        color: var(--qm-text-secondary);
-        margin-bottom: 24px;
-    }
-
     .invoice-details {
         display: flex;
         flex-direction: column;
@@ -523,7 +356,7 @@ else
         display: flex;
         align-items: center;
         gap: 8px;
-        font-size: 20px;
+        font-size: var(--qm-text-xl);
         font-weight: 700;
         color: var(--qm-text-primary);
         font-family: var(--qm-font-display);
@@ -531,12 +364,12 @@ else
 
     .invoice-from-logo .q-icon {
         color: var(--qm-primary);
-        font-size: 24px;
+        font-size: var(--qm-text-stat);
     }
 
     .invoice-from-tagline {
         margin: 8px 0 0;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
     }
 
@@ -546,7 +379,7 @@ else
 
     .invoice-to-heading {
         margin: 0 0 8px;
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         font-weight: 600;
         color: var(--qm-text-secondary);
     }
@@ -556,21 +389,21 @@ else
         align-items: center;
         justify-content: flex-end;
         gap: 8px;
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-primary);
         margin-bottom: 12px;
     }
 
     .invoice-to-billto {
         margin: 0 0 4px;
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-primary);
     }
 
     .invoice-to-billto small {
         color: var(--qm-text-muted);
         text-transform: uppercase;
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         font-weight: 600;
         margin-right: 4px;
     }
@@ -579,7 +412,7 @@ else
         list-style: none;
         margin: 0 0 12px;
         padding: 0;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
         line-height: 1.6;
     }
@@ -588,7 +421,7 @@ else
         display: flex;
         flex-direction: column;
         gap: 4px;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
     }
 
@@ -600,14 +433,14 @@ else
 
     .invoice-line-items h6 {
         margin: 0 0 12px 0;
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         font-weight: 600;
         color: var(--qm-text-secondary);
     }
 
     .line-items-content {
         margin: 0;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-primary);
         white-space: pre-wrap;
         word-wrap: break-word;
@@ -616,12 +449,12 @@ else
     .line-items-table {
         width: 100%;
         border-collapse: collapse;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
     }
 
     .line-items-table th {
         text-transform: uppercase;
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         font-weight: 600;
         color: var(--qm-text-muted);
         padding: 0 0 8px;
@@ -651,11 +484,11 @@ else
         display: flex;
         justify-content: space-between;
         align-items: center;
-        font-size: 14px;
+        font-size: var(--qm-text-base);
     }
 
     .amount-row.total {
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
         padding-top: 12px;
         border-top: 2px solid var(--qm-border);
         margin-top: 8px;
@@ -667,9 +500,6 @@ else
     }
 
     @@media (max-width: 768px) {
-        .filters-row {
-            grid-template-columns: 1fr;
-        }
 
         .invoice-document-header {
             grid-template-columns: 1fr;
@@ -703,23 +533,162 @@ else
     // Defaults to All time: a billing history is read to find one invoice, not to survey a period,
     // so hiding older invoices behind a default window would be actively unhelpful.
     private DateRange filterRange = DateRange.AllTime();
-    private List<string> statusOptions = new() { "Paid", "Pending", "Overdue", "Failed" };
+    // The ledger's own statuses (InvoiceStatus). This list offered "Pending", "Overdue" and "Failed",
+    // none of which an invoice is ever given, so filtering by them always came back empty.
+    private List<string> statusOptions = new() { "Open", "Paid", "Void", "Uncollectible" };
 
     // Pagination
     private int currentPage = 1;
     private int pageSize = 20;
     private int TotalPages => (int)Math.Ceiling(filteredInvoices.Count / (double)pageSize);
 
-    protected override async Task OnInitializedAsync()
+    /// <summary>True when the Billing hub hosts this section (always, since 2026-09-19).</summary>
+    [Parameter] public bool Embedded { get; set; }
+
+    // ------------------------------------------------------------------ paying an invoice (2026-09-19)
+
+    private bool canManage;
+    private bool mobileMoneyOn;
+    private string? renewalNumber;
+
+    private InvoiceDto? payTarget;
+    private string? payPhone;
+    private bool payAttempted;
+    private bool paySubmitting;
+    private string? payError;
+    private string? payFieldError;
+    private Guid? payReference;
+    private bool payFailed;
+
+    private static decimal AmountDue(InvoiceDto invoice) => Math.Max(0, invoice.Total - invoice.AmountPaid);
+
+    private string PayButtonText => payTarget == null ? "Send prompt" : $"Send prompt · {payTarget.Currency} {AmountDue(payTarget):N0}";
+
+    /// <summary>An open UGX invoice with something left to pay, for a holder of billing.manage, when
+    /// Mobile Money is switched on — exactly what POST invoices/{id}/pay accepts.</summary>
+    private bool CanPay(InvoiceDto invoice) =>
+        canManage && mobileMoneyOn && invoice.Status == "Open" && invoice.Currency == "UGX" && AmountDue(invoice) > 0;
+
+    private void PayFromDetails()
     {
-        var hasPermission = await PermissionService.HasPermissionAsync("billing.view");
-        if (!hasPermission)
+        var target = selectedInvoice;
+        CloseInvoiceDetails();
+        OpenPay(target);
+    }
+
+    private void OpenPay(InvoiceDto? invoice)
+    {
+        if (invoice == null) return;
+        payTarget = invoice;
+        payPhone = string.IsNullOrEmpty(renewalNumber) ? null : UgandaPhone.Display(renewalNumber);
+        payAttempted = false;
+        paySubmitting = false;
+        payError = null;
+        payFieldError = null;
+        payReference = null;
+        payFailed = false;
+    }
+
+    private void RetryPay()
+    {
+        payReference = null;
+        payFailed = false;
+        payError = null;
+    }
+
+    private async Task SubmitPay()
+    {
+        if (payTarget == null || paySubmitting) return;
+        payAttempted = true;
+        payError = null;
+        payFieldError = null;
+        if (!MobileMoneyNumberField.IsValid(payPhone))
         {
-            Navigation.NavigateTo("/unauthorized");
+            payError = "Complete the fields marked in red.";
             return;
         }
 
+        paySubmitting = true;
+        try
+        {
+            var result = await PaymentApi.PayInvoiceAsync(payTarget.Id, payPhone!.Trim());
+            if (result.State == PaymentStates.Succeeded)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Invoice paid", result.Message);
+                payTarget = null;
+                await LoadInvoices();
+                return;
+            }
+            payReference = result.ReferenceId;
+            if (payReference == null) payError = result.Message;
+        }
+        catch (ApiFieldException ex)
+        {
+            payFieldError = ex.For("phoneNumber") ?? (ex.Code == "INVALID_PHONE" ? ex.Message : null);
+            payError = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            payError = ex.Message;
+        }
+        finally
+        {
+            paySubmitting = false;
+        }
+    }
+
+    private async Task OnPaySettled(PaymentStatusDto status)
+    {
+        if (status.State == PaymentStates.Succeeded)
+        {
+            NotificationService.Notify(ToastSeverity.Success, "Invoice paid", $"{payTarget?.InvoiceNumber} is paid. A receipt is on its way by email.");
+            payTarget = null;
+            payReference = null;
+        }
+        else
+        {
+            payFailed = true;
+        }
         await LoadInvoices();
+    }
+
+    private void ClosePay()
+    {
+        if (paySubmitting) return;
+        if (payReference != null && !payFailed)
+            NotificationService.Notify(ToastSeverity.Info, "Payment still open", "If you approve the prompt, the invoice is marked paid on its own.");
+        payTarget = null;
+        payReference = null;
+        payFailed = false;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // The hub gates this tab on billing.view; the section does not redirect on its own.
+        canManage = await PermissionService.HasPermissionAsync(Permissions.BillingManage);
+        if (canManage)
+        {
+            try
+            {
+                mobileMoneyOn = (await PaymentApi.GetProvidersAsync()).MobileMoneyEnabled;
+                if (mobileMoneyOn) renewalNumber = (await PaymentApi.GetRenewalNumberAsync()).PhoneNumber;
+            }
+            catch
+            {
+                // Pay stays hidden: the invoices themselves still load and read correctly.
+                mobileMoneyOn = false;
+            }
+        }
+        await LoadInvoices();
+
+        // BillingLinks.Invoice(id) opens one invoice: the overview's "view" link and any email that
+        // names an invoice. Nothing read this key before 2026-09-19, so the link opened the list.
+        var query = System.Web.HttpUtility.ParseQueryString(new Uri(Navigation.Uri).Query);
+        if (Guid.TryParse(query["invoice"], out var invoiceId)
+            && invoices.FirstOrDefault(i => i.Id == invoiceId) is { } target)
+        {
+            await ViewInvoice(target);
+        }
     }
 
     private async Task LoadInvoices()
@@ -878,33 +847,11 @@ else
     private string GetStatusBadgeVariant(string status) => status.ToLower() switch
     {
         "paid" => "success",
-        "pending" => "warning",
-        "overdue" => "danger",
-        "failed" => "secondary",
-        _ => "secondary"
+        "open" => "warning",
+        "uncollectible" => "danger",
+        _ => "muted"
     };
 
-    // DTO
-    private record InvoiceDto
-    {
-        public Guid Id { get; init; }
-        public string InvoiceNumber { get; init; } = "";
-        public string Status { get; init; } = "";
-        public string Currency { get; init; } = "";
-        public decimal Subtotal { get; init; }
-        public decimal TaxAmount { get; init; }
-        public decimal Total { get; init; }
-        public decimal AmountPaid { get; init; }
-        public DateTime InvoiceDate { get; init; }
-        public DateTime DueDate { get; init; }
-        public DateTime? PaidAt { get; init; }
-        public string? PdfUrl { get; init; }
-        public string? LineItems { get; init; }
-        public string? BillingName { get; init; }
-        public string? BillingEmail { get; init; }
-        public string? OrganizationAddress { get; init; }
-        public string? OrganizationPhone { get; init; }
-    }
 
     private record LineItem
     {

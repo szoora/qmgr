@@ -25,6 +25,12 @@
        component has to hardcode `color: white` (which reads as an unthemed literal
        in audits and can't be tuned centrally if the fill ever changes). */
     --qm-text-on-primary: #ffffff;
+    /* Text on the AMBER fill, which is a different question from text on the brand fill.
+       --qm-text-on-primary is derived from the tenant's own brand colour by BrandPalette, so a
+       dark-branded tenant got #ffffff on #f59e0b: about 1.9:1, unreadable, and the reason a
+       filled warning button looked washed out. Amber is the same in both themes and is always
+       light, so its foreground is always near-black. */
+    --qm-text-on-warning: #1f1f1f;
     /* Literal white surface that must stay white regardless of theme (QR-code quiet
        zone, print-preview paper). Not a themed background — use --qm-bg-card for that. */
     --qm-surface-white: #ffffff;
@@ -62,14 +68,21 @@
     --qm-success: #16a34a;
     --qm-warning: #f59e0b;
     --qm-danger: #dc2626;
-    --qm-info: #8c2f52;
+    /* "Info" is the BRAND-toned status, not a hue of its own — it shipped as a second copy of the
+       wine literal. That made it invisible to white-labelling: a rebranded tenant got green chrome
+       with wine "info" tiles and chips scattered through it, which reads as a bug rather than as a
+       palette. Pointing it at the token makes it follow the tenant, and changes nothing at all for
+       an unbranded install, where the token IS that wine. Found 2026-09-20 by
+       scripts/e2e/browser/white-label-ui.mjs, which sweeps every visible element for the shipped
+       wine while a tenant is branded. */
+    --qm-info: var(--qm-primary);
     /* Bare R,G,B triples of the four status colors (same role as --qm-primary-rgb) so
        tinted backgrounds can be written rgba(var(--qm-success-rgb), 0.12) instead of a
        hardcoded rgba(16,185,129,…) that ignores the theme's actual status color. */
     --qm-success-rgb: 22, 163, 74;
     --qm-warning-rgb: 245, 158, 11;
     --qm-danger-rgb: 220, 38, 38;
-    --qm-info-rgb: 140, 47, 82;
+    --qm-info-rgb: var(--qm-primary-rgb);
 
     /* Third-party brand colors (share targets / media providers). These are fixed by
        the brands themselves and deliberately identical in both themes — defined once
@@ -201,11 +214,11 @@
     --qm-success: #10b981;
     --qm-warning: #f59e0b;
     --qm-danger: #ef4444;
-    --qm-info: #7a2847;
+    --qm-info: var(--qm-primary);
     --qm-success-rgb: 16, 185, 129;
     --qm-warning-rgb: 245, 158, 11;
     --qm-danger-rgb: 239, 68, 68;
-    --qm-info-rgb: 122, 40, 71;
+    --qm-info-rgb: var(--qm-primary-rgb);
 
     /* Student Welfare Ledger — darker than the dark-theme values above for contrast on a
        light background; same three hues (gold/clay/teal), not a different palette per theme. */
@@ -657,7 +670,7 @@ a:hover {
 
 .rz-panelmenu-header > a .rz-icon {
     color: var(--qm-primary) !important;
-    font-size: 20px;
+    font-size: var(--qm-text-xl);
 }
 
 .rz-panelmenu-item {
@@ -717,7 +730,7 @@ a:hover {
     transition: var(--qm-transition) !important;
     text-transform: none !important;
     letter-spacing: 0.02em;
-    font-size: 14px !important;
+    font-size: var(--qm-text-base) !important;
     padding: 10px 20px !important;
 }
 
@@ -822,7 +835,7 @@ a:hover {
     color: var(--qm-text-secondary) !important;
     font-weight: 600;
     text-transform: uppercase;
-    font-size: 11px;
+    font-size: var(--qm-text-xs);
     letter-spacing: 0.1em;
     border-bottom: 1px solid var(--qm-border) !important;
     padding: 16px !important;
@@ -863,7 +876,7 @@ a:hover {
 
 .rz-pager .rz-pagesize-text {
     color: var(--qm-text-secondary) !important;
-    font-size: 13px !important;
+    font-size: var(--qm-text-base) !important;
 }
 
 .rz-pager-element,
@@ -921,7 +934,7 @@ a:hover {
 .rz-label {
     color: var(--qm-text-secondary) !important;
     font-weight: 500;
-    font-size: 13px;
+    font-size: var(--qm-text-base);
 }
 
 /* Dropdown Panel */
@@ -973,7 +986,7 @@ a:hover {
     border-radius: var(--qm-radius-full) !important;
     font-weight: 600;
     padding: 6px 14px !important;
-    font-size: 12px !important;
+    font-size: var(--qm-text-sm) !important;
 }
 
 .rz-badge-success {
@@ -1236,7 +1249,7 @@ a:hover {
 }
 
 .stats-card .stats-change {
-    font-size: 13px;
+    font-size: var(--qm-text-base);
     margin-top: 8px;
     display: inline-flex;
     align-items: center;
@@ -1286,7 +1299,7 @@ a:hover {
     color: white;
     padding: 16px 20px;
     font-weight: 600;
-    font-size: 16px;
+    font-size: var(--qm-text-md);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -1323,7 +1336,7 @@ a:hover {
 }
 
 .queue-current-token .token-label {
-    font-size: 12px;
+    font-size: var(--qm-text-sm);
     color: var(--qm-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.15em;
@@ -1338,7 +1351,7 @@ a:hover {
     padding: 14px 28px;
     border-radius: var(--qm-radius-lg);
     font-weight: 700;
-    font-size: 20px;
+    font-size: var(--qm-text-xl);
     min-width: 100px;
     transition: var(--qm-transition);
     font-family: var(--qm-font-display);
@@ -1426,7 +1439,7 @@ a:hover {
 }
 
 .kiosk-header .tagline {
-    font-size: 18px;
+    font-size: var(--qm-text-lg);
     color: var(--qm-text-secondary);
 }
 
@@ -1502,7 +1515,7 @@ a:hover {
 }
 
 .kiosk-service-card .service-name {
-    font-size: 22px;
+    font-size: var(--qm-text-stat);
     font-weight: 600;
     color: var(--qm-text-primary);
     margin-bottom: 8px;
@@ -1510,7 +1523,7 @@ a:hover {
 }
 
 .kiosk-service-card .service-description {
-    font-size: 14px;
+    font-size: var(--qm-text-base);
     color: var(--qm-text-secondary);
     line-height: 1.5;
 }
@@ -1519,13 +1532,13 @@ a:hover {
     margin-top: 20px;
     padding-top: 20px;
     border-top: 1px solid var(--qm-border);
-    font-size: 13px;
+    font-size: var(--qm-text-base);
     color: var(--qm-text-muted);
 }
 
 .kiosk-service-card .service-wait strong {
     color: var(--qm-primary);
-    font-size: 18px;
+    font-size: var(--qm-text-lg);
 }
 
 /* Token Print Receipt */
@@ -1557,7 +1570,7 @@ a:hover {
 }
 
 .token-receipt .receipt-logo {
-    font-size: 28px;
+    font-size: var(--qm-text-stat);
     font-weight: 700;
     background: var(--qm-gradient-primary);
     -webkit-background-clip: text;
@@ -1576,14 +1589,14 @@ a:hover {
 }
 
 .token-receipt .receipt-service {
-    font-size: 20px;
+    font-size: var(--qm-text-xl);
     font-weight: 600;
     color: var(--qm-text-primary);
     margin-bottom: 8px;
 }
 
 .token-receipt .receipt-info {
-    font-size: 14px;
+    font-size: var(--qm-text-base);
     color: var(--qm-text-secondary);
     margin-bottom: 24px;
 }
@@ -1597,7 +1610,7 @@ a:hover {
 }
 
 .token-receipt .receipt-footer {
-    font-size: 12px;
+    font-size: var(--qm-text-sm);
     color: var(--qm-text-muted);
     border-top: 1px dashed var(--qm-border);
     padding-top: 20px;
@@ -1632,7 +1645,7 @@ a:hover {
 }
 
 .customer-display-header .datetime {
-    font-size: 28px;
+    font-size: var(--qm-text-stat);
     color: var(--qm-text-secondary);
     font-family: var(--qm-font-mono);
 }
@@ -1716,7 +1729,7 @@ a:hover {
 
 .waiting-section h3 {
     color: var(--qm-text-primary);
-    font-size: 22px;
+    font-size: var(--qm-text-stat);
     text-transform: uppercase;
     letter-spacing: 0.15em;
     margin-bottom: 24px;
@@ -1765,14 +1778,14 @@ a:hover {
 }
 
 .waiting-list .token {
-    font-size: 28px;
+    font-size: var(--qm-text-stat);
     font-weight: 700;
     color: var(--qm-primary);
     font-family: var(--qm-font-display);
 }
 
 .waiting-list .service {
-    font-size: 14px;
+    font-size: var(--qm-text-base);
     color: var(--qm-text-secondary);
 }
 
@@ -1795,7 +1808,7 @@ a:hover {
 .counter-terminal-header h2 {
     color: var(--qm-text-primary);
     margin: 0 0 12px 0;
-    font-size: 26px;
+    font-size: var(--qm-text-stat);
     font-family: var(--qm-font-display);
 }
 
@@ -1806,7 +1819,7 @@ a:hover {
     padding: 8px 20px;
     background: rgba(22, 163, 74, 0.15);
     border-radius: var(--qm-radius-full);
-    font-size: 14px;
+    font-size: var(--qm-text-base);
     color: var(--qm-success);
     font-weight: 600;
 }
@@ -1834,7 +1847,7 @@ a:hover {
 }
 
 .current-customer .label {
-    font-size: 14px;
+    font-size: var(--qm-text-base);
     color: var(--qm-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.15em;
@@ -1850,13 +1863,13 @@ a:hover {
 }
 
 .current-customer .customer-name {
-    font-size: 22px;
+    font-size: var(--qm-text-stat);
     color: var(--qm-text-primary);
     margin-top: 16px;
 }
 
 .current-customer .service-type {
-    font-size: 14px;
+    font-size: var(--qm-text-base);
     color: var(--qm-text-secondary);
     margin-top: 8px;
 }
@@ -1870,7 +1883,7 @@ a:hover {
 .terminal-action-btn {
     padding: 24px;
     border-radius: var(--qm-radius-lg);
-    font-size: 16px;
+    font-size: var(--qm-text-md);
     font-weight: 600;
     border: none;
     cursor: pointer;
@@ -1928,7 +1941,7 @@ a:hover {
 }
 
 .section-title h2 {
-    font-size: 28px;
+    font-size: var(--qm-text-stat);
     font-weight: 600;
     color: var(--qm-text-primary);
     margin: 0;
@@ -1966,7 +1979,7 @@ a:hover {
      ::before                 a 300px radial gradient blob in the top-right corner — the last
                               decorative gradient in the app, missed by the 2026-08-19 flattening
                               because it is drawn by a pseudo-element rather than a background
-     h1 { font-size: 28px }   equal specificity to layout.css's .qm-main h1 { 24px } and LATER in
+     h1 { font-size: var(--qm-text-stat)}   equal specificity to layout.css's .qm-main h1 { 24px } and LATER in
                               the cascade, so the title reduction of 2026-09-18 never once reached
                               the screen. Read off document.styleSheets in the running page.
 
@@ -1988,7 +2001,7 @@ a:hover {
     margin: 0;
     padding: 0;
     background: transparent;
-    font-size: 14px;
+    font-size: var(--qm-text-base);
     position: relative;
 }
 
@@ -2012,7 +2025,7 @@ a:hover {
 }
 
 .chart-container h3 {
-    font-size: 18px;
+    font-size: var(--qm-text-lg);
     margin-bottom: 24px;
     color: var(--qm-text-primary);
     font-family: var(--qm-font-display);
@@ -2077,7 +2090,7 @@ a:hover {
 
 .loading-overlay .loading-text {
     margin-top: 24px;
-    font-size: 16px;
+    font-size: var(--qm-text-md);
     color: var(--qm-text-secondary);
 }
 

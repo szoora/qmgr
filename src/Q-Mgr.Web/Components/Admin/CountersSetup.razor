@@ -14,100 +14,91 @@
     <PageTitle>Counters Setup - Q-Mgr</PageTitle>
 }
 
-<div class="page-header">
-    @if (!Embedded)
-    {
-        <div class="header-content">
-            <h1><QIcon Name="door-open-fill" /> Counters Setup</h1>
-            <p class="page-subtitle">Manage service counters for your branch</p>
-        </div>
-    }
-    <div class="header-actions">
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1><QIcon Name="door-open-fill" /> Counters Setup</h1>
+        <p class="page-subtitle">Manage service counters for your branch</p>
+    </Title>
+    <Actions>
         @if (canCreate)
         {
-            <QButton Text="Add Counter" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" />
+            <QButton Text="Add counter" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" />
         }
-    </div>
-</div>
+    </Actions>
+</QPageActions>
 
-<div class="admin-content">
-    <QCard Class="mb-4" Title="Counters" Icon="list-ul">
-        <HeaderActions>
-            <span class="counter-count">@counters.Count(c => c.IsActive) active / @counters.Count total</span>
-        </HeaderActions>
-        <ChildContent>
-            @if (isLoading)
-            {
-                <div class="loading-state">
-                    <QSpinner Size="lg" />
-                    <span>Loading counters...</span>
-                </div>
-            }
-            else if (!counters.Any())
-            {
-                <div class="empty-state">
-                    <QIcon Name="door-open-fill" Size="xl" />
-                    <h4>No Counters Configured</h4>
-                    <p>Add counters to allow staff to serve customers.</p>
-                    @if (canCreate)
-                    {
-                        <QButton Text="Add Your First Counter" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" />
-                    }
-                </div>
-            }
-            else
-            {
-                <div class="counters-grid">
+@if (isLoading)
+{
+    <div class="loading-container"><QSpinner Size="lg" /><span>Loading counters...</span></div>
+}
+else if (!counters.Any())
+{
+    <QEmptyState Icon="door-open" Title="No counters yet" Text="A counter is a place staff serve customers from.">
+        <Action>
+            @if (canCreate) { <QButton Text="Add counter" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" /> }
+        </Action>
+    </QEmptyState>
+}
+else
+{
+    <QCard NoPadding="true">
+        <div class="table-wrap">
+            <table class="data-table q-stack">
+                <thead><tr><th class="num">No.</th><th>Counter</th><th>Services</th><th>Status</th><th></th></tr></thead>
+                <tbody>
                     @foreach (var counter in counters)
                     {
-                        <div class="counter-card @(!counter.IsActive ? "inactive" : "")">
-                            <div class="counter-header">
-                                <div class="counter-number">@counter.CounterNumber</div>
-                                <div class="counter-status @counter.Status.ToString().ToLower()">
-                                    <span class="status-dot"></span>
-                                    @counter.Status
-                                </div>
-                            </div>
-                            <div class="counter-body">
-                                <h4>@counter.DisplayName</h4>
+                        <tr class="@(counter.IsActive ? "" : "row-muted")">
+                            <td class="num"><strong>@counter.CounterNumber</strong></td>
+                            <td>@counter.DisplayName</td>
+                            <td>
                                 @if (counter.ServiceTypes?.Any() == true)
                                 {
-                                    <div class="service-types">
+                                    <span class="cell-tags">
                                         @foreach (var st in counter.ServiceTypes.Take(3))
                                         {
-                                            <span class="service-tag" style="background: color-mix(in srgb, @(st.Color ?? "var(--qm-primary)") 12%, transparent); color: @(st.Color ?? "var(--qm-primary)")">@st.Name</span>
+                                            <QChip Text="@st.Name" Color="@(st.Color ?? "var(--qm-primary)")" Size="sm" />
                                         }
                                         @if (counter.ServiceTypes.Count > 3)
                                         {
-                                            <span class="service-tag more">+@(counter.ServiceTypes.Count - 3) more</span>
+                                            <QChip Text="@($"+{counter.ServiceTypes.Count - 3}")" Variant="muted" Size="sm" Title="@string.Join(", ", counter.ServiceTypes.Skip(3).Select(s => s.Name))" />
                                         }
-                                    </div>
+                                    </span>
                                 }
                                 else
                                 {
-                                    <p class="no-services">No services assigned</p>
+                                    <span class="cell-sub">None assigned</span>
                                 }
-                            </div>
-                            <div class="counter-footer">
+                            </td>
+                            <td>
+                                @if (!counter.IsActive)
+                                {
+                                    <QChip Text="Disabled" Variant="muted" Size="sm" />
+                                }
+                                else
+                                {
+                                    <QChip Text="@counter.Status.ToString()" Variant="@CounterStatusVariant(counter.Status.ToString())" Size="sm" />
+                                }
+                            </td>
+                            <td class="row-actions">
                                 @if (canEdit)
                                 {
-                                    <QButton Icon="pencil-fill" Variant="ghost" Size="sm" OnClick="@(() => ShowEditDialog(counter))" Title="Edit" />
-                                    <QButton Icon="@(counter.IsActive ? "eye-slash" : "eye")" Variant="ghost" Size="sm"
-                                              OnClick="@(() => ToggleCounter(counter))" Title="@(counter.IsActive ? "Disable" : "Enable")" />
+                                    <QButton Icon="pencil" Variant="ghost" Size="sm" OnClick="@(() => ShowEditDialog(counter))" Title="Edit" />
+                                    <QButton Icon="@(counter.IsActive ? "toggle-on" : "toggle-off")" Variant="ghost" Size="sm"
+                                             OnClick="@(() => ToggleCounter(counter))" Title="@(counter.IsActive ? "Disable" : "Enable")" />
                                 }
                                 @if (canDelete)
                                 {
-                                    <QButton Icon="trash-fill" Variant="ghost" Size="sm" Class="text-danger"
-                                              OnClick="@(() => DeleteCounter(counter))" Title="Delete" />
+                                    <QButton Icon="trash" Variant="ghost" Size="sm" OnClick="@(() => DeleteCounter(counter))" Title="Delete" />
                                 }
-                            </div>
-                        </div>
+                            </td>
+                        </tr>
                     }
-                </div>
-            }
-        </ChildContent>
+                </tbody>
+            </table>
+        </div>
     </QCard>
-</div>
+}
 
 <!-- Add/Edit Dialog -->
 <QModal @bind-Visible="showDialog" Title="@(editingCounter == null ? "Add Counter" : "Edit Counter")" Size="md">
@@ -172,152 +163,8 @@
         align-items: center;
         gap: 8px;
         margin: 0;
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
         color: var(--qm-text-primary);
-    }
-
-    .counter-count {
-        color: var(--qm-text-muted);
-        font-size: 14px;
-    }
-
-    .loading-state, .empty-state {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        padding: 60px 20px;
-        text-align: center;
-        color: var(--qm-text-muted);
-    }
-
-    .empty-state .rzi {
-        font-size: 64px;
-        margin-bottom: 16px;
-        opacity: 0.3;
-    }
-
-    .empty-state h4 {
-        margin: 0 0 8px;
-        color: var(--qm-text-primary);
-    }
-
-    .empty-state p {
-        margin: 0 0 24px;
-    }
-
-    .counters-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-        gap: 20px;
-    }
-
-    .counter-card {
-        background: var(--qm-bg-elevated);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-        overflow: hidden;
-        transition: all 0.3s ease;
-    }
-
-    .counter-card:hover {
-        border-color: var(--qm-primary);
-        box-shadow: var(--qm-shadow-md);
-    }
-
-    .counter-card.inactive {
-        opacity: 0.6;
-    }
-
-    .counter-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 16px;
-        background: var(--qm-bg-card);
-        border-bottom: 1px solid var(--qm-border);
-    }
-
-    .counter-number {
-        width: 48px;
-        height: 48px;
-        background: var(--qm-gradient-primary);
-        border-radius: var(--qm-radius-xl);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 20px;
-        font-weight: 700;
-        color: var(--qm-text-on-primary);
-    }
-
-    .counter-status {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        padding: 6px 12px;
-        border-radius: var(--qm-radius-full);
-        font-size: 12px;
-        font-weight: 600;
-        text-transform: capitalize;
-    }
-
-    .status-dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-    }
-
-    .counter-status.active { background: color-mix(in srgb, var(--qm-success) 15%, transparent); color: var(--qm-success); }
-    .counter-status.active .status-dot { background: var(--qm-success); }
-    .counter-status.serving { background: color-mix(in srgb, var(--qm-primary) 15%, transparent); color: var(--qm-primary); }
-    .counter-status.serving .status-dot { background: var(--qm-primary); }
-    .counter-status.onbreak { background: color-mix(in srgb, var(--qm-warning) 15%, transparent); color: var(--qm-warning); }
-    .counter-status.onbreak .status-dot { background: var(--qm-warning); }
-    .counter-status.closed { background: color-mix(in srgb, var(--qm-text-secondary) 15%, transparent); color: var(--qm-text-secondary); }
-    .counter-status.closed .status-dot { background: var(--qm-text-secondary); }
-    .counter-status.offline, .counter-status.inactive { background: color-mix(in srgb, var(--qm-danger) 15%, transparent); color: var(--qm-danger); }
-    .counter-status.offline .status-dot, .counter-status.inactive .status-dot { background: var(--qm-danger); }
-
-    .counter-body {
-        padding: 16px;
-    }
-
-    .counter-body h4 {
-        margin: 0 0 12px;
-        color: var(--qm-text-primary);
-    }
-
-    .service-types {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-    }
-
-    .service-tag {
-        padding: 4px 10px;
-        border-radius: var(--qm-radius-full);
-        font-size: 11px;
-        font-weight: 500;
-    }
-
-    .service-tag.more {
-        background: var(--qm-bg-card);
-        color: var(--qm-text-muted);
-    }
-
-    .no-services {
-        color: var(--qm-text-muted);
-        font-size: 13px;
-        margin: 0;
-    }
-
-    .counter-footer {
-        display: flex;
-        justify-content: flex-end;
-        gap: var(--q-row-gap, 8px);
-        padding: 12px 16px;
-        border-top: 1px solid var(--qm-border);
     }
 
     /* Dialog */
@@ -383,6 +230,16 @@
 </style>
 
 @code {
+    /// <summary>A counter's live state, in the shared chip colours: open and serving read as good,
+    /// on a break as a pause, closed or offline as muted.</summary>
+    private static string CounterStatusVariant(string status) => status.ToLowerInvariant() switch
+    {
+        "active" or "open" or "available" => "success",
+        "serving" or "busy" => "primary",
+        "break" or "paused" or "onbreak" => "warning",
+        _ => "muted"
+    };
+
     /// <summary>True when the Branches hub is hosting this page inside its own tab strip: the host
     /// then owns the page title and the tab strip. There is no route to this component any other
     /// way — see CLAUDE.md, "A hub owns the route; its sections own nothing".</summary>

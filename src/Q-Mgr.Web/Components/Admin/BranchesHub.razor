@@ -26,6 +26,10 @@
             <h1>Branches<QInfo Text="The places this organization serves from, the counters inside them, and the services offered." Label="Branches" /></h1>
             <p class="subtitle">The places this organization serves from, the counters inside them, and the services offered.</p>
         </div>
+        <div class="header-actions">
+            @* The open section's own buttons land here — see QPageActions. *@
+            <SectionOutlet SectionId="QPageActions.Id" />
+        </div>
     </div>
 
     <QTabs Tabs="@tabs" @bind-ActiveKey="@hubTab" IdPrefix="br" AriaLabel="Branch sections" />

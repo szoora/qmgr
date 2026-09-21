@@ -66,50 +66,50 @@
             }
 
             <form @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+                <p class="form-required-note">* Required</p>
+
                 <div class="join-row">
                     <div class="form-group">
-                        <label for="firstName"><span>First name</span></label>
-                        <input id="firstName" class="form-control" autocomplete="given-name" maxlength="100" @bind="form.FirstName" @bind:event="oninput" disabled="@(busy || codeSent)" />
+                        <label for="firstName"><span>First name</span><span class="req">*</span></label>
+                        <input id="firstName" class="form-control @Invalid(nameof(form.FirstName))" autocomplete="given-name" maxlength="100"
+                               @bind="form.FirstName" @bind:event="oninput" @bind:after="@(() => Touch(nameof(form.FirstName)))"
+                               @onblur="@(() => Touch(nameof(form.FirstName)))" disabled="@(busy || codeSent)" />
+                        @Problem(nameof(form.FirstName))
                     </div>
                     <div class="form-group">
-                        <label for="lastName"><span>Last name</span></label>
-                        <input id="lastName" class="form-control" autocomplete="family-name" maxlength="100" @bind="form.LastName" @bind:event="oninput" disabled="@(busy || codeSent)" />
+                        <label for="lastName"><span>Surname</span><span class="req">*</span></label>
+                        <input id="lastName" class="form-control @Invalid(nameof(form.LastName))" autocomplete="family-name" maxlength="100"
+                               @bind="form.LastName" @bind:event="oninput" @bind:after="@(() => Touch(nameof(form.LastName)))"
+                               @onblur="@(() => Touch(nameof(form.LastName)))" disabled="@(busy || codeSent)" />
+                        @Problem(nameof(form.LastName))
                     </div>
                 </div>
                 <div class="form-group">
-                    <label for="email"><QIcon Name="envelope-fill" Size="16" /><span>Email</span></label>
-                    <input id="email" type="email" class="form-control" autocomplete="email" maxlength="256" @bind="form.Email" @bind:event="oninput" disabled="@(busy || codeSent)" />
+                    <label for="email"><QIcon Name="envelope-fill" Size="16" /><span>Email</span><span class="req">*</span></label>
+                    <input id="email" type="email" class="form-control @Invalid(nameof(form.Email))" autocomplete="email" maxlength="256"
+                           @bind="form.Email" @bind:event="oninput" @bind:after="@(() => Touch(nameof(form.Email)))"
+                           @onblur="@(() => Touch(nameof(form.Email)))" disabled="@(busy || codeSent)" />
+                    @Problem(nameof(form.Email))
                     @if (info.AllowedEmailDomains.Count > 0)
                     {
                         <p class="join-hint">Use your school address: @string.Join(", ", info.AllowedEmailDomains.Select(d => "@" + d))</p>
                     }
                 </div>
-                <div class="join-row">
-                    <div class="form-group">
-                        <label for="phone"><span>Phone (optional)</span></label>
-                        <input id="phone" type="tel" class="form-control" autocomplete="tel" maxlength="30" @bind="form.Phone" @bind:event="oninput" disabled="@(busy || codeSent)" />
-                    </div>
-                    <div class="form-group">
-                        <label for="employee"><span>Employee number (optional)</span></label>
-                        <input id="employee" class="form-control" maxlength="50" @bind="form.EmployeeNumber" @bind:event="oninput" disabled="@(busy || codeSent)" />
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label for="jobTitle"><span>Job title (optional)</span></label>
-                    <input id="jobTitle" class="form-control" maxlength="100" placeholder="e.g. Mathematics teacher" @bind="form.JobTitle" @bind:event="oninput" disabled="@(busy || codeSent)" />
-                </div>
                 @if (info.Branches.Count > 1)
                 {
                     <div class="form-group">
                         <QSelect TValue="Guid?" TItem="JoinBranchOptionDto" @bind-Value="form.BranchId" Items="@info.Branches"
-                                 ValueSelector="@(b => (Guid?)b.Id)" TextSelector="@(b => b.Name)" Label="Where you work" Placeholder="Choose…"
+                                 ValueSelector="@(b => (Guid?)b.Id)" TextSelector="@(b => b.Name)" Label="Where you work *" Placeholder="Choose…"
                                  Disabled="@(busy || codeSent)" />
+                        @Problem(nameof(form.BranchId))
                     </div>
                 }
 
                 @if (!codeSent)
                 {
-                    <button type="button" class="btn-login" @onclick="SendCodeAsync" disabled="@(busy || !DetailsComplete)">
+                    @* Never disabled on an incomplete form: a button that cannot be pressed cannot say
+                       WHY, so the press is what reveals the field to fix. Same rule as the payment dialog. *@
+                    <button type="button" class="btn-login" @onclick="SendCodeAsync" disabled="@busy">
                         @if (busy) { <span class="auth-spinner"></span><span>Sending…</span> }
                         else { <QIcon Name="envelope-arrow-up" Size="18" /><span>Email me a code</span> }
                     </button>
@@ -117,40 +117,53 @@
                 else
                 {
                     <div class="form-group">
-                        <label for="code"><QIcon Name="shield-lock-fill" Size="16" /><span>Code from the email</span></label>
-                        <input id="code" class="form-control join-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" @bind="form.EmailCode" @bind:event="oninput" disabled="@busy" />
+                        <label for="code"><QIcon Name="shield-lock-fill" Size="16" /><span>Code from the email</span><span class="req">*</span></label>
+                        <input id="code" class="form-control join-code @Invalid(nameof(form.EmailCode))" inputmode="numeric" autocomplete="one-time-code" maxlength="6"
+                               @bind="form.EmailCode" @bind:event="oninput" @bind:after="@(() => Touch(nameof(form.EmailCode)))"
+                               @onblur="@(() => Touch(nameof(form.EmailCode)))" disabled="@busy" />
+                        @Problem(nameof(form.EmailCode))
                         <p class="join-hint"><a href="" @onclick="EditDetails" @onclick:preventDefault="true">Change my details</a> · <a href="" @onclick="SendCodeAsync" @onclick:preventDefault="true">Send the code again</a></p>
                     </div>
                     <div class="form-group">
-                        <label for="password"><QIcon Name="lock-fill" Size="16" /><span>Choose a password</span></label>
-                        <input id="password" type="password" class="form-control" autocomplete="new-password" @bind="form.Password" @bind:event="oninput" disabled="@busy" placeholder="At least @info.PasswordMinimumLength characters" />
+                        <label for="password"><QIcon Name="lock-fill" Size="16" /><span>Choose a password</span><span class="req">*</span></label>
+                        <input id="password" type="password" class="form-control @Invalid(nameof(form.Password))" autocomplete="new-password"
+                               @bind="form.Password" @bind:event="oninput" @bind:after="@(() => Touch(nameof(form.Password)))"
+                               @onblur="@(() => Touch(nameof(form.Password)))" disabled="@busy" placeholder="At least @info.PasswordMinimumLength characters" />
+                        @Problem(nameof(form.Password))
                         <p class="join-hint">Avoid the school's name, your email and common words such as "staff".</p>
                     </div>
                     <div class="form-group">
-                        <label for="confirm"><QIcon Name="lock-fill" Size="16" /><span>Confirm password</span></label>
-                        <input id="confirm" type="password" class="form-control" autocomplete="new-password" @bind="form.ConfirmPassword" @bind:event="oninput" disabled="@busy" />
-                        @if (!string.IsNullOrEmpty(form.ConfirmPassword) && form.Password != form.ConfirmPassword)
-                        {
-                            <span class="validation-message">The passwords do not match</span>
-                        }
+                        <label for="confirm"><QIcon Name="lock-fill" Size="16" /><span>Confirm password</span><span class="req">*</span></label>
+                        <input id="confirm" type="password" class="form-control @Invalid(nameof(form.ConfirmPassword))" autocomplete="new-password"
+                               @bind="form.ConfirmPassword" @bind:event="oninput" @bind:after="@(() => Touch(nameof(form.ConfirmPassword)))"
+                               @onblur="@(() => Touch(nameof(form.ConfirmPassword)))" disabled="@busy" />
+                        @Problem(nameof(form.ConfirmPassword))
                     </div>
-                    <button type="submit" class="btn-login" disabled="@(busy || string.IsNullOrWhiteSpace(form.EmailCode) || string.IsNullOrEmpty(form.Password) || form.Password != form.ConfirmPassword)">
+                    <button type="submit" class="btn-login" disabled="@busy">
                         @if (busy) { <span class="auth-spinner"></span><span>Sending…</span> }
                         else { <QIcon Name="send-fill" Size="18" /><span>Send my request</span> }
                     </button>
+                }
+
+                @if (showSummary)
+                {
+                    <p class="form-error">Complete the fields marked in red</p>
                 }
             </form>
         }
 
         <div class="login-footer">
-            <p>Already have an account? <a href="/login" class="link-register">Sign in</a></p>
-            <p class="powered-by">Powered by SACC Software</p>
+            <div class="auth-doors">
+                <a href="/login" class="auth-door"><QIcon Name="box-arrow-in-right" Size="18" /><span>Sign In</span></a>
+            </div>
+            <PoweredBy />
         </div>
     </div>
 </div>
 
 <style>
-    .join-card { max-width: 560px; }
+    .join-card { max-width: 480px; }
+    .login-container .join-card label .req { color: var(--qm-danger, #b42318); margin-left: 2px; }
     .join-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
     .join-hint { font-size: 12px; color: var(--qm-text-muted); margin: 6px 0 0; }
     .join-code { letter-spacing: 6px; font-size: 20px; text-align: center; }
@@ -162,12 +175,97 @@
 
     private JoinLinkInfoDto? info;
     private readonly JoinApplicationRequest form = new();
-    private bool loading = true, busy, codeSent, done;
+    private bool loading = true, busy, codeSent, done, showSummary;
     private string? errorMessage, infoMessage, doneMessage;
 
-    private bool DetailsComplete => !string.IsNullOrWhiteSpace(form.FirstName) && !string.IsNullOrWhiteSpace(form.LastName)
-                                    && !string.IsNullOrWhiteSpace(form.Email) && form.Email.Contains('@')
-                                    && (info == null || info.Branches.Count <= 1 || form.BranchId != null);
+    /// <summary>
+    /// Fields the person has actually been in. A form that goes red before anybody has typed is
+    /// noise; one that stays silent until a failed submit hides the answer. Touched-or-submitted
+    /// is the middle, and it is what the rest of the app's forms do.
+    /// </summary>
+    private readonly HashSet<string> touched = [];
+
+    private void Touch(string field) { touched.Add(field); }
+
+    /// <summary>
+    /// Every rule the API enforces, enforced here too — and ONLY the rules the API enforces. A
+    /// client-side check the server does not repeat is a courtesy; a server-side refusal the client
+    /// does not anticipate costs somebody the whole form to one 400.
+    /// </summary>
+    private string? Validate(string field) => field switch
+    {
+        nameof(form.FirstName) => NameProblem(form.FirstName, "first name"),
+        nameof(form.LastName) => NameProblem(form.LastName, "surname"),
+        nameof(form.Email) => EmailProblem(),
+        nameof(form.BranchId) => info is { Branches.Count: > 1 } && form.BranchId == null ? "Choose where you work" : null,
+        nameof(form.EmailCode) => form.EmailCode.Trim().Length switch
+        {
+            0 => "Enter the code from the email",
+            6 => form.EmailCode.Trim().All(char.IsAsciiDigit) ? null : "The code is six digits",
+            _ => "The code is six digits"
+        },
+        nameof(form.Password) => string.IsNullOrEmpty(form.Password) ? "Choose a password"
+            : form.Password.Length < (info?.PasswordMinimumLength ?? 8) ? $"At least {info?.PasswordMinimumLength ?? 8} characters"
+            : null,
+        nameof(form.ConfirmPassword) => string.IsNullOrEmpty(form.ConfirmPassword) ? "Type the password again"
+            : form.Password != form.ConfirmPassword ? "The passwords do not match"
+            : null,
+        _ => null
+    };
+
+    private static string? NameProblem(string value, string label)
+    {
+        var trimmed = (value ?? "").Trim();
+        if (trimmed.Length == 0) return $"Enter your {label}";
+        if (trimmed.Length < 2) return $"That {label} is too short";
+        if (trimmed.Length > 100) return $"That {label} is too long";
+        // Letters, spaces, hyphens and apostrophes. Ugandan names carry all three, digits carry none.
+        if (trimmed.Any(c => !char.IsLetter(c) && c != ' ' && c != '-' && c != '\'' && c != '.'))
+            return $"A {label} has no numbers or symbols in it";
+        return null;
+    }
+
+    private string? EmailProblem()
+    {
+        var email = (form.Email ?? "").Trim();
+        if (email.Length == 0) return "Enter your email address";
+        if (email.Length > 256) return "That email address is too long";
+        var at = email.IndexOf('@');
+        if (at <= 0 || at == email.Length - 1 || email.IndexOf('@', at + 1) >= 0) return "That does not look like an email address";
+        var domain = email[(at + 1)..];
+        if (!domain.Contains('.') || domain.StartsWith('.') || domain.EndsWith('.')) return "That does not look like an email address";
+        if (email.Any(char.IsWhiteSpace)) return "An email address has no spaces in it";
+
+        // The API refuses a disallowed domain too; saying so here saves a round trip and a rejection.
+        var allowed = info?.AllowedEmailDomains ?? [];
+        if (allowed.Count > 0 && !allowed.Any(d => domain.Equals(d, StringComparison.OrdinalIgnoreCase)))
+            return $"Use your school address ({string.Join(", ", allowed.Select(d => "@" + d))})";
+
+        return null;
+    }
+
+    private string Invalid(string field) => touched.Contains(field) && Validate(field) != null ? "is-invalid" : "";
+
+    private RenderFragment? Problem(string field) => touched.Contains(field) && Validate(field) is { } message
+        ? builder =>
+        {
+            builder.OpenElement(0, "span");
+            builder.AddAttribute(1, "class", "validation-message");
+            builder.AddContent(2, message);
+            builder.CloseElement();
+        }
+    : null;
+
+    /// <summary>Marks every named field touched and reports whether any of them is wrong.</summary>
+    private bool Blocked(params string[] fields)
+    {
+        foreach (var field in fields) touched.Add(field);
+        showSummary = fields.Any(f => Validate(f) != null);
+        return showSummary;
+    }
+
+    private static readonly string[] DetailFields = [nameof(JoinApplicationRequest.FirstName), nameof(JoinApplicationRequest.LastName), nameof(JoinApplicationRequest.Email), nameof(JoinApplicationRequest.BranchId)];
+    private static readonly string[] CodeFields = [nameof(JoinApplicationRequest.EmailCode), nameof(JoinApplicationRequest.Password), nameof(JoinApplicationRequest.ConfirmPassword)];
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -181,7 +279,7 @@
 
     private async Task SendCodeAsync()
     {
-        if (!DetailsComplete) return;
+        if (Blocked(DetailFields)) return;
         errorMessage = null;
         infoMessage = null;
         busy = true;
@@ -199,12 +297,15 @@
     {
         codeSent = false;
         infoMessage = null;
+        showSummary = false;
         form.EmailCode = string.Empty;
+        foreach (var field in CodeFields) touched.Remove(field);
     }
 
     private async Task SubmitAsync()
     {
-        if (!codeSent || form.Password != form.ConfirmPassword) return;
+        if (!codeSent) return;
+        if (Blocked([.. DetailFields, .. CodeFields])) return;
         errorMessage = null;
         busy = true;
         try

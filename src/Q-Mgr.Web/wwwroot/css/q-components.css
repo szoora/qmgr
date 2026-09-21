@@ -10,13 +10,14 @@
     /* Button */
     --q-btn-padding-y: 0.5rem;
     --q-btn-padding-x: 1rem;
-    --q-btn-font-size: 0.875rem;
+    --q-btn-font-size: var(--qm-text-base);
     --q-btn-font-weight: 500;
     --q-btn-border-radius: var(--qm-radius-md);
     --q-btn-transition: all 0.2s ease;
 
     /* Card */
-    --q-card-padding: 1.25rem;
+    /* 1.25rem (20px) until 2026-09-19. A card is a container for data, not a frame around it. */
+    --q-card-padding: 0.875rem;
     --q-card-border-radius: var(--qm-radius-lg);
     --q-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     --q-card-shadow-elevated: 0 4px 12px rgba(0, 0, 0, 0.15);
@@ -25,7 +26,7 @@
     --q-input-padding-y: 0.625rem;
     --q-input-padding-x: 0.875rem;
     --q-input-border-radius: var(--qm-radius-md);
-    --q-input-font-size: 0.875rem;
+    --q-input-font-size: var(--qm-text-base);
 
     /* Modal */
     --q-modal-backdrop-bg: rgba(0, 0, 0, 0.5);
@@ -75,7 +76,7 @@
 /* Button Sizes */
 .q-btn--sm {
     padding: 0.375rem 0.75rem;
-    font-size: 0.8125rem;
+    font-size: var(--qm-text-base);
 }
 
 .q-btn--md {
@@ -84,7 +85,7 @@
 
 .q-btn--lg {
     padding: 0.75rem 1.5rem;
-    font-size: 1rem;
+    font-size: var(--qm-text-md);
 }
 
 /* Button Variants */
@@ -134,7 +135,8 @@
 
 .q-btn--warning {
     background: var(--qm-warning);
-    color: var(--qm-text-on-primary);
+    /* NOT --qm-text-on-primary: that one follows the tenant's brand, and this fill is amber. */
+    color: var(--qm-text-on-warning);
     border-color: var(--qm-warning);
 }
 
@@ -269,12 +271,12 @@
     background: none;
     color: var(--qm-text-muted);
     cursor: pointer;
-    font-size: 14px;
+    font-size: var(--qm-text-base);
     transition: color 0.15s, background 0.15s;
 }
 
-.q-info__btn:hover { color: var(--qm-primary); background: var(--qm-bg-hover, var(--qm-bg-secondary)); }
-.q-info__btn--on { color: var(--qm-primary); background: var(--qm-bg-hover, var(--qm-bg-secondary)); }
+.q-info__btn:hover { color: var(--qm-primary); background: var(--qm-bg-secondary); }
+.q-info__btn--on { color: var(--qm-primary); background: var(--qm-bg-secondary); }
 .q-info__btn:focus-visible { outline: 2px solid var(--qm-primary); outline-offset: 1px; }
 
 .q-info__pop {
@@ -291,7 +293,7 @@
     background: var(--qm-bg-card);
     box-shadow: var(--qm-shadow-md);
     color: var(--qm-text-secondary);
-    font-size: 12.5px;
+    font-size: var(--qm-text-sm);
     font-weight: 400;
     line-height: 1.5;
     text-align: left;
@@ -344,40 +346,57 @@
     box-shadow: var(--q-card-shadow-elevated);
 }
 
+/* A LONG HeaderActions MUST NOT SQUEEZE THE TITLE TO NOTHING (2026-09-19).
+
+   `.q-card__header-text` was `flex: 1` — that is `1 1 0%`, a base size of zero — beside actions
+   sized by their own content. When those actions are long (Billing Overview puts the tenant's
+   whole module list in the header), the free space goes negative, both shrink, and the title has
+   `min-width: 0` so it collapses to a single character column: "Current Plan" rendered as one
+   letter per line, straight down the card. Seen in production.
+
+   The header wraps now, and the title block carries a real basis, so the ACTIONS drop to a second
+   line rather than the title being crushed. */
 .q-card__header {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.5rem 0.75rem;
     padding: var(--q-card-padding);
     border-bottom: 1px solid var(--qm-border);
 }
 
 .q-card__icon {
-    font-size: 1.25rem;
+    font-size: var(--qm-text-xl);
     color: var(--qm-primary);
 }
 
 .q-card__header-text {
-    flex: 1;
+    /* A real basis, not 0%: the title keeps room for a few words before anything else gets any. */
+    flex: 1 1 11rem;
     min-width: 0;
 }
 
 .q-card__title {
     margin: 0;
-    font-size: 1rem;
+    font-size: var(--qm-text-md);
     font-weight: 600;
     color: var(--qm-text-primary);
 }
 
 .q-card__subtitle {
     margin: 0.25rem 0 0;
-    font-size: 0.8125rem;
+    font-size: var(--qm-text-base);
     color: var(--qm-text-muted);
 }
 
 .q-card__header-actions {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    align-items: center;
     gap: 0.5rem;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .q-card__body {
@@ -458,14 +477,14 @@
 }
 
 .q-modal__icon {
-    font-size: 1.25rem;
+    font-size: var(--qm-text-xl);
     color: var(--qm-primary);
 }
 
 .q-modal__title {
     flex: 1;
     margin: 0;
-    font-size: 1.125rem;
+    font-size: var(--qm-text-lg);
     font-weight: 600;
     color: var(--qm-text-primary);
 }
@@ -524,7 +543,7 @@
 }
 
 .q-input__label {
-    font-size: 0.875rem;
+    font-size: var(--qm-text-base);
     font-weight: 500;
     color: var(--qm-text-primary);
 }
@@ -617,12 +636,12 @@
 }
 
 .q-input__helper {
-    font-size: 0.75rem;
+    font-size: var(--qm-text-sm);
     color: var(--qm-text-muted);
 }
 
 .q-input__error {
-    font-size: 0.75rem;
+    font-size: var(--qm-text-sm);
     color: var(--qm-danger);
 }
 
@@ -659,7 +678,7 @@
 }
 
 .q-select__label {
-    font-size: 0.875rem;
+    font-size: var(--qm-text-base);
     font-weight: 500;
     color: var(--qm-text-primary);
 }
@@ -768,7 +787,7 @@
 
 .q-select__search-icon {
     color: var(--qm-text-muted);
-    font-size: 0.875rem;
+    font-size: var(--qm-text-base);
     flex-shrink: 0;
 }
 
@@ -779,7 +798,7 @@
     outline: none;
     background: transparent;
     color: var(--qm-text-primary);
-    font-size: 0.875rem;
+    font-size: var(--qm-text-base);
     font-family: inherit;
 }
 
@@ -790,7 +809,13 @@
 .q-select__option {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    /* LEFT-ALIGNED, and the trailing tick is what moves instead (see .q-select__check).
+       This was `space-between`, which reads correctly for the single-select — label, then the
+       tick pushed to the right edge — and wrongly for the MULTI-select, where the checkbox comes
+       FIRST: the two items are the box and the label, so space-between threw the label to the far
+       right and left it floating in the middle of the list. Reported 2026-09-20 against the
+       timetable's teacher picker, and it was every QMultiSelect in the app. */
+    justify-content: flex-start;
     padding: 0.625rem 0.875rem;
     cursor: pointer;
     transition: background 0.15s ease;
@@ -807,24 +832,29 @@
 
 .q-select__option--clear {
     color: var(--qm-text-muted);
-    font-size: 0.8125rem;
+    font-size: var(--qm-text-base);
     border-bottom: 1px solid var(--qm-border);
 }
 
+/* The single-select's tick keeps its place at the right edge, now by taking the free space
+   itself rather than by the row's alignment doing it. One rule, and it cannot affect a row that
+   has no tick in it. */
 .q-select__check {
     color: var(--qm-primary);
+    margin-left: auto;
+    padding-left: 10px;
 }
 
 .q-select__empty {
     padding: 1rem;
     text-align: center;
     color: var(--qm-text-muted);
-    font-size: 0.875rem;
+    font-size: var(--qm-text-base);
 }
 
 .q-select__helper,
 .q-select__error {
-    font-size: 0.75rem;
+    font-size: var(--qm-text-sm);
 }
 
 .q-select__helper {
@@ -870,7 +900,7 @@
     background: rgba(var(--qm-primary-rgb), 0.1);
     color: var(--qm-primary);
     border-radius: var(--qm-radius-sm);
-    font-size: 0.8125rem;
+    font-size: var(--qm-text-base);
     max-width: 150px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -907,7 +937,7 @@
     padding: 8px 12px;
     border: 1px solid var(--qm-border);
     border-radius: var(--q-input-border-radius);
-    font-size: 0.875rem;
+    font-size: var(--qm-text-base);
     outline: none;
     background: var(--qm-bg-card);
     color: var(--qm-text-primary);
@@ -942,7 +972,7 @@
 }
 
 .q-multiselect__checkbox i {
-    font-size: 12px;
+    font-size: var(--qm-text-sm);
 }
 
 /* ==========================================================================
@@ -1009,13 +1039,13 @@
 
 .q-checkbox__icon {
     color: var(--qm-text-on-primary);
-    font-size: 0.875rem;
+    font-size: var(--qm-text-base);
 }
 
 /* Doubled for the same reason as .q-checkbox above — the span inherits from the <label>, so the
    generic rules' uppercase and bold reach it too. */
 .q-checkbox__label.q-checkbox__label {
-    font-size: 0.875rem;
+    font-size: var(--qm-text-base);
     font-weight: 400;
     text-transform: none;
     letter-spacing: normal;
@@ -1042,17 +1072,17 @@
 
 .q-badge--sm {
     padding: 0.125rem 0.5rem;
-    font-size: 0.6875rem;
+    font-size: var(--qm-text-xs);
 }
 
 .q-badge--md {
     padding: 0.25rem 0.625rem;
-    font-size: 0.75rem;
+    font-size: var(--qm-text-sm);
 }
 
 .q-badge--lg {
     padding: 0.375rem 0.75rem;
-    font-size: 0.8125rem;
+    font-size: var(--qm-text-base);
 }
 
 .q-badge--pill {
@@ -1189,7 +1219,7 @@
 }
 
 .q-spinner__text {
-    font-size: 0.875rem;
+    font-size: var(--qm-text-base);
     color: var(--qm-text-muted);
 }
 
@@ -1201,11 +1231,11 @@
 /* ==========================================================================
    QIcon Component
    ========================================================================== */
-.q-icon--xs { font-size: 0.75rem; }
-.q-icon--sm { font-size: 0.875rem; }
-.q-icon--md { font-size: 1rem; }
-.q-icon--lg { font-size: 1.25rem; }
-.q-icon--xl { font-size: 1.5rem; }
+.q-icon--xs { font-size: var(--qm-text-sm); }
+.q-icon--sm { font-size: var(--qm-text-base); }
+.q-icon--md { font-size: var(--qm-text-md); }
+.q-icon--lg { font-size: var(--qm-text-xl); }
+.q-icon--xl { font-size: var(--qm-text-stat); }
 .q-icon--2xl { font-size: 2rem; }
 
 /* ==========================================================================
@@ -1282,7 +1312,7 @@
 
 .q-toast__icon {
     flex-shrink: 0;
-    font-size: 1.25rem;
+    font-size: var(--qm-text-xl);
 }
 
 .q-toast--success .q-toast__icon { color: var(--qm-success); }
@@ -1297,13 +1327,13 @@
 
 .q-toast__title {
     font-weight: 600;
-    font-size: 0.875rem;
+    font-size: var(--qm-text-base);
     color: var(--qm-text-primary);
     margin-bottom: 0.125rem;
 }
 
 .q-toast__message {
-    font-size: 0.8125rem;
+    font-size: var(--qm-text-base);
     color: var(--qm-text-secondary);
     line-height: 1.4;
 }
@@ -1367,7 +1397,7 @@
     border: 1px solid var(--qm-border);
     border-radius: var(--qm-radius-md, 0.25rem);
     color: var(--qm-text-secondary);
-    font-size: 0.8125rem;
+    font-size: var(--qm-text-base);
     cursor: pointer;
     transition: all 0.15s ease;
 }
@@ -1458,17 +1488,17 @@
 }
 
 .q-file-upload__icon {
-    font-size: 1.75rem;
+    font-size: var(--qm-text-stat);
     color: var(--qm-primary);
 }
 
 .q-file-upload__text {
-    font-size: 0.875rem;
+    font-size: var(--qm-text-base);
     color: var(--qm-text-primary);
 }
 
 .q-file-upload__hint {
-    font-size: 0.75rem;
+    font-size: var(--qm-text-sm);
     color: var(--qm-text-muted);
 }
 
@@ -1488,7 +1518,7 @@
     padding: 0.5rem 0.75rem;
     border-radius: var(--qm-radius-md);
     background: var(--qm-bg-elevated);
-    font-size: 0.8125rem;
+    font-size: var(--qm-text-base);
 }
 
 .q-file-upload__item--uploading { color: var(--qm-text-secondary); }
@@ -1587,7 +1617,7 @@
     line-height: 1;
     cursor: pointer;
     color: var(--qm-text-muted);
-    font-size: 11px;
+    font-size: var(--qm-text-xs);
 }
 .q-datepicker__clear:hover { color: var(--qm-danger); }
 
@@ -1620,7 +1650,7 @@
     border-radius: var(--qm-radius-sm);
     color: var(--qm-text-primary);
     font: inherit;
-    font-size: 13px;
+    font-size: var(--qm-text-base);
     cursor: pointer;
     padding: 5px 8px;
     display: inline-flex;
@@ -1639,7 +1669,7 @@
 
 .q-datepicker__dow {
     text-align: center;
-    font-size: 10px;
+    font-size: var(--qm-text-xs);
     font-weight: 600;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -1656,7 +1686,7 @@
     background: none;
     color: var(--qm-text-primary);
     font: inherit;
-    font-size: 13px;
+    font-size: var(--qm-text-base);
     font-variant-numeric: tabular-nums;
     cursor: pointer;
 }
@@ -1684,7 +1714,7 @@
     background: var(--qm-bg-card);
     color: var(--qm-text-primary);
     font: inherit;
-    font-size: 13px;
+    font-size: var(--qm-text-base);
     font-variant-numeric: tabular-nums;
     cursor: pointer;
 }
@@ -1710,7 +1740,7 @@
     border-radius: var(--qm-radius-sm);
     color: var(--qm-text-muted);
     font: inherit;
-    font-size: 12px;
+    font-size: var(--qm-text-sm);
     padding: 4px 10px;
     cursor: pointer;
 }
@@ -1751,7 +1781,36 @@
     gap: 10px;
     min-width: 0;
 }
-.q-daterange__field { min-width: 150px; flex: 1 1 150px; }
+.q-daterange__field { min-width: 140px; flex: 0 1 150px; }
+
+/* ONE ROW, NOT TWO (2026-09-19). "From" and "To" sat as labels above the boxes, which made every
+   range filter on twelve pages two rows tall to say what a dash between two dates already says.
+   The labels stay in the markup — screen readers still announce "From" and "To" — and are hidden
+   visually only. The presets and boxes share the row, aligned on their centres. */
+.q-daterange,
+.q-daterange__fields { align-items: center; }
+
+.q-daterange__field .q-input__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+.q-daterange__sep { color: var(--qm-text-muted); }
+
+/* The pair never splits (2026-09-19). Beside the presets, the fields box shrank to its min-content
+   width and the second date wrapped UNDER the first — "From" on one line and "To" on the next,
+   reported from the dashboard. The pair keeps its natural width and stays on one line; the PRESETS
+   are what wrap. On a phone there is no room for both boxes side by side, so they may stack there. */
+.q-daterange__fields { flex: 0 0 auto; flex-wrap: nowrap; }
+.q-daterange__presets { flex: 1 1 260px; min-width: 0; }
+
+@media (max-width: 576px) {
+    .q-daterange__fields { flex: 1 1 100%; flex-wrap: wrap; }
+}
 
 .q-daterange__presets {
     display: flex;
@@ -1767,7 +1826,7 @@
     background: var(--qm-bg-card);
     color: var(--qm-text-muted);
     font: inherit;
-    font-size: 12px;
+    font-size: var(--qm-text-sm);
     cursor: pointer;
     white-space: nowrap;
 }
@@ -1780,7 +1839,7 @@
 }
 
 .q-daterange__caption {
-    font-size: 12.5px;
+    font-size: var(--qm-text-sm);
     color: var(--qm-text-muted);
     margin: 0;
     flex-basis: 100%;
@@ -1803,7 +1862,7 @@
 }
 
 .q-pager__caption {
-    font-size: 13px;
+    font-size: var(--qm-text-base);
     color: var(--qm-text-secondary);
     font-variant-numeric: tabular-nums;
 }
@@ -1822,7 +1881,7 @@
     position: relative;
     padding: 4px 0 14px 56px;
     font-family: var(--qm-font-display);
-    font-size: 12px;
+    font-size: var(--qm-text-sm);
     font-weight: 700;
     letter-spacing: .04em;
     text-transform: uppercase;
@@ -1906,7 +1965,7 @@
 }
 
 .q-timeline__date {
-    font-size: 12px;
+    font-size: var(--qm-text-sm);
     color: var(--qm-text-muted);
     white-space: nowrap;
 }
@@ -1914,7 +1973,7 @@
 .q-timeline__text {
     margin: 8px 0;
     color: var(--qm-text-primary);
-    font-size: 14px;
+    font-size: var(--qm-text-base);
     line-height: 1.5;
 }
 
@@ -1923,7 +1982,7 @@
     align-items: center;
     gap: 6px;
     margin: 4px 0;
-    font-size: 12px;
+    font-size: var(--qm-text-sm);
     color: var(--qm-text-muted);
 }
 
@@ -1956,11 +2015,16 @@
 /* ==========================================================================
    Stat tiles — lifted from WelfareReports .stat-card, sized by --qm-statcard-*
    ========================================================================== */
+/* `align-content: start` since 2026-09-19. A stat row sitting beside a taller card in an outer
+   grid was stretched to that card's height, and its own rows stretched with it — four tiles with
+   a number at the top and 200px of nothing under it, which is what Billing Overview showed. A
+   tile is sized by what it says. */
 .q-stat-row {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr));
+    align-content: start;
     gap: var(--qm-statcard-gap);
-    margin-bottom: 18px;
+    margin-bottom: var(--qm-block-gap, 12px);
 }
 
 .q-stat-row > * { min-width: 0; }
@@ -2017,7 +2081,7 @@
 }
 
 .q-stat__unit {
-    font-size: 13px;
+    font-size: var(--qm-text-base);
     font-weight: 500;
     margin-left: 4px;
 }
@@ -2037,7 +2101,7 @@
     margin-top: 6px;
     padding: 3px 9px;
     border-radius: var(--qm-radius-full);
-    font-size: 12px;
+    font-size: var(--qm-text-sm);
 }
 
 .q-stat__sub--neutral { color: var(--qm-text-muted); background: var(--qm-bg-elevated); }
@@ -2099,7 +2163,7 @@
 .q-bars--suffixed .q-bars__row { grid-template-columns: 1fr 2fr auto auto; }
 
 .q-bars__label {
-    font-size: 13px;
+    font-size: var(--qm-text-base);
     color: var(--qm-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2127,7 +2191,7 @@
 }
 
 .q-bars__count {
-    font-size: 13px;
+    font-size: var(--qm-text-base);
     font-weight: 700;
     color: var(--qm-text-primary);
     text-align: right;
@@ -2135,14 +2199,14 @@
 }
 
 .q-bars__suffix {
-    font-size: 11.5px;
+    font-size: var(--qm-text-xs);
     color: var(--qm-text-muted);
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
 }
 
 .q-bars__empty {
-    font-size: 12px;
+    font-size: var(--qm-text-sm);
     color: var(--qm-text-muted);
     margin: 0 0 10px;
 }
@@ -2207,7 +2271,7 @@
     border-radius: var(--qm-radius-full);
     background: var(--qm-primary);
     color: var(--qm-text-on-primary);
-    font-size: 0.75rem;
+    font-size: var(--qm-text-sm);
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     text-align: center;
@@ -2237,10 +2301,10 @@
 
 .q-chip__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.q-chip--md { font-size: 12px; padding: 3px 10px; }
+.q-chip--md { font-size: var(--qm-text-sm); padding: 3px 10px; }
 
 .q-chip--sm {
-    font-size: 10px;
+    font-size: var(--qm-text-xs);
     padding: 2px 7px;
     text-transform: uppercase;
     letter-spacing: .03em;
@@ -2277,7 +2341,7 @@
     color: var(--qm-text-secondary);
     border-radius: var(--qm-radius-md);
     padding: 6px 8px 6px 12px;
-    font-size: 13px;
+    font-size: var(--qm-text-base);
     text-transform: none;
     letter-spacing: 0;
     font-weight: 400;
@@ -2306,13 +2370,20 @@
 /* ==========================================================================
    Empty state — lifted from app.css .empty-state
    ========================================================================== */
+/* AN EMPTY STATE IS ONE LINE OF NEWS, NOT A POSTER (2026-09-19, "those empty states are
+   unnecessarily big. compact them"). It was 60px of padding round a 64px icon and a 20px title —
+   about 230px to say "nothing here yet", often inside a card whose header already said what would be
+   here. The sizes are tokens (layout.css, --qm-empty-*) shared with the older `.empty-state` class
+   in app.css, so both families match — and a page never sets its own: 50 components used to, which
+   is how every empty state in the app came to be a different size. */
 .q-empty {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     text-align: center;
-    padding: 60px 20px;
+    gap: 4px;
+    padding: var(--qm-empty-pad);
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
     border-radius: var(--qm-radius-lg);
@@ -2320,44 +2391,78 @@
 }
 
 .q-empty .q-empty__icon {
-    font-size: 64px;
+    font-size: var(--qm-empty-icon);
     line-height: 1;
     color: var(--qm-text-muted);
     opacity: 0.5;
-    margin-bottom: 16px;
+    margin-bottom: 2px;
 }
 
 .q-empty__title {
-    margin: 0 0 8px;
-    font-size: 20px;
+    margin: 0;
+    font-size: var(--qm-text-md);
     font-family: var(--qm-font-display);
     color: var(--qm-text-primary);
 }
 
 .q-empty__text {
     margin: 0;
+    font-size: var(--qm-text-sm);
     color: var(--qm-text-muted);
-    max-width: 48ch;
+    max-width: 90ch;
 }
 
 .q-empty__action {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    gap: 8px;
-    margin-top: 20px;
+    gap: var(--q-row-gap, 8px);
+    margin-top: 8px;
 }
 
-.q-empty--compact { padding: 28px 16px; }
-.q-empty--compact .q-empty__icon { font-size: 36px; margin-bottom: 10px; }
-.q-empty--compact .q-empty__title { font-size: 15px; }
+
+/* THE ICON SITS BESIDE THE HEADING, NOT ABOVE IT. Stacked, an empty state was four rows tall — icon,
+   title, sentence, button — and a sentence that wrapped made it taller still (157–178px measured).
+   Beside, the icon spans the title and the sentence, so the whole thing is the height of its text.
+   A grid rather than a flex row because the button, when there is one, spans the full width below. */
+.q-empty {
+    display: grid;
+    grid-template-columns: auto minmax(0, max-content);
+    justify-content: center;
+    align-items: center;
+    column-gap: 12px;
+    row-gap: 2px;
+    text-align: left;
+}
+
+.q-empty .q-empty__icon {
+    grid-row: span 2;
+    align-self: center;
+    margin: 0;
+}
+
+.q-empty__title,
+.q-empty__text {
+    grid-column: 2;
+}
+
+/* The button sits on the SAME row, to the right — a button underneath added a whole row. A phone
+   has no room beside, so there it goes underneath. */
+.q-empty__action {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    margin: 0 0 0 8px;
+}
 
 @media (max-width: 576px) {
-    .q-empty { padding: 40px 16px; }
-    .q-empty .q-empty__icon { font-size: 48px; }
-    .q-empty__title { font-size: 18px; }
-    .q-empty__text { font-size: 14px; }
+    .q-empty__action { grid-column: 1 / -1; grid-row: auto; justify-self: center; margin: 6px 0 0; }
 }
+
+/* Inside a card the card already frames it: no second border, and less padding. */
+.q-card .q-empty { border: 0; background: transparent; padding: 12px 8px; }
+
+.q-empty--compact { padding: 12px 8px; }
+.q-empty--compact .q-empty__icon { font-size: var(--qm-text-xl); }
 
 /* ==========================================================================
    Activity log — generalised from the Document Library's activity modal
@@ -2367,7 +2472,7 @@
 
 .q-activity__note {
     margin: 0;
-    font-size: .85rem;
+    font-size: var(--qm-text-base);
     color: var(--qm-text-secondary);
     line-height: 1.5;
 }
@@ -2383,7 +2488,7 @@
 .q-activity__title {
     margin: 0;
     font-family: var(--qm-font-display);
-    font-size: .95rem;
+    font-size: var(--qm-text-md);
     color: var(--qm-text-primary);
 }
 
@@ -2391,7 +2496,7 @@
 
 .q-activity__table-wrap { overflow-x: auto; }
 
-.q-activity__table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.q-activity__table { width: 100%; border-collapse: collapse; font-size: var(--qm-text-base); }
 
 .q-activity__table th,
 .q-activity__table td {
@@ -2442,7 +2547,7 @@
 }
 
 .q-rating--sm .q-rating__star { width: 48px; height: 48px; }
-.q-rating--sm .q-rating__star .q-icon { font-size: 24px; }
+.q-rating--sm .q-rating__star .q-icon { font-size: var(--qm-text-stat); }
 
 .q-rating__star:hover,
 .q-rating__star.hover {
@@ -2475,7 +2580,7 @@
 
 .q-rating__label {
     text-align: center;
-    font-size: 16px;
+    font-size: var(--qm-text-md);
     font-weight: 600;
     color: var(--qm-primary);
     min-height: 24px;
@@ -2483,9 +2588,9 @@
 
 @media (max-width: 576px) {
     .q-rating__star { width: 52px; height: 52px; }
-    .q-rating__star .q-icon { font-size: 28px; }
+    .q-rating__star .q-icon { font-size: var(--qm-text-stat); }
     .q-rating--sm .q-rating__star { width: 42px; height: 42px; }
-    .q-rating--sm .q-rating__star .q-icon { font-size: 20px; }
+    .q-rating--sm .q-rating__star .q-icon { font-size: var(--qm-text-xl); }
 }
 
 /* ==========================================================================
@@ -2534,9 +2639,9 @@
     user-select: none;
 }
 
-.q-avatar--sm { width: 28px; height: 28px; font-size: 11px; border-radius: var(--qm-radius-md); }
-.q-avatar--md { width: 40px; height: 40px; font-size: 14px; }
-.q-avatar--lg { width: 56px; height: 56px; font-size: 20px; }
+.q-avatar--sm { width: 28px; height: 28px; font-size: var(--qm-text-xs); border-radius: var(--qm-radius-md); }
+.q-avatar--md { width: 40px; height: 40px; font-size: var(--qm-text-base); }
+.q-avatar--lg { width: 56px; height: 56px; font-size: var(--qm-text-xl); }
 
 .q-avatar__img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
@@ -2582,7 +2687,7 @@
         content: attr(data-label);
         flex: 0 0 38%;
         text-align: left;
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         font-weight: 600;
         letter-spacing: .04em;
         text-transform: uppercase;
@@ -2596,7 +2701,7 @@
         padding-bottom: 8px !important;
         margin-bottom: 4px;
         border-bottom: 1px solid var(--qm-border) !important;
-        font-size: 15px;
+        font-size: var(--qm-text-md);
     }
 
     table.q-stack > tbody > tr > td:first-child::before,
@@ -2699,7 +2804,7 @@
     background: var(--qm-bg-card);
     max-width: 100%;
 }
-.q-weekgrid__table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: max-content; font-size: 13px; }
+.q-weekgrid__table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: max-content; font-size: var(--qm-text-base); }
 .q-weekgrid__table th, .q-weekgrid__table td { border-right: 1px solid var(--qm-border); border-bottom: 1px solid var(--qm-border); }
 .q-weekgrid__table tr > :last-child { border-right: none; }
 .q-weekgrid__table tbody tr:last-child > * { border-bottom: none; }
@@ -2708,7 +2813,7 @@
     position: sticky; top: 0; z-index: 2;
     background: var(--qm-bg-elevated);
     padding: 8px 10px; text-align: left; white-space: nowrap;
-    font-family: var(--qm-font-display); font-size: 12.5px; font-weight: 600; color: var(--qm-text-primary);
+    font-family: var(--qm-font-display); font-size: var(--qm-text-sm); font-weight: 600; color: var(--qm-text-primary);
 }
 .q-weekgrid__corner { left: 0; z-index: 3; color: var(--qm-text-muted); font-weight: 500; }
 .q-weekgrid__colhead--today { box-shadow: inset 0 -2px 0 var(--qm-primary); color: var(--qm-primary); }
@@ -2716,10 +2821,10 @@
     position: sticky; left: 0; z-index: 1;
     background: var(--qm-bg-elevated);
     padding: 6px 10px; text-align: left; white-space: nowrap; vertical-align: top;
-    font-size: 12.5px; font-weight: 600; color: var(--qm-text-primary);
+    font-size: var(--qm-text-sm); font-weight: 600; color: var(--qm-text-primary);
 }
 .q-weekgrid__head-label { display: block; }
-.q-weekgrid__head-sub { display: block; font-size: 11px; font-weight: 400; color: var(--qm-text-muted); font-variant-numeric: tabular-nums; }
+.q-weekgrid__head-sub { display: block; font-size: var(--qm-text-xs); font-weight: 400; color: var(--qm-text-muted); font-variant-numeric: tabular-nums; }
 
 .q-weekgrid__cell {
     position: relative;
@@ -2741,7 +2846,7 @@
     color: var(--qm-text-muted);
 }
 .q-weekgrid__cell--selected.q-weekgrid--conflict { box-shadow: inset 0 0 0 2px var(--qm-primary), inset 5px 0 0 var(--qm-danger); }
-.q-weekgrid__state-icon { float: right; margin-left: 4px; font-size: 12px; line-height: 1; }
+.q-weekgrid__state-icon { float: right; margin-left: 4px; font-size: var(--qm-text-sm); line-height: 1; }
 .q-weekgrid--warning .q-weekgrid__state-icon { color: var(--qm-warning); }
 .q-weekgrid--conflict .q-weekgrid__state-icon { color: var(--qm-danger); }
 .q-weekgrid--unavailable .q-weekgrid__state-icon { color: var(--qm-text-muted); }
@@ -2751,7 +2856,7 @@
 .q-weekgrid__break-band {
     padding: 4px 10px; height: auto;
     background: var(--qm-bg-elevated);
-    font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--qm-text-muted); text-align: center;
+    font-size: var(--qm-text-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--qm-text-muted); text-align: center;
 }
 
 /* The phone: a list per day. */
@@ -2759,11 +2864,11 @@
 .q-weekgrid__day { margin-bottom: 14px; }
 .q-weekgrid__day-head {
     display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px;
-    margin: 0 0 6px; font-family: var(--qm-font-display); font-size: 14px; color: var(--qm-text-primary);
+    margin: 0 0 6px; font-family: var(--qm-font-display); font-size: var(--qm-text-base); color: var(--qm-text-primary);
 }
 .q-weekgrid__day-head .q-weekgrid__head-sub { display: inline; }
-.q-weekgrid__today-tag { font-size: 11px; font-weight: 600; color: var(--qm-primary); text-transform: uppercase; letter-spacing: .05em; }
-.q-weekgrid__day-empty { margin: 0; font-size: 13px; color: var(--qm-text-muted); }
+.q-weekgrid__today-tag { font-size: var(--qm-text-xs); font-weight: 600; color: var(--qm-primary); text-transform: uppercase; letter-spacing: .05em; }
+.q-weekgrid__day-empty { margin: 0; font-size: var(--qm-text-base); color: var(--qm-text-muted); }
 .q-weekgrid__day-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .q-weekgrid__item {
     display: flex; align-items: flex-start; gap: 10px; width: 100%; min-height: 44px;
@@ -2773,9 +2878,9 @@
 }
 .q-weekgrid__item--selected { box-shadow: inset 0 0 0 2px var(--qm-primary); }
 .q-weekgrid__item:focus-visible { outline: 2px solid var(--qm-primary); outline-offset: 1px; }
-.q-weekgrid__item-when { flex: 0 0 64px; display: flex; flex-direction: column; font-size: 12px; font-variant-numeric: tabular-nums; }
-.q-weekgrid__item-when span { color: var(--qm-text-muted); font-size: 11px; }
-.q-weekgrid__item-body { flex: 1 1 auto; min-width: 0; font-size: 13px; }
+.q-weekgrid__item-when { flex: 0 0 64px; display: flex; flex-direction: column; font-size: var(--qm-text-sm); font-variant-numeric: tabular-nums; }
+.q-weekgrid__item-when span { color: var(--qm-text-muted); font-size: var(--qm-text-xs); }
+.q-weekgrid__item-body { flex: 1 1 auto; min-width: 0; font-size: var(--qm-text-base); }
 
 @media (max-width: 640px) {
     .q-weekgrid__scroll { display: none; }
@@ -2798,8 +2903,8 @@
 .q-monthlist__week { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); padding: 10px 12px; min-width: 0; }
 .q-monthlist__week--current { border-left: 3px solid var(--qm-primary); }
 .q-monthlist__head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; font: 600 13px var(--qm-font-display); color: var(--qm-text-primary); }
-.q-monthlist__tag { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--qm-primary); }
-.q-monthlist__empty { margin: 0; font-size: 13px; color: var(--qm-text-muted); }
+.q-monthlist__tag { font-size: var(--qm-text-xs); text-transform: uppercase; letter-spacing: .05em; color: var(--qm-primary); }
+.q-monthlist__empty { margin: 0; font-size: var(--qm-text-base); color: var(--qm-text-muted); }
 .q-monthlist__items { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
 
 /* =====================================================================================================
@@ -2820,8 +2925,8 @@
     --q-control-h: 32px;
     --q-control-h-sm: 28px;
     --q-control-h-lg: 38px;
-    --q-control-font: 13px;
-    --q-control-font-sm: 12.5px;
+    --q-control-font: var(--qm-text-base);
+    --q-control-font-sm: var(--qm-text-sm);
     --q-control-pad-x: 10px;
     --q-row-gap: 8px;
 }
@@ -2842,7 +2947,7 @@
 .q-btn--lg {
     min-height: var(--q-control-h-lg);
     padding: 0 20px;
-    font-size: 15px;
+    font-size: var(--qm-text-md);
 }
 
 /* An icon-only button is square. */
@@ -2918,11 +3023,11 @@ textarea.q-input { font-size: var(--q-control-font); padding: 8px var(--q-contro
 
 /* The icon is a marker beside the title, not a tile above it. */
 .q-card__icon {
-    font-size: 1.05rem;
+    font-size: var(--qm-text-lg);
     line-height: 1;
 }
 
 .q-card__title {
-    font-size: 0.95rem;
+    font-size: var(--qm-text-md);
     line-height: 1.3;
 }

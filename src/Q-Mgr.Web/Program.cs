@@ -99,6 +99,7 @@ builder.Services.AddScoped<IClassTeacherApiService, ClassTeacherApiService>();
 builder.Services.AddScoped<IStaffPerformanceApiService, StaffPerformanceApiService>();
 builder.Services.AddScoped<IStaffOnboardingApiService, StaffOnboardingApiService>();
 builder.Services.AddScoped<IModuleApiService, ModuleApiService>();
+builder.Services.AddScoped<IPaymentApiService, PaymentApiService>();
 builder.Services.AddScoped<IMarketingApiService, MarketingApiService>();
 builder.Services.AddScoped<IContentApiService, ContentApiService>();
 builder.Services.AddScoped<IDocumentShareApiService, DocumentShareApiService>();
@@ -233,6 +234,53 @@ app.MapGet("/culture/set", (HttpContext http, string culture, string? redirectUr
     }
 
     return Results.LocalRedirect(target);
+});
+
+// The PWA manifest for a tenant's OWN host (white-label plan, C3). An installed app on a member
+// of staff's phone carries their school's name, icon and colour rather than ours — an installed
+// icon reading "Q-Mgr" on a white-labelled deployment is the most visible place the white-labelling
+// could leak, and it is the one place a user keeps looking at when the browser is shut.
+//
+// App.razor only links this on a host that actually resolves to a tenant; on the platform host the
+// static wwwroot/manifest.json is linked instead. This endpoint re-checks anyway and falls back to
+// the platform manifest for an unknown host — a link is not a permission.
+app.MapGet("/app-manifest.json", async (HttpContext http, QMgr.Web.Services.IOrganizationApiService organizations) =>
+{
+    var branding = await organizations.GetBrandingForHostAsync(http.Request.Host.Host);
+
+    var name = branding.Resolved && !string.IsNullOrWhiteSpace(branding.BrandName) ? branding.BrandName! : "Q-Mgr";
+    var theme = branding.Resolved && !string.IsNullOrWhiteSpace(branding.PrimaryColor) ? branding.PrimaryColor! : "#8c2f52";
+    // A tenant's uploaded logo, else ours. Purpose "any" only: a maskable icon has to carry its own
+    // safe zone and we cannot know that an uploaded logo does — declaring it maskable would let
+    // Android crop the school's name off its own icon.
+    var icon = branding.Resolved && !string.IsNullOrWhiteSpace(branding.LogoUrl) ? branding.LogoUrl! : "/images/icon-512.svg";
+    var iconType = icon.EndsWith(".svg", StringComparison.OrdinalIgnoreCase) ? "image/svg+xml"
+        : icon.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ? "image/png"
+        : icon.EndsWith(".webp", StringComparison.OrdinalIgnoreCase) ? "image/webp"
+        : "image/jpeg";
+
+    var manifest = new Dictionary<string, object?>
+    {
+        ["name"] = name,
+        ["short_name"] = name.Length > 12 ? name[..12].TrimEnd() : name,
+        ["description"] = $"{name} — front office: queues, visitors, signage, welfare and secure documents.",
+        ["start_url"] = "/",
+        ["display"] = "standalone",
+        ["background_color"] = "#0d1117",
+        ["theme_color"] = theme,
+        ["orientation"] = "any",
+        ["scope"] = "/",
+        ["lang"] = "en",
+        ["icons"] = new[]
+        {
+            new Dictionary<string, object?> { ["src"] = icon, ["sizes"] = "any", ["type"] = iconType, ["purpose"] = "any" }
+        }
+    };
+
+    // Never cached at the edge: the manifest depends on the Host header, and a shared cache that
+    // ignored that would hand one school's name to another.
+    http.Response.Headers.CacheControl = "private, max-age=300";
+    return Results.Json(manifest, contentType: "application/manifest+json");
 });
 
 app.MapRazorComponents<App>()

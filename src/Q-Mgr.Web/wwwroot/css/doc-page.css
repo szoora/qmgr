@@ -32,7 +32,7 @@
     text-decoration: none;
     font-family: var(--qm-font-display, inherit);
     font-weight: 700;
-    font-size: 20px;
+    font-size: var(--qm-text-xl);
 }
 
 .doc-brand-mark {
@@ -45,13 +45,13 @@
     background: rgba(255, 255, 255, 0.16);
     border: 1px solid rgba(255, 255, 255, 0.3);
     color: var(--qm-text-on-primary);
-    font-size: 16px;
+    font-size: var(--qm-text-md);
 }
 
 .doc-topbar-link {
     color: var(--qm-text-on-primary);
     text-decoration: none;
-    font-size: 14px;
+    font-size: var(--qm-text-base);
     font-weight: 600;
     padding: 8px 16px;
     border-radius: var(--qm-radius-full, 999px);
@@ -81,12 +81,12 @@
 
 .doc-meta {
     color: var(--qm-text-secondary);
-    font-size: 14px;
+    font-size: var(--qm-text-base);
     margin: 0 0 28px;
 }
 
 .doc-lede {
-    font-size: 17px;
+    font-size: var(--qm-text-lg);
     line-height: 1.7;
     color: var(--qm-text-primary);
     margin: 0 0 28px;
@@ -97,7 +97,7 @@
     border-left: 3px solid var(--qm-primary);
     padding: 16px 20px;
     border-radius: var(--qm-radius-md);
-    font-size: 14px;
+    font-size: var(--qm-text-base);
     line-height: 1.65;
     color: var(--qm-text-primary);
     margin-bottom: 32px;
@@ -105,7 +105,7 @@
 
 .doc-card h2 {
     font-family: var(--qm-font-display, inherit);
-    font-size: 20px;
+    font-size: var(--qm-text-xl);
     font-weight: 700;
     color: var(--qm-text-primary);
     margin: 36px 0 12px;
@@ -121,7 +121,7 @@
 
 .doc-card p,
 .doc-card li {
-    font-size: 15px;
+    font-size: var(--qm-text-md);
     line-height: 1.75;
     color: var(--qm-text-secondary);
 }
@@ -162,7 +162,7 @@
     align-items: center;
     justify-content: center;
     gap: 12px;
-    font-size: 13px;
+    font-size: var(--qm-text-base);
     flex-wrap: wrap;
 }
 
@@ -183,7 +183,7 @@
     text-align: center;
     color: var(--qm-text-on-primary);
     opacity: 0.75;
-    font-size: 12px;
+    font-size: var(--qm-text-sm);
     margin: 24px 0 0;
 }
 
@@ -213,17 +213,17 @@
     align-items: center;
     justify-content: center;
     margin-bottom: 12px;
-    font-size: 18px;
+    font-size: var(--qm-text-lg);
 }
 
 .doc-contact-tile h3 {
-    font-size: 15px;
+    font-size: var(--qm-text-md);
     margin: 0 0 6px;
     color: var(--qm-text-primary);
 }
 
 .doc-contact-tile p {
-    font-size: 13px;
+    font-size: var(--qm-text-base);
     margin: 0 0 10px;
     color: var(--qm-text-secondary);
 }
@@ -248,24 +248,24 @@
     align-items: center;
     justify-content: center;
     margin-bottom: 14px;
-    font-size: 20px;
+    font-size: var(--qm-text-xl);
 }
 
 .doc-contact-single h3 {
-    font-size: 17px;
+    font-size: var(--qm-text-lg);
     margin: 0 0 6px;
     color: var(--qm-text-primary);
 }
 
 .doc-contact-single > p {
-    font-size: 14px;
+    font-size: var(--qm-text-base);
     margin: 0 0 12px;
     color: var(--qm-text-secondary);
 }
 
 .doc-contact-email {
     display: inline-block;
-    font-size: 16px;
+    font-size: var(--qm-text-md);
     font-weight: 600;
     color: var(--qm-primary);
     text-decoration: none;
@@ -287,7 +287,7 @@
 }
 
 .doc-contact-hints li {
-    font-size: 13px;
+    font-size: var(--qm-text-base);
     color: var(--qm-text-secondary);
 }
 
@@ -305,7 +305,7 @@
 }
 
 .doc-faq-item h3 {
-    font-size: 15px;
+    font-size: var(--qm-text-md);
     font-weight: 600;
     color: var(--qm-text-primary);
     margin: 0 0 8px;
@@ -321,6 +321,6 @@
     }
 
     .doc-header h1 {
-        font-size: 28px;
+        font-size: var(--qm-text-stat);
     }
 }

@@ -188,17 +188,17 @@
 </QModal>
 
 <style>
-    .sa-closed { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; padding: 10px 14px; margin-bottom: 14px; border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-text-muted); border-radius: var(--qm-radius-md); background: var(--qm-bg-secondary); font-size: 13.5px; color: var(--qm-text-secondary); }
+    .sa-closed { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; padding: 10px 14px; margin-bottom: 14px; border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-text-muted); border-radius: var(--qm-radius-md); background: var(--qm-bg-secondary); font-size: var(--qm-text-base); color: var(--qm-text-secondary); }
     .sa-closed > span { flex: 1 1 260px; min-width: 0; }
-    .sa-warn { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-warning); background: var(--qm-bg-secondary); border-radius: var(--qm-radius-sm); font-size: 13.5px; }
+    .sa-warn { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-warning); background: var(--qm-bg-secondary); border-radius: var(--qm-radius-sm); font-size: var(--qm-text-base); }
     .sa-warn i { color: var(--qm-warning); }
     .loading-container { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
     .sa-period { min-width: 220px; }
     .table-wrap { overflow-x: auto; }
     .sa-row { cursor: pointer; }
-    .sa-row:hover td { background: var(--qm-bg-hover, var(--qm-bg-secondary)); }
+    .sa-row:hover td { background: var(--qm-bg-secondary); }
     .sa-person { display: flex; align-items: center; gap: 8px; }
-    .sa-muted { color: var(--qm-text-muted); font-size: 12.5px; }
+    .sa-muted { color: var(--qm-text-muted); font-size: var(--qm-text-sm); }
 </style>
 
 @code {
@@ -233,7 +233,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
-            Navigation.NavigateTo("/billing/modules");
+            Navigation.NavigateTo(BillingLinks.Modules);
             return;
         }
 

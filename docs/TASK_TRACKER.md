@@ -5,7 +5,511 @@ Living list of work requested across sessions. Update status inline as work prog
 Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
 ---
-## ▶ NEXT SESSION — start here (rewritten 2026-09-19, afternoon)
+## ▶▶ HANDOVER — read this first (written 2026-09-20 21:35; see the 2026-09-21 section below first)
+
+### The one thing that matters
+
+**Nothing has been committed since `803ece4` (2026-09-18).** The working tree carries
+**221 modified files and 78 new ones** — roughly five sessions of work: payments through the sacc.ug
+gateway, the billing hub, the UI compaction and type scale, minutes of meetings, the list-page sweep,
+the registration doors, white label + custom domains, and the tenant lifecycle and purge.
+
+**Do not offer to commit or deploy unprompted** — both are the user's call, and they have been asked
+several times and deferred each time. But the next session should know the tree is this large before
+touching anything, and that a `git checkout` of any file could destroy a lot.
+
+**Four migrations are in that tree and are additive**, in order:
+`20260919160000_UgxDefaultAndStripeOff`, `20260920084558_AddMeetingMinutes`,
+`20260920142127_AddCustomDomainVerification`, `20260920153902_AddTenantLifecycleAndPurge`.
+All four are applied to the dev database already.
+
+### State: everything asked for is built and verified
+
+The last four requests were each "implement the plan fully", and each is finished, run against the
+dev tenant, and written up in its own section below. Nothing is half-done and there is no resume
+point to pick up. Current package: **`scripts/deploy/dist/qmgr-0.2.0-20260920.2129.tar.gz`**
+(112 MB, ports 8586/8587) — superseded tarballs were deleted so there is only one to pick up.
+
+### How to verify it all in one go
+
+    # API with the two Development-only stubs the suites need
+    Dns__Stub=true CustomDomains__SkipCertificate=true Cors__AllowedOrigins__4=http://127.0.0.1:5003 \
+      dotnet run --project src/Q-Mgr.API/Q-Mgr.API.csproj --urls "http://127.0.0.1:5001" --no-build
+    ApiBaseUrl="http://127.0.0.1:5001" dotnet run --project src/Q-Mgr.Web/Q-Mgr.Web.csproj \
+      --urls "http://127.0.0.1:5003" --no-build
+
+    API=http://127.0.0.1:5001 BRANCH=<branch guid> SA_USER=superadmin SA_PASS=admin \
+      bash scripts/e2e/class-teacher-e2e.sh
+
+**Sections 15, 17 and 18 were wired into that runner on 2026-09-20 and had never been.**
+`duty-rota-e2e.mjs`, `minutes-e2e.mjs` and `registration-doors-e2e.mjs` each existed and each passed
+standalone, but the shell suite never called them — so a "full run" under-reported by about ninety
+assertions and a regression in any of the three would not have shown up in one. All seven Node
+suites now run from the single command. **If you add a Node suite, wire it there in the same commit.**
+
+`scripts/rebuild.sh` stops the running API/Web before building — MSBuild cannot overwrite a DLL a
+running process holds, and that failure reads exactly like a compile error when it is not.
+
+### Four things that are true and easy to get wrong
+
+- **`TenantPurgeModelGuard` fails STARTUP on an unclassified table.** Add an entity and the API will
+  not start until it is in `TenantDataManifest`. That is deliberate — the alternative is a purge that
+  reports success and leaves rows behind — and the error names the entity and the four options.
+- **The purge suite creates its own tenant and destroys it.** It cannot be pointed at the dev tenant.
+  It also resets its own sign-up budget through a Development-only endpoint, because registration is
+  capped at three an hour per address.
+- **A fallback literal hides a wrong token name.** `var(--qm-bg-subtle, #f4f4f5)` and
+  `var(--qm-surface, #fff)` both named tokens that do not exist, so both silently took the literal —
+  one of them made the DNS record on the tenant dialog invisible in dark mode. **Real tokens only, no
+  fallback literal**, and check a colour change in BOTH themes.
+- **Run the deploy build after touching `build-linux.ps1`.** A `` `$genDir `` escape inside ordinary
+  PowerShell (not a here-string) produced a literal path segment and step 7 threw. The PowerShell
+  parser said `parse ok` — the string was syntactically fine and semantically wrong.
+
+### Not exercised, and stated rather than claimed
+
+- **No certificate has ever been issued** for a tenant domain. The suites run with
+  `CustomDomains__SkipCertificate=true`; certbot, the nginx include and the sudoers drop-in were
+  verified by rendering the generated scripts and `bash -n`, never on a host.
+- **`suppression_reapply` needs a real `pg_restore`** on the server to be exercised.
+- **No real money has moved** through the sacc.ug gateway; the payments suites run against a stub.
+  The first real prompt is the platform's own "Send UGX 500" test on `/platform/payments`.
+- The 104-day lifecycle clock has only been exercised by forcing transitions plus one genuine
+  elapsed `Pending` window (the sweep moved four stale dev tenants `Pending` → `Suspended`).
+
+---
+## ▶ (2026-09-21) — the four traps, three UI reports, and a certificate decision taken twice
+
+**The machine shut down abruptly at 11:47 mid-command.** Nothing was lost: every edit was on disk,
+the solution builds, and all eight static guards pass. The session that died is `be2b6796`; this
+entry is reconstructed from the working tree and that transcript, both read rather than recalled.
+
+### The four traps from the 2026-09-20 handover, closed
+
+- **A `var()` fallback hiding a wrong token name.** Closed, and given a permanent guard:
+  **`scripts/e2e/css-token-check.mjs`** — 276 files, 156 tokens, every `var()` names one. Rules in
+  CLAUDE.md, "A `var()` fallback hides a wrong token name".
+- **`TenantPurgeModelGuard` fails startup on an unclassified entity.** **`scripts/e2e/purge-manifest-check.mjs`**
+  now says so before the API does: 81 entities, all classified. Learning it from a dead API is the
+  slowest possible way to find out.
+- **The certificate path** — the largest change; see below.
+- **Run the deploy build after touching `build-linux.ps1`.** Run. Produced
+  `qmgr-0.2.0-20260921.1145.tar.gz`. **NOTE: built with `-SkipPublish`, so it carries 20 Sep
+  binaries with 21 Sep config scripts** — it does not contain any of this day's code.
+
+### The certificate decision, taken twice, and both halves stand
+
+**Morning** (user: *"the certificate exists on the server and is already shared properly with other
+applications"*, then "use shared cert, never issue"): certbot left the live path entirely.
+`ICertificateIssuer`/`CertbotCertificateIssuer` became **`ITenantDomainActivator`/`NginxTenantDomainActivator`**,
+which writes the tenant's nginx block against the installed certificate, reloads, and refuses a domain
+that certificate does not cover. The invented per-tenant renewal date is gone. Rename verified across
+DI, `CustomDomainService`, `CustomDomainDto` and the tenant UI; solution builds clean.
+
+**Afternoon** (user: *"external domains like dashboard.maryhillug.net should be supported also. this is
+the reason for whitelabelling"*): the installed certificate is Sectigo DV answering for
+`*.cashbook.ug` and `cashbook.ug` only — read off the live host — so it can never cover somebody's own
+domain. The morning's work becomes the **fast path** of a hybrid; per-domain issuance returns as the
+branch underneath the coverage check. **That is workstream B of the completion plan and is in flight.**
+
+### The three UI reports
+
+- **Welfare Categories and Service Types both led their colour palette with Q-Mgr's own wine and
+  preselected it**, so a white-labelled school stamped our colour on every category and service it
+  created. The first swatch is the tenant's own brand now, stored as `null` rather than a hex, so it
+  follows a rebrand. `Color` became `string?` on both forms.
+- **The Tenant Details modal**: the amber, the row alignment and the Save button. `detail-item` — a
+  class seven components each defined differently — is gone from the page, and the file was normalised
+  back to CRLF after a patch mixed line endings into it.
+- **Amber-filled buttons were unreadable on a dark-branded tenant.** `.q-btn--warning` took
+  `--qm-text-on-primary`, which `BrandPalette` derives from the tenant's brand — about 1.9:1 white on
+  `#f59e0b`. New `--qm-text-on-warning`, near-black and theme-invariant, since amber is fixed in both
+  themes. This one is global, not page-level.
+
+### What maryhillug.net actually looks like — measured, not assumed (2026-09-21)
+
+Asked by the user: *"do you prefer that i upload for you the certificate? is maryhillug.net not having
+a certificate yet?"* and *"how is admissions.maryhillug.net working? the project is hosted on the same
+server"*. Read off the live internet with DNS-over-HTTPS and `openssl s_client`. **Raw UDP DNS is
+blocked in this sandbox** — a plain `nslookup` times out here even for `qmgr.cashbook.ug`, so the
+morning session's `dashboard.maryhillug.net` timeout proved nothing and should not be read as a
+missing record.
+
+- **`dashboard.maryhillug.net` ALREADY resolves to `74.208.201.32`** — the same box as
+  `qmgr.cashbook.ug`. The A record is in place, so block 1 is already done for this tenant, though the
+  product still has to ask every other tenant for it.
+- **It has no certificate of its own.** The handshake falls through to the default server and is
+  served `*.cashbook.ug` — a name mismatch, so a browser opening it today gets a warning. `curl -k`
+  then gets nothing at all (http 000): there is no server block for that name either.
+- **`maryhillug.net` and `www.maryhillug.net`** serve the school's own website from that same box
+  under a **Let's Encrypt** certificate (issuer `YE1`, both names on one certificate, expiring
+  19 Nov 2026 — a 90-day certificate, so something on the box is renewing it).
+- **`admissions.maryhillug.net` — the user's own question, and the proof.** Same box, and it works
+  because it has **its own Let's Encrypt certificate** (CN `admissions.maryhillug.net`, issuer `YE2`,
+  a SINGLE SAN, expiring 29 Oct 2026) and its own nginx server block. There is no `*.maryhillug.net`
+  wildcard anywhere — every subdomain on that host carries a certificate of its own. A single SAN with
+  the CN equal to the domain is the signature of `certbot certonly -d <domain> --cert-name <domain>`.
+
+**So B0 is answered, and the answer to "should I upload a certificate?" is no.** An ACME client is
+already installed and renewing on that server, and a sibling application on the same box is already
+doing exactly what `dashboard.maryhillug.net` needs. Q-Mgr should issue the same way rather than take
+an upload: an upload means a private key for this application to store and protect, and a manual
+renewal every 90 days that silently breaks a tenant's site the first time it is missed. **No new OS
+package is needed** — which also keeps the standing no-server-dependencies rule intact.
+
+What still needs confirming ON the box: which client it is, and that Q-Mgr's helper stays out of its
+way — its own `--cert-name` and its own webroot `/var/www/qmgr-acme`, both of which the recovered
+code already uses. The box is reachable at `74.208.201.32` on SSH port `2285`.
+
+### What this day's analysis found, beyond the traps
+
+Written up in full in the completion plan artifact: **https://claude.ai/artifact/3WCYkNeW6smKKCa7ZUKNBy**
+
+- **Three separate blocks stand between a tenant domain and a browser**, each fatal alone: the panel
+  asks for a TXT record and **no A or CNAME**, so the domain never points here; no certificate can
+  cover an external name; and nginx matches `server_name qmgr.cashbook.ug` only, so even a
+  `*.cashbook.ug` subdomain — which the wildcard certificate already covers — reaches whatever default
+  server answers. Nine phases were built and verified against a stub; production serves nothing.
+- **Three real defects inside 26 build warnings**, all reported on every build for days:
+  `StaffMinutes.meId` never assigned (nobody can close their own action point), `WelfareReports.pageIndex`
+  never assigned with no pager on the page at all (a safeguarding search shows the first 50 and says
+  nothing), and `StaffMinutesController:498` filtering `r.Outcome != null` on a non-nullable enum.
+- **Two "still open" notes in the 2026-09-19 block are already closed** — corrected there.
+- **Eight static guards and twenty-three browser suites, and no runner calls any of them.** The same
+  shape as sections 15/17/18, which passed standalone for weeks while the one command skipped them.
+
+---
+## ▶ (2026-09-20) — tenant lifecycle and complete purge, all seven phases. NOT COMMITTED.
+
+Plan artifact: https://claude.ai/artifact/33y4u5jAA8zmWYtyWR49To. Rules in CLAUDE.md, "A tenant has
+a life, and the end of it leaves nothing".
+
+- **Phase 0 — a dead pipeline and a job that would have thrown.** `TenantStatus.Deleted` was read in
+  four places and written in NONE, so no tenant could ever be deleted; and `BillingJobs` would have
+  done a bare `Remove(org)` against **36 Restrict FKs**, taking the whole nightly cleanup with it.
+- **Phase 1 — `TenantDataManifest` + `TenantPurgeModelGuard`.** Four classes; startup FAILS on an
+  unclassified table. This is the "flexible for future tables" mechanism, and the only hand-kept part.
+- **Phase 2 — the residue inventory.** Rows per table, files, Hangfire jobs, cache keys, external
+  references. Read-only and useful on its own.
+- **Phase 3 — the lifecycle.** Six states, published clocks (104 days end to end), warning emails,
+  `TenantLifecycleEvent`, and the platform UI.
+- **Phase 4 — the purge engine.** Files first, then Hangfire, then ~70 tables dependents-first in one
+  transaction, derived from `IModel`.
+- **Phase 5 — verification.** The completeness check reads `information_schema`, not the model;
+  anything left rolls the transaction back. Certificate, tombstone, suppression list, restore hook.
+- **Phase 6 — statutory retention.** `Invoice`/`Payment` de-identified and kept five years.
+- **Phase 7 — the monthly re-verification sweep, and the Terms and Privacy wording.**
+
+**Terms §8a is new and says it plainly**: if an account stops being paid for, it is suspended for 60
+days, closed for 30 more, scheduled for 14, and then permanently deleted — 104 days, emailed before
+each step, with the backup window (30 days) and the two exceptions stated honestly.
+
+- **Verified**: `scripts/e2e/tenant-purge-e2e.mjs` **32/32** (section 20). It creates its own tenant,
+  fills it, purges it and proves nothing is left — it cannot run against the dev tenant.
+- **Cleaned up by the feature itself**: the "Doors Check" tenant an earlier session had to leave for a
+  platform administrator, and a "Purge Check" tenant from this session's first rolled-back run, were
+  both purged with verification passing.
+- **Not exercised**: `suppression_reapply` needs a real restore on the server; it was checked by
+  rendering the generated script and `bash -n`.
+- **Production package builds**: `qmgr-0.2.0-20260920.2106.tar.gz` (111.4 MB). The four generated
+  shell scripts in it all pass `bash -n`, the sudoers drop-in is the single-command NOPASSWD entry,
+  and the nginx site carries `include /etc/nginx/qmgr-tenants/*.conf`.
+- **A build-script defect was found by running it, not by reading it.** The white-label pass had
+  written `` `$genDir `` inside ORDINARY PowerShell (not a here-string), so the escape produced a
+  literal `$genDir` path segment and step 7 threw. `parse ok` from the PowerShell parser did not
+  catch it — the string was syntactically fine and semantically wrong. **Run the deploy build after
+  touching `build-linux.ps1`; parsing it is not enough.**
+
+---
+## ▶ (2026-09-20) — the white-label plan, all nine phases. NOT COMMITTED.
+
+Plan artifact: https://claude.ai/artifact/Q5GWUjaCRBfZm9ANY6FVfp — built word for word, phases 0-8.
+Rules in CLAUDE.md, "White label: a tenant's own domain, its own assets, and our name coming off".
+
+- **Phase 0 — the dead branch.** `TenantResolutionMiddleware` nested the `CustomDomain` lookup inside
+  the subdomain branch, which `ExtractSubdomainAsync` skips for exactly the hosts the feature exists
+  for. **The custom-domain feature had never once run.** Now a sibling, cached 30 minutes with
+  negative answers, evicted when a domain goes live or is released.
+- **Phase 1 — brand-asset uploads.** `ImageProbe` reads PNG/JPEG/WebP headers by hand (no image
+  library); the stored extension comes from the BYTES; SVG refused; a replacement deletes the old
+  file; `UploadOwnerKind.Branding`, public by intent. Preview tiles with the limits stated before the
+  picker, a favicon shown at 16 and 32px, and the old URL fields kept collapsed for tenants on one.
+- **Phase 2 — verification.** `ICustomDomainService`, seven additive columns on `Organization`
+  (`20260920142127_AddCustomDomainVerification`), `_qmgr-verify` TXT compared in constant time, a
+  hand-written DNS/UDP lookup behind `IDnsTxtLookup`, a daily sweep that backs off and gives up after
+  a week, and a platform-only Custom Domain block on Tenant Details with the exact record to create.
+- **Phase 3 — certbot and nginx.** One root-owned helper plus a one-command sudoers drop-in; the site
+  file includes `/etc/nginx/qmgr-tenants/*.conf`. **Server-only, and stated as such**: verified by
+  rendering the generated helper out of `build-linux.ps1` and `bash -n`-ing it.
+- **Phase 4 — `TenantHostContext`.** Resolved once in `App.razor`, cascaded. Branded sign-in, favicon
+  and PWA manifest per host, and **Register Organisation hidden** on a tenant's own domain.
+- **Phase 5 — the shell.** `MainLayout` reads `api/v1/branding/mine` (no permission code: the
+  ProfileController rule) and wears the name, logo and palette.
+- **Phase 6 — email.** `EmailTemplates.EmailBrand` + `IEmailBrandService`. The body is branded; the
+  envelope cannot move and that is not a gap — the relays reject a From that is not the mailbox.
+- **Phase 7 — the rest.** Per-host PWA manifest endpoint, the public share page carrying the school,
+  and the print-sheet audit, which found one real leak: the printed join poster said "on Q-Mgr".
+- **Phase 8 — attribution.** `FeatureCodes.RemoveAttribution`, the `white-label-plus` add-on, a
+  platform override on the tenant's row, and all THREE attribution strings on one flag.
+
+**The engine was reported as not working, and it was.** Every branded surface set three tokens while
+`qm-theme.css` defines seven more as wine literals, so hovers and tints stayed wine. `BrandPalette`
+derives the whole family in one home (four call sites had their own copy), and `--qm-info` — a second
+copy of the wine literal — now follows `--qm-primary`.
+
+- **Verified**: `scripts/e2e/white-label-e2e.mjs` **52/52** (section 19 of `class-teacher-e2e.sh`) and
+  `scripts/e2e/browser/white-label-ui.mjs` **20/20**. Both restore the tenant exactly.
+- **Not exercised**: no real certificate has been issued; the suite runs with
+  `CustomDomains__SkipCertificate=true`, Development only.
+
+### Also this session — the join form (user instruction)
+*"only show the mandatory fields ... clearly mark the mandatory fields and implement aggressive
+validations both in the ui and backend"*, and *"label Last name and surname"*.
+Phone, employee number and job title are **removed from `JoinApplicationRequest` entirely**, not
+hidden — the shape of the request is what enforces it, and a job title is the school's record of
+somebody rather than an applicant's claim. Every field is marked, validated on blur and on submit,
+and the API enforces the same rules field by field so a refusal names the box. "Last name" is
+"Surname".
+
+---
+## ▶ (2026-09-20, night) — two doors on the sign-in page. NOT COMMITTED.
+
+Reported from the login screen: *"Don't have an account? Create one"* led to registering a whole new
+ORGANIZATION. A teacher at a school that already uses Q-Mgr reads that, tells the truth, and gets a
+duplicate school. All five recommendations built. Rules in CLAUDE.md, "There are TWO doors".
+
+1. **Registration says what it creates.** `/register` is *"Register your organisation"* with a line
+   under it pointing at the join link. The words *"Create one"* are gone from `/login`.
+2. **The second door exists**: `Components/Pages/JoinCode.razor` at `/join` takes a code or a whole
+   pasted URL and forwards to `/join/{Code}`. It looks nothing up — an unknown code must read the
+   same as a revoked one, and `JoinStaff` already makes that judgement.
+3. **`IOrganizationHintService`** answers "does this domain already belong to a tenant?" on the
+   registration form, and **discloses only what a school published about itself** — sign-up ON, a
+   live link, and the domain in its own allowed list. Free mailboxes are never matched; the join
+   code is never in the answer; a failed lookup never fails a sign-up.
+4. **It warns, never blocks.** Continuing sets `AcknowledgedExistingOrganization` → +30 and a signal
+   in the reviewer's words. Proven live: one run scored 30 (Allow), a second scored 50 (Flag) once
+   the name-similarity signal joined it — which is exactly the intended shape.
+5. **Admin provisioning stays primary** — verified, not changed: `JoinEnabled` false by default,
+   `RequireApproval` always true, `AllowedEmailDomains` narrowing who may apply.
+
+- **Verified**: `scripts/e2e/registration-doors-e2e.mjs` **25/25** and
+  `scripts/e2e/browser/registration-doors.mjs` **18/18**. Both restore the tenant's settings; the
+  browser one signs out first, or a live session sends it to the dashboard and every assertion
+  passes by accident.
+- **Left behind**: one tenant, *"Doors Check mu9nuqa9"*, created by section 18.5 to prove the
+  flagging works. **Suspended** with a reason naming the run; a platform administrator deletes it.
+
+---
+## ▶ (2026-09-20, night) — the list-page sweep, all four phases. NOT COMMITTED.
+
+Plan `docs/plans/LIST_PAGE_STANDARDISATION.md` implemented end to end. **58 list pages: 23 swept,
+35 ruled out of scope with a reason each, 0 outstanding.** Rules in CLAUDE.md, "A list page has one
+shape, and QBulkBar is its one home".
+
+- **Phase 1**: `Components/Shared/UI/QBulkBar.razor`, extracted FROM `StaffRegister` and the register
+  moved onto it first — its browser suite stayed green.
+- **Phase 2**: sixteen pages changed (visitor audit, join requests, my welfare actions, expected
+  visitors, staff notices, duty reports queue, visitor management, welfare reports, media library,
+  playlists, campaigns, schedules, display zones, broadcasts, subjects, registration review).
+  **Bulk approve/reject on join requests** applies one role and branch to the ticked people, one call
+  each, and NAMES the ones the guard refuses.
+- **Phase 3** (`scripts/e2e/refusal-audit.mjs`) found one: the **School Day** page saved the school
+  day and the rooms as two calls, rooms second, so a blank room was refused AFTER the day had saved.
+  `TimetableSettings.PreSubmitProblem` refuses it first, naming the row.
+- **Phase 4**: `list-page-audit.mjs` now carries DONE (with per-page waivers and reasons) and
+  OUT_OF_SCOPE, and FAILS when a swept page regresses.
+- **Verified**: `scripts/e2e/browser/list-sweep.mjs` 52/52 in a real browser — it detects the module
+  redirect and skips with that reason rather than passing on the Billing page. All static guards clean.
+- **The `row` heuristic was wrong twice and was fixed twice** (a stat strip and an hours editor both
+  read as "card per item"). It now requires the grid's class beside a `@foreach`.
+
+### Seeded data: removed, except what the product refuses to delete
+
+Notices, expected visitors and the REGISTER-CHECK duty were removed. **Four meetings (MINUTES-E2E /
+MINUTES-UI) cannot be cancelled** — their registers are closed and the records stand, which is the
+rule, not a bug. **The `PRINT-CHECK` timetable cannot be deleted** (a published version is history)
+and it is now the dev branch's only live timetable, where before there was none. Removing either is
+a database-owner action.
+
+---
+## ▶ (2026-09-20, evening) — minutes of a meeting, built in full. NOT COMMITTED.
+
+Asked after the register rework: *"what provisions to standardise recording minutes… what is the industry
+standard and what is your recommendation"*, then **"implement the full minutes recommendation, plan the sweep
+properly"**. The standards behind the shape (Robert's Rules for content, open-meeting/records law for the
+lifecycle, ISO 15489 for the qualities, board portals for the product shape) are written at the top of
+`Q-Mgr.Shared/Application/DTOs/MinutesDto.cs`; the rules are in CLAUDE.md.
+
+- **Minutes are now a record in Q-Mgr, not a PDF written elsewhere.** Template from the policy (tenant-editable,
+  `MinutesTemplateDefaults` in Shared), motions with mover/seconder/outcome/votes, action points, and a
+  **Draft → Circulated → Approved** lifecycle where adoption is a one-way door and every later change is an
+  append-only correction. `MinutesApprovedAtDutyId` records WHICH meeting adopted them; a meeting cannot adopt
+  its own.
+- **Attendance comes from the register and is never retyped** — Excused reads as apologies, Late is present and
+  late, and the page and the printed sheet both say so while the register is still open. Quorum is computed on
+  read from the policy, default 0 = not tracked.
+- **An action point is a row (`StaffMinuteAction`)** — the one case where the enhance-before-add constraint
+  argues FOR a table: queried per person across meetings, its own lifecycle, and a `ReminderStage` column the
+  ladder claims before sending. It appears on the assignee's portal to-do and is chased by a new
+  `ReminderSubject.MinuteActionDue` ladder (a day before, on the day, three days after; never interruptive).
+- **New**: `StaffMinutesController`, `StaffMinutes.razor`, `MinutesPrint.razor` (a draft prints marked DRAFT;
+  publishing an adopted sheet also ATTACHES it as the meeting's minutes document), `StaffMinutesSettings.razor`
+  in the policy editor, migration `20260920084558_AddMeetingMinutes` (additive: nine columns, one table).
+- **Verified**: `scripts/e2e/minutes-e2e.mjs` **47/47** and `scripts/e2e/browser/minutes-ui.mjs` **21/21**, both
+  0 failed; route-audit and the three static guards clean. A meeting whose register is closed is never cancelled,
+  so each run leaves one meeting behind titled with its run id.
+- **Also**: "Minutes" on a duty row now opens the record; attaching a PDF written elsewhere is the smaller action
+  beside it.
+
+## ▶ THE LIST-PAGE SWEEP — planned, not started (2026-09-20)
+
+`docs/plans/LIST_PAGE_STANDARDISATION.md`, artifact https://claude.ai/artifact/YGWVKtSHSxNkPQvtgb1KvL.
+`scripts/e2e/list-page-audit.mjs` is Phase 0 and reports the register's five faults per page: **59 list pages,
+36 with three or more.** Four decisions are waiting in the plan (scope, order, the virtualisation threshold,
+Tier 2's row shape).
+
+---
+## ▶ (2026-09-20, later) — duties on the teacher sheet, and the register rework. NOT COMMITTED.
+
+- **Duties on the teacher print sheet.** `TimetablePrint` loads the branch's duties over the timetable's own
+  effective range and lists each teacher's under their grid: date, time, duty, where, and what they are there to
+  do (expected / takes the register / supervises). Lessons excluded — they are the grid. A Duties toggle on the
+  toolbar, default on, teacher axis only. The load never fails the print.
+- **The register reworked for scale** (`StaffRegister.razor`, one page that serves session, meeting, ROTA and
+  lesson registers alike — the "Teacher on duty" screenshot is the same page): full width, one line per person,
+  `<Virtualize>` above 40 rows, filter chips with counts, search, tick-and-apply bulk marking, a "rest present"
+  sweep over the unmarked only, an unsaved count, a confirm before closing with people unmarked, and the two
+  server refusals (self-marking, a rota's missing reason) enforced on the row instead of losing the submit to a
+  400. Rules in CLAUDE.md.
+- **Verified**: `scripts/e2e/browser/register-and-duty-sheet.mjs` — **22 checks, 0 failed**, against a real
+  135-row branch-wide register at 1600px and 390px. The seeded `REGISTER-CHECK` duty was cancelled afterwards.
+- **Open, answered but not built**: minutes standardisation (a structured minutes record on the duty, mirroring
+  `DutyReportTemplateDefaults`), and a sweep of the pages that share the register's faults. Both were put to the
+  user as recommendations rather than started.
+
+---
+## ▶ (2026-09-20) — individual timetable extracts (options 1–4). NOT COMMITTED.
+
+Asked: *"what possibilities to print individual teacher timetable extracts?"*, then **"implement all 1-4"**.
+The four were: (1) a `?key=` filter on the print route, (2) "Print my timetable" on the portal, (3) a picker for a
+chosen set, (4) per-teacher Publish to Library. All four are in; (4) needed no code of its own once the document's
+name followed the selection. Rules in CLAUDE.md under the duty-rota section, beside the `QPrintSheet` bullet.
+
+- **`TimetablePrint.razor`** now takes `?key=` (comma-separated), filters `Pages()` out of a new `AllPages()`
+  that carries a key per sheet, and offers a `QMultiSelect` of the sheets on the toolbar. The keys match the
+  editor's `InView` keys exactly. **Empty means every sheet**, so the old no-key behaviour is untouched.
+  `DocTitle` / `SelectionSummary` / `FileSlug` name what is actually on the paper, which is what makes a published
+  extract findable — *"TERM 3 2026 — Martin Kato"*, not a fortieth *"… — by teacher"*.
+- **`Timetable.razor`**: the Print button dropped the view key and always printed the whole school. It now carries
+  it (`PrintUrl()`); master falls back to by-class, as before, because it has no single key.
+- **`MyTimetableCard.razor`**: a **Print my timetable** button beside "Open the timetable", straight to the
+  person's own sheet. No timetable master in the loop and no extra permission — reading a published version needs
+  only branch membership.
+- **Verified in a real headless Chrome**: `scripts/e2e/browser/timetable-print.mjs`, **29 checks, 0 failed,
+  nothing skipped** — including a real Publish to Library (row created, named for the teacher, then deleted).
+  Section 9 signs in as a **teacher**, not the administrator, and the suite refuses to run against a one-teacher
+  version because the central assertion would pass vacuously there.
+- **Setup the run needed** (the dev tenant had no published timetable in force — every version was Archived, so
+  `…/timetable/current` was 204 and the portal card hid itself): three subject-teacher assignments recreated and
+  a five-lesson timetable *"PRINT-CHECK mu9j6kwb"* published over today for two seeded teachers. **It is still
+  published on the dev tenant** and is safe to discard.
+- **One real mistake, stated plainly**: the suite's first cleanup matched Library documents on the teacher's name
+  alone and deleted a pre-existing *"Staff performance report — Martin Kato (Complete record)"* left by another
+  suite. Almost certainly another run's artefact, but not this run's to remove. The filter now requires the
+  timetable's name too.
+- **Not done, and not part of 1–4**: duties from the rota on a teacher's sheet. It was offered as an extra
+  alongside the four and the answer named only the four, so it is still open — the data is at hand
+  (`TimetableChecker` already raises `TeacherOnSessionDuty`), and a sheet that shows lessons but hides the Friday
+  duty is one somebody will still double-book themselves against.
+
+---
+## ▶ (2026-09-19, night) — recommendations 11–14 and the item-4 checks. NOT COMMITTED.
+
+- **11 Held payments**: "Needs a decision" on Reconciliation, `POST …/platform/payments/{ref}/resolve`, decision kept
+  in `Payment.Metadata`. **12 Public address**: one reader, `GetPublicWebBaseUrlAsync`; the SaaS seed is
+  `https://cashbook.ug`, so production emails may have linked there — worth checking one real reset email.
+  **13 Dashboard**: the post-sign-in error was a race (fixed; 8/8 clean simultaneous sign-ins, was 3/4 failing).
+  **14**: both halves were already done — CLAUDE.md corrected.
+- Also: the gateway defaults to `https://sacc.ug` with the callback worked out (Shared `SaccGatewayDefaults`); three
+  flex-with-bold-text rows fixed; card payments no longer shown as Mobile Money in Reconciliation.
+- **CRM (E:\CRM, not git)**: `PaymentResponse.Failed` final; 4xx logged as one warning line. Builds; not deployed.
+- **Verified**: payments-e2e 121/121, payments-ui 57/57, billing-hub 57/57, uniform 42/42, empty-state 29/29,
+  action-location 191/191, hub-nav 81/81, the four static guards clean.
+
+## ▶ PAYMENTS — the latest work (2026-09-19, late evening). NOT COMMITTED.
+
+The payment-collection rework, "implemented word for word" from the payments plan: the sacc.ug gateway for
+Mobile Money and cards, a ledger that writes before money moves, a signed webhook, a reconciliation job, UGX
+as the default currency, Stripe kept but OFF. CLAUDE.md, **"Payments go through the sacc.ug gateway, and only
+the ledger moves a payment"**, has every rule.
+
+- **Verified:** `node scripts/e2e/payments-e2e.mjs` 101/101 · `node scripts/e2e/browser/payments-ui.mjs` 43/43 ·
+  billing-hub 57/57 · uniform-check 42/42 · empty-state 29/29 · action-location 191/191 · hub-nav 81/81 ·
+  select-verify 20/20 · the four static guards clean. Both builds clean.
+- **Found by running it:** `Payment.Metadata` is jsonb, so the in-flight check's `Contains` 500ed every purchase.
+- **Not done, and needs the user:** nothing has been sent through the REAL gateway. To go live: on
+  `/platform/payments` paste the CRMPro key (scopes payments:collect, payments:status, webhooks:manage), Check
+  connection, Register webhook, then "Send UGX 500 prompt" to a real phone — that is the debit message.
+- **Later (user: "update the legal pages, update the plan artifacts, there should be a way for the user to update
+  the renewal number"):** Terms and Privacy rewritten; both plan artifacts updated; the renewal number is always on
+  the Payment tab and can be removed, with an Overview tile. No e2e on this last pass, by instruction; the production
+  build was run.
+- **Legal text changed, for the user to review:** Privacy and Terms named Stripe as the payment processor;
+  both now name the SACC payment gateway. Terms still describes the retired Free/Starter/Professional/
+  Enterprise tiers — left alone, it is not a processor fact.
+
+## ▶ NEXT SESSION — start here (rewritten 2026-09-19, evening)
+
+**State: BUILT and VERIFIED, NOT COMMITTED.** Everything since `803ece4` is in the working tree. The
+afternoon handover below still holds for how to run things; this adds what the evening changed. Every rule
+below is written up in CLAUDE.md — read the sections named here before touching the same ground.
+
+**What the evening did, in the user's words and in CLAUDE.md's:**
+- *"the font still looks big… uniform font and size"* → **"One type scale: six sizes"**. 18 sizes on screen → 6.
+  Headings h2–h6 now take the scale (they were falling through to Bootstrap's 32/28/24px).
+- *"inconsistent location of the buttons"* → **"A page's buttons have ONE location"**. `QPageActions` +
+  `SectionOutlet`: every hub section's buttons sit on the hub's title row, top right.
+- *"those empty states are unnecessarily big… must be uniform"* → **"An empty state is one line of news"**.
+- *"these billing pages are totally off"* → **"Billing is one hub, and every billing address comes from
+  `BillingLinks`"**. Five routes → `/billing` with five tabs. Nine dead links fixed (seven were in emails and API
+  refusals), a card checkout that returned to the API's loopback, four silent display bugs, `InvoiceDto` moved to
+  Shared. Plan: https://claude.ai/artifact/TuKvFVjSoJAQZb2cyfQUKm
+- *"that Branches page also needs rework and compaction"* → its three tabs are tables now.
+- The dashboard's date range moved to the filter bar (the band was three rows); the shared range picker is one row
+  and its two dates never split; `.data-table` rows are 9px, not 14px.
+- **Four dead stylesheets deleted** (3,481 lines, nothing rendered them) and eight hand-built figure cards moved onto
+  `QStatTile`.
+- A dashboard bug found on the way: when the module list failed to load, a tenant without Core Queue got a red
+  "Unable to load queue data" banner (the fail-open guess asked for queue data and was refused). It no longer shows.
+  **Why that module list sometimes fails right after sign-in was NOT found** — worth a look.
+
+**New checks (run them with the others):**
+
+    node scripts/e2e/browser/billing-hub.mjs       #  57  the billing hub, its links, a non-billing user
+    node scripts/e2e/browser/action-location.mjs   # 166+ every hub tab: one band, buttons top right
+    node scripts/e2e/browser/empty-state-check.mjs #  33  height ≤ 110px, icon ≤ 30px
+    node scripts/e2e/browser/daterange-check.mjs   #  16  From/To on one line at 1500 and 1100px
+    node scripts/e2e/browser/type-audit.mjs        # guard: every size on the scale (15 pages)
+    node scripts/e2e/browser/type-sweep-all.mjs    # wide net: 54 pages, every tab, two sign-ins
+
+`route-audit.mjs` now also reads email links, `upgradeUrl`/`purchaseUrl`/`actionUrl`/`returnUrl` values and
+`BillingLinks.Hub`; against the last commit's code it reports the three never-built billing pages.
+
+~~**Still open, deliberately not done tonight:** eight places resolve the public base URL (`SaaS` setting →
+`SaaS:BaseUrl`) the same way and could share one helper; the old billing checkout (`POST billing/checkout-session`,
+tier plans) is still in the API with no caller.~~
+
+**BOTH CLOSED 2026-09-21 — this note was stale and is corrected rather than deleted.** The public
+address has ONE reader, `IPlatformSettingsService.GetPublicWebBaseUrlAsync`, called from fourteen
+sites across controllers, jobs and the lifecycle service, with `Application/Services/PublicWebBase.cs`
+as the configuration half; nothing reads `SaasSettings.BaseUrl` directly any more. And
+`checkout-session` does not appear anywhere in the solution — not in a controller, not in a Razor
+page. Verified by grep on 2026-09-21. **A carried-forward "still open" note is worth a grep before it
+is worth a plan.**
+
+---
+## Earlier handover (2026-09-19, afternoon) — still accurate for how to run everything
 
 **State: everything is BUILT and VERIFIED. 1023 assertions, 0 failures, across every suite.** The
 build is clean (0 errors, 22 pre-existing nullable warnings) and the four static guards report

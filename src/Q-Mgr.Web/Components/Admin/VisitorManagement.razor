@@ -54,36 +54,12 @@
 
     @if (summary != null)
     {
-        <div class="summary-cards">
-            <div class="summary-card">
-                <div class="card-icon onsite"><QIcon Name="person-check-fill" /></div>
-                <div class="card-content">
-                    <span class="card-value">@summary.CurrentlyOnSite</span>
-                    <span class="card-label">Currently On Site</span>
-                </div>
-            </div>
-            <div class="summary-card">
-                <div class="card-icon total"><QIcon Name="people-fill" /></div>
-                <div class="card-content">
-                    <span class="card-value">@summary.TotalToday</span>
-                    <span class="card-label">Total Today</span>
-                </div>
-            </div>
-            <div class="summary-card">
-                <div class="card-icon upcoming"><QIcon Name="calendar-event" /></div>
-                <div class="card-content">
-                    <span class="card-value">@summary.PreRegisteredUpcoming</span>
-                    <span class="card-label">Pre-Registered</span>
-                </div>
-            </div>
-            <div class="summary-card @(summary.WatchlistedOnSite > 0 ? "alert" : "")">
-                <div class="card-icon watchlist"><QIcon Name="shield-exclamation" /></div>
-                <div class="card-content">
-                    <span class="card-value">@summary.WatchlistedOnSite</span>
-                    <span class="card-label">Watchlisted On Site</span>
-                </div>
-            </div>
-        </div>
+        <QStatRow>
+            <QStatTile Icon="person-check-fill" Variant="success" Value="@summary.CurrentlyOnSite.ToString()" Label="On site now" />
+            <QStatTile Icon="people-fill" Variant="primary" Value="@summary.TotalToday.ToString()" Label="Today" />
+            <QStatTile Icon="calendar-event" Variant="info" Value="@summary.PreRegisteredUpcoming.ToString()" Label="Pre-registered" />
+            <QStatTile Icon="shield-exclamation" Variant="@(summary.WatchlistedOnSite > 0 ? "danger" : "secondary")" Value="@summary.WatchlistedOnSite.ToString()" Label="Watchlisted on site" />
+        </QStatRow>
     }
 
     <QTabs Tabs="@(filterTabs.Select(t => new QTab(t.Key, t.Value)).ToList())" ActiveKey="@activeFilter" ActiveKeyChanged="@ApplyFilter" AriaLabel="Which visitors" />
@@ -127,8 +103,11 @@
                 </div>
             }
 
+        @* Paging (plan Phase 2). The on-site list is a day's traffic on a busy front desk and
+           every row here is a card with actions — a component subtree Blazor Server diffs and ships
+           down the circuit. The page already has its own search and status filters above. *@
         <div class="visitor-list">
-            @foreach (var visitor in visitors)
+            @foreach (var visitor in PagedVisitors)
             {
                 <div class="visitor-card @(visitor.IsWatchlisted ? "watchlisted" : "") status-@visitor.Status.ToString().ToLower()">
                     @if (canCheckOut)
@@ -217,6 +196,7 @@
                 </div>
             }
         </div>
+        <QPager Count="@visitors.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="visitors" />
     }
 </div>
 
@@ -567,48 +547,39 @@
                OnClose="@HandleToggleWatchlistConfirm" />
 
 <style>.header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr)); gap: var(--qm-statcard-gap); margin-bottom: 18px; }
-    .summary-card { display: flex; align-items: center; gap: 10px; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: var(--qm-statcard-pad); }
-    .summary-card.alert { border-color: var(--qm-danger); }
-    .card-icon { width: var(--qm-statcard-icon); height: var(--qm-statcard-icon); border-radius: var(--qm-radius-full, 50%); display: flex; align-items: center; justify-content: center; font-size: var(--qm-statcard-icon-font); background: var(--qm-primary-light); color: var(--qm-primary); flex-shrink: 0; }
-    .card-icon.watchlist { background: rgba(var(--qm-danger-rgb), 0.12); color: var(--qm-danger); }
-    .card-content { display: flex; flex-direction: column; }
-    .card-value { font-size: var(--qm-statcard-value); font-weight: 700; color: var(--qm-text-primary); line-height: 1.1; }
-    .card-label { font-size: var(--qm-statcard-label); color: var(--qm-text-muted); margin-top: 1px; }
 
     /* Duplicate-visitor warning — see the RenderDuplicateWarning / duplicate-confirm comments.
        Amber, not red: this is "look at this before you continue", not "you cannot continue". */
     .dup-warning { border: 1px solid rgba(var(--qm-warning-rgb), 0.45); background: rgba(var(--qm-warning-rgb), 0.08); border-radius: var(--qm-radius-md); padding: 12px 14px; margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
     .dup-warning--strong { border-color: var(--qm-warning); background: rgba(var(--qm-warning-rgb), 0.14); }
-    .dup-warning__head { margin: 0; font-size: 13px; font-weight: 600; color: var(--qm-text-primary); display: flex; align-items: flex-start; gap: 8px; }
+    .dup-warning__head { margin: 0; font-size: var(--qm-text-base); font-weight: 600; color: var(--qm-text-primary); display: flex; align-items: flex-start; gap: 8px; }
     .dup-warning__head .q-icon { color: var(--qm-warning); flex-shrink: 0; margin-top: 1px; }
 
     .dup-list { display: flex; flex-direction: column; gap: 8px; }
     .dup-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; }
-    .dup-row__name { font-weight: 600; font-size: 13px; color: var(--qm-text-primary); display: inline-flex; align-items: center; gap: 6px; }
-    .dup-row__meta { font-size: 12px; color: var(--qm-text-muted); flex: 1; min-width: 120px; }
-    .dup-row__onsite { font-size: 11px; font-weight: 600; color: var(--qm-success); border: 1px solid var(--qm-success); border-radius: var(--qm-radius-full, 999px); padding: 1px 8px; }
+    .dup-row__name { font-weight: 600; font-size: var(--qm-text-base); color: var(--qm-text-primary); display: inline-flex; align-items: center; gap: 6px; }
+    .dup-row__meta { font-size: var(--qm-text-sm); color: var(--qm-text-muted); flex: 1; min-width: 120px; }
+    .dup-row__onsite { font-size: var(--qm-text-xs); font-weight: 600; color: var(--qm-success); border: 1px solid var(--qm-success); border-radius: var(--qm-radius-full, 999px); padding: 1px 8px; }
 
     .subscription-row { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 10px 12px; margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
     .subscription-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .subscription-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
-    .subscription-grid label, .subscription-row .full-width-label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--qm-text-muted); }
+    .subscription-grid label, .subscription-row .full-width-label { display: flex; flex-direction: column; gap: 4px; font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
     .subscription-grid select, .subscription-grid input, .subscription-row .full-width-label input {
         padding: 6px 9px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm);
-        background: var(--qm-bg-card); color: var(--qm-text-primary); font-size: 13px;
+        background: var(--qm-bg-card); color: var(--qm-text-primary); font-size: var(--qm-text-base);
     }
 
-    .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
-    .empty-state .q-icon { font-size: 40px; opacity: 0.5; }
+    .loading-container { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
 
     .visitor-list { display: flex; flex-direction: column; gap: 12px; }
     .batch-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--qm-primary-light); border: 1px solid var(--qm-primary); border-radius: var(--qm-radius-md); padding: 10px 14px; margin-bottom: 14px; }
-    .batch-bar-count { display: flex; align-items: center; gap: 7px; font-size: 14px; }
+    .batch-bar-count { display: flex; align-items: center; gap: 7px; font-size: var(--qm-text-base); }
     .batch-bar-count strong { font-variant-numeric: tabular-nums; }
-    .batch-clear { margin-left: auto; background: none; border: none; padding: 2px 6px; cursor: pointer; font: inherit; font-size: 13px; color: var(--qm-text-muted); text-decoration: underline; }
+    .batch-clear { margin-left: auto; background: none; border: none; padding: 2px 6px; cursor: pointer; font: inherit; font-size: var(--qm-text-base); color: var(--qm-text-muted); text-decoration: underline; }
 
     /* The count of who is still in the building, with the one action somebody locking up wants. */
-    .onsite-hint { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--qm-text-secondary); margin-bottom: 12px; }
+    .onsite-hint { display: flex; align-items: center; gap: 8px; font-size: var(--qm-text-base); color: var(--qm-text-secondary); margin-bottom: 12px; }
     .onsite-hint .q-icon { color: var(--qm-text-muted); }
 
     .visitor-select { width: 16px; height: 16px; cursor: pointer; margin-right: 12px; float: left; margin-top: 4px; }
@@ -617,54 +588,54 @@
     .visitor-card.watchlisted { border-left-color: var(--qm-danger); }
     .visitor-main { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
     .visitor-identity { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-    .badge-code { font-family: monospace; font-size: 12px; color: var(--qm-text-muted); background: var(--qm-bg-secondary); padding: 2px 8px; border-radius: var(--qm-radius-md); }
+    .badge-code { font-family: monospace; font-size: var(--qm-text-sm); color: var(--qm-text-muted); background: var(--qm-bg-secondary); padding: 2px 8px; border-radius: var(--qm-radius-md); }
     .visitor-name { font-weight: 600; color: var(--qm-text-primary); display: inline-flex; align-items: center; gap: 6px; }
     .watchlist-flag { color: var(--qm-danger); }
-    .visitor-company { color: var(--qm-text-muted); font-size: 13px; }
-    .returning-badge { font-size: 11px; color: var(--qm-primary); background: var(--qm-primary-light); padding: 2px 8px; border-radius: 999px; display: inline-flex; align-items: center; gap: 4px; }
-    .frequency-flag { font-size: 11px; color: var(--qm-accent-orange); background: rgba(var(--qm-warning-rgb), 0.12); padding: 2px 8px; border-radius: 999px; display: inline-flex; align-items: center; gap: 4px; }
-    .status-badge { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 3px 10px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
+    .visitor-company { color: var(--qm-text-muted); font-size: var(--qm-text-base); }
+    .returning-badge { font-size: var(--qm-text-xs); color: var(--qm-primary); background: var(--qm-primary-light); padding: 2px 8px; border-radius: 999px; display: inline-flex; align-items: center; gap: 4px; }
+    .frequency-flag { font-size: var(--qm-text-xs); color: var(--qm-accent-orange); background: rgba(var(--qm-warning-rgb), 0.12); padding: 2px 8px; border-radius: 999px; display: inline-flex; align-items: center; gap: 4px; }
+    .status-badge { font-size: var(--qm-text-xs); text-transform: uppercase; letter-spacing: .04em; padding: 3px 10px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
     .status-checkedin .status-badge { background: rgba(var(--qm-success-rgb), 0.15); color: var(--qm-success); }
     .status-preregistered .status-badge { background: rgba(var(--qm-warning-rgb), 0.15); color: var(--qm-accent-orange); }
 
-    .visitor-details { display: flex; flex-wrap: wrap; gap: 14px; margin: 10px 0; font-size: 13px; color: var(--qm-text-muted); }
+    .visitor-details { display: flex; flex-wrap: wrap; gap: 14px; margin: 10px 0; font-size: var(--qm-text-base); color: var(--qm-text-muted); }
     .detail-item { display: inline-flex; align-items: center; gap: 5px; }
 
     .visitor-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
     .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
-    .form-grid label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); }
+    .form-grid label { display: flex; flex-direction: column; gap: 6px; font-size: var(--qm-text-base); color: var(--qm-text-muted); }
     .form-grid label.full-width { grid-column: 1 / -1; }
-    .form-grid input, .form-grid textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: 14px; background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
-    .checkin-hint { font-size: 12px; color: var(--qm-text-muted); margin-top: 10px; }
+    .form-grid input, .form-grid textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: var(--qm-text-base); background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
+    .checkin-hint { font-size: var(--qm-text-sm); color: var(--qm-text-muted); margin-top: 10px; }
 
     .returning-search { position: relative; }
-    .returning-search input { width: 100%; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 9px 12px; font-size: 14px; background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
+    .returning-search input { width: 100%; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 9px 12px; font-size: var(--qm-text-base); background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
     .returning-results { position: absolute; z-index: 20; top: 100%; left: 0; right: 0; margin-top: 4px; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); box-shadow: var(--qm-shadow-md); max-height: 260px; overflow-y: auto; }
     .returning-result { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; cursor: pointer; border-bottom: 1px solid var(--qm-border); }
     .returning-result:last-child { border-bottom: none; }
     .returning-result:hover { background: var(--qm-bg-secondary); }
     .returning-result-name { font-weight: 600; color: var(--qm-text-primary); display: flex; align-items: center; gap: 6px; }
-    .returning-result-meta { font-size: 12px; color: var(--qm-text-muted); }
-    .returning-selected { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; background: var(--qm-primary-light); border-radius: var(--qm-radius-sm); font-size: 13px; color: var(--qm-primary); }
+    .returning-result-meta { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
+    .returning-selected { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; background: var(--qm-primary-light); border-radius: var(--qm-radius-sm); font-size: var(--qm-text-base); color: var(--qm-primary); }
     .returning-result.roster { background: color-mix(in srgb, var(--qm-primary) 5%, transparent); }
     .roster-flag { color: var(--qm-primary); }
-    .roster-badge { font-size: 11px; color: var(--qm-primary); background: var(--qm-primary-light); padding: 2px 8px; border-radius: 999px; }
+    .roster-badge { font-size: var(--qm-text-xs); color: var(--qm-primary); background: var(--qm-primary-light); padding: 2px 8px; border-radius: 999px; }
     .returning-selected.roster { background: var(--qm-primary-light); color: var(--qm-primary); }
-    .card-usage-flag { font-size: 11px; color: var(--qm-text-muted); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+    .card-usage-flag { font-size: var(--qm-text-xs); color: var(--qm-text-muted); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
     .card-usage-flag.warn { color: var(--qm-accent-orange); background: rgba(var(--qm-warning-rgb), 0.12); padding: 2px 8px; border-radius: 999px; }
     span.card-usage-flag { flex-shrink: 0; }
     .card-override-box { margin-top: 12px; padding: 12px; border: 1px solid rgba(var(--qm-warning-rgb), 0.35); background: rgba(var(--qm-warning-rgb), 0.08); border-radius: var(--qm-radius-sm); }
-    .card-override-box p { margin: 0 0 8px; font-size: 13px; color: var(--qm-accent-orange); display: flex; align-items: flex-start; gap: 6px; }
-    .card-override-box label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); }
+    .card-override-box p { margin: 0 0 8px; font-size: var(--qm-text-base); color: var(--qm-accent-orange); display: flex; align-items: flex-start; gap: 6px; }
+    .card-override-box label { display: flex; flex-direction: column; gap: 6px; font-size: var(--qm-text-base); color: var(--qm-text-muted); }
     .card-override-box input { width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-card); color: var(--qm-text-primary); }
 
     .badge-card { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 0; text-align: center; }
     .badge-qr-container { width: 220px; height: 220px; display: flex; align-items: center; justify-content: center; }
-    .badge-name { font-weight: 700; font-size: 16px; color: var(--qm-text-primary); margin-top: 8px; }
+    .badge-name { font-weight: 700; font-size: var(--qm-text-md); color: var(--qm-text-primary); margin-top: 8px; }
     .badge-code { font-family: monospace; }
-    .badge-host { font-size: 13px; color: var(--qm-text-muted); }
-    .badge-hint { font-size: 12px; color: var(--qm-text-muted); margin-top: 10px; }
+    .badge-host { font-size: var(--qm-text-base); color: var(--qm-text-muted); }
+    .badge-hint { font-size: var(--qm-text-sm); color: var(--qm-text-muted); margin-top: 10px; }
 
     .photo-capture { margin-top: 14px; }
     .photo-preview { display: flex; align-items: center; gap: 12px; }
@@ -673,18 +644,18 @@
     .photo-live video { width: 220px; height: 165px; border-radius: var(--qm-radius-sm); background: #000; object-fit: cover; }
     .scanner-hidden-canvas { display: none; }
 
-    .consent-check { display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; font-size: 13px; color: var(--qm-text-muted); cursor: pointer; }
+    .consent-check { display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; font-size: var(--qm-text-base); color: var(--qm-text-muted); cursor: pointer; }
     .consent-check input { margin-top: 3px; }
 
-    .visitor-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--qm-border); font-size: 13px; }
+    .visitor-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--qm-border); font-size: var(--qm-text-base); }
     .visitor-row:last-child { border-bottom: none; }
 
     .settings-section { margin-bottom: 20px; }
-    .settings-section h3 { margin: 0 0 6px; font-size: 15px; color: var(--qm-text-primary); }
-    .settings-hint { font-size: 12px; color: var(--qm-text-muted); margin: 0 0 10px; }
-    .settings-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--qm-text-primary); margin-bottom: 10px; cursor: pointer; }
-    .full-width-label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); }
-    .full-width-label textarea { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: 14px; background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
+    .settings-section h3 { margin: 0 0 6px; font-size: var(--qm-text-md); color: var(--qm-text-primary); }
+    .settings-hint { font-size: var(--qm-text-sm); color: var(--qm-text-muted); margin: 0 0 10px; }
+    .settings-toggle { display: flex; align-items: center; gap: 8px; font-size: var(--qm-text-base); color: var(--qm-text-primary); margin-bottom: 10px; cursor: pointer; }
+    .full-width-label { display: flex; flex-direction: column; gap: 6px; font-size: var(--qm-text-base); color: var(--qm-text-muted); }
+    .full-width-label textarea { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: var(--qm-text-base); background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
 </style>
 
 @code {
@@ -779,6 +750,13 @@
 
     private List<VisitorDto> allVisitors = new();
     private List<VisitorDto> visitors = new();
+    // ---- Paging (list-page sweep, plan Phase 2) --------------------------------------------
+    // Every row here is a component subtree Blazor Server diffs and ships down the circuit, so
+    // the page renders a page of them rather than the whole list.
+    private const int PageSize = 25;
+    private int pageIndex;
+    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (visitors.Count() - 1) / PageSize));
+    private IEnumerable<VisitorDto> PagedVisitors => visitors.Skip(SafePageIndex * PageSize).Take(PageSize);
     private VisitorSummaryDto? summary;
     private bool isLoading = true;
     private Guid branchId;
@@ -893,7 +871,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.VisitorManagement))
         {
-            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            Navigation.NavigateTo(BillingLinks.Modules, forceLoad: false);
             return;
         }
 
@@ -1704,9 +1682,9 @@
                     body { font-family: Arial, sans-serif; text-align: center; margin: 0; }
                     .badge { border: 2px solid #333; border-radius: var(--qm-radius-md); padding: 16px; }
                     img { width: 180px; height: 180px; }
-                    .name { font-size: 18px; font-weight: 700; margin-top: 10px; }
-                    .code { font-size: 13px; color: #555; margin-top: 4px; }
-                    .date { font-size: 11px; color: #888; margin-top: 12px; }
+                    .name { font-size: var(--qm-text-lg); font-weight: 700; margin-top: 10px; }
+                    .code { font-size: var(--qm-text-base); color: #555; margin-top: 4px; }
+                    .date { font-size: var(--qm-text-xs); color: #888; margin-top: 12px; }
                 </style>
             </head>
             <body>
@@ -1755,11 +1733,11 @@
                     body { font-family: Arial, sans-serif; text-align: center; margin: 0; }
                     .badge { border: 2px solid #333; border-radius: var(--qm-radius-md); padding: 16px; }
                     img { width: 180px; height: 180px; }
-                    .name { font-size: 20px; font-weight: 700; margin-top: 10px; }
-                    .code { font-family: monospace; font-size: 13px; color: #555; margin-top: 4px; }
-                    .company { font-size: 13px; color: #555; margin-top: 4px; }
-                    .host { font-size: 13px; color: #555; margin-top: 8px; }
-                    .date { font-size: 11px; color: #888; margin-top: 12px; }
+                    .name { font-size: var(--qm-text-xl); font-weight: 700; margin-top: 10px; }
+                    .code { font-family: monospace; font-size: var(--qm-text-base); color: #555; margin-top: 4px; }
+                    .company { font-size: var(--qm-text-base); color: #555; margin-top: 4px; }
+                    .host { font-size: var(--qm-text-base); color: #555; margin-top: 8px; }
+                    .date { font-size: var(--qm-text-xs); color: #888; margin-top: 12px; }
                 </style>
             </head>
             <body>

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using QMgr.Application.DTOs;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using QMgr.Application.Interfaces.Billing;
@@ -16,7 +17,7 @@ public class BillingService : IBillingService
 {
     private readonly QMgrDbContext _dbContext;
     private readonly IStripeService _stripeService;
-    private readonly IMobileMoneyService _mobileMoneyService;
+    private readonly IPaymentLedger _ledger;
     private readonly IUsageTrackingService _usageTrackingService;
     private readonly IFeatureFlagService _featureFlags;
     private readonly IModuleLimitResolver _limitResolver;
@@ -27,7 +28,7 @@ public class BillingService : IBillingService
     public BillingService(
         QMgrDbContext dbContext,
         IStripeService stripeService,
-        IMobileMoneyService mobileMoneyService,
+        IPaymentLedger ledger,
         IUsageTrackingService usageTrackingService,
         IFeatureFlagService featureFlags,
         IModuleLimitResolver limitResolver,
@@ -37,7 +38,7 @@ public class BillingService : IBillingService
     {
         _dbContext = dbContext;
         _stripeService = stripeService;
-        _mobileMoneyService = mobileMoneyService;
+        _ledger = ledger;
         _usageTrackingService = usageTrackingService;
         _featureFlags = featureFlags;
         _limitResolver = limitResolver;
@@ -451,7 +452,7 @@ public class BillingService : IBillingService
 
         if (due.Count == 0) return null;
 
-        var currency = organization.PreferredCurrency ?? "USD";
+        var currency = organization.PreferredCurrency ?? "UGX";
         var isUgx = string.Equals(currency, "UGX", StringComparison.OrdinalIgnoreCase);
 
         var account = await _accountProvider.GetOrOpenAsync(organizationId, asOf);
@@ -602,8 +603,10 @@ public class BillingService : IBillingService
             if (org == null)
                 return new PaymentCollectionResult(false, null, "ORG_NOT_FOUND", "Organization not found");
 
-            // If Stripe customer exists, try card payment
-            if (!string.IsNullOrEmpty(org.StripeCustomerId))
+            // A card on file with Stripe — only when Stripe is actually configured. It is off unless
+            // an administrator configures it (2026-09-19); a Stripe customer id left over from a test
+            // would otherwise send every renewal into a charge that can only fail, and on into dunning.
+            if (!string.IsNullOrEmpty(org.StripeCustomerId) && await _stripeService.IsConfiguredAsync())
             {
                 var stripeResult = await _stripeService.ChargeCustomerAsync(
                     org.StripeCustomerId,
@@ -628,32 +631,37 @@ public class BillingService : IBillingService
                 return new PaymentCollectionResult(false, null, stripeResult.ErrorCode, stripeResult.ErrorMessage);
             }
 
-            // If mobile money phone exists, try mobile money
+            // Mobile Money to the renewal number on file, through the sacc.ug gateway and the ledger
+            // (2026-09-19). This used to record the invoice PAID the moment the prompt was sent —
+            // before any money moved — and recorded every MTN payment as Airtel. Now a prompt is a
+            // pending ledger row; only the gateway's confirmation marks the invoice paid.
             if (!string.IsNullOrEmpty(org.BillingPhone))
             {
-                var mobileResult = await _mobileMoneyService.CollectPaymentAsync(
-                    org.Id,
-                    org.BillingPhone,
-                    invoice.Total,
-                    invoice.Currency,
-                    $"Invoice {invoice.InvoiceNumber}",
-                    invoice.InvoiceNumber);
-
-                if (mobileResult.Success)
+                // A prompt already out for this invoice is settled first, never sent again.
+                if (await _ledger.OpenPaymentForInvoiceAsync(invoice.Id) is { } openId)
                 {
-                    var payment = await RecordPaymentAsync(
-                        org.Id,
-                        invoice.Total,
-                        invoice.Currency,
-                        mobileResult.Channel == "mtn" ? PaymentMethod.MtnMobileMoney : PaymentMethod.AirtelMoney,
-                        invoice.SubscriptionId,
-                        invoiceId,
-                        mobileResult.TransactionId);
-
-                    return new PaymentCollectionResult(true, payment, null, null);
+                    var state = await _ledger.RefreshAsync(openId);
+                    if (state == PaymentStates.Succeeded)
+                        return new PaymentCollectionResult(true, await _dbContext.Payments.FindAsync(openId), null, null);
+                    if (state is PaymentStates.Pending or PaymentStates.Review)
+                        return new PaymentCollectionResult(false, null, AwaitingConfirmation,
+                            "A mobile money prompt is waiting for the customer to approve it.");
+                    // Failed or abandoned: a fresh attempt goes ahead below.
                 }
 
-                return new PaymentCollectionResult(false, null, mobileResult.ErrorCode, mobileResult.ErrorMessage);
+                try
+                {
+                    var start = await _ledger.StartInvoicePaymentAsync(org.Id, invoice.Id, org.BillingPhone, null);
+                    if (start.State == PaymentStates.Succeeded && start.ReferenceId is { } paid)
+                        return new PaymentCollectionResult(true, await _dbContext.Payments.FindAsync(paid), null, null);
+                    if (!start.IsFinal)
+                        return new PaymentCollectionResult(false, null, AwaitingConfirmation, start.Message);
+                    return new PaymentCollectionResult(false, null, "MOBILE_MONEY_FAILED", start.Message);
+                }
+                catch (PaymentRequestException ex)
+                {
+                    return new PaymentCollectionResult(false, null, ex.Code, ex.Message);
+                }
             }
 
             return new PaymentCollectionResult(false, null, "NO_PAYMENT_METHOD", "No valid payment method on file");
@@ -668,6 +676,11 @@ public class BillingService : IBillingService
     #endregion
 
     #region Payments
+
+    /// <summary>A mobile money prompt has been sent and not yet answered. NOT a failure: the renewal
+    /// job must neither mark the subscription past due nor tell the customer their payment failed
+    /// while their phone is still asking them to approve it.</summary>
+    public const string AwaitingConfirmation = "AWAITING_CONFIRMATION";
 
     public async Task<Payment> RecordPaymentAsync(
         Guid organizationId,
@@ -895,7 +908,8 @@ public class BillingService : IBillingService
 
     #region Private Helpers
 
-    private static string GenerateInvoiceNumber()
+    /// <summary>The one invoice-number format; the payment ledger uses it too.</summary>
+    internal static string GenerateInvoiceNumber()
     {
         return $"INV-{DateTime.UtcNow:yyyyMM}-{Guid.NewGuid().ToString("N")[..8].ToUpper()}";
     }

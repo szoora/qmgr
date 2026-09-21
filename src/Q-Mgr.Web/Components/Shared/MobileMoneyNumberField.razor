@@ -1,0 +1,56 @@
+@namespace QMgr.Web.Components.Shared
+@using QMgr.Domain.Payments
+
+@*
+    The one Mobile Money number field (2026-09-19) — the module purchase, paying an invoice, the renewal
+    number and the platform's test prompt all use it, so all four accept and refuse exactly the numbers
+    the gateway does. Validation is UgandaPhone's, the same rule the API and the gateway apply, so a
+    number this field accepts is never refused later for its shape.
+
+    It is marked required, says which network a number belongs to as it is typed, and shows its error
+    once the person has left the field or tried to submit (ShowErrors) — not on the first keystroke.
+*@
+
+<QInput TValue="string" Value="@Value" ValueChanged="@OnChanged" Label="@Label" Required="true"
+        Type="tel" Placeholder="0772 123 456" IconLeft="phone" MaxLength="16" Disabled="@Disabled"
+        HasError="@(ErrorText != null)" ErrorMessage="@ErrorText" HelperText="@Helper" OnBlur="@(() => touched = true)" />
+
+@code {
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+    [Parameter] public string Label { get; set; } = "Mobile Money number";
+    [Parameter] public bool Disabled { get; set; }
+
+    /// <summary>Set by the form once submit has been tried, so an untouched empty field shows its error too.</summary>
+    [Parameter] public bool ShowErrors { get; set; }
+
+    /// <summary>What the field says under itself while the number is fine; defaults to the network.</summary>
+    [Parameter] public string? Hint { get; set; }
+
+    /// <summary>An error the API returned for this field, shown in place of the local one.</summary>
+    [Parameter] public string? ServerError { get; set; }
+
+    private bool touched;
+
+    /// <summary>The same rule the form checks before it submits.</summary>
+    public static bool IsValid(string? value) => UgandaPhone.Problem(value) == null;
+
+    private string? ErrorText =>
+        ServerError ?? ((touched || ShowErrors) ? UgandaPhone.Problem(Value) : null);
+
+    private string? Helper
+    {
+        get
+        {
+            if (ErrorText != null) return null;
+            var network = UgandaPhone.Operator(Value);
+            return network != null ? $"{network} · {UgandaPhone.Display(Value)}" : Hint ?? "MTN or Airtel, e.g. 0772 123 456.";
+        }
+    }
+
+    private async Task OnChanged(string? value)
+    {
+        Value = value;
+        await ValueChanged.InvokeAsync(value);
+    }
+}

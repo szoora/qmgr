@@ -317,10 +317,10 @@
     .appr-grid { display: grid; grid-template-columns: 1fr; gap: 0 16px; }
     @@media (min-width: 760px) { .appr-grid { grid-template-columns: 1fr 1fr; } }
     .appr-grid > * { min-width: 0; }
-    .appr-muted { color: var(--qm-text-muted); font-size: 13px; font-style: normal; }
+    .appr-muted { color: var(--qm-text-muted); font-size: var(--qm-text-base); font-style: normal; }
 
     .appr-steps { list-style: none; margin: 0; padding: 14px 16px; display: flex; gap: 8px; overflow-x: auto; }
-    .appr-step { display: flex; align-items: center; gap: 8px; flex: 1 0 auto; white-space: nowrap; font-size: 13px; color: var(--qm-text-muted); }
+    .appr-step { display: flex; align-items: center; gap: 8px; flex: 1 0 auto; white-space: nowrap; font-size: var(--qm-text-base); color: var(--qm-text-muted); }
     .appr-step:not(:last-child)::after { content: ""; flex: 1; height: 2px; min-width: 16px; background: var(--qm-border); }
     .appr-step--done:not(:last-child)::after { background: var(--qm-success); }
     .appr-step__dot { width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; border: 2px solid var(--qm-border); flex: 0 0 auto; }
@@ -345,7 +345,7 @@
     .appr-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 
     .appr-readonly { display: flex; flex-direction: column; gap: 10px; }
-    .appr-readonly h5 { margin: 8px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--qm-text-muted); }
+    .appr-readonly h5 { margin: 8px 0 4px; font-size: var(--qm-text-sm); text-transform: uppercase; letter-spacing: 0.06em; color: var(--qm-text-muted); }
     .appr-readonly__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
     .appr-readonly__row--overall { padding-top: 8px; border-top: 1px solid var(--qm-border); }
     .appr-quote { margin: 4px 0 0; padding: 10px 14px; border-left: 3px solid var(--qm-primary); background: var(--qm-bg-secondary); border-radius: 0 var(--qm-radius-sm) var(--qm-radius-sm) 0; white-space: pre-wrap; color: var(--qm-text-secondary); }
@@ -355,15 +355,15 @@
     .appr-table-wrap { overflow-x: auto; }
 
     .appr-outcome { display: flex; flex-direction: column; gap: 12px; }
-    .appr-outcome__rating { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 18px; }
-    .appr-dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; font-size: 14px; }
+    .appr-outcome__rating { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: var(--qm-text-lg); }
+    .appr-dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; font-size: var(--qm-text-base); }
     .appr-dl dt { color: var(--qm-text-muted); }
     .appr-dl dd { margin: 0; color: var(--qm-text-primary); white-space: pre-wrap; }
     @@media (max-width: 480px) { .appr-dl { grid-template-columns: 1fr; }
      .appr-dl dd { margin-bottom: 6px; } }
 
     .loading-container { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border); }
-    .form-hint { font-size: 13px; color: var(--qm-text-muted); margin: 0 0 12px; }
+    .form-hint { font-size: var(--qm-text-base); color: var(--qm-text-muted); margin: 0 0 12px; }
 </style>
 
 @code {
@@ -396,7 +396,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
-            Navigation.NavigateTo("/billing/modules");
+            Navigation.NavigateTo(BillingLinks.Modules);
             return;
         }
 

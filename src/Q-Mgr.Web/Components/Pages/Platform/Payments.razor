@@ -1,0 +1,73 @@
+@page "/platform/payments"
+@using QMgr.Domain.Constants
+@using QMgr.Web.Services
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+
+@*
+    The platform Payments hub (2026-09-19): how Q-Mgr collects money through the sacc.ug gateway, and
+    whether the money it asked for arrived. Two sections, no routes of their own (CLAUDE.md, "A hub owns
+    the route; its sections own nothing"):
+
+      Gateway         — the address, the API key, cards, the webhook, and a real UGX 500 test prompt.
+      Reconciliation  — per day: prompts sent, confirmed, failed, abandoned and held for review.
+
+    The gateway settings used to be three fields on the Platform Settings page, an editor that did not
+    know about the webhook secret and would have wiped it on every save. That card now links here.
+*@
+
+<PageTitle>Payments - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Payments<QInfo Label="Payments" Text="Every tenant payment — Mobile Money and cards — goes through the sacc.ug gateway. This is where it is configured, tested and reconciled." /></h1>
+            <p class="subtitle">How tenants pay, and whether the money arrived.</p>
+        </div>
+        <div class="header-actions">
+            <SectionOutlet SectionId="QPageActions.Id" />
+        </div>
+    </div>
+
+    <QTabs Tabs="@tabs" @bind-ActiveKey="@hubTab" IdPrefix="pp" AriaLabel="Payments sections" />
+
+    @if (hubTab == GatewayTab) { <PaymentGateway Embedded="true" /> }
+    else if (hubTab == ReconciliationTab) { <PaymentReconciliation Embedded="true" /> }
+</div>
+
+@code {
+    public const string GatewayTab = "gateway";
+    public const string ReconciliationTab = "reconciliation";
+
+    private static readonly HubTabs.Section[] Sections =
+    {
+        new(new QTab(GatewayTab, "Gateway", "plug"), Permissions.PlatformSettingsView),
+        new(new QTab(ReconciliationTab, "Reconciliation", "journal-check"), Permissions.PlatformSettingsView),
+    };
+
+    private IReadOnlyList<QTab> tabs = Array.Empty<QTab>();
+    private string hubTab = GatewayTab;
+
+    [SupplyParameterFromQuery(Name = "tab")] public string? TabParam { get; set; }
+
+    /// <summary>The last ?tab= this hub acted on — see HubTabs.FollowQuery.</summary>
+    private string? appliedTab;
+
+    protected override async Task OnInitializedAsync()
+    {
+        tabs = await HubTabs.VisibleAsync(PermissionService, null, Sections);
+        if (tabs.Count == 0)
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        hubTab = HubTabs.Resolve(tabs, TabParam);
+        appliedTab = TabParam;
+    }
+
+    protected override void OnParametersSet()
+    {
+        HubTabs.FollowQuery(tabs, TabParam, ref appliedTab, ref hubTab);
+    }
+}

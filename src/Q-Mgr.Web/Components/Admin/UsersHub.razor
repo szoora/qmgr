@@ -25,6 +25,10 @@
             <h1>Users &amp; Roles<QInfo Text="Who can sign in and what they may do — including the people still waiting to be let in." Label="Users &amp; Roles" /></h1>
             <p class="subtitle">Who can sign in and what they may do — including the people still waiting to be let in.</p>
         </div>
+        <div class="header-actions">
+            @* The open section's own buttons land here — see QPageActions. *@
+            <SectionOutlet SectionId="QPageActions.Id" />
+        </div>
     </div>
 
     <QTabs Tabs="@tabs" @bind-ActiveKey="@hubTab" IdPrefix="us" AriaLabel="User sections" />

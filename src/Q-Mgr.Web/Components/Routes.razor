@@ -18,6 +18,9 @@
 <CascadingAuthenticationState>
   @* The browser's address and agent, from App.razor's host request (see ViewerRequestInfo). *@
   <CascadingValue Value="Viewer" IsFixed="true">
+  @* Which host this browser arrived on, and what it should look like (see TenantHostContext).
+     IsFixed because the host cannot change within a circuit — the circuit IS one host. *@
+  <CascadingValue Value="TenantHost" IsFixed="true">
     <Router AppAssembly="typeof(Program).Assembly">
         <Found Context="routeData">
             @if (RequiresAuthorization(routeData.PageType))
@@ -67,6 +70,7 @@
         </NotFound>
     </Router>
   </CascadingValue>
+  </CascadingValue>
 </CascadingAuthenticationState>
 
 @inject ViewerRequestContext ViewerContext
@@ -74,6 +78,9 @@
 @code {
     /// <summary>Set by App.razor from the host request; null on any render path that has no HttpContext.</summary>
     [Parameter] public ViewerRequestInfo? Viewer { get; set; }
+
+    /// <summary>Which host this browser arrived on, resolved once by App.razor. Never null.</summary>
+    [Parameter] public TenantHostContext TenantHost { get; set; } = TenantHostContext.Platform;
 
     /// <summary>
     /// Hands the browser's address and agent to the per-circuit context that

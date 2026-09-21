@@ -216,18 +216,18 @@
     </FooterContent>
 </QModal>
 
-<style>.myday-next { display: flex; align-items: center; gap: 10px; padding: 12px 14px; margin-top: 12px; border: 1px solid var(--qm-border); border-left: 4px solid var(--qm-primary); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); font-size: 14px; }
-    .myday-muted { font-size: 13px; color: var(--qm-text-muted); margin: 0; }
-    .myday-error { color: var(--qm-danger); font-size: 13px; }
+<style>.myday-next { display: flex; align-items: center; gap: 10px; padding: 12px 14px; margin-top: 12px; border: 1px solid var(--qm-border); border-left: 4px solid var(--qm-primary); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); font-size: var(--qm-text-base); }
+    .myday-muted { font-size: var(--qm-text-base); color: var(--qm-text-muted); margin: 0; }
+    .myday-error { color: var(--qm-danger); font-size: var(--qm-text-base); }
     .myday-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
     .myday-lesson { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 4px 12px; align-items: start; padding: 10px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-secondary); }
     .myday-lesson--done { opacity: .8; }
     .myday-lesson--attention { box-shadow: inset 3px 0 0 var(--qm-warning); }
     .myday-lesson--missed { box-shadow: inset 3px 0 0 var(--qm-danger); }
-    .myday-lesson__time { display: flex; flex-direction: column; font-size: 13px; }
-    .myday-lesson__time span { color: var(--qm-text-muted); font-size: 12px; }
-    .myday-lesson__main { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 14px; }
-    .myday-lesson__meta, .myday-lesson__status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12.5px; color: var(--qm-text-secondary); }
+    .myday-lesson__time { display: flex; flex-direction: column; font-size: var(--qm-text-base); }
+    .myday-lesson__time span { color: var(--qm-text-muted); font-size: var(--qm-text-sm); }
+    .myday-lesson__main { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: var(--qm-text-base); }
+    .myday-lesson__meta, .myday-lesson__status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
     .myday-lesson__actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
     .myday-lesson__actions:empty { display: none; }
 
@@ -238,9 +238,9 @@
     }
     .myday-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 14px; }
     @@media (min-width: 900px) { .myday-grid { grid-template-columns: 1fr 1fr; } }
-    .myday-simple { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; }
+    .myday-simple { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: var(--qm-text-base); }
     .myday-simple li { display: flex; flex-direction: column; gap: 2px; }
-    .myday-simple li span { color: var(--qm-text-secondary); font-size: 12.5px; }
+    .myday-simple li span { color: var(--qm-text-secondary); font-size: var(--qm-text-sm); }
 </style>
 
 @code {
@@ -267,7 +267,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
-            Navigation.NavigateTo("/billing/modules");
+            Navigation.NavigateTo(BillingLinks.Modules);
             return;
         }
         await BranchState.InitializeAsync();

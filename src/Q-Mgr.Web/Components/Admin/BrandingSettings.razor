@@ -15,21 +15,18 @@
 }
 
 <div class="admin-page">
-    <div class="page-header">
-        @if (!Embedded)
-        {
-            <div class="header-content">
-                <h1>Branding Settings<QInfo Text="Customize the look of your public kiosk and display screens with your own logo and colors" Label="Branding Settings" /></h1>
-                <p class="subtitle">Customize the look of your public kiosk and display screens with your own logo and colors</p>
-            </div>
-        }
-        <div class="header-actions">
+    <QPageActions Embedded="@Embedded">
+        <Title>
+            <h1>Branding Settings<QInfo Text="Customize the look of your public kiosk and display screens with your own logo and colors" Label="Branding Settings" /></h1>
+            <p class="subtitle">Customize the look of your public kiosk and display screens with your own logo and colors</p>
+        </Title>
+        <Actions>
             @if (canEdit)
             {
                 <QButton Text="Save Settings" Icon="check-lg" Variant="primary" OnClick="@SaveSettings" Disabled="@(isSaving || isLoading || !settings.WhiteLabelEntitled)" />
             }
-        </div>
-    </div>
+        </Actions>
+    </QPageActions>
 
     @if (isLoading)
     {
@@ -63,7 +60,7 @@
             <QCard Icon="lock-fill" Title="White-Label Branding" Subtitle="Not available on your current plan">
                 <div class="upgrade-notice">
                     <p>@(featureUnavailableMessage ?? "Add the Communication module to customize your logo and colors.")</p>
-                    <QButton Text="View Plans" Icon="arrow-up-circle-fill" Variant="primary" OnClick="@(() => Navigation.NavigateTo("/billing/modules"))" />
+                    <QButton Text="View Plans" Icon="arrow-up-circle-fill" Variant="primary" OnClick="@(() => Navigation.NavigateTo(BillingLinks.Modules))" />
                 </div>
             </QCard>
         }
@@ -80,22 +77,129 @@
                 </div>
             </QCard>
 
-            <QCard Icon="image-fill" Title="Logo &amp; Favicon" Subtitle="Shown on public kiosk and display screens">
+            <QCard Icon="image-fill" Title="Logo &amp; Favicon" Subtitle="Shown wherever your organisation is named — the app, your kiosk and display screens, and the emails you send">
                 <div class="form-grid">
                     <div class="form-group">
                         <label>Brand Name</label>
                         <QInput @bind-Value="@settings.BrandName" Placeholder="Your Company Name" Disabled="@(!settings.WhiteLabelEntitled)" />
-                        <small>Overrides "Q-Mgr" on public screens when set</small>
-                    </div>
-                    <div class="form-group">
-                        <label>Logo URL</label>
-                        <QInput @bind-Value="@settings.LogoUrl" Placeholder="https://your-domain.com/logo.png" Disabled="@(!settings.WhiteLabelEntitled)" />
-                    </div>
-                    <div class="form-group">
-                        <label>Favicon URL</label>
-                        <QInput @bind-Value="@settings.FaviconUrl" Placeholder="https://your-domain.com/favicon.svg" Disabled="@(!settings.WhiteLabelEntitled)" />
+                        <small>Overrides "Q-Mgr" wherever the product names itself</small>
                     </div>
                 </div>
+
+                @if (!string.IsNullOrEmpty(assetError))
+                {
+                    <div class="validation-error">@assetError</div>
+                }
+
+                <div class="asset-grid">
+                    @* THE LIMITS ARE STATED BEFORE THE PICKER, not after a refusal: a school on a
+                       phone should not spend 4 MB of their bundle to be told no. QFileUpload also
+                       refuses an over-sized file in the browser — and the server refuses it again
+                       regardless, because a client-side check is a courtesy, never a control. *@
+                    <div class="asset-tile">
+                        <div class="asset-head">
+                            <strong>Logo</strong>
+                            <span>PNG, JPEG or WebP. Up to 1 MB, up to 2048px a side.</span>
+                        </div>
+                        <div class="asset-preview">
+                            @if (!string.IsNullOrWhiteSpace(settings.LogoUrl))
+                            {
+                                <img src="@settings.LogoUrl" alt="Your logo" />
+                            }
+                            else
+                            {
+                                <span class="asset-empty">No logo yet</span>
+                            }
+                        </div>
+                        <div class="asset-actions">
+                            <QFileUpload UploadUrl="@($"api/v1/organizations/{organizationId}/branding/logo")"
+                                         Accept="image/png,image/jpeg,image/webp" Multiple="false"
+                                         MaxSizeBytes="1048576" CompressImages="false"
+                                         HintText="PNG, JPEG or WebP, up to 1 MB"
+                                         OnUploaded="@(r => OnAssetUploaded(r, isFavicon: false))"
+                                         OnError="@(m => { assetError = m; return Task.CompletedTask; })" />
+                            @if (!string.IsNullOrWhiteSpace(settings.LogoUrl))
+                            {
+                                <QButton Text="Remove" Icon="trash" Variant="ghost" Size="sm" Disabled="@isSavingAsset" OnClick="@(() => RemoveAsset(false))" />
+                            }
+                        </div>
+                    </div>
+
+                    <div class="asset-tile">
+                        <div class="asset-head">
+                            <strong>Favicon</strong>
+                            <span>Square PNG, JPEG or WebP. 64–1024px, up to 512 KB.</span>
+                        </div>
+                        <div class="asset-preview">
+                            @if (!string.IsNullOrWhiteSpace(settings.FaviconUrl))
+                            {
+                                <img src="@settings.FaviconUrl" alt="Your favicon" />
+                            }
+                            else
+                            {
+                                <span class="asset-empty">No favicon yet</span>
+                            }
+                        </div>
+                        @* A favicon is seen at 16px and at 32px and almost never at its real size.
+                           This is where a detailed crest turns to mush, so it is shown at the sizes
+                           it will actually be used at, beside the full one. *@
+                        @if (!string.IsNullOrWhiteSpace(settings.FaviconUrl))
+                        {
+                            <div class="favicon-sizes">
+                                <span><img src="@settings.FaviconUrl" alt="" style="width:16px;height:16px;" /> 16px</span>
+                                <span><img src="@settings.FaviconUrl" alt="" style="width:32px;height:32px;" /> 32px</span>
+                            </div>
+                        }
+                        <div class="asset-actions">
+                            <QFileUpload UploadUrl="@($"api/v1/organizations/{organizationId}/branding/favicon")"
+                                         Accept="image/png,image/jpeg,image/webp" Multiple="false"
+                                         MaxSizeBytes="524288" CompressImages="false"
+                                         HintText="Square image, up to 512 KB"
+                                         OnUploaded="@(r => OnAssetUploaded(r, isFavicon: true))"
+                                         OnError="@(m => { assetError = m; return Task.CompletedTask; })" />
+                            @if (!string.IsNullOrWhiteSpace(settings.FaviconUrl))
+                            {
+                                <QButton Text="Remove" Icon="trash" Variant="ghost" Size="sm" Disabled="@isSavingAsset" OnClick="@(() => RemoveAsset(true))" />
+                            }
+                        </div>
+                    </div>
+                </div>
+
+                <p class="asset-note">SVG is not accepted. An SVG can carry script, and a logo has to be served as an image to be a logo — a 512&times;512 PNG is what every browser wants for a favicon anyway.</p>
+
+                @* KEPT, collapsed: tenants already on a typed link would lose their logo the day
+                   this shipped if the field went away. New work should use the picker above. *@
+                <details class="asset-links">
+                    <summary>Use a link instead</summary>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>Logo URL</label>
+                            <QInput @bind-Value="@settings.LogoUrl" Placeholder="https://your-domain.com/logo.png" Disabled="@(!settings.WhiteLabelEntitled)" />
+                        </div>
+                        <div class="form-group">
+                            <label>Favicon URL</label>
+                            <QInput @bind-Value="@settings.FaviconUrl" Placeholder="https://your-domain.com/favicon.png" Disabled="@(!settings.WhiteLabelEntitled)" />
+                        </div>
+                    </div>
+                    <small>Saved with the Save Settings button, like the rest of this page. An uploaded file replaces whatever is here.</small>
+                </details>
+            </QCard>
+
+            @* Read-only on purpose: a tenant does not self-serve a domain, because issuing the
+               certificate touches the web server itself. Shown so a school that HAS one can see it
+               is live, and so one that wants one knows who to ask. *@
+            <QCard Icon="globe2" Title="Your Own Web Address" Subtitle="Reach this system at your organisation's own domain">
+                @if (!string.IsNullOrWhiteSpace(settings.CustomDomain))
+                {
+                    <div class="domain-live">
+                        <QIcon Name="check-circle-fill" />
+                        <span>Your staff can sign in at <strong>@settings.CustomDomain</strong>. The sign-in page there carries your name and logo, and does not offer to create a new organisation.</span>
+                    </div>
+                }
+                else
+                {
+                    <p class="settings-hint">Your staff sign in at this platform's address today. To use something like <strong>dashboard.yourschool.com</strong> instead, ask SACC to set this up &mdash; it needs a DNS record on your side and a certificate on ours.</p>
+                }
             </QCard>
 
             <QCard Icon="stars" Title="Color Palettes" Subtitle="Quick-start palettes for common business types — click one to apply instantly">
@@ -251,13 +355,13 @@
     }
 
     .form-group label {
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         font-weight: 500;
         color: var(--qm-text-primary);
     }
 
     .form-group small {
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-secondary);
     }
 
@@ -287,6 +391,55 @@
         gap: 12px;
     }
 
+    .asset-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: var(--qm-block-gap);
+    }
+
+    .asset-tile {
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: var(--q-row-gap);
+    }
+
+    .asset-head { display: flex; flex-direction: column; gap: 2px; }
+    .asset-head span { font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
+
+    /* A checkerboard, so a transparent PNG reads as transparent rather than as white-on-white. */
+    .asset-preview {
+        min-height: 88px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: var(--qm-radius-md);
+        background-color: #ffffff;
+        background-image:
+            linear-gradient(45deg, #e9e9e9 25%, transparent 25%),
+            linear-gradient(-45deg, #e9e9e9 25%, transparent 25%),
+            linear-gradient(45deg, transparent 75%, #e9e9e9 75%),
+            linear-gradient(-45deg, transparent 75%, #e9e9e9 75%);
+        background-size: 16px 16px;
+        background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+    }
+
+    .asset-preview img { max-height: 72px; max-width: 100%; object-fit: contain; }
+    .asset-empty { font-size: var(--qm-text-sm); color: #6b6b6b; }
+
+    .favicon-sizes { display: flex; gap: 14px; align-items: center; font-size: var(--qm-text-xs); color: var(--qm-text-secondary); }
+    .favicon-sizes span { display: inline-flex; align-items: center; gap: 5px; }
+
+    .asset-actions { display: flex; align-items: flex-start; gap: var(--q-row-gap); flex-wrap: wrap; }
+    .asset-note { font-size: var(--qm-text-sm); color: var(--qm-text-secondary); margin: var(--qm-block-gap) 0 0; }
+    .asset-links { margin-top: var(--qm-block-gap); }
+    .asset-links summary { cursor: pointer; font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
+    .asset-links .form-grid { margin-top: var(--qm-field-gap); }
+
+    .domain-live { display: flex; align-items: center; gap: 8px; color: var(--qm-text-primary); }
+
     .palette-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -300,7 +453,7 @@
         gap: var(--q-row-gap);
         font-size: var(--q-control-font-sm);
         padding: 14px 10px;
-        background: var(--qm-surface, transparent);
+        background: var(--qm-bg-card);
         border: 2px solid var(--qm-border);
         border-radius: var(--qm-radius-lg);
         cursor: pointer;
@@ -329,7 +482,7 @@
         width: 26px;
         height: 26px;
         border-radius: 50%;
-        border: 2px solid var(--qm-surface, #fff);
+        border: 2px solid var(--qm-bg-card);
         box-shadow: 0 0 0 1px var(--qm-border);
     }
 
@@ -338,13 +491,13 @@
     }
 
     .palette-name {
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         font-weight: 600;
         color: var(--qm-text-primary);
     }
 
     .palette-business-type {
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         color: var(--qm-text-secondary);
         text-align: center;
     }
@@ -358,7 +511,7 @@
         display: flex;
         align-items: center;
         gap: 6px;
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-primary);
         cursor: pointer;
     }
@@ -455,13 +608,13 @@
     }
 
     .toggle-label {
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         font-weight: 500;
         color: var(--qm-text-primary);
     }
 
     .toggle-info small {
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-secondary);
     }
 
@@ -483,7 +636,7 @@
         background: color-mix(in srgb, var(--qm-danger) 15%, transparent);
         color: var(--qm-danger);
         border-radius: var(--qm-radius-lg);
-        font-size: 13px;
+        font-size: var(--qm-text-base);
     }
 </style>
 
@@ -619,6 +772,55 @@
         finally
         {
             isSavingTheme = false;
+        }
+    }
+
+    private bool isSavingAsset;
+    private string? assetError;
+
+    /// <summary>
+    /// A logo or favicon arrived. QFileUpload posts straight to the API from the BROWSER (see its
+    /// own note on ApiPublicUrl), so the response is the updated branding and there is nothing
+    /// left to save — the picker is not part of the Save Settings form.
+    /// </summary>
+    private Task OnAssetUploaded(QFileUpload.UploadedFileResult result, bool isFavicon)
+    {
+        assetError = null;
+        try
+        {
+            var updated = JsonSerializer.Deserialize<OrganizationBrandingDto>(result.ResponseBody, JsonOptions);
+            if (updated != null)
+            {
+                settings = updated;
+                NotificationService.Notify(ToastSeverity.Success, "Saved", isFavicon ? "Favicon updated" : "Logo updated");
+            }
+        }
+        catch (Exception ex)
+        {
+            assetError = $"The file uploaded but the page could not read the response: {ex.Message}";
+        }
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private async Task RemoveAsset(bool isFavicon)
+    {
+        isSavingAsset = true;
+        assetError = null;
+        try
+        {
+            settings = await OrganizationApi.RemoveBrandAssetAsync(organizationId, isFavicon);
+            NotificationService.Notify(ToastSeverity.Success, "Removed", isFavicon ? "Favicon removed" : "Logo removed");
+        }
+        catch (Exception ex)
+        {
+            // The API's own sentence: it says exactly which rule was broken, and a generic
+            // failure here would leave somebody guessing between four of them.
+            assetError = ex.Message;
+        }
+        finally
+        {
+            isSavingAsset = false;
         }
     }
 

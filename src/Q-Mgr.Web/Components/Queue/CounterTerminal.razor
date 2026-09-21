@@ -319,7 +319,7 @@
     .ct-head-left h2 {
         color: var(--qm-text-primary);
         margin: 0;
-        font-size: 22px;
+        font-size: var(--qm-text-stat);
         display: flex;
         align-items: center;
         gap: 10px;
@@ -369,7 +369,7 @@
         display: flex;
         align-items: center;
         gap: 6px;
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         opacity: 0.9;
     }
 
@@ -393,7 +393,7 @@
 
     .panel-header h3 {
         margin: 0;
-        font-size: 16px;
+        font-size: var(--qm-text-md);
         font-weight: 600;
         color: var(--qm-text-primary);
         display: flex;
@@ -417,7 +417,7 @@
         display: flex;
         align-items: center;
         gap: 6px;
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
     }
 
@@ -444,18 +444,18 @@
         align-items: center;
         justify-content: center;
         gap: 8px;
-        font-size: 15px;
+        font-size: var(--qm-text-md);
         color: var(--qm-text-secondary);
     }
 
     .customer-details .q-icon {
         color: var(--qm-text-muted);
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
     }
 
     .customer-details .customer-name {
         font-weight: 600;
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
         color: var(--qm-text-primary);
     }
 
@@ -482,14 +482,14 @@
     }
 
     .no-customer p {
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
         font-weight: 500;
         margin: 0 0 8px;
         color: var(--qm-text-secondary);
     }
 
     .no-customer span {
-        font-size: 14px;
+        font-size: var(--qm-text-base);
     }
 
     /* Actions Panel */
@@ -541,18 +541,18 @@
     }
 
     .action-icon .q-icon {
-        font-size: 24px;
+        font-size: var(--qm-text-stat);
     }
 
     .action-text {
         font-weight: 600;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-primary);
         margin-bottom: 2px;
     }
 
     .action-hint {
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         color: var(--qm-text-muted);
     }
 
@@ -647,13 +647,13 @@
     }
 
     .queue-token .token-number {
-        font-size: 20px;
+        font-size: var(--qm-text-xl);
         font-weight: 700;
         color: var(--qm-primary);
     }
 
     .priority-badge {
-        font-size: 9px;
+        font-size: var(--qm-text-xs);
         padding: 2px 6px;
         border-radius: var(--qm-radius-full);
         font-weight: 600;
@@ -677,7 +677,7 @@
     }
 
     .queue-details .service-name {
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
     }
 
@@ -688,13 +688,13 @@
 
     .queue-wait .wait-time {
         display: block;
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         font-weight: 500;
         color: var(--qm-text-secondary);
     }
 
     .queue-wait .position {
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-muted);
     }
 
@@ -724,18 +724,18 @@
 
     .empty-queue {
         text-align: center;
-        padding: 60px 20px;
+        padding: var(--qm-empty-pad);
         color: var(--qm-text-muted);
     }
 
     .empty-queue .q-icon {
-        font-size: 48px;
+        font-size: var(--qm-empty-icon);
         color: var(--qm-text-muted);
-        margin-bottom: 16px;
+        margin-bottom: 4px;
     }
 
     .empty-queue p {
-        font-size: 16px;
+        font-size: var(--qm-text-md);
         font-weight: 500;
         margin: 0 0 8px;
         color: var(--qm-text-secondary);
@@ -772,7 +772,7 @@
     }
 
     .select-counter-prompt h3 {
-        font-size: 24px;
+        font-size: var(--qm-text-stat);
         margin: 0 0 12px;
         color: var(--qm-text-primary);
     }
@@ -810,7 +810,7 @@
     .transfer-current-token {
         margin: 0 0 16px;
         color: var(--qm-text-secondary);
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         line-height: 1.5;
     }
 
@@ -825,7 +825,7 @@
     .transfer-label {
         display: block;
         margin-bottom: 6px;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         font-weight: 600;
         color: var(--qm-text-primary);
     }

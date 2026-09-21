@@ -2,11 +2,13 @@ using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Caching.Distributed;
 using QMgr.API.Authorization;
+using QMgr.Application.DTOs;
+using QMgr.Application.Interfaces;
 using QMgr.Application.Interfaces.Billing;
 using QMgr.Application.Tenant;
 using QMgr.Domain.Constants;
+using QMgr.Domain.Entities.Platform;
 using QMgr.Domain.Enums;
 using QMgr.Infrastructure.Data;
 using System.Text.Json;
@@ -24,39 +26,43 @@ namespace QMgr.Controllers.v1;
 public class ModulesController : ControllerBase
 {
     private readonly IModuleAccessService _moduleAccessService;
-    private readonly IMobileMoneyService _mobileMoneyService;
+    private readonly IPaymentLedger _ledger;
     private readonly IStripeService _stripeService;
     private readonly QMgrDbContext _dbContext;
     private readonly ITenantContextAccessor _tenantContextAccessor;
-    private readonly IDistributedCache _cache;
-    private readonly IWebHostEnvironment _environment;
     private readonly ILogger<ModulesController> _logger;
-    private const string PendingPurchasePrefix = "module-purchase:";
+    private readonly IPlatformSettingsService _platformSettingsService;
+    private readonly IConfiguration _configuration;
 
     public ModulesController(
         IModuleAccessService moduleAccessService,
-        IMobileMoneyService mobileMoneyService,
+        IPaymentLedger ledger,
         IStripeService stripeService,
         QMgrDbContext dbContext,
         ITenantContextAccessor tenantContextAccessor,
-        IDistributedCache cache,
-        IWebHostEnvironment environment,
-        ILogger<ModulesController> logger)
+        ILogger<ModulesController> logger,
+        IPlatformSettingsService platformSettingsService,
+        IConfiguration configuration)
     {
         _moduleAccessService = moduleAccessService;
-        _mobileMoneyService = mobileMoneyService;
+        _ledger = ledger;
         _stripeService = stripeService;
         _dbContext = dbContext;
         _tenantContextAccessor = tenantContextAccessor;
-        _cache = cache;
-        _environment = environment;
         _logger = logger;
+        _platformSettingsService = platformSettingsService;
+        _configuration = configuration;
     }
+
+    /// <summary>The public site, for a link a browser or a payment gateway will follow — the same
+    /// resolution BillingController uses. Never Request.Host: this API is reached from the Web
+    /// server over its loopback, so the request host is an address no customer can open.</summary>
+    private Task<string> GetBaseUrlAsync() => _platformSettingsService.GetPublicWebBaseUrlAsync();
 
     private Guid OrganizationId => _tenantContextAccessor.TenantContext?.OrganizationId ?? Guid.Empty;
 
     /// <summary>The full 4-module catalog — anonymous so the registration wizard's module picker
-    /// (no account exists yet) can render it, same pattern as the existing GET billing/plans.</summary>
+    /// (no account exists yet) can render it, the one public read of the catalog.</summary>
     [HttpGet]
     [AllowAnonymous]
     public async Task<IActionResult> GetCatalog()
@@ -76,13 +82,6 @@ public class ModulesController : ControllerBase
         return Ok(status);
     }
 
-    /// <summary>
-    /// The attribute sits on the constructor parameter, not on the generated property. Written the
-    /// other way round ([property: Required]) the framework's validation rejects the request type
-    /// itself with a 400 before the action ever runs, which is what it had been doing to every
-    /// module purchase — found live 2026-09-04 while testing grandfathered pricing.
-    /// </summary>
-    public record PurchaseModuleRequest([Required] string PhoneNumber, string BillingCycle = "Monthly");
 
     private const int MaxReasonLength = 500;
 
@@ -105,20 +104,22 @@ public class ModulesController : ControllerBase
             && string.Equals(uri.Host, Request.Host.Host, StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>Self-service add — collects payment via Mobile Money and activates on success.
-    /// In Development with no gateway configured, simulates an instant success so the flow can be
-    /// demonstrated end to end without real MTN/Airtel sandbox credentials.</summary>
+    /// <summary>
+    /// Buy a module, or pay for one on trial, through the sacc.ug gateway — Mobile Money or card
+    /// (2026-09-19). The ledger writes the invoice and a pending payment BEFORE the gateway is asked,
+    /// and the module is activated only when the gateway confirms the money (webhook, status read or
+    /// reconciliation) — never by this request and never by a browser that keeps polling. Everything
+    /// the payer typed is validated here and again in the ledger; nothing is written for a request
+    /// that would be refused.
+    /// </summary>
     [HttpPost("{moduleCode}/purchase")]
     [RequirePermission(Permissions.BillingManage)]
-    public async Task<IActionResult> PurchaseModule(string moduleCode, [FromBody] PurchaseModuleRequest request)
+    public async Task<IActionResult> PurchaseModule(string moduleCode, [FromBody] ModulePurchaseRequest request, CancellationToken cancellationToken)
     {
         if (!ModuleCodes.All.Contains(moduleCode))
             return NotFound(new { message = $"Unknown module '{moduleCode}'." });
-
-        var catalog = await _moduleAccessService.GetCatalogAsync();
-        var module = catalog.FirstOrDefault(m => m.Code == moduleCode);
-        if (module == null)
-            return NotFound(new { message = $"Module '{moduleCode}' is not in the catalog." });
+        if (request is null)
+            return BadRequest(new { error = "INVALID_REQUEST", message = "The purchase details are missing." });
 
         var blocking = await _moduleAccessService.GetBlockingTrialModuleAsync(OrganizationId, moduleCode);
         if (blocking != null)
@@ -133,83 +134,35 @@ public class ModulesController : ControllerBase
 
         if (!TryParseCycle(request.BillingCycle, out var cycle))
             return BadRequest(new { error = "INVALID_BILLING_CYCLE", message = "Billing cycle must be Monthly or Annual." });
-        if (string.IsNullOrWhiteSpace(request.PhoneNumber))
-            return BadRequest(new { error = "INVALID_PHONE", message = "A mobile money phone number is required." });
 
-        // Not module.MonthlyPriceUgx/AnnualPriceUgx directly: an organization that already holds
-        // this module at an agreed price pays that price, not whatever the catalog says today.
-        // For a first purchase the two are the same number.
-        var amount = await _moduleAccessService.GetChargeableUgxPriceAsync(OrganizationId, moduleCode, cycle);
-
-        if (_environment.IsDevelopment())
+        try
         {
-            // Dev-only simulation: MobileMoneyService.CollectPaymentAsync returns a clean
-            // "DISABLED" failure whenever MobileMoney:Enabled isn't set (true in every local dev
-            // environment, since no gateway credentials exist here) — real behavior, not a bug.
-            // Rather than let that dead-end the whole registration→purchase flow during local
-            // testing, probe it first and fall back to an instant simulated success so the flow
-            // is actually demonstrable. Never runs outside Development.
-            var probe = await _mobileMoneyService.CollectPaymentAsync(OrganizationId, request.PhoneNumber, amount, "UGX", $"probe-{moduleCode}");
-            if (!probe.Success && probe.ErrorCode == "DISABLED")
-            {
-                await _moduleAccessService.ActivateAsync(OrganizationId, moduleCode, cycle);
-                _logger.LogInformation("[DEV SIMULATION] Activated module {Module} for org {OrgId} — no Mobile Money gateway configured", moduleCode, OrganizationId);
-                return Ok(new { simulated = true, status = "Active", message = "Mobile Money isn't configured in this environment — activated immediately for testing." });
-            }
+            var result = await _ledger.StartModulePurchaseAsync(OrganizationId, moduleCode, cycle, request, ClientIp(), cancellationToken);
+            if (result.IsFinal && result.State != PaymentStates.Succeeded)
+                return BadRequest(new { error = "PAYMENT_NOT_STARTED", message = result.Message, referenceId = result.ReferenceId });
+            return Ok(result);
         }
-
-        var narrative = $"Q-Mgr {module.Name} module ({cycle})";
-        var result = await _mobileMoneyService.CollectPaymentAsync(OrganizationId, request.PhoneNumber, amount, "UGX", narrative);
-
-        if (!result.Success || result.TransactionId == null)
+        catch (PaymentRequestException ex)
         {
-            return BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage ?? "Payment could not be initiated.", customerMessage = result.CustomerMessage });
+            return StatusCode(ex.StatusCode, new { error = ex.Code, message = ex.Message });
         }
-
-        // Track what this transaction is for so the status-check endpoint below knows what to
-        // activate once the customer confirms on their phone — ephemeral (30 min), not a
-        // permanent record; a real Payment/Invoice row is out of scope for this pass.
-        var pending = JsonSerializer.Serialize(new { OrganizationId, ModuleCode = moduleCode, BillingCycle = cycle.ToString() });
-        await _cache.SetStringAsync($"{PendingPurchasePrefix}{result.TransactionId}", pending,
-            new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(30) });
-
-        return Ok(new { transactionId = result.TransactionId, status = result.Status.ToString(), message = "Payment initiated. Please check your phone to confirm." });
     }
 
-    /// <summary>Poll after PurchaseModule — activates the pending module once the gateway confirms success.</summary>
-    [HttpGet("purchase-status/{transactionId}")]
+    /// <summary>Where a purchase stands. Read from the ledger; while it is still open the gateway is
+    /// asked first, so a page that polls sees the verdict the moment the gateway has it. Another
+    /// organization's payment answers 404, never 403.</summary>
+    [HttpGet("purchase-status/{referenceId:guid}")]
     [RequirePermission(Permissions.BillingView)]
-    public async Task<IActionResult> CheckPurchaseStatus(string transactionId)
+    public async Task<IActionResult> CheckPurchaseStatus(Guid referenceId, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(transactionId) || transactionId.Length > 128)
-            return BadRequest(new { message = "Invalid transaction id." });
-
-        var result = await _mobileMoneyService.CheckPaymentStatusAsync(transactionId);
-
-        if (result.Status == MobileMoneyPaymentStatus.Succeeded)
-        {
-            var pendingJson = await _cache.GetStringAsync($"{PendingPurchasePrefix}{transactionId}");
-            if (pendingJson != null)
-            {
-                var pending = JsonSerializer.Deserialize<PendingPurchase>(pendingJson);
-                // The pending record names the org that started the purchase; only that org may
-                // complete it. Anyone else polling a guessed transaction id gets a plain 404.
-                if (pending != null && pending.OrganizationId != OrganizationId)
-                    return NotFound(new { message = "No pending purchase found for this transaction." });
-
-                if (pending != null)
-                {
-                    TryParseCycle(pending.BillingCycle, out var cycle);
-                    await _moduleAccessService.ActivateAsync(pending.OrganizationId, pending.ModuleCode, cycle);
-                    await _cache.RemoveAsync($"{PendingPurchasePrefix}{transactionId}");
-                }
-            }
-        }
-
-        return Ok(new { status = result.Status.ToString(), errorMessage = result.ErrorMessage });
+        var status = await _ledger.GetStatusAsync(OrganizationId, referenceId, refresh: true, cancellationToken);
+        return status == null ? NotFound(new { message = "No such payment." }) : Ok(status);
     }
 
-    private record PendingPurchase(Guid OrganizationId, string ModuleCode, string BillingCycle);
+    private string? ClientIp() =>
+        Request.Headers["X-Viewer-Ip"].FirstOrDefault()
+        ?? Request.Headers["X-Real-IP"].FirstOrDefault()
+        ?? HttpContext.Connection.RemoteIpAddress?.ToString();
 
     public record PurchaseModuleCardRequest(string BillingCycle = "Monthly", string? SuccessUrl = null, string? CancelUrl = null);
 
@@ -283,8 +236,15 @@ public class ModulesController : ControllerBase
             return Ok(new { requiresCheckout = false, status = "Active", message = $"{plan.Name} activated and added to your card subscription." });
         }
 
-        var successUrl = request.SuccessUrl ?? $"{Request.Scheme}://{Request.Host}/billing/modules?checkout=success";
-        var cancelUrl = request.CancelUrl ?? $"{Request.Scheme}://{Request.Host}/billing/modules?checkout=cancelled";
+        // Stripe sends the customer back to these, so they must be addresses the customer's browser
+        // can open: the public site, never Request.Host (the loopback in production). A relative URL
+        // a client passed is anchored to the same public base.
+        var baseUrl = await GetBaseUrlAsync();
+        string Anchor(string? url, bool succeeded) => string.IsNullOrWhiteSpace(url)
+            ? BillingLinks.Absolute(baseUrl, BillingLinks.CheckoutReturn(succeeded))
+            : url.StartsWith('/') ? BillingLinks.Absolute(baseUrl, url) : url;
+        var successUrl = Anchor(request.SuccessUrl, succeeded: true);
+        var cancelUrl = Anchor(request.CancelUrl, succeeded: false);
         var session = await _stripeService.CreateModuleCheckoutSessionAsync(OrganizationId, moduleCode, priceId, successUrl, cancelUrl, customerId, cycle.ToString());
 
         return Ok(new { requiresCheckout = true, checkoutUrl = session.Url });

@@ -1,0 +1,65 @@
+@*
+    A PAGE'S ACTION ROW HAS ONE LOCATION, AND THIS IS THE ONE HOME FOR IT (2026-09-19).
+
+    Reported from production against two hubs: "inconsistent location of the buttons. some are on
+    top right… standardise the location of the action buttons." On /admin/feedback the Export and
+    Refresh buttons sat in a band of their own BELOW the tab strip, left-aligned; on /admin/branches
+    so did Add Branch. On every ordinary page the same kind of button sits on the title row, top
+    right. Two locations for one thing, and the hubs had the odd one.
+
+    THE CAUSE WAS STRUCTURAL, NOT COSMETIC. A hub owns the page header ("A hub owns the route; its
+    sections own nothing" in CLAUDE.md), so a folded section hid its own title with
+    `@@if (!Embedded)` — and was left rendering a `.page-header` that contained nothing but its
+    buttons. `.page-header` is `justify-content: space-between`, so a lone child sits at the START,
+    which is why they were on the left as well as in the wrong band. Right-aligning them with CSS
+    would have fixed the alignment and kept the extra band, which is the actual complaint: a
+    second header strip that spends a row of the page to hold two buttons.
+
+    So the buttons MOVE, into the hub's own title row, using Blazor's section support: the hub
+    renders `<SectionOutlet SectionId="QPageActions.Id" />` in its `.header-right`, and an embedded
+    section renders its buttons into `<SectionContent>` with the same id. The framework resolves
+    that across the render tree, which is why this is a SectionOutlet and not a cascading
+    RenderFragment a section assigns during its own render — that shape re-renders the hub from
+    inside the child's render pass, and a `RenderFragment` lambda is a new object every time, so
+    the equality check that would stop the loop can never hold.
+
+    ONE OUTLET, ONE FILLER. `Id` is a single static object, so exactly one section may be on screen
+    at a time — which is what a tab strip guarantees. A page that needs two action groups puts them
+    both in this component's `Actions`.
+
+    Not embedded, it renders the same `.page-header` markup the page had before, so a section that
+    ever gets its own route again is unaffected and every non-hub page keeps its band untouched.
+*@
+
+@if (Embedded)
+{
+    <SectionContent SectionId="QPageActions.Id">@Actions</SectionContent>
+}
+else
+{
+    <div class="page-header">
+        @if (Title is not null)
+        {
+            <div class="header-content">@Title</div>
+        }
+        <div class="header-actions">@Actions</div>
+    </div>
+}
+
+@code {
+    /// <summary>
+    /// The one section id shared by every hub's outlet and every embedded section's content.
+    /// A plain object rather than a string: a string id is a name two unrelated components can
+    /// collide on by accident, and there is only ever one page-action slot on screen.
+    /// </summary>
+    public static readonly object Id = new();
+
+    /// <summary>True when a hub is hosting this section, so the buttons belong in the hub's band.</summary>
+    [Parameter] public bool Embedded { get; set; }
+
+    /// <summary>The title block — an h1 and its subtitle. Rendered only when this page owns its band.</summary>
+    [Parameter] public RenderFragment? Title { get; set; }
+
+    /// <summary>The buttons. These follow the page: into the hub's band when embedded, otherwise this one.</summary>
+    [Parameter] public RenderFragment? Actions { get; set; }
+}

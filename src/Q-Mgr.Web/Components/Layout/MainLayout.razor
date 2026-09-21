@@ -21,6 +21,7 @@
 @using QMgr.Web.Services
 @inject ILocalStorageService LocalStorage
 @inject IModuleApiService ModuleApi
+@inject IOrganizationApiService OrganizationApi
 @inject IModuleStateService ModuleState
 @inject IAppInitializationService AppInit
 @inject IConfiguration Configuration
@@ -42,7 +43,7 @@
                 justify-content: center;
                 align-items: center;
                 min-height: 100vh;
-                background: var(--bg-color);
+                background: var(--qm-bg-dark);
             }
             .loading-content {
                 text-align: center;
@@ -54,14 +55,17 @@
                 height: 80px;
             }
             .loading-text {
-                color: var(--text-secondary);
+                color: var(--qm-text-secondary);
             }
         </style>
     </div>
 }
 else
 {
-<div class="qm-app" data-theme="@currentTheme">
+@* The tenant's palette over the whole shell (white-label plan, C1). Empty for an organization
+   that has white-labelling switched off or is not entitled to it — both decided server-side by
+   api/v1/branding/mine, so nothing here has to judge it. *@
+<div class="qm-app" data-theme="@currentTheme" style="@ShellBrandingStyle">
     <!-- Top Header -->
     <header class="qm-header">
         <div class="header-left">
@@ -73,9 +77,16 @@ else
             </button>
             <a href="/" @onclick="CollapseSidebarOnMobile" class="brand">
                 <span class="brand-logo">
-                    <img src="/images/icon-512@(currentTheme == "light" ? "-light" : "").svg" alt="Q-Mgr" />
+                    @if (!string.IsNullOrWhiteSpace(shellBranding.LogoUrl))
+                    {
+                        <img src="@shellBranding.LogoUrl" alt="@ShellAppName" />
+                    }
+                    else
+                    {
+                        <img src="/images/icon-512@(currentTheme == "light" ? "-light" : "").svg" alt="@ShellAppName" />
+                    }
                 </span>
-                <span class="brand-text">Q-Mgr</span>
+                <span class="brand-text">@ShellAppName</span>
             </a>
         </div>
 
@@ -404,34 +415,18 @@ else
                     </li>
                 }
 
-                <!-- Billing & Subscription -->
+                <!-- Billing — one hub since 2026-09-19 (BillingHub.razor); its five tabs are not five entries. -->
                 @if (canViewBilling)
                 {
-                    <li class="nav-item has-submenu @(IsMenuExpanded("billing") ? "open" : "")">
-                        <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("billing"))" @onclick:preventDefault>
+                    <li class="nav-item">
+                        <a href="@BillingLinks.Hub.TrimStart('/')" @onclick="CollapseSidebarOnMobile" class="nav-link @(IsActive(BillingLinks.Hub) ? "active" : "")">
                             <i class="bi bi-credit-card"></i>
                             <span>Billing</span>
                             @if (unpurchasedModuleCount > 0)
                             {
                                 <span class="nav-badge" title="@unpurchasedModuleCount module(s) available">@unpurchasedModuleCount</span>
                             }
-                            <i class="bi bi-chevron-down submenu-arrow"></i>
                         </a>
-                        <ul class="submenu">
-                            <li><a href="billing/overview" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/billing/overview") ? "active" : "")"><i class="bi bi-grid"></i>Overview</a></li>
-                            <li>
-                                <a href="billing/modules" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/billing/modules") ? "active" : "")">
-                                    <i class="bi bi-grid-3x3-gap-fill"></i>Modules
-                                    @if (unpurchasedModuleCount > 0)
-                                    {
-                                        <span class="nav-badge">@unpurchasedModuleCount</span>
-                                    }
-                                </a>
-                            </li>
-                            <li><a href="billing/invoices" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/billing/invoices") ? "active" : "")"><i class="bi bi-receipt"></i>Invoices</a></li>
-                            <li><a href="billing/payment-methods" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/billing/payment-methods") ? "active" : "")"><i class="bi bi-wallet2"></i>Payment Methods</a></li>
-                            <li><a href="billing/usage" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/billing/usage") ? "active" : "")"><i class="bi bi-bar-chart-line"></i>Usage & Limits</a></li>
-                        </ul>
                     </li>
                 }
 
@@ -449,6 +444,7 @@ else
                             <li><a href="platform/tenants" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/platform/tenants") ? "active" : "")"><i class="bi bi-building"></i>Tenant Management</a></li>
                             <li><a href="platform/registration-review" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/platform/registration-review") ? "active" : "")"><i class="bi bi-person-badge"></i>Registration Review</a></li>
                             <li><a href="platform/module-catalog" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/platform/module-catalog") ? "active" : "")"><i class="bi bi-grid-3x3-gap"></i>Module Catalog</a></li>
+                            <li><a href="platform/payments" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/platform/payments") ? "active" : "")"><i class="bi bi-cash-coin"></i>Payments</a></li>
                             <li><a href="admin/platform-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/platform-settings") ? "active" : "")"><i class="bi bi-gear"></i>Platform Settings</a></li>
                             <li><a href="admin/platform-spotify" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/platform-spotify") ? "active" : "")"><i class="bi bi-spotify"></i>Spotify Integration</a></li>
                             <li><a href="admin/docs" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/docs") ? "active" : "")"><i class="bi bi-journal-richtext"></i>Docs Management</a></li>
@@ -481,7 +477,18 @@ else
 
         <!-- Footer -->
         <footer class="qm-footer">
-            <span>&copy; @DateTime.Now.Year Q-Mgr Front-Office Platform</span>
+            @* The SECOND attribution string, and it has to move with the first: a tenant who paid
+               to take "Powered by SACC Software" off their sign-in page and still reads "Q-Mgr" at
+               the foot of every screen afterwards has not got what they bought. Same flag, same
+               server-side resolution — see PoweredBy. *@
+            @if (shellBranding.AttributionRemoved)
+            {
+                <span>&copy; @DateTime.Now.Year @ShellAppName</span>
+            }
+            else
+            {
+                <span>&copy; @DateTime.Now.Year Q-Mgr Front-Office Platform</span>
+            }
             <div class="footer-links">
                 @if (isSuperAdmin)
                 {
@@ -620,6 +627,42 @@ else
 }
 
 @code {
+    /// <summary>
+    /// What this organization's shell should look like. Read from api/v1/branding/mine, which
+    /// carries NO permission code (the ProfileController rule — a member of staff asking what their
+    /// own workspace looks like) and which applies the white-label switch and the entitlement
+    /// server-side, so this is already "yes" or "no" rather than something to judge here.
+    ///
+    /// Defaults to unbranded, which is the standard Q-Mgr look: a failed fetch falls back to it
+    /// rather than to a blank shell, the same fail-open as every module gate in this app.
+    /// </summary>
+    private TenantHostBrandingDto shellBranding = new() { Resolved = false };
+
+    private string ShellAppName => shellBranding.Resolved && !string.IsNullOrWhiteSpace(shellBranding.BrandName)
+        ? shellBranding.BrandName!
+        : "Q-Mgr";
+
+    private string ShellBrandingStyle => shellBranding.Resolved
+        ? BrandPalette.StyleFor(shellBranding.PrimaryColor, shellBranding.SecondaryColor, shellBranding.AccentColor)
+        : string.Empty;
+
+    /// <summary>
+    /// Loads the shell's branding. NEVER blocks and never fails the layout: branding is cosmetic,
+    /// and an unreachable API must leave somebody looking at a working app in our colours, not at
+    /// nothing. Called once the session is known to be live, so it does not race a dead session.
+    /// </summary>
+    private async Task LoadShellBrandingAsync()
+    {
+        try
+        {
+            shellBranding = await OrganizationApi.GetMyBrandingAsync();
+        }
+        catch
+        {
+            shellBranding = new TenantHostBrandingDto { Resolved = false };
+        }
+    }
+
     private bool authChecked = false;
     private bool sidebarExpanded = true;
     private UserInfo? currentUser;
@@ -731,6 +774,9 @@ else
             // read "signed out" as "not allowed" and sent them to /unauthorized.
             if (!await SessionStillValidAsync()) return;
 
+            // After the session is known live, so a refused refresh cannot race it.
+            await LoadShellBrandingAsync();
+
             // Mark auth as checked since we already have a user
             authChecked = true;
             tokensInitialized = true;
@@ -806,6 +852,8 @@ else
                     await BuildApiDocsUrlAsync();
 
                     if (!await SessionStillValidAsync()) return;
+
+                    await LoadShellBrandingAsync();
 
                     // Mark auth as checked and show the app
                     authChecked = true;
@@ -1068,7 +1116,7 @@ else
 
         // Only send people to the marketplace if they could actually buy something there; staff
         // without billing access would just bounce off that page's own permission check.
-        NavigationManager.NavigateTo(canViewBilling ? "/billing/modules" : "/");
+        NavigationManager.NavigateTo(canViewBilling ? BillingLinks.Modules : "/");
     }
 
     /// <summary>

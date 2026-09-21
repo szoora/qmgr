@@ -155,14 +155,14 @@
         align-items: center;
         justify-content: center;
         color: var(--qm-text-on-primary);
-        font-size: 24px;
+        font-size: var(--qm-text-stat);
     }
 
     .integration-status .status {
         display: flex;
         align-items: center;
         gap: 6px;
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-muted);
     }
 
@@ -170,7 +170,7 @@
 
     .integration-body { padding: 16px; }
     .integration-body h4 { margin: 0 0 8px; color: var(--qm-text-primary); }
-    .integration-body p { margin: 0 0 12px; font-size: 13px; color: var(--qm-text-muted); line-height: 1.5; }
+    .integration-body p { margin: 0 0 12px; font-size: var(--qm-text-base); color: var(--qm-text-muted); line-height: 1.5; }
 
     .integration-features { display: flex; flex-wrap: wrap; gap: 8px; }
 
@@ -181,11 +181,11 @@
         padding: 4px 8px;
         background: var(--qm-bg-elevated);
         border-radius: var(--qm-radius-md);
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         color: var(--qm-text-secondary);
     }
 
-    .feature-tag .rzi { font-size: 12px; color: var(--qm-success); }
+    .feature-tag .rzi { font-size: var(--qm-text-sm); color: var(--qm-success); }
 
     .integration-footer {
         display: flex;
@@ -208,12 +208,12 @@
         margin-bottom: 16px;
     }
 
-    .section-header h2 { margin: 0; font-size: 18px; color: var(--qm-text-primary); }
-    .section-subtitle { margin: 4px 0 0; font-size: 12px; color: var(--qm-text-muted); }
+    .section-header h2 { margin: 0; font-size: var(--qm-text-lg); color: var(--qm-text-primary); }
+    .section-subtitle { margin: 4px 0 0; font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
 
     .webhooks-list { display: flex; flex-direction: column; gap: 12px; }
 
-    .webhook-name { display: block; font-weight: 600; font-size: 13px; color: var(--qm-text-primary); margin-bottom: 2px; }
+    .webhook-name { display: block; font-weight: 600; font-size: var(--qm-text-base); color: var(--qm-text-primary); margin-bottom: 2px; }
     .event-tag.muted { background: var(--qm-bg-card); color: var(--qm-text-muted); }
 
     .webhook-item {
@@ -227,7 +227,7 @@
     }
 
     .webhook-info { flex: 1; }
-    .webhook-url { font-family: var(--qm-font-mono); font-size: 13px; color: var(--qm-primary); }
+    .webhook-url { font-family: var(--qm-font-mono); font-size: var(--qm-text-base); color: var(--qm-primary); }
 
     .webhook-events {
         display: flex;
@@ -240,7 +240,7 @@
         background: var(--qm-primary-light);
         color: var(--qm-primary);
         border-radius: var(--qm-radius-sm);
-        font-size: 10px;
+        font-size: var(--qm-text-xs);
         font-weight: 500;
     }
 
@@ -250,11 +250,11 @@
         display: flex;
         flex-direction: column;
         align-items: center;
-        padding: 40px;
+        padding: var(--qm-empty-pad);
         color: var(--qm-text-muted);
     }
 
-    .empty-webhooks .rzi { font-size: 48px; margin-bottom: 12px; }
+    .empty-webhooks .rzi { font-size: var(--qm-empty-icon); margin-bottom: 4px; }
 </style>
 
 @code {

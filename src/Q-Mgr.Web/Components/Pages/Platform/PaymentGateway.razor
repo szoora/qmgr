@@ -1,0 +1,462 @@
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Payments
+@implements IDisposable
+@inject IPaymentApiService PaymentApi
+@inject IPermissionService PermissionService
+@inject IToastService Toast
+
+@*
+    Gateway — a section of the platform Payments hub (/platform/payments?tab=gateway). No @page.
+
+    Four things, in the order an administrator does them: the settings (address, key, switch, cards),
+    a check that the key works, the webhook registration, and a real UGX 500 test prompt that proves the
+    whole path — the phone rings, the gateway confirms, and its signed webhook reaches this install.
+
+    Validation is aggressive on purpose (2026-09-19): a wrong address or key does not fail on this page,
+    it fails later on a customer's payment. Every rule here is also enforced by the API, which is the
+    one that names the field when it refuses.
+*@
+
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1>Gateway</h1>
+        <p class="subtitle">The sacc.ug gateway that collects every payment.</p>
+    </Title>
+    <Actions>
+        <QButton Icon="arrow-repeat" Text="Refresh" Variant="secondary" OnClick="@LoadAsync" Disabled="@isLoading" />
+    </Actions>
+</QPageActions>
+
+@if (isLoading)
+{
+    <div class="loading-container"><QSpinner Size="lg" /><span>Loading the gateway settings...</span></div>
+}
+else if (loadError != null)
+{
+    <QEmptyState Icon="exclamation-triangle-fill" Title="Gateway settings not loaded" Text="@loadError">
+        <Action><QButton Text="Try again" Icon="arrow-repeat" Variant="primary" OnClick="@LoadAsync" /></Action>
+    </QEmptyState>
+}
+else if (settings != null)
+{
+    <QStatRow>
+        <QStatTile Label="Mobile Money" Value="@(settings.MobileMoneyAvailable ? "Available" : "Off")" Icon="phone"
+                   Variant="@(settings.MobileMoneyAvailable ? "success" : "default")" Sub="MTN and Airtel" />
+        <QStatTile Label="Cards" Value="@(settings.CardsAvailable ? "Available" : "Off")" Icon="credit-card"
+                   Variant="@(settings.CardsAvailable ? "success" : "default")" Sub="Through the gateway's card page" />
+        <QStatTile Label="Webhook" Value="@(WebhookRegistered ? "Registered" : "Not registered")" Icon="broadcast"
+                   Variant="@(WebhookRegistered ? "success" : "warning")" Sub="@(WebhookRegistered ? "Payments settle in seconds" : "Payments settle every 5 minutes")" />
+        <QStatTile Label="Stripe" Value="@(settings.StripeAvailable ? "Configured" : "Off")" Icon="slash-circle"
+                   Sub="Kept off; not used for collections" />
+    </QStatRow>
+
+    <div class="pg-grid">
+        <QCard Title="Settings" Icon="sliders">
+            <HeaderActions>
+                <QInfo Label="Gateway settings" Align="right"
+                       Text="The API key is issued to Q-Mgr in CRMPro (Settings → API keys). It needs payments:collect, payments:status and webhooks:manage — and nothing that sends money out. It is never shown again: the field shows dots when a key is saved. Leave the dots to keep it." />
+            </HeaderActions>
+            <ChildContent>
+                <p class="form-required-note"><span class="q-input__required">*</span> Required to switch the gateway on</p>
+                <QCheckbox Value="@form.Enabled" ValueChanged="@((bool v) => { form.Enabled = v; if (!v) form.CardsEnabled = false; })"
+                           Label="Collect payments through the gateway" Disabled="@(!canEdit || saving)" />
+                <div class="form-row pg-fields">
+                    <QInput TValue="string" @bind-Value="form.BaseUrl" Label="Gateway address" Required="true" Placeholder="@SaccGatewayDefaults.BaseUrl"
+                            Type="url" MaxLength="200" Disabled="@(!canEdit || saving)" IconLeft="globe"
+                            HasError="@(BaseUrlError != null)" ErrorMessage="@BaseUrlError" HelperText="@BaseUrlHelp" />
+                    <QInput TValue="string" @bind-Value="form.ApiKey" Label="API key" Required="true" Type="password" MaxLength="256"
+                            Disabled="@(!canEdit || saving)" IconLeft="key"
+                            HasError="@(ApiKeyError != null)" ErrorMessage="@ApiKeyError"
+                            HelperText="@(KeyIsStored ? "A key is saved. Leave the dots to keep it." : "Paste the key exactly as CRMPro showed it.")" />
+                </div>
+                <QCheckbox Value="@form.CardsEnabled" ValueChanged="@((bool v) => form.CardsEnabled = v)"
+                           Label="Also take cards (Visa, Mastercard) on the gateway's card page" Disabled="@(!canEdit || saving || !form.Enabled)" />
+                @if (fieldErrors.TryGetValue("cardsEnabled", out var cardsError))
+                {
+                    <p class="form-error"><QIcon Name="exclamation-circle" /> @cardsError</p>
+                }
+                @if (saveError != null)
+                {
+                    <p class="form-error"><QIcon Name="exclamation-circle" /> @saveError</p>
+                }
+                @if (canEdit)
+                {
+                    <div class="form-actions">
+                        <QButton Text="Save settings" Icon="check-lg" Variant="primary" OnClick="@SaveAsync" Loading="@saving" Disabled="@saving" />
+                        <QButton Text="Check connection" Icon="plug" Variant="secondary" OnClick="@CheckAsync" Loading="@checking" Disabled="@(checking || !SavedWithKey)" />
+                    </div>
+                }
+                @if (check != null)
+                {
+                    <p class="pg-result pg-result--@(check.Authorised ? "ok" : "bad")">
+                        <QIcon Name="@(check.Authorised ? "check-circle-fill" : "x-circle-fill")" /> @check.Message
+                    </p>
+                }
+            </ChildContent>
+        </QCard>
+
+        <QCard Title="Webhook" Icon="broadcast">
+            <HeaderActions>
+                <QInfo Label="Webhook" Align="right"
+                       Text="The gateway calls this address, signed with a secret it issues, the moment a payment moves. Q-Mgr then asks the gateway for the payment's status with its own key, so nothing in a callback is trusted on its own. Without a webhook, payments still settle — the reconciliation job asks the gateway every five minutes." />
+            </HeaderActions>
+            <ChildContent>
+                <QInput TValue="string" Value="@settings.CallbackUrl" Label="Callback address" ReadOnly="true" IconLeft="link-45deg"
+                        HelperText="Worked out from this server's own address — nothing to type. Register webhook sends it to the gateway." />
+                <dl class="pg-facts">
+                    <dt>Status</dt>
+                    <dd>@(WebhookRegistered ? $"Registered ({settings.WebhookId})" : "Not registered")</dd>
+                    <dt>Signing secret</dt>
+                    <dd>@(string.IsNullOrEmpty(settings.WebhookSecret) ? "None stored" : "Stored")</dd>
+                </dl>
+                @if (canEdit)
+                {
+                    <div class="form-actions">
+                        <QButton Text="@(WebhookRegistered ? "Register again" : "Register webhook")" Icon="broadcast" Variant="@(WebhookRegistered ? "secondary" : "primary")"
+                                 OnClick="@RegisterAsync" Loading="@registering" Disabled="@(registering || !SavedWithKey)" />
+                    </div>
+                }
+                @if (webhookResult != null)
+                {
+                    <p class="pg-result pg-result--@(webhookResult.Registered ? "ok" : "bad")">
+                        <QIcon Name="@(webhookResult.Registered ? "check-circle-fill" : "x-circle-fill")" /> @webhookResult.Message
+                    </p>
+                }
+                @if (!SavedWithKey)
+                {
+                    <p class="pg-note">Save the gateway address and API key first.</p>
+                }
+            </ChildContent>
+        </QCard>
+
+        <QCard Title="Test prompt" Icon="phone-vibrate">
+            <HeaderActions>
+                <QInfo Label="Test prompt" Align="right"
+                       Text="Sends a real UGX 500 Mobile Money prompt to the number you enter. Approve it with the phone's PIN: the gateway confirms the money, and the webhook line turns green when the gateway's signed callback reaches this install. It is recorded against no tenant." />
+            </HeaderActions>
+            <ChildContent>
+                <p class="form-required-note"><span class="q-input__required">*</span> Required</p>
+                <div class="form-row">
+                    <MobileMoneyNumberField @bind-Value="testPhone" Label="Phone to prompt" Disabled="@(!canEdit || testSending || TestRunning)"
+                                            ShowErrors="@testAttempted" ServerError="@testFieldError" />
+                </div>
+                @if (canEdit)
+                {
+                    <div class="form-actions">
+                        <QButton Text="Send UGX 500 prompt" Icon="send" Variant="primary" OnClick="@SendTestAsync"
+                                 Loading="@testSending" Disabled="@(testSending || TestRunning || !settings.MobileMoneyAvailable)" />
+                    </div>
+                }
+                @if (!settings.MobileMoneyAvailable)
+                {
+                    <p class="pg-note">Switch the gateway on and save its address and key first.</p>
+                }
+                @if (testError != null)
+                {
+                    <p class="form-error"><QIcon Name="exclamation-circle" /> @testError</p>
+                }
+                @if (test != null)
+                {
+                    <dl class="pg-facts">
+                        <dt>Prompt</dt>
+                        <dd><QChip Text="@test.State" Variant="@StateVariant(test.State)" Size="sm" /> @test.Message</dd>
+                        <dt>Webhook</dt>
+                        <dd>
+                            @if (test.WebhookReceived)
+                            {
+                                <QChip Text="Received" Variant="success" Size="sm" Icon="check-lg" />
+                            }
+                            else
+                            {
+                                <QChip Text="Not yet" Variant="muted" Size="sm" />
+                            }
+                        </dd>
+                    </dl>
+                }
+            </ChildContent>
+        </QCard>
+    </div>
+}
+
+<style>
+    .pg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--qm-block-gap, 10px); align-items: start; }
+    .pg-grid > * { min-width: 0; }
+    .pg-fields { margin: var(--qm-field-gap, 12px) 0; }
+    .pg-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: var(--qm-field-gap, 12px) 0 0; font-size: var(--qm-text-sm); }
+    .pg-facts dt { color: var(--qm-text-muted); }
+    .pg-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+    .pg-result { display: flex; gap: 6px; align-items: flex-start; margin: var(--qm-field-gap, 12px) 0 0; font-size: var(--qm-text-sm); }
+    .pg-result--ok { color: var(--qm-success); }
+    .pg-result--bad { color: var(--qm-danger); }
+    .pg-note { margin: var(--qm-field-gap, 12px) 0 0; font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
+</style>
+
+@code {
+    [Parameter] public bool Embedded { get; set; }
+
+    private const string Mask = "••••••••";
+
+    private bool isLoading = true;
+    private string? loadError;
+    private bool canEdit;
+    private GatewaySettingsDto? settings;
+
+    private sealed class FormModel
+    {
+        public bool Enabled { get; set; }
+        public string? BaseUrl { get; set; }
+        public string? ApiKey { get; set; }
+        public bool CardsEnabled { get; set; }
+    }
+
+    private FormModel form = new();
+    private bool attempted;
+    private bool saving;
+    private string? saveError;
+    private readonly Dictionary<string, string> fieldErrors = new(StringComparer.OrdinalIgnoreCase);
+
+    private bool checking;
+    private GatewayCheckDto? check;
+    private bool registering;
+    private WebhookRegistrationDto? webhookResult;
+
+    private string? testPhone;
+    private bool testAttempted;
+    private bool testSending;
+    private string? testError;
+    private string? testFieldError;
+    private TestPromptStatusDto? test;
+    private CancellationTokenSource? testPoll;
+
+    private bool KeyIsStored => settings?.ApiKey == Mask;
+
+    /// <summary>Says when the address is the platform default, so nobody wonders whether to change it.</summary>
+    private string BaseUrlHelp =>
+        string.Equals(form.BaseUrl?.Trim().TrimEnd('/'), SaccGatewayDefaults.BaseUrl, StringComparison.OrdinalIgnoreCase)
+            ? "The SACC gateway — the platform default. Leave it unless SACC gives you another address."
+            : $"The site address only, not an API path. The platform default is {SaccGatewayDefaults.BaseUrl}.";
+    private bool WebhookRegistered => !string.IsNullOrEmpty(settings?.WebhookId) && !string.IsNullOrEmpty(settings?.WebhookSecret);
+
+    /// <summary>The address and key the check and the registration will use are the SAVED ones.</summary>
+    private bool SavedWithKey => settings is { BaseUrl: not null } && KeyIsStored;
+
+    private bool TestRunning => test is { IsFinal: false } || (test is { IsFinal: true } && !test.WebhookReceived && testPoll != null);
+
+    private string? BaseUrlError
+    {
+        get
+        {
+            if (fieldErrors.TryGetValue("baseUrl", out var server)) return server;
+            if (!attempted) return null;
+            var value = form.BaseUrl?.Trim() ?? "";
+            if (value.Length == 0) return form.Enabled ? "The gateway address is required to switch the gateway on." : null;
+            if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || (uri.Scheme != "https" && uri.Scheme != "http"))
+                return "Enter a full address, e.g. https://sacc.ug.";
+            if (uri.Scheme != "https" && !uri.IsLoopback) return "The address must start with https://.";
+            if (uri.AbsolutePath.Contains("/api", StringComparison.OrdinalIgnoreCase)) return "Enter the site address only, not an API path.";
+            if (!string.IsNullOrEmpty(uri.Query)) return "The address takes no query string.";
+            return null;
+        }
+    }
+
+    private string? ApiKeyError
+    {
+        get
+        {
+            if (fieldErrors.TryGetValue("apiKey", out var server)) return server;
+            if (!attempted) return null;
+            var value = form.ApiKey?.Trim() ?? "";
+            if (value == Mask) return KeyIsStored ? null : "Enter the API key — none is stored yet.";
+            if (value.Length == 0) return form.Enabled ? "An API key is required to switch the gateway on." : null;
+            if (value.Length < 16 || value.Length > 256 || value.Any(char.IsWhiteSpace))
+                return "An API key is 16 to 256 characters with no spaces.";
+            return null;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        canEdit = await PermissionService.HasPermissionAsync(Permissions.PlatformSettingsEdit);
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        loadError = null;
+        try
+        {
+            Apply(await PaymentApi.GetGatewayAsync());
+        }
+        catch (Exception ex)
+        {
+            loadError = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void Apply(GatewaySettingsDto dto)
+    {
+        settings = dto;
+        form = new FormModel
+        {
+            Enabled = dto.Enabled,
+            BaseUrl = string.IsNullOrWhiteSpace(dto.BaseUrl) ? SaccGatewayDefaults.BaseUrl : dto.BaseUrl,
+            ApiKey = dto.ApiKey,
+            CardsEnabled = dto.CardsEnabled,
+        };
+        attempted = false;
+        fieldErrors.Clear();
+    }
+
+    private async Task SaveAsync()
+    {
+        attempted = true;
+        saveError = null;
+        fieldErrors.Clear();
+        if (BaseUrlError != null || ApiKeyError != null)
+        {
+            saveError = "Complete the fields marked in red.";
+            return;
+        }
+
+        saving = true;
+        try
+        {
+            Apply(await PaymentApi.UpdateGatewayAsync(new UpdateGatewaySettingsRequest(
+                form.Enabled, form.BaseUrl?.Trim() ?? "", form.ApiKey?.Trim() ?? "", form.CardsEnabled)));
+            check = null;
+            Toast.Notify(ToastSeverity.Success, "Gateway settings saved",
+                settings!.MobileMoneyAvailable ? "Tenants can pay by Mobile Money." : "Payments through the gateway are off.");
+        }
+        catch (ApiFieldException ex)
+        {
+            foreach (var (field, message) in ex.Errors) fieldErrors[field] = message;
+            saveError = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            saveError = ex.Message;
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private async Task CheckAsync()
+    {
+        checking = true;
+        try
+        {
+            check = await PaymentApi.CheckGatewayAsync();
+        }
+        catch (Exception ex)
+        {
+            check = new GatewayCheckDto(false, false, null, ex.Message);
+        }
+        finally
+        {
+            checking = false;
+        }
+    }
+
+    private async Task RegisterAsync()
+    {
+        registering = true;
+        try
+        {
+            webhookResult = await PaymentApi.RegisterWebhookAsync(null);
+            if (webhookResult.Registered) Apply(await PaymentApi.GetGatewayAsync());
+        }
+        catch (Exception ex)
+        {
+            webhookResult = new WebhookRegistrationDto(false, null, settings?.CallbackUrl ?? "", ex.Message);
+        }
+        finally
+        {
+            registering = false;
+        }
+    }
+
+    private async Task SendTestAsync()
+    {
+        testAttempted = true;
+        testError = null;
+        testFieldError = null;
+        if (!MobileMoneyNumberField.IsValid(testPhone)) return;
+
+        testSending = true;
+        try
+        {
+            test = await PaymentApi.SendTestPromptAsync(testPhone!.Trim());
+            if (!test.IsFinal) StartPolling(test.ReferenceId);
+        }
+        catch (ApiFieldException ex)
+        {
+            testFieldError = ex.For("phoneNumber");
+            testError = testFieldError == null ? ex.Message : null;
+        }
+        catch (Exception ex)
+        {
+            testError = ex.Message;
+        }
+        finally
+        {
+            testSending = false;
+        }
+    }
+
+    /// <summary>Follows the test until the gateway has a verdict AND the webhook has arrived, or four
+    /// minutes pass — a webhook can land a few seconds after the status turns final.</summary>
+    private void StartPolling(Guid referenceId)
+    {
+        testPoll?.Cancel();
+        testPoll = new CancellationTokenSource();
+        var token = testPoll.Token;
+        _ = Task.Run(async () =>
+        {
+            var started = DateTime.UtcNow;
+            try
+            {
+                while (!token.IsCancellationRequested && DateTime.UtcNow - started < TimeSpan.FromMinutes(4))
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(3), token);
+                    var status = await PaymentApi.GetTestPromptAsync(referenceId);
+                    if (status != null) test = status;
+                    await InvokeAsync(StateHasChanged);
+                    if (test is { IsFinal: true, WebhookReceived: true }) break;
+                    if (test is { IsFinal: true } && DateTime.UtcNow - started > TimeSpan.FromMinutes(1)) break;
+                }
+            }
+            catch (TaskCanceledException)
+            {
+            }
+            finally
+            {
+                if (!token.IsCancellationRequested)
+                {
+                    testPoll = null;
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+        }, token);
+    }
+
+    private static string StateVariant(string state) => state switch
+    {
+        PaymentStates.Succeeded => "success",
+        PaymentStates.Failed or PaymentStates.Abandoned => "danger",
+        PaymentStates.Review => "warning",
+        _ => "muted"
+    };
+
+    public void Dispose()
+    {
+        testPoll?.Cancel();
+        testPoll?.Dispose();
+    }
+}

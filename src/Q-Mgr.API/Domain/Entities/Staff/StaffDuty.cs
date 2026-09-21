@@ -64,8 +64,50 @@ public class StaffDuty : BaseAuditableEntity
     public DateTime? RegisterClosedAt { get; set; }
     public Guid? RegisterClosedByUserId { get; set; }
 
-    /// <summary>The minutes, in the Library.</summary>
+    /// <summary>
+    /// The ADOPTED minutes as a Library document. Until 2026-09-20 this was the whole feature: a PDF
+    /// written somewhere else and attached by hand. It is now the archival snapshot of the record
+    /// below, attached automatically when the minutes are approved — which is what keeps the share
+    /// links, the retention window and the read log working with no new code.
+    /// </summary>
     public Guid? MinutesMediaContentId { get; set; }
+
+    // ---- Minutes of the meeting (2026-09-20) -----------------------------------------------------
+    // The standards these follow are set out at the top of Q-Mgr.Shared/Application/DTOs/MinutesDto.cs:
+    // Robert's Rules for the content, open-meeting/records law for the lifecycle, ISO 15489 for the
+    // qualities. Columns on this row rather than a minutes table, per the standing constraint: a set
+    // of minutes belongs to exactly one meeting, has no life without it, and is only ever read one
+    // meeting at a time. Its ACTION POINTS are the exception and have their own table — see
+    // StaffMinuteAction for the three reasons.
+
+    /// <summary>
+    /// The minutes document: section answers, motions and post-adoption corrections, as jsonb.
+    /// Read and written ONLY through the minutes controller's serializer — never parsed elsewhere,
+    /// the same rule as Branch.Settings and Organization.Settings.
+    /// </summary>
+    public string? MinutesJson { get; set; }
+
+    /// <summary>None until somebody starts them. Draft → Circulated → Approved, and never backwards.</summary>
+    public MinutesStatus MinutesStatus { get; set; } = MinutesStatus.None;
+
+    public DateTime? MinutesCirculatedAt { get; set; }
+
+    /// <summary>When the body ADOPTED them. This is the moment they become the official record.</summary>
+    public DateTime? MinutesApprovedAt { get; set; }
+    public Guid? MinutesApprovedByUserId { get; set; }
+
+    /// <summary>
+    /// The meeting that adopted them, which is normally the NEXT one. The date alone does not say
+    /// which meeting did it, and "adopted at the meeting of 4 October" is what the record has to be
+    /// able to state.
+    /// </summary>
+    public Guid? MinutesApprovedAtDutyId { get; set; }
+
+    public DateTime? MinutesUpdatedAt { get; set; }
+    public Guid? MinutesUpdatedByUserId { get; set; }
+
+    /// <summary>The ladder's claim column for "these minutes have not been circulated yet".</summary>
+    public int MinutesReminderStage { get; set; }
 
     /// <summary>Set when the ahead-of-time reminder went out. One reminder per row, gated by a timestamp.</summary>
     public DateTime? ReminderSentAt { get; set; }

@@ -63,11 +63,13 @@ public class FeatureFlagService : IFeatureFlagService
         }
 
         // Get from database
-        var organizationExists = await _dbContext.Organizations
+        var row = await _dbContext.Organizations
             .AsNoTracking()
-            .AnyAsync(o => o.Id == organizationId);
+            .Where(o => o.Id == organizationId)
+            .Select(o => new { o.Settings })
+            .FirstOrDefaultAsync();
 
-        if (!organizationExists)
+        if (row == null)
         {
             return NoEntitlements(organizationId);
         }
@@ -89,6 +91,13 @@ public class FeatureFlagService : IFeatureFlagService
         {
             _logger.LogWarning(ex, "Failed to resolve active modules for organization {OrganizationId}; leaving the organization with no entitlements", organizationId);
         }
+
+        // A platform override, for a negotiated deal. It lives in Organization.Settings rather
+        // than a column of its own (the standing enhance-before-add rule) and is applied AFTER the
+        // module grants, because its whole purpose is to give somebody something they have not
+        // bought. It can only ever turn a flag ON: taking away an entitlement a tenant is paying a
+        // module for is a refund question, not a switch.
+        features = ApplyPlatformOverrides(features, row.Settings, _logger);
 
         // Cache the result
         try
@@ -124,6 +133,7 @@ public class FeatureFlagService : IFeatureFlagService
             ApiAccess: false,
             WhiteLabel: false,
             ExportReports: false,
+            RemoveAttribution: false,
             ShowAds: true,
             CustomFeatures: new Dictionary<string, bool>());
     }
@@ -158,17 +168,75 @@ public class FeatureFlagService : IFeatureFlagService
         var coreQueue = activeModules.Contains(ModuleCodes.CoreQueue);
         var engagement = activeModules.Contains(ModuleCodes.EngagementCommunications);
         var integrations = activeModules.Contains(ModuleCodes.IntegrationsApi);
-        // Any purchased module counts, including the retired visitor-safeguarding code, which some
-        // rows still carry until the split migration has run everywhere.
-        var anyModule = activeModules.Count > 0;
+        // Any purchased PRODUCT module counts, including the retired visitor-safeguarding code,
+        // which some rows still carry until the split migration has run everywhere. White-Label
+        // Plus is deliberately excluded: it is an add-on that removes a line of attribution, and
+        // buying it is not buying report exports or an ad-free kiosk.
+        var anyModule = activeModules.Any(c => c != ModuleCodes.WhiteLabelPlus);
 
         return features with
         {
             ApiAccess = features.ApiAccess || integrations,
             WhiteLabel = features.WhiteLabel || engagement,
+            // Its own add-on, never WhiteLabel: engagement-communications grants WhiteLabel and
+            // every signage tenant buys it, so sharing the flag would give attribution removal
+            // away to most of the customer base. See FeatureCodes.RemoveAttribution.
+            RemoveAttribution = features.RemoveAttribution || activeModules.Contains(ModuleCodes.WhiteLabelPlus),
             ExportReports = features.ExportReports || anyModule,
             ShowAds = features.ShowAds && !anyModule
         };
+    }
+
+    /// <summary>The Organization.Settings key a platform override lives under. One home, read and written.</summary>
+    public const string OverridesKey = "FeatureOverrides";
+
+    /// <summary>
+    /// Reads <c>Organization.Settings["FeatureOverrides"]</c> — a flat map of feature code to bool.
+    /// A malformed blob is read as "no overrides" and logged: an entitlement resolver that throws
+    /// takes every gated page in the app down with it.
+    /// </summary>
+    internal static FeatureFlags ApplyPlatformOverrides(FeatureFlags features, string? organizationSettingsJson, ILogger logger)
+    {
+        if (string.IsNullOrWhiteSpace(organizationSettingsJson)) return features;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(organizationSettingsJson);
+            if (!doc.RootElement.TryGetProperty(OverridesKey, out var overrides) || overrides.ValueKind != JsonValueKind.Object)
+                return features;
+
+            bool On(string code) => overrides.TryGetProperty(code, out var v) && v.ValueKind == JsonValueKind.True;
+
+            return features with
+            {
+                ApiAccess = features.ApiAccess || On(FeatureCodes.ApiAccess),
+                WhiteLabel = features.WhiteLabel || On(FeatureCodes.WhiteLabel),
+                ExportReports = features.ExportReports || On(FeatureCodes.ExportReports),
+                RemoveAttribution = features.RemoveAttribution || On(FeatureCodes.RemoveAttribution)
+            };
+        }
+        catch (JsonException ex)
+        {
+            logger.LogWarning(ex, "Organization {OrganizationId} has a malformed Settings blob; platform feature overrides ignored", features.OrganizationId);
+            return features;
+        }
+    }
+
+    /// <summary>
+    /// Drop the cached set. Five minutes is a long time to stare at a switch you just flipped and
+    /// watch nothing happen, so every write that changes an entitlement calls this.
+    /// </summary>
+    public async Task InvalidateCacheAsync(Guid organizationId)
+    {
+        try
+        {
+            await _cache.RemoveAsync($"{CachePrefix}{organizationId}");
+        }
+        catch (Exception ex)
+        {
+            // A cache that will not forget is a stale answer for five minutes, not a failed write.
+            _logger.LogWarning(ex, "Failed to invalidate the feature cache for organization {OrganizationId}", organizationId);
+        }
     }
 
     private static bool GetFeatureValue(FeatureFlags features, string featureCode)
@@ -178,6 +246,7 @@ public class FeatureFlagService : IFeatureFlagService
             "api_access" => features.ApiAccess,
             "white_label" => features.WhiteLabel,
             "export_reports" => features.ExportReports,
+            "remove_attribution" => features.RemoveAttribution,
             _ => features.CustomFeatures.GetValueOrDefault(featureCode, false)
         };
     }

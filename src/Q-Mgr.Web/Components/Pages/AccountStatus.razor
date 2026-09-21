@@ -134,10 +134,9 @@
         _ => "muted"
     };
 
-    // The API's actionUrl values ("/billing/update-payment", "/billing/reactivate") don't
-    // correspond to real routes in this app — billing changes all happen through the one real
-    // Subscription page regardless of the reason access was cut off, so both suspended and
-    // cancelled route there instead of trusting actionUrl literally.
+    // Both states send the person to the Modules tab. The API's actionUrl pointed at
+    // /billing/update-payment and /billing/reactivate until 2026-09-19 — pages that never existed —
+    // and now comes from BillingLinks too, but a suspended account's fix is still made there.
     private string? PrimaryActionText => Code switch
     {
         "ACCOUNT_SUSPENDED" => "Update Payment",
@@ -147,7 +146,7 @@
 
     private void GoToPrimaryAction()
     {
-        Navigation.NavigateTo("/billing/modules", forceLoad: true);
+        Navigation.NavigateTo(BillingLinks.Modules, forceLoad: true);
     }
 
     private async Task HandleLogout()

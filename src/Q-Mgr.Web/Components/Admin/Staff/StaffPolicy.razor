@@ -18,18 +18,15 @@
 }
 
 <div class="admin-page">
-<div class="page-header">
-    @if (!Embedded)
-    {
-        <div class="header-content">
-            <h1>Scoring Policy<QInfo Text="Periods, bands, caps, the leaderboard switch, budgets, lead times and retention — one setting per decision, organisation-wide." Label="Scoring Policy" /></h1>
-            <p class="subtitle">Periods, bands, caps, the leaderboard switch, budgets, lead times and retention — one setting per decision, organisation-wide.</p>
-        </div>
-    }
-    <div class="header-actions">
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1>Scoring Policy<QInfo Text="Periods, bands, caps, the leaderboard switch, budgets, lead times and retention — one setting per decision, organisation-wide." Label="Scoring Policy" /></h1>
+        <p class="subtitle">Periods, bands, caps, the leaderboard switch, budgets, lead times and retention — one setting per decision, organisation-wide.</p>
+    </Title>
+    <Actions>
         <QButton Text="Save policy" Icon="check-lg" Variant="primary" OnClick="@Save" Loading="@isSaving" Disabled="@(policy == null)" />
-    </div>
-</div>
+    </Actions>
+</QPageActions>
 
     @if (isLoading)
     {
@@ -124,6 +121,8 @@
 
             <StaffDutyReportSettings Policy="@policy" DefaultTemplate="@DutyReportTemplateDefaults.Sections" />
 
+            <StaffMinutesSettings Policy="@policy" DefaultTemplate="@MinutesTemplateDefaults.Sections" />
+
             <QCard Title="Teaching and lessons" Icon="grid-3x3-gap" Class="pol-card">
                 @{ policy.TeachingLoadNorms ??= new TeachingLoadNormsDto(); }
                 <div class="form-row">
@@ -194,8 +193,8 @@
     .pol-table td { vertical-align: middle; }
     .pol-num { text-align: right; font-variant-numeric: tabular-nums; }
     .pol-add { margin-top: 8px; }
-    .pol-help { display: block; margin-top: 6px; font-size: 12px; color: var(--qm-text-muted); line-height: 1.5; }
-    .pol-error { margin: 8px 0 0; font-size: 12.5px; color: var(--qm-danger); }
+    .pol-help { display: block; margin-top: 6px; font-size: var(--qm-text-sm); color: var(--qm-text-muted); line-height: 1.5; }
+    .pol-error { margin: 8px 0 0; font-size: var(--qm-text-sm); color: var(--qm-danger); }
     .form-row > * { flex: 1 1 140px; min-width: 0; }
 </style>
 
@@ -228,7 +227,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
-            Navigation.NavigateTo("/billing/modules");
+            Navigation.NavigateTo(BillingLinks.Modules);
             return;
         }
 

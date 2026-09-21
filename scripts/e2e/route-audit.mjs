@@ -32,7 +32,7 @@ const patterns = [...routes].map(r => ({
 const resolves = (p) => patterns.some(x => x.re.test(p));
 
 // ---- what is linked to
-const RETIRED_PREFIXES = ['/admin/', '/content/', '/reports/', '/portal', '/my-day', '/billing/', '/queue/', '/display/', '/platform/'];
+const RETIRED_PREFIXES = ['/admin/', '/content/', '/reports/', '/portal', '/my-day', '/billing', '/queue/', '/display/', '/platform/'];
 const found = new Map();   // link -> [files]
 const linkRes = [
   /ActionUrl\s*=\s*\$?"([^"{]*(?:\{[^}]*\}[^"{]*)*)"/g,
@@ -40,6 +40,11 @@ const linkRes = [
   /Href\s*=\s*"(\/[^"?#]*)"/g,
   /ConfigureUrl\s*=\s*"(\/[^"?#]*)"/g,
   /<a href="(\/[^"?#]*)"/g,
+  // The blind spots that hid seven dead billing links until 2026-09-19: an email's link, and the
+  // upgrade / purchase / action / return URL an API refusal or a payment gateway hands a browser.
+  /EmailTemplates\.Link\(\s*\w+\s*,\s*\$?"(\/[^"]*)"/g,
+  /(?:upgradeUrl|purchaseUrl|actionUrl|returnUrl|successUrl|cancelUrl)\s*[=:]\s*\$?"(\/[^"{]*)"/gi,
+  /WriteForbiddenResponse\([^;]*?"(\/[^"]*)"\)/g,
 ];
 for (const f of files) {
   const s = fs.readFileSync(f, 'utf8');
@@ -55,6 +60,17 @@ for (const f of files) {
       if (!found.has(link)) found.set(link, new Set());
       found.get(link).add(f);
     }
+  }
+}
+
+// BillingLinks (Q-Mgr.Shared) is the one home for billing addresses; its hub must be a real route,
+// or every link built from it is broken at once.
+{
+  const bl = fs.readFileSync('src/Q-Mgr.Shared/Domain/Constants/BillingLinks.cs', 'utf8');
+  const hub = bl.match(/const string Hub = "([^"]+)"/)?.[1];
+  if (hub) {
+    if (!found.has(hub)) found.set(hub, new Set());
+    found.get(hub).add('src/Q-Mgr.Shared/Domain/Constants/BillingLinks.cs (Hub)');
   }
 }
 

@@ -1,5 +1,6 @@
 using QMgr.Domain.Common;
 using System.Text.Json;
+using QMgr.Application.DTOs;
 
 namespace QMgr.Domain.Entities.Platform;
 
@@ -158,7 +159,13 @@ public class StripeSettings
     public string PublishableKey { get; set; } = string.Empty;
     public string WebhookSecret { get; set; } = string.Empty;
     public bool TestMode { get; set; } = false;
-    public bool Enabled { get; set; } = true;
+
+    /// <summary>OFF unless someone switches it on (2026-09-19). It defaulted to true on an earlier
+    /// session's own judgement that card was "this app's primary payment method" — never the owner's
+    /// decision — so every install reported card payments as available with no keys set, and tenants
+    /// were offered a Card option that could only fail. Collections go through the sacc.ug gateway.
+    /// Even switched on, Stripe counts as available only with a secret key (StripeService).</summary>
+    public bool Enabled { get; set; } = false;
 }
 
 /// <summary>
@@ -166,9 +173,25 @@ public class StripeSettings
 /// </summary>
 public class MobileMoneySettings
 {
-    public string CrmApiUrl { get; set; } = string.Empty;
+    /// <summary>The sacc.ug gateway's base address, e.g. https://sacc.ug. The JSON name is a wire
+    /// format — stored rows carry it — so it keeps the old name; every screen calls it "Gateway URL".</summary>
+    public string CrmApiUrl { get; set; } = SaccGatewayDefaults.BaseUrl;
+
+    /// <summary>The gateway API key issued to Q-Mgr in CRMPro, sent as X-API-Key. Scopes needed:
+    /// payments:collect, payments:status, webhooks:manage — and nothing that moves money out.</summary>
     public string ApiKey { get; set; } = string.Empty;
+
     public bool Enabled { get; set; } = false;
+
+    /// <summary>Take cards through the gateway's Pesapal channel as well as Mobile Money.</summary>
+    public bool CardsEnabled { get; set; } = false;
+
+    /// <summary>The signing secret the gateway returned when Q-Mgr registered its webhook. Verifies
+    /// every callback (X-Webhook-Signature). Masked like every other secret.</summary>
+    public string WebhookSecret { get; set; } = string.Empty;
+
+    /// <summary>The gateway's id for Q-Mgr's webhook subscription, kept so it can be re-registered.</summary>
+    public string WebhookId { get; set; } = string.Empty;
 }
 
 /// <summary>

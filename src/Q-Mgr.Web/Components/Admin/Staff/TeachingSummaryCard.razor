@@ -43,12 +43,12 @@
     .ts-list { list-style: none; margin: 0; padding: 0; }
     .ts-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; padding: 7px 0; border-bottom: 1px solid var(--qm-border); min-width: 0; }
     .ts-row:last-child { border-bottom: none; }
-    .ts-main { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; font-size: 13.5px; }
+    .ts-main { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; font-size: var(--qm-text-base); }
     .ts-classes { color: var(--qm-text-secondary); }
-    .ts-periods { font-size: 12.5px; color: var(--qm-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .ts-periods { font-size: var(--qm-text-sm); color: var(--qm-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
     .ts-mismatch { color: var(--qm-warning); }
-    .ts-total { margin: 8px 0 0; font-size: 12.5px; color: var(--qm-text-muted); }
-    .ts-muted { margin: 0; font-size: 13px; color: var(--qm-text-muted); }
+    .ts-total { margin: 8px 0 0; font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
+    .ts-muted { margin: 0; font-size: var(--qm-text-base); color: var(--qm-text-muted); }
 </style>
 
 @code {

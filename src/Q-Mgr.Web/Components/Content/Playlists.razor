@@ -13,20 +13,18 @@
 
 
 <div class="playlists-page">
-    <!-- Toolbar -->
-    <QCard Class="toolbar-card">
-        <div class="toolbar">
-            <div class="toolbar-left">
-                <QInput TValue="string" @bind-Value="@searchTerm" Placeholder="Search playlists..." IconLeft="search" />
-            </div>
-            <div class="toolbar-right">
-                @if (canCreate)
-                {
-                    <QButton Text="New Playlist" Icon="plus-lg" Variant="primary" OnClick="@ShowCreateDialog" />
-                }
-            </div>
-        </div>
-    </QCard>
+    <QPageActions Embedded="@Embedded">
+        <Actions>
+            @if (canCreate)
+            {
+                <QButton Text="New Playlist" Icon="plus-lg" Variant="primary" OnClick="@ShowCreateDialog" />
+            }
+        </Actions>
+    </QPageActions>
+
+    <QFilterBar>
+        <QInput TValue="string" @bind-Value="@searchTerm" Placeholder="Search playlists..." IconLeft="search" />
+    </QFilterBar>
 
     @if (isLoading)
     {
@@ -50,7 +48,7 @@
     else
     {
         <div class="playlists-grid">
-            @foreach (var playlist in FilteredPlaylists)
+            @foreach (var playlist in PagedPlaylists)
             {
                 <QCard Class="playlist-card" @onclick="@(() => OpenPlaylist(playlist))">
                     <div class="playlist-icon">
@@ -90,6 +88,7 @@
                 </QCard>
             }
         </div>
+        <QPager Count="@(FilteredPlaylists.Count())" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="playlists" />
     }
 </div>
 
@@ -163,7 +162,7 @@
         gap: var(--q-row-gap, 8px);
     }
 
-    .loading-container, .empty-state {
+    .loading-container {
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -172,26 +171,6 @@
         gap: 16px;
         color: var(--qm-text-secondary);
         text-align: center;
-    }
-
-    .empty-state {
-        background: var(--qm-bg-card);
-        border-radius: var(--qm-radius-xl);
-        padding: 80px 20px;
-    }
-
-    .empty-state .rzi {
-        font-size: 64px;
-        color: var(--qm-text-muted);
-    }
-
-    .empty-state h3 {
-        margin: 0 0 8px;
-        color: var(--qm-text-primary);
-    }
-
-    .empty-state p {
-        margin: 0 0 24px;
     }
 
     .playlists-grid {
@@ -225,7 +204,7 @@
     }
 
     .playlist-icon .rzi {
-        font-size: 28px;
+        font-size: var(--qm-text-stat);
         color: var(--qm-text-on-primary);
     }
 
@@ -236,13 +215,13 @@
 
     .playlist-info h3 {
         margin: 0 0 4px;
-        font-size: 16px;
+        font-size: var(--qm-text-md);
         font-weight: 600;
     }
 
     .playlist-info p {
         margin: 0 0 12px;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
         white-space: nowrap;
         overflow: hidden;
@@ -259,12 +238,12 @@
         display: flex;
         align-items: center;
         gap: 4px;
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-secondary);
     }
 
     .meta-item .rzi {
-        font-size: 14px;
+        font-size: var(--qm-text-base);
     }
 
     .playlist-actions {
@@ -345,6 +324,14 @@
     private IEnumerable<PlaylistDto> FilteredPlaylists => playlists
         .Where(p => string.IsNullOrEmpty(searchTerm) || p.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
 
+    // ---- Paging (list-page sweep, plan Phase 2) --------------------------------------------
+    // Every row here is a component subtree Blazor Server diffs and ships down the circuit, so
+    // a page of them is drawn rather than the whole list.
+    private const int PageSize = 24;
+    private int pageIndex;
+    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (FilteredPlaylists.Count() - 1) / PageSize));
+    private IEnumerable<PlaylistDto> PagedPlaylists => FilteredPlaylists.Skip(SafePageIndex * PageSize).Take(PageSize);
+
     protected override async Task OnInitializedAsync()
     {
         // Check permission
@@ -357,7 +344,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
         {
-            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            Navigation.NavigateTo(BillingLinks.Modules, forceLoad: false);
             return;
         }
 

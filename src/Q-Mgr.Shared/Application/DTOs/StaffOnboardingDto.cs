@@ -96,6 +96,17 @@ public record JoinEmailCodeRequest
     public string Email { get; set; } = string.Empty;
 }
 
+/// <summary>
+/// A join application. MANDATORY FIELDS ONLY (user instruction, 2026-09-20: "no need to show the
+/// optional fields"). Phone, employee number and job title used to be here and are gone — not
+/// merely hidden — because the shape of the request is what enforces the rule, the same way
+/// <c>UpdateStaffContactRequest</c> has nowhere to put an employment field.
+///
+/// Two reasons, and the second is the stronger one: a form a stranger fills in should ask for the
+/// least it can, and a job title is the SCHOOL's record of somebody, not the applicant's claim
+/// about themselves — the standing staff-record split. An approver fills those in afterwards, on
+/// the staff directory, where they are auditable.
+/// </summary>
 public record JoinApplicationRequest
 {
     public string FirstName { get; set; } = string.Empty;
@@ -103,9 +114,6 @@ public record JoinApplicationRequest
     public string Email { get; set; } = string.Empty;
     /// <summary>The six-digit code emailed to <see cref="Email"/>.</summary>
     public string EmailCode { get; set; } = string.Empty;
-    public string? Phone { get; set; }
-    public string? EmployeeNumber { get; set; }
-    public string? JobTitle { get; set; }
     public Guid? BranchId { get; set; }
     public string Password { get; set; } = string.Empty;
     public string ConfirmPassword { get; set; } = string.Empty;
@@ -133,6 +141,29 @@ public record JoinRequestDto
 }
 
 public record JoinDuplicateSignalDto(string Kind, string Detail, Guid? ExistingUserId);
+
+/// <summary>
+/// The answer to "does the organization behind this email address already use Q-Mgr?", asked on the
+/// registration form before somebody creates a SECOND copy of their own school (2026-09-20).
+///
+/// <para><b>Disclosure here is CONSENT-BASED, and that is the whole design.</b> A tenant appears in
+/// this answer only when it has switched staff self-sign-up ON and listed the domain itself — which
+/// is a published statement that people at that domain may ask to join. Nothing else is matched: not
+/// the tenant's own contact address, not a similar name, not a guess from the organization's title.
+/// Telling a stranger "St Mary's uses this product" on the strength of a guess would be a leak;
+/// telling somebody at the domain the school itself published is the school's own invitation.</para>
+///
+/// <para><b>The join CODE is never returned.</b> It is the school's secret and rotating it is how a
+/// school closes the door. The answer names the school and sends the applicant to the code page.</para>
+/// </summary>
+public record OrganizationHintDto
+{
+    public bool Found { get; init; }
+    /// <summary>The school's name, only when Found. Null otherwise — never a near-match or a guess.</summary>
+    public string? OrganizationName { get; init; }
+    /// <summary>The domain that matched, so the page can say WHY it is asking.</summary>
+    public string? MatchedDomain { get; init; }
+}
 
 public record ApproveJoinRequest
 {

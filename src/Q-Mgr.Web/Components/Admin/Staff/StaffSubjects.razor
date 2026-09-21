@@ -20,19 +20,16 @@
    branch, and the teacher count is this branch's. Retired, never deleted — assignments, timetable lessons and
    lesson duties point at a subject by id. *@
 <div class="admin-page">
-<div class="page-header">
-    @if (!Embedded)
-    {
-        <div class="header-content">
-            <h1>Subjects<QInfo Text="The subjects your school teaches. Subject teachers are assigned to classes on the Class Teachers page; the timetable and teaching-load reports read their names from here." Label="Subjects" /></h1>
-            <p class="subtitle">The subjects your school teaches. Subject teachers are assigned to classes on the Class Teachers page; the timetable and teaching-load reports read their names from here.</p>
-        </div>
-    }
-    <div class="header-actions">
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1>Subjects<QInfo Text="The subjects your school teaches. Subject teachers are assigned to classes on the Class Teachers page; the timetable and teaching-load reports read their names from here." Label="Subjects" /></h1>
+        <p class="subtitle">The subjects your school teaches. Subject teachers are assigned to classes on the Class Teachers page; the timetable and teaching-load reports read their names from here.</p>
+    </Title>
+    <Actions>
         <QButton Text="Class Teachers" Icon="person-video3" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/students/class-teachers"))" />
         <QButton Text="New subject" Icon="plus-lg" Variant="primary" OnClick="@(() => Open(null))" />
-    </div>
-</div>
+    </Actions>
+</QPageActions>
 
     <QFilterBar Wrap="true">
         <QInput TValue="string" @bind-Value="@search" Placeholder="Search name, code or department" IconLeft="search" Clearable="true" Class="sj-search" />
@@ -55,7 +52,7 @@
                 <table class="data-table q-stack">
                     <thead><tr><th>Subject</th><th>Code</th><th>Department</th><th>Teachers here</th><th>State</th><th></th></tr></thead>
                     <tbody>
-                        @foreach (var s in Visible)
+                        @foreach (var s in Paged)
                         {
                             <tr class="@(s.IsActive ? "" : "sj-retired")">
                                 <td>
@@ -80,6 +77,7 @@
                         }
                     </tbody>
                 </table>
+                <QPager Count="@(Visible.Count)" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="subjects" />
             </div>
         </QCard>
         <p class="sj-note">A subject still taught in any class cannot be retired: end its assignments on the Class Teachers page first, or the timetable would keep placing a subject nobody can pick.</p>
@@ -121,12 +119,12 @@
     .sj-swatch { width: 10px; height: 10px; border-radius: var(--qm-radius-sm); flex-shrink: 0; }
     .sj-actions { display: flex; flex-wrap: wrap; gap: 4px; }
     .sj-retired { opacity: .65; }
-    .sj-note { font-size: 12.5px; color: var(--qm-text-muted); margin: 10px 2px 0; max-width: 78ch; line-height: 1.5; }
+    .sj-note { font-size: var(--qm-text-sm); color: var(--qm-text-muted); margin: 10px 2px 0; max-width: 78ch; line-height: 1.5; }
     .sj-form { display: flex; flex-direction: column; gap: 14px; }
-    .sj-colour label { display: block; font-size: 13px; font-weight: 600; color: var(--qm-text-primary); margin-bottom: 6px; }
+    .sj-colour label { display: block; font-size: var(--qm-text-base); font-weight: 600; color: var(--qm-text-primary); margin-bottom: 6px; }
     .sj-colour-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
     .sj-colour-row input[type=color] { width: 44px; height: 36px; padding: 2px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-card); cursor: pointer; }
-    .sj-sub { font-size: 12px; color: var(--qm-text-muted); }</style>
+    .sj-sub { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }</style>
 
 @code {
     /// <summary>True when a hub is hosting this section inside its own tab strip: the host then owns
@@ -147,6 +145,13 @@
                     || s.Code.Contains(search, StringComparison.OrdinalIgnoreCase)
                     || (s.DepartmentName?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false))
         .ToList();
+    // ---- Paging (list-page sweep, plan Phase 2) --------------------------------------------
+    // Every row here is a component subtree Blazor Server diffs and ships down the circuit, so
+    // the page renders a page of them rather than the whole list.
+    private const int PageSize = 25;
+    private int pageIndex;
+    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (Visible.Count - 1) / PageSize));
+    private IEnumerable<SubjectDto> Paged => Visible.Skip(SafePageIndex * PageSize).Take(PageSize);
 
     protected override async Task OnInitializedAsync()
     {
@@ -159,7 +164,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
-            Navigation.NavigateTo("/billing/modules");
+            Navigation.NavigateTo(BillingLinks.Modules);
             return;
         }
 

@@ -67,20 +67,9 @@
         if (!branding.WhitelabelEnabled)
             return;
 
-        var overrides = new List<string>();
-        AddIfValidColor(overrides, "--qm-primary", branding.PrimaryColor);
-        AddIfValidColor(overrides, "--qm-secondary", branding.SecondaryColor);
-        AddIfValidColor(overrides, "--qm-accent-orange", branding.AccentColor);
-
-        if (overrides.Count > 0)
-            brandingStyle = string.Join("; ", overrides);
-    }
-
-    private static readonly Regex HexColor = new(@"^#[0-9a-fA-F]{3,8}$", RegexOptions.Compiled);
-
-    private static void AddIfValidColor(List<string> overrides, string cssVar, string? value)
-    {
-        if (!string.IsNullOrWhiteSpace(value) && HexColor.IsMatch(value))
-            overrides.Add($"{cssVar}: {value}");
+        // BrandPalette derives the whole --qm-* family from the three colours a tenant chose. This
+        // used to set those three alone, which left every hover, tint and rgba() wash on the
+        // shipped wine — a kiosk with a green accent and wine chips behind it.
+        brandingStyle = BrandPalette.StyleFor(branding.PrimaryColor, branding.SecondaryColor, branding.AccentColor);
     }
 }

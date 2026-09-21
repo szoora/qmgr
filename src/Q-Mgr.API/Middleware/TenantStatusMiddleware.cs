@@ -1,3 +1,4 @@
+using QMgr.Domain.Constants;
 using QMgr.Application.Tenant;
 using QMgr.Domain.Enums;
 using System.Text.Json;
@@ -122,7 +123,7 @@ public class TenantStatusMiddleware
                 await WriteForbiddenResponse(context,
                     "ACCOUNT_SUSPENDED",
                     "Your account has been suspended due to payment issues. Please update your payment method to restore access.",
-                    "/billing/update-payment");
+                    BillingLinks.Payment);
                 return;
 
             case TenantStatus.Cancelled:
@@ -133,7 +134,7 @@ public class TenantStatusMiddleware
                 await WriteForbiddenResponse(context,
                     "ACCOUNT_CANCELLED",
                     "Your account has been cancelled. Please contact support if you wish to reactivate.",
-                    "/billing/reactivate");
+                    BillingLinks.Reactivate);
                 return;
 
             case TenantStatus.Deleted:

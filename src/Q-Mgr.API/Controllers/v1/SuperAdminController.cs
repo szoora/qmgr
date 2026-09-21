@@ -1,3 +1,6 @@
+using QMgr.Infrastructure.Services.Billing;
+using QMgr.Application.DTOs;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -25,6 +28,12 @@ public class SuperAdminController : ControllerBase
     private readonly IBillingService _billingService;
     private readonly IUsageTrackingService _usageTrackingService;
     private readonly IModuleAccessService _moduleAccessService;
+    private readonly ICustomDomainService _customDomains;
+    private readonly IFeatureFlagService _featureFlags;
+    private readonly ITenantLifecycleService _lifecycle;
+    private readonly ITenantPurgeService _purge;
+    private readonly IHostEnvironment _environment;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<SuperAdminController> _logger;
 
     public SuperAdminController(
@@ -33,6 +42,12 @@ public class SuperAdminController : ControllerBase
         IBillingService billingService,
         IUsageTrackingService usageTrackingService,
         IModuleAccessService moduleAccessService,
+        ICustomDomainService customDomains,
+        IFeatureFlagService featureFlags,
+        ITenantLifecycleService lifecycle,
+        ITenantPurgeService purge,
+        IHostEnvironment environment,
+        IConfiguration configuration,
         ILogger<SuperAdminController> logger)
     {
         _dbContext = dbContext;
@@ -40,8 +55,256 @@ public class SuperAdminController : ControllerBase
         _billingService = billingService;
         _usageTrackingService = usageTrackingService;
         _moduleAccessService = moduleAccessService;
+        _customDomains = customDomains;
+        _featureFlags = featureFlags;
+        _lifecycle = lifecycle;
+        _purge = purge;
+        _environment = environment;
+        _configuration = configuration;
         _logger = logger;
     }
+
+    #region Tenant lifecycle and purge
+
+    /// <summary>Where this tenant is in its life, when its next automatic move is due, and its history.</summary>
+    [HttpGet("tenants/{id:guid}/lifecycle")]
+    [ProducesResponseType(typeof(TenantLifecycleStatusDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetLifecycle(Guid id, CancellationToken ct)
+        => Ok(await _lifecycle.GetStatusAsync(id, ct));
+
+    /// <summary>
+    /// Moves a tenant to another state by hand. Every move is written down, and the clock on the
+    /// new state starts now. <c>Deleted</c> is refused: a tenant reaches it only by being purged.
+    /// </summary>
+    [HttpPost("tenants/{id:guid}/lifecycle")]
+    [ProducesResponseType(typeof(TenantLifecycleStatusDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> SetLifecycle(Guid id, [FromBody] TransitionTenantRequest request, CancellationToken ct)
+    {
+        if (!Enum.TryParse<TenantStatus>(request?.Status, ignoreCase: true, out var target))
+            return BadRequest(new { error = "UNKNOWN_STATUS", message = $"'{request?.Status}' is not a tenant status." });
+
+        var actor = User.Identity?.Name ?? "platform administrator";
+        var result = await _lifecycle.TransitionAsync(id, target, actor, CurrentUserId(), request?.Reason, ct);
+        return result.Ok
+            ? Ok(result.Status)
+            : BadRequest(new ProblemDetails { Title = result.Error, Status = StatusCodes.Status400BadRequest });
+    }
+
+    /// <summary>
+    /// What this tenant is made of, before anything is deleted: rows per table, files, background
+    /// jobs, cache keys, external references. READ-ONLY, and the thing a purge is checked against.
+    /// </summary>
+    [HttpGet("tenants/{id:guid}/residue")]
+    [ProducesResponseType(typeof(TenantResidueDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetResidue(Guid id, CancellationToken ct)
+        => Ok(await _purge.InventoryAsync(id, ct));
+
+    /// <summary>
+    /// Empties the tenant out of every table, deletes its files, removes its background jobs, and
+    /// verifies that nothing is left. IRREVERSIBLE.
+    ///
+    /// Two gates, both deliberate. The tenant must already be in <c>PendingDeletion</c> — a purge
+    /// is the end of a lifecycle, never a shortcut through it — and the caller must type the
+    /// organisation's name back, because a misclick must not reach this.
+    /// </summary>
+    [HttpPost("tenants/{id:guid}/purge")]
+    [ProducesResponseType(typeof(TenantPurgeResultDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> PurgeTenant(Guid id, [FromBody] PurgeTenantRequest request, CancellationToken ct)
+    {
+        var org = await _dbContext.Organizations.IgnoreQueryFilters().AsNoTracking().FirstOrDefaultAsync(o => o.Id == id, ct);
+        if (org == null) return NotFound(new { error = "TENANT_NOT_FOUND", message = "Tenant not found" });
+
+        if (org.Status != TenantStatus.PendingDeletion)
+            return Conflict(new
+            {
+                error = "NOT_SCHEDULED",
+                message = $"'{org.Name}' is {org.Status}. Schedule it for deletion first — a purge is the end of the lifecycle, not a shortcut through it."
+            });
+
+        if (!string.Equals(request?.ConfirmName?.Trim(), org.Name.Trim(), StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { error = "NAME_MISMATCH", message = "Type the organisation's name exactly to confirm. This cannot be undone." });
+
+        var actor = User.Identity?.Name ?? "platform administrator";
+        _logger.LogWarning("Super admin {Actor} is purging tenant {TenantId} ({Name})", actor, id, org.Name);
+
+        var result = await _purge.PurgeAsync(id, actor, CurrentUserId(), request?.Reason, ct);
+        return result.Ok ? Ok(result) : StatusCode(StatusCodes.Status500InternalServerError, result);
+    }
+
+    /// <summary>
+    /// Gives this caller's address its sign-up budget back. DEVELOPMENT ONLY — 404 anywhere else.
+    /// The purge suite has to create a tenant in order to destroy one, and three sign-ups an hour
+    /// is right in production and unworkable for a suite run repeatedly against a dev box.
+    /// </summary>
+    [HttpPost("registration-budget/reset")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ResetRegistrationBudget([FromServices] IRegistrationGuardService guard, CancellationToken ct)
+    {
+        if (!_environment.IsDevelopment()) return NotFound();
+        await guard.ResetAttemptBudgetAsync(HttpContext.Connection.RemoteIpAddress?.ToString(), ct);
+        return Ok(new { reset = true });
+    }
+
+    /// <summary>The certificates: what was purged, when, by whom, and whether the completeness check passed.</summary>
+    [HttpGet("purge-certificates")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetPurgeCertificates([FromQuery] int limit = 50, CancellationToken ct = default)
+    {
+        var rows = await _dbContext.TenantPurgeCertificates.AsNoTracking()
+            .OrderByDescending(c => c.PurgedAt)
+            .Take(Math.Clamp(limit, 1, 200))
+            .ToListAsync(ct);
+        return Ok(rows);
+    }
+
+    #endregion
+
+    #region Custom domain
+
+    // Platform-only, on the existing SuperAdmin gate, and that IS the decision (plan decision 2):
+    // a tenant does not self-serve a domain, because the certificate step reaches the web server's
+    // own configuration. The tenant sees the live domain read-only on their Branding page with one
+    // line telling them who to ask.
+
+    [HttpGet("tenants/{id:guid}/custom-domain")]
+    [ProducesResponseType(typeof(CustomDomainStatusDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetCustomDomain(Guid id, CancellationToken ct)
+        => Ok(await _customDomains.GetStatusAsync(id, ct));
+
+    /// <summary>Claims a domain and returns the exact TXT record to create. Writes nothing live.</summary>
+    [HttpPut("tenants/{id:guid}/custom-domain")]
+    [ProducesResponseType(typeof(CustomDomainStatusDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> RequestCustomDomain(Guid id, [FromBody] RequestCustomDomainRequest request, CancellationToken ct)
+    {
+        var result = await _customDomains.RequestAsync(id, request?.Domain ?? string.Empty, ct);
+        return result.Ok
+            ? Ok(result.Status)
+            : BadRequest(new ProblemDetails { Title = result.Error, Status = StatusCodes.Status400BadRequest });
+    }
+
+    /// <summary>
+    /// Runs whatever step is outstanding. A 400 here is NOT a dead end — it names the step that
+    /// failed and the status it returns says where the claim now stands, so the same button is
+    /// pressed again once the DNS record appears.
+    /// </summary>
+    [HttpPost("tenants/{id:guid}/custom-domain/verify")]
+    [ProducesResponseType(typeof(CustomDomainStatusDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> VerifyCustomDomain(Guid id, CancellationToken ct)
+    {
+        var result = await _customDomains.VerifyAsync(id, ct);
+        return result.Ok
+            ? Ok(result.Status)
+            : BadRequest(new ProblemDetails { Title = result.Error, Status = StatusCodes.Status400BadRequest, Extensions = { ["status"] = result.Status } });
+    }
+
+    /// <summary>
+    /// Publishes a TXT record into the DNS STUB, so the verification flow can be exercised end to
+    /// end without owning a zone. 404 anywhere but Development with <c>Dns:Stub</c> set — the same
+    /// shape as the Development-only weekly-analysis trigger, and for the same reason: a test hook
+    /// that can be reached on a real server is not a test hook.
+    /// </summary>
+    [HttpPost("tenants/{id:guid}/custom-domain/stub-dns")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> PublishStubDns(Guid id, [FromQuery] string? value, CancellationToken ct)
+    {
+        if (!_environment.IsDevelopment() || !_configuration.GetValue("Dns:Stub", false))
+            return NotFound();
+
+        var status = await _customDomains.GetStatusAsync(id, ct);
+        if (string.IsNullOrEmpty(status.VerificationRecordName))
+            return BadRequest(new { message = "That tenant has no domain waiting to be verified." });
+
+        // Defaults to the token the service actually minted, so the happy path needs no argument;
+        // pass a value to exercise the "a record exists but does not match" refusal.
+        QMgr.Infrastructure.Services.Domains.StubDnsTxtLookup.Publish(
+            status.VerificationRecordName,
+            value ?? status.VerificationRecordValue ?? string.Empty);
+
+        return Ok(new { published = status.VerificationRecordName });
+    }
+
+    [HttpDelete("tenants/{id:guid}/custom-domain")]
+    [ProducesResponseType(typeof(CustomDomainStatusDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ReleaseCustomDomain(Guid id, CancellationToken ct)
+    {
+        var result = await _customDomains.ReleaseAsync(id, ct);
+        return result.Ok
+            ? Ok(result.Status)
+            : BadRequest(new ProblemDetails { Title = result.Error, Status = StatusCodes.Status400BadRequest });
+    }
+
+    #endregion
+
+    #region Feature overrides
+
+    /// <summary>
+    /// A negotiated entitlement, recorded on the tenant's own row. The same reasoning as
+    /// <c>AgreedPriceUgx</c>: what a customer actually gets is written down, never inferred from a
+    /// catalogue row. It can only ever turn a flag ON — taking away something a module grants is a
+    /// refund question, not a switch, so the resolver ORs this in after the module grants.
+    /// </summary>
+    [HttpPut("tenants/{id:guid}/feature-overrides/{code}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> SetFeatureOverride(Guid id, string code, [FromBody] SetFeatureOverrideRequest request, CancellationToken ct)
+    {
+        if (!FeatureOverrideCodes.Contains(code))
+            return BadRequest(new { error = "UNKNOWN_FEATURE", message = $"'{code}' is not a feature that can be overridden." });
+
+        var org = await _dbContext.Organizations.FindAsync([id], ct);
+        if (org == null) return NotFound(new { error = "TENANT_NOT_FOUND", message = "Tenant not found" });
+
+        var root = string.IsNullOrEmpty(org.Settings)
+            ? new Dictionary<string, JsonElement>()
+            : JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(org.Settings) ?? new();
+
+        var overrides = root.TryGetValue(FeatureFlagService.OverridesKey, out var existing) && existing.ValueKind == JsonValueKind.Object
+            ? JsonSerializer.Deserialize<Dictionary<string, bool>>(existing.GetRawText()) ?? new()
+            : new Dictionary<string, bool>();
+
+        // OFF is a REMOVAL, not a stored false: a stored false reads as "this tenant is refused
+        // this feature", which is not a thing this system has. Absent means "whatever they bought".
+        if (request?.Enabled == true) overrides[code] = true; else overrides.Remove(code);
+
+        // Merge back over the whole blob: Organization.Settings also carries IndustryFeatures,
+        // StaffPerformance and DocumentSharing, and a write that replaced the object would drop them.
+        var merged = new Dictionary<string, object>();
+        foreach (var (key, value) in root) merged[key] = value;
+        if (overrides.Count > 0) merged[FeatureFlagService.OverridesKey] = overrides;
+        else merged.Remove(FeatureFlagService.OverridesKey);
+        org.Settings = JsonSerializer.Serialize(merged);
+
+        await _dbContext.SaveChangesAsync(ct);
+
+        // The entitlement cache is five minutes. Without this the administrator who just granted it
+        // watches nothing happen and grants it again.
+        await _featureFlags.InvalidateCacheAsync(id);
+
+        _logger.LogInformation("Super admin {Action} the '{Code}' override for tenant {TenantId}",
+            request?.Enabled == true ? "granted" : "removed", code, id);
+
+        return Ok(new { code, enabled = request?.Enabled == true });
+    }
+
+    /// <summary>
+    /// The features a platform administrator may hand out by hand. Deliberately a short list, not
+    /// every constant on <c>FeatureCodes</c>: an override is for a negotiated deal, and anything
+    /// that is simply part of a module should be sold as that module.
+    /// </summary>
+    private static readonly HashSet<string> FeatureOverrideCodes = new(StringComparer.Ordinal)
+    {
+        FeatureCodes.WhiteLabel,
+        FeatureCodes.RemoveAttribution
+    };
+
+    #endregion
 
     #region Tenant Management
 
@@ -100,6 +363,23 @@ public class SuperAdminController : ControllerBase
     /// <summary>
     /// Get detailed tenant information
     /// </summary>
+    /// <summary>The overrides currently set on a tenant, so the dialog can show them as switches.</summary>
+    private static Dictionary<string, bool> ReadFeatureOverrides(string? settingsJson)
+    {
+        if (string.IsNullOrEmpty(settingsJson)) return new();
+        try
+        {
+            var root = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(settingsJson);
+            if (root != null && root.TryGetValue(FeatureFlagService.OverridesKey, out var element) && element.ValueKind == JsonValueKind.Object)
+                return JsonSerializer.Deserialize<Dictionary<string, bool>>(element.GetRawText()) ?? new();
+        }
+        catch (JsonException)
+        {
+            // A malformed blob reads as "no overrides" — the same call the resolver makes.
+        }
+        return new();
+    }
+
     [HttpGet("tenants/{id:guid}")]
     [ProducesResponseType(typeof(TenantDetails), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -130,6 +410,9 @@ public class SuperAdminController : ControllerBase
             BillingPhone = org.BillingPhone,
             PreferredCurrency = org.PreferredCurrency,
             CustomDomain = org.CustomDomain,
+            CustomDomainStatus = await _customDomains.GetStatusAsync(id),
+            Lifecycle = await _lifecycle.GetStatusAsync(id),
+            FeatureOverrides = ReadFeatureOverrides(org.Settings),
             StripeCustomerId = org.StripeCustomerId,
             CreatedAt = org.CreatedAt,
             VerifiedAt = org.VerifiedAt,
@@ -557,8 +840,18 @@ public record TenantDetails : TenantSummary
     public string? ContactPhone { get; init; }
     public string? BillingEmail { get; init; }
     public string? BillingPhone { get; init; }
-    public string PreferredCurrency { get; init; } = "USD";
+    public string PreferredCurrency { get; init; } = "UGX";
     public string? CustomDomain { get; init; }
+
+    /// <summary>Where the tenant's own domain has got to, including the DNS record still to be created.</summary>
+    public CustomDomainStatusDto? CustomDomainStatus { get; init; }
+
+    /// <summary>Where the tenant is in its life, and when the next automatic move is due.</summary>
+    public TenantLifecycleStatusDto? Lifecycle { get; init; }
+
+    /// <summary>Feature codes granted by hand on this tenant's row, outside any module they hold.</summary>
+    public Dictionary<string, bool> FeatureOverrides { get; init; } = new();
+
     public string? StripeCustomerId { get; init; }
     public DateTime? VerifiedAt { get; init; }
     public int OnboardingStep { get; init; }
@@ -596,6 +889,11 @@ public record UsageSummary
 public record SuspendRequest
 {
     public string Reason { get; init; } = string.Empty;
+}
+
+public record SetFeatureOverrideRequest
+{
+    public bool Enabled { get; init; }
 }
 
 public record UpdateStorageQuotaRequest

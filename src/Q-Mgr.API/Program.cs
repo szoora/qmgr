@@ -355,6 +355,15 @@ QMgr.Infrastructure.Services.Storage.UploadLinks.Use(app.Services.GetRequiredSer
         scope.ServiceProvider.GetRequiredService<ILogger<QMgr.Infrastructure.Data.RbacSeeder>>());
     await rbacSeeder.SeedAsync();
 
+    // EVERY TABLE IN THE MODEL MUST BE CLASSIFIED for the tenant purge. This is the one thing in
+    // the purge that is declared rather than derived, and it FAILS HARD rather than logging: the
+    // cost of shipping an unclassified table is a purge that reports success and leaves the rows
+    // behind, found long after a tenant was told their data was gone. A developer adding a table
+    // gets a specific error naming their entity, on their own machine, the first time they run.
+    QMgr.Infrastructure.Data.Purge.TenantPurgeModelGuard.Validate(
+        db,
+        scope.ServiceProvider.GetRequiredService<ILogger<QMgr.Infrastructure.Data.RbacSeeder>>());
+
     // The module catalog, in EVERY environment. Until 2026-09-16 the only seed lived in DbSeeder,
     // which runs in Development only, so a module added to the code never reached a production
     // catalog. Insert-if-missing; never overwrites an administrator's edit.
@@ -425,6 +434,8 @@ VisitorReportSubscriptionJobsRegistration.RegisterRecurringJobs();
 WelfareReminderJobRegistration.RegisterRecurringJobs();
 AppointmentJobsRegistration.RegisterRecurringJobs();
 DocumentShareJobsRegistration.RegisterRecurringJobs();
+CustomDomainJobsRegistration.RegisterRecurringJobs();
+TenantLifecycleJobsRegistration.RegisterRecurringJobs();
 StaffPerformanceJobsRegistration.RegisterRecurringJobs();
 ReminderLadderJobRegistration.RegisterRecurringJobs();
 TimetableIntegrityJobRegistration.RegisterRecurringJobs();

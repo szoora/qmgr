@@ -238,30 +238,30 @@
 
 <style>
     .dr-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
-    .dr-muted { font-size: 12.5px; color: var(--qm-text-muted); }
+    .dr-muted { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
     .dr-columns { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
     .dr-main { flex: 1 1 560px; min-width: 0; }
     .dr-side { flex: 0 1 360px; min-width: 260px; }
     .dr-section { margin-bottom: 14px; }
-    .dr-returned { display: flex; gap: 10px; padding: 10px 12px; margin-bottom: 14px; border: 1px solid var(--qm-warning); border-radius: var(--qm-radius-md); font-size: 13px; }
+    .dr-returned { display: flex; gap: 10px; padding: 10px 12px; margin-bottom: 14px; border: 1px solid var(--qm-warning); border-radius: var(--qm-radius-md); font-size: var(--qm-text-base); }
     .dr-returned p { margin: 2px 0 0; white-space: pre-wrap; }
     .dr-links, .dr-evidence { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--qm-border); }
-    .dr-links h4, .dr-evidence h4, .dr-h4 { margin: 0 0 6px; font-size: 13.5px; font-family: var(--qm-font-display); }
+    .dr-links h4, .dr-evidence h4, .dr-h4 { margin: 0 0 6px; font-size: var(--qm-text-base); font-family: var(--qm-font-display); }
     .dr-h4 { margin-top: 16px; }
-    .dr-linked { list-style: none; margin: 6px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+    .dr-linked { list-style: none; margin: 6px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: var(--qm-text-base); }
     .dr-linked li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .dr-link-add { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
     .dr-link-add > .q-select-wrapper { flex: 1 1 260px; min-width: 0; }
-    .dr-link-new { font-size: 13px; padding-bottom: 10px; }
+    .dr-link-new { font-size: var(--qm-text-base); padding-bottom: 10px; }
     .dr-files { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
     .dr-form-foot { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--qm-border); }
     .dr-vis { flex: 1 1 260px; min-width: 0; }
     .dr-form-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
     .dr-answers { margin: 0; display: grid; gap: 12px; }
-    .dr-answers dt { font-size: 12px; color: var(--qm-text-muted); }
-    .dr-answers dd { margin: 2px 0 0; white-space: pre-wrap; font-size: 14px; }
-    .dr-note { margin: 4px 0 0; white-space: pre-wrap; font-size: 13px; }
-    .dr-snapshot { margin-top: 6px; font-size: 12.5px; }
+    .dr-answers dt { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
+    .dr-answers dd { margin: 2px 0 0; white-space: pre-wrap; font-size: var(--qm-text-base); }
+    .dr-note { margin: 4px 0 0; white-space: pre-wrap; font-size: var(--qm-text-base); }
+    .dr-snapshot { margin-top: 6px; font-size: var(--qm-text-sm); }
     .dr-snapshot dl { margin: 6px 0 0; display: grid; gap: 6px; }
     .dr-snapshot dt { color: var(--qm-text-muted); }
     .dr-snapshot dd { margin: 0; white-space: pre-wrap; }
@@ -288,7 +288,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
-            Navigation.NavigateTo("/billing/modules");
+            Navigation.NavigateTo(BillingLinks.Modules);
             return;
         }
         await BranchState.InitializeAsync();

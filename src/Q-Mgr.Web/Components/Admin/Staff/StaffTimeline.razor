@@ -310,33 +310,33 @@
     .st-head { display: flex; gap: 14px; align-items: flex-start; min-width: 0; }
     .st-head__text { min-width: 0; }
     .st-head__text h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .st-head__text .subtitle { margin: 0 0 8px; color: var(--qm-text-muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+    .st-head__text .subtitle { margin: 0 0 8px; color: var(--qm-text-muted); font-size: var(--qm-text-base); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
     .st-head__score { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-    .st-head__points { font-size: 13px; color: var(--qm-text-secondary); }
+    .st-head__points { font-size: var(--qm-text-base); color: var(--qm-text-secondary); }
     .st-columns { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
     .st-main { flex: 1 1 520px; min-width: 0; }
     .st-side { flex: 0 1 320px; min-width: 260px; display: flex; flex-direction: column; gap: 16px; }
     .st-desc { margin: 6px 0; white-space: pre-wrap; color: var(--qm-text-primary); }
-    .st-purpose { margin: 0 0 6px; font-size: 12px; color: var(--qm-text-muted); display: flex; gap: 6px; align-items: flex-start; }
+    .st-purpose { margin: 0 0 6px; font-size: var(--qm-text-sm); color: var(--qm-text-muted); display: flex; gap: 6px; align-items: flex-start; }
     .st-activity-item .q-timeline__card { padding: 6px 12px; background: transparent; border-style: dashed; box-shadow: none; }
     .st-activity-item .q-timeline__marker { transform: scale(.72); opacity: .7; }
-    .st-activity-text { font-size: 13px; font-weight: 400; color: var(--qm-text-secondary); }
-    .st-meta { display: flex; flex-wrap: wrap; gap: 4px 6px; font-size: 12.5px; color: var(--qm-text-muted); }
+    .st-activity-text { font-size: var(--qm-text-base); font-weight: 400; color: var(--qm-text-secondary); }
+    .st-meta { display: flex; flex-wrap: wrap; gap: 4px 6px; font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
     .st-late { color: var(--qm-warning); display: inline-flex; gap: 4px; align-items: center; }
     .st-notes { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
     .st-note { border-left: 3px solid var(--qm-border); padding: 6px 10px; background: var(--qm-bg-secondary); border-radius: var(--qm-radius-sm); }
     .st-note--response { border-left-color: var(--qm-primary); background: rgba(var(--qm-primary-rgb), 0.06); }
-    .st-note__kind { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--qm-text-muted); margin-right: 8px; }
+    .st-note__kind { font-size: var(--qm-text-xs); text-transform: uppercase; letter-spacing: .04em; color: var(--qm-text-muted); margin-right: 8px; }
     .st-note--response .st-note__kind { color: var(--qm-primary); font-weight: 600; }
-    .st-note__by { font-size: 12px; color: var(--qm-text-muted); }
-    .st-note p { margin: 2px 0 0; white-space: pre-wrap; font-size: 13.5px; }
+    .st-note__by { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
+    .st-note p { margin: 2px 0 0; white-space: pre-wrap; font-size: var(--qm-text-base); }
     .st-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-    .st-muted { color: var(--qm-text-muted); font-size: 13px; margin: 0; }
-    .st-foot { margin-top: 10px; font-size: 12px; }
+    .st-muted { color: var(--qm-text-muted); font-size: var(--qm-text-base); margin: 0; }
+    .st-foot { margin-top: 10px; font-size: var(--qm-text-sm); }
     .st-facts { display: grid; grid-template-columns: 1fr; gap: 6px; margin: 14px 0 0; }
-    .st-facts dt { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--qm-text-muted); margin: 0; }
-    .st-facts dd { margin: 0; font-size: 14px; color: var(--qm-text-primary); }
-    .form-group > label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 600; color: var(--qm-text-secondary); }
+    .st-facts dt { font-size: var(--qm-text-xs); text-transform: uppercase; letter-spacing: .05em; color: var(--qm-text-muted); margin: 0; }
+    .st-facts dd { margin: 0; font-size: var(--qm-text-base); color: var(--qm-text-primary); }
+    .form-group > label { display: block; margin-bottom: 6px; font-size: var(--qm-text-base); font-weight: 600; color: var(--qm-text-secondary); }
 </style>
 
 @code {
@@ -458,7 +458,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
-            Navigation.NavigateTo("/billing/modules");
+            Navigation.NavigateTo(BillingLinks.Modules);
             return;
         }
 

@@ -95,7 +95,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var attempt in attempts)
+                        @foreach (var attempt in Paged)
                         {
                             <tr>
                                 <td>
@@ -166,6 +166,11 @@
                         }
                     </tbody>
                 </table>
+                @* Paging (plan Phase 2). A platform-wide review queue collects every flagged sign-up
+                   the product has ever had; rendering it whole is a page nobody can use and a payload
+                   nobody asked for. Bulk is waived deliberately: a refused sign-up is a lost customer
+                   who cannot appeal (CLAUDE.md), so each one is a decision with a reason of its own. *@
+                <QPager Count="@attempts.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="attempts" />
             </div>
         </QCard>
     }
@@ -256,7 +261,7 @@
         display: flex;
         align-items: center;
         gap: 0.5rem;
-        font-size: 0.875rem;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
         cursor: pointer;
     }
@@ -273,7 +278,7 @@
     .review-table th {
         text-align: left;
         padding: 0.75rem 1rem;
-        font-size: 0.75rem;
+        font-size: var(--qm-text-sm);
         text-transform: uppercase;
         letter-spacing: 0.04em;
         color: var(--qm-text-secondary);
@@ -296,7 +301,7 @@
     .applicant-phone,
     .org-match,
     .reviewed-note {
-        font-size: 0.8125rem;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
     }
 
@@ -312,7 +317,7 @@
     .signal-list {
         margin: 0;
         padding-left: 1.1rem;
-        font-size: 0.8125rem;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
     }
 
@@ -321,13 +326,12 @@
     }
 
     .date-cell {
-        font-size: 0.8125rem;
+        font-size: var(--qm-text-base);
         white-space: nowrap;
     }
 
     .loading-state,
-    .error-state,
-    .empty-state {
+    .error-state {
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -338,6 +342,12 @@
 </style>
 
 @code {
+    private const int PageSize = 25;
+    private int pageIndex;
+
+    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (attempts.Count - 1) / PageSize));
+    private IEnumerable<RegistrationAttemptDto> Paged => attempts.Skip(SafePageIndex * PageSize).Take(PageSize);
+
     private bool isLoading = true;
     private bool hasError;
     private string errorMessage = "";
@@ -375,6 +385,7 @@
 
     private async Task LoadAttempts()
     {
+        pageIndex = 0;
         isLoading = true;
         hasError = false;
 

@@ -36,6 +36,25 @@ public record OrganizationBrandingDto
     /// Not set on the anonymous public-display endpoint — irrelevant there.
     /// </summary>
     public bool WhiteLabelEntitled { get; set; } = true;
+
+    /// <summary>
+    /// Whether "Powered by SACC Software" and the Q-Mgr footer line come off this tenant's
+    /// screens. Resolved SERVER-side from <c>FeatureCodes.RemoveAttribution</c> — an add-on, or a
+    /// platform override on the organization — and never inferred by the client.
+    ///
+    /// DEFAULTS TO FALSE, unlike <see cref="WhiteLabelEntitled"/> beside it, and that asymmetry is
+    /// deliberate: a DTO fails to load as easily as it loads, and a generous default for branding
+    /// is merely generous while a generous default here would REMOVE the attribution on a dropped
+    /// request. Attribution is on until somebody has paid for it to be off.
+    /// </summary>
+    public bool AttributionRemoved { get; set; }
+
+    /// <summary>
+    /// The tenant's own live domain, read-only on the Branding page. Tenants do not self-serve a
+    /// domain — the certificate step touches the host — so this is shown with a line telling them
+    /// who to ask. Null when there is none.
+    /// </summary>
+    public string? CustomDomain { get; set; }
 }
 
 /// <summary>

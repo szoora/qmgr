@@ -28,63 +28,102 @@
     }
     else if (!entries.Any())
     {
-        <div class="empty-state">
-            <QIcon Name="clock-history" />
-            <h3>No Deletions</h3>
-            <p>No visitor records have been deleted for this branch</p>
-        </div>
+        <QEmptyState Icon="clock-history" Title="No deletions yet" Text="No visitor record has been deleted for this branch." />
     }
     else
     {
-        <div class="audit-table-wrap">
-            <table class="audit-table">
-                <thead>
-                    <tr>
-                        <th>Visitor</th>
-                        <th>Badge</th>
-                        <th>Purpose</th>
-                        <th>Status at deletion</th>
-                        <th>Deleted by</th>
-                        <th>Deleted at</th>
-                        <th>Reason</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var entry in entries)
-                    {
+        @* Search and paging, no selection: an audit log is READ-ONLY by construction, so there is
+           nothing a selection could be applied to. A bulk bar with a tick box and no action is
+           worse than none. *@
+        <QBulkBar Search="@search" SearchChanged="@SetSearch" ShowSelection="false"
+                  SearchPlaceholder="Search by visitor, badge, reason or who deleted it" />
+
+        @if (Visible.Count == 0)
+        {
+            <QEmptyState Icon="funnel" Title="Nothing matches" Text="Clear the search to see every deletion.">
+                <Action><QButton Text="Show everything" Icon="arrow-counterclockwise" Variant="secondary" Size="sm" OnClick="@(() => SetSearch(string.Empty))" /></Action>
+            </QEmptyState>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table class="data-table q-stack">
+                    <thead>
                         <tr>
-                            <td>@entry.FullName</td>
-                            <td class="mono">@entry.BadgeCode</td>
-                            <td>@entry.Purpose</td>
-                            <td>@entry.StatusAtDeletion</td>
-                            <td>@(entry.DeletedByUserName ?? "—")</td>
-                            <td>@QDateFormat.DT(entry.DeletedAt.ToLocalTime())</td>
-                            <td class="reason">@entry.DeletionReason</td>
+                            <th>Visitor</th>
+                            <th>Badge</th>
+                            <th>Purpose</th>
+                            <th>Status at deletion</th>
+                            <th>Deleted by</th>
+                            <th>Deleted at</th>
+                            <th>Reason</th>
                         </tr>
-                    }
-                </tbody>
-            </table>
-        </div>
+                    </thead>
+                    <tbody>
+                        @foreach (var entry in Paged)
+                        {
+                            <tr>
+                                <td>@entry.FullName</td>
+                                <td class="mono">@entry.BadgeCode</td>
+                                <td>@entry.Purpose</td>
+                                <td>@entry.StatusAtDeletion</td>
+                                <td class="cell-sub">@(entry.DeletedByUserName ?? "—")</td>
+                                <td>@QDateFormat.DT(entry.DeletedAt.ToLocalTime())</td>
+                                <td class="reason">@entry.DeletionReason</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <QPager Count="@Visible.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="deletions" />
+        }
     }
 </div>
 
 <style>.header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
-    .empty-state .q-icon { font-size: 40px; opacity: 0.5; }
+    .loading-container { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
 
-    .audit-table-wrap { overflow-x: auto; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); }
-    .audit-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .audit-table th { text-align: left; padding: 10px 14px; color: var(--qm-text-muted); font-weight: 600; border-bottom: 1px solid var(--qm-border); white-space: nowrap; }
-    .audit-table td { padding: 10px 14px; border-bottom: 1px solid var(--qm-border); color: var(--qm-text-primary); vertical-align: top; }
-    .audit-table tr:last-child td { border-bottom: none; }
+    /* The table is the shared .data-table (app.css) at the shared sizes; only what is peculiar
+       to this page stays here. A page that restyles a shared class name restyles it app-wide
+       while it is open: a component style block is not scoped. */
+    .table-wrap { overflow-x: auto; }
     .mono { font-family: monospace; }
     .reason { color: var(--qm-text-muted); max-width: 320px; }
 </style>
 
 @code {
+    private const int PageSize = 25;
+
     private Guid branchId;
     private List<DeletedVisitorDto> entries = new();
     private bool isLoading = true;
+    private string search = string.Empty;
+    private int pageIndex;
+
+    /// <summary>
+    /// A deletion log only grows, so it is searched and paged rather than rendered whole: every row
+    /// of it is diffed and shipped down the circuit on Blazor Server.
+    /// </summary>
+    private List<DeletedVisitorDto> Visible
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(search)) return entries;
+            var q = search.Trim();
+            bool Has(string? s) => (s ?? string.Empty).Contains(q, StringComparison.OrdinalIgnoreCase);
+            return entries.Where(e => Has(e.FullName) || Has(e.BadgeCode) || Has(e.Purpose)
+                                      || Has(e.DeletedByUserName) || Has(e.DeletionReason)).ToList();
+        }
+    }
+
+    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (Visible.Count - 1) / PageSize));
+    private IEnumerable<DeletedVisitorDto> Paged => Visible.Skip(SafePageIndex * PageSize).Take(PageSize);
+
+    private void SetSearch(string value)
+    {
+        search = value ?? string.Empty;
+        pageIndex = 0;
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -98,7 +137,6 @@
         branchId = BranchState.CurrentBranchId;
 
         entries = await VisitorApi.GetDeletedVisitorsAsync(branchId);
-        isLoading = false;
         isLoading = false;
     }
 
@@ -123,6 +161,9 @@
     {
         this.branchId = branchId;
         isLoading = true;
+        // The search and the page belong to the branch that was showing, not to the new one.
+        search = string.Empty;
+        pageIndex = 0;
         entries = await VisitorApi.GetDeletedVisitorsAsync(branchId);
         isLoading = false;
     }

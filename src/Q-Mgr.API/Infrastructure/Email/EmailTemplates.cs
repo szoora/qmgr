@@ -16,6 +16,25 @@ public static class EmailTemplates
 
     /// <summary>Brand accent — the same wine as the app's --qm-primary (light theme).</summary>
     private const string Accent = "#7a2847";
+
+    /// <summary>
+    /// Who an email is FROM, as the reader sees it: the name in the body, the accent, the logo in
+    /// the header, and whether our own name appears at the foot of it.
+    ///
+    /// THE ENVELOPE IS NOT IN HERE, AND THAT IS NOT A GAP. IONOS — and Google, and Microsoft —
+    /// reject a From address that is not the authenticated mailbox, so carrying a tenant's address
+    /// there turns a working relay into a 5xx on every send. The platform mailbox sends and the
+    /// tenant's display name is shown (see ISmtpProfileResolver); a tenant that wants its own From
+    /// address configures its own SMTP, which that resolver already supports. So the body is fully
+    /// branded, the envelope is not, and anything else would be a promise the mail providers
+    /// refuse to keep.
+    /// </summary>
+    public sealed record EmailBrand(string Name, string Accent, string? LogoUrl, bool AttributionRemoved)
+    {
+        /// <summary>Q-Mgr's own. The default for every caller that does not know an organization —
+        /// a sign-up confirmation for an organization that does not exist yet, a platform notice.</summary>
+        public static readonly EmailBrand Platform = new(AppName, EmailTemplates.Accent, null, false);
+    }
     private const string Danger = "#b42318";
     private const string Text = "#1f1f1f";
     private const string Muted = "#6b6b6b";
@@ -34,6 +53,8 @@ public static class EmailTemplates
     /// <param name="footerNote">Optional small-print line under the rule (HTML fragment).</param>
     /// <param name="tone">Warning tone colours the heading red (payment failed, suspended).</param>
     /// <param name="showLinkFallback">Prints the CTA URL as text under the button (verification / reset links).</param>
+    /// <param name="brand">Whose email this is. Null is the platform's own — every existing caller
+    /// passes nothing and is unchanged, which is why this is last and optional.</param>
     public static string Layout(
         string title,
         string? greeting,
@@ -42,9 +63,12 @@ public static class EmailTemplates
         string? ctaUrl = null,
         string? footerNote = null,
         Tone tone = Tone.Info,
-        bool showLinkFallback = false)
+        bool showLinkFallback = false,
+        EmailBrand? brand = null)
     {
-        var headingColor = tone == Tone.Warning ? Danger : Accent;
+        var who = brand ?? EmailBrand.Platform;
+        var accent = who.Accent;
+        var headingColor = tone == Tone.Warning ? Danger : accent;
         var body = string.Join("\n", paragraphs.Select(p => $"        <p style='margin: 0 0 14px 0;'>{p}</p>"));
         var greet = greeting == null ? "" : $"        <p style='margin: 0 0 14px 0;'>Hi {WebUtility.HtmlEncode(greeting)},</p>\n";
         var cta = "";
@@ -52,7 +76,7 @@ public static class EmailTemplates
         {
             var safeUrl = WebUtility.HtmlEncode(ctaUrl);
             cta = $@"        <div style='text-align: center; margin: 28px 0;'>
-            <a href='{safeUrl}' style='background-color: {Accent}; color: #ffffff; padding: 12px 30px; text-decoration: none; border-radius: 4px; display: inline-block; font-weight: 600;'>{WebUtility.HtmlEncode(ctaText)}</a>
+            <a href='{safeUrl}' style='background-color: {accent}; color: #ffffff; padding: 12px 30px; text-decoration: none; border-radius: 4px; display: inline-block; font-weight: 600;'>{WebUtility.HtmlEncode(ctaText)}</a>
         </div>
 ";
             if (showLinkFallback)
@@ -67,6 +91,20 @@ public static class EmailTemplates
             ? ""
             : $"        <p style='color: {Muted}; font-size: 13px; margin: 0 0 10px 0;'>{footerNote}</p>\n";
 
+        // A logo, where the organization has one. An <img> in an email is blocked by default in
+        // most clients, so the name still has to carry the message on its own — this is the
+        // decoration, never the content.
+        var logo = string.IsNullOrWhiteSpace(who.LogoUrl)
+            ? ""
+            : $"        <div style='margin: 0 0 18px 0;'><img src='{WebUtility.HtmlEncode(who.LogoUrl)}' alt='{WebUtility.HtmlEncode(who.Name)}' style='max-height: 48px; max-width: 220px;'></div>\n";
+
+        // THE THIRD ATTRIBUTION STRING. The other two are the six public sign-in pages and the
+        // shell footer; all three move together on one flag, or a tenant pays to remove our name
+        // and still reads it at the foot of their own password-reset mail.
+        var attribution = who.AttributionRemoved
+            ? $"&copy; {DateTime.UtcNow.Year} {WebUtility.HtmlEncode(who.Name)}"
+            : $"&copy; {DateTime.UtcNow.Year} {AppName} &middot; Front-Office Platform";
+
         return $@"<!DOCTYPE html>
 <html>
 <head>
@@ -75,13 +113,13 @@ public static class EmailTemplates
 </head>
 <body style='margin: 0; padding: 0; background: #f4f4f5;'>
     <div style='max-width: 600px; margin: 0 auto; padding: 32px 20px; font-family: Arial, Helvetica, sans-serif; line-height: 1.6; color: {Text};'>
-        <div style='background: #ffffff; border: 1px solid {Rule}; border-top: 3px solid {Accent}; border-radius: 4px; padding: 28px;'>
-        <h1 style='color: {headingColor}; font-size: 22px; margin: 0 0 18px 0;'>{WebUtility.HtmlEncode(title)}</h1>
+        <div style='background: #ffffff; border: 1px solid {Rule}; border-top: 3px solid {accent}; border-radius: 4px; padding: 28px;'>
+{logo}        <h1 style='color: {headingColor}; font-size: 22px; margin: 0 0 18px 0;'>{WebUtility.HtmlEncode(title)}</h1>
 {greet}{body}
-{cta}        <p style='margin: 18px 0 0 0;'>Best regards,<br>The {AppName} Team</p>
+{cta}        <p style='margin: 18px 0 0 0;'>Best regards,<br>The {WebUtility.HtmlEncode(who.Name)} Team</p>
         </div>
         <hr style='border: none; border-top: 1px solid {Rule}; margin: 24px 0 14px 0;'>
-{footer}        <p style='color: {Muted}; font-size: 12px; margin: 0;'>&copy; {DateTime.UtcNow.Year} {AppName} &middot; Front-Office Platform</p>
+{footer}        <p style='color: {Muted}; font-size: 12px; margin: 0;'>{attribution}</p>
     </div>
 </body>
 </html>";

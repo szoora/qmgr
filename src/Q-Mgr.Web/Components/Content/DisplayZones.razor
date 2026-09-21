@@ -12,20 +12,18 @@
 
 
 <div class="display-zones-page">
-    <!-- Toolbar -->
-    <QCard Class="toolbar-card">
-        <div class="toolbar">
-            <div class="toolbar-left">
-                <QInput TValue="string" @bind-Value="@searchTerm" Placeholder="Search displays..." IconLeft="search" />
-            </div>
-            <div class="toolbar-right">
-                @if (canCreate)
-                {
-                    <QButton Text="Add Display" Icon="tv-fill" Variant="primary" OnClick="@ShowCreateDisplayDialog" />
-                }
-            </div>
-        </div>
-    </QCard>
+    <QPageActions Embedded="@Embedded">
+        <Actions>
+            @if (canCreate)
+            {
+                <QButton Text="Add Display" Icon="tv-fill" Variant="primary" OnClick="@ShowCreateDisplayDialog" />
+            }
+        </Actions>
+    </QPageActions>
+
+    <QFilterBar>
+        <QInput TValue="string" @bind-Value="@searchTerm" Placeholder="Search displays..." IconLeft="search" />
+    </QFilterBar>
 
     @if (isLoading)
     {
@@ -49,7 +47,7 @@
     else
     {
         <div class="displays-list">
-            @foreach (var display in FilteredDisplays)
+            @foreach (var display in PagedDisplays)
             {
                 <QCard Class="display-card">
                     <div class="display-header">
@@ -106,6 +104,7 @@
                 </QCard>
             }
         </div>
+        <QPager Count="@(FilteredDisplays.Count())" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="displays" />
     }
 </div>
 
@@ -267,7 +266,7 @@
         gap: var(--q-row-gap, 8px);
     }
 
-    .loading-container, .empty-state {
+    .loading-container {
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -275,27 +274,6 @@
         padding: 60px 20px;
         gap: 16px;
         text-align: center;
-    }
-
-    .empty-state {
-        background: var(--qm-bg-card);
-        border-radius: var(--qm-radius-xl);
-        padding: 80px 20px;
-    }
-
-    .empty-state .rzi {
-        font-size: 64px;
-        color: var(--qm-text-muted);
-    }
-
-    .empty-state h3 {
-        margin: 0 0 8px;
-        color: var(--qm-text-primary);
-    }
-
-    .empty-state p {
-        margin: 0 0 24px;
-        color: var(--qm-text-secondary);
     }
 
     .displays-list {
@@ -340,17 +318,17 @@
     }
 
     .display-icon .rzi {
-        font-size: 24px;
+        font-size: var(--qm-text-stat);
     }
 
     .display-info h3 {
         margin: 0 0 4px;
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
     }
 
     .display-info p {
         margin: 0;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
     }
 
@@ -362,7 +340,7 @@
     }
 
     .last-seen {
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         color: var(--qm-text-secondary);
     }
 
@@ -382,7 +360,7 @@
 
     .zones-header h4 {
         margin: 0;
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         font-weight: 600;
     }
 
@@ -390,7 +368,7 @@
         padding: 12px;
         text-align: center;
         color: var(--qm-text-secondary);
-        font-size: 13px;
+        font-size: var(--qm-text-base);
     }
 
     .zones-list-view {
@@ -418,7 +396,7 @@
         display: flex;
         flex-direction: column;
         gap: 2px;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
     }
 
@@ -477,6 +455,13 @@
     [Parameter] public bool Embedded { get; set; }
 
     private List<DisplayDto> displays = new();
+    // ---- Paging (list-page sweep, plan Phase 2) --------------------------------------------
+    // Every row here is a component subtree Blazor Server diffs and ships down the circuit, so
+    // the page renders a page of them rather than the whole list.
+    private const int PageSize = 25;
+    private int pageIndex;
+    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (FilteredDisplays.Count() - 1) / PageSize));
+    private IEnumerable<DisplayDto> PagedDisplays => FilteredDisplays.Skip(SafePageIndex * PageSize).Take(PageSize);
     private List<PlaylistDto> playlists = new();
     private bool isLoading = true;
     private string searchTerm = "";
@@ -532,7 +517,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
         {
-            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            Navigation.NavigateTo(BillingLinks.Modules, forceLoad: false);
             return;
         }
 

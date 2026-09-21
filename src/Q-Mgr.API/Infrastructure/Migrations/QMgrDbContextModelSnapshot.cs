@@ -2926,6 +2926,27 @@ namespace QMgr.Infrastructure.Migrations
                     b.Property<string>("CustomDomain")
                         .HasColumnType("text");
 
+                    b.Property<int>("CustomDomainAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("CustomDomainCertificateAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("CustomDomainLastAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CustomDomainLastError")
+                        .HasColumnType("text");
+
+                    b.Property<string>("CustomDomainPending")
+                        .HasColumnType("text");
+
+                    b.Property<string>("CustomDomainVerificationToken")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("CustomDomainVerifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("DisplayTheme")
                         .IsRequired()
                         .HasColumnType("text");
@@ -3145,6 +3166,180 @@ namespace QMgr.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("platform_spotify_connections", "qmgr");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Platform.TenantLifecycleEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Actor")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid?>("ActorUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("FromStatus")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("NextTransitionDueAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("OccurredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("OrganizationName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<int>("ToStatus")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "OccurredAt");
+
+                    b.ToTable("tenant_lifecycle_events", "qmgr");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Platform.TenantPurgeCertificate", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("BackgroundJobsRemoved")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("CacheKeysDropped")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DurationMs")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("FilesDeleted")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("FilesFailed")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("PurgedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PurgedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("RowsDeletedJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<int>("RowsRetained")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VerificationDetail")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("VerificationPassed")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "PurgedAt");
+
+                    b.ToTable("tenant_purge_certificates", "qmgr");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Platform.TenantTombstone", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EmailDomainHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("HadFinancialRecords")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("NameKeyHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("PurgedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PurgedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid?>("PurgedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("StatutoryRetentionUntil")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EmailDomainHash");
+
+                    b.HasIndex("NameKeyHash");
+
+                    b.HasIndex("OrganizationId")
+                        .IsUnique();
+
+                    b.ToTable("tenant_tombstones", "qmgr");
                 });
 
             modelBuilder.Entity("QMgr.Domain.Entities.Queue.Appointment", b =>
@@ -4089,7 +4284,34 @@ namespace QMgr.Infrastructure.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<DateTime?>("MinutesApprovedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("MinutesApprovedAtDutyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("MinutesApprovedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("MinutesCirculatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("MinutesJson")
+                        .HasColumnType("jsonb");
+
                     b.Property<Guid?>("MinutesMediaContentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("MinutesReminderStage")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("MinutesStatus")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("MinutesUpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("MinutesUpdatedByUserId")
                         .HasColumnType("uuid");
 
                     b.Property<Guid>("OrganizationId")
@@ -4177,6 +4399,10 @@ namespace QMgr.Infrastructure.Migrations
                     b.HasIndex("SeriesId")
                         .HasDatabaseName("idx_staff_duties_series")
                         .HasFilter("\"SeriesId\" IS NOT NULL");
+
+                    b.HasIndex("BranchId", "MinutesStatus")
+                        .HasDatabaseName("idx_staff_duties_minutes_status")
+                        .HasFilter("\"MinutesStatus\" <> 0");
 
                     b.HasIndex("BranchId", "StartsAt")
                         .HasDatabaseName("idx_staff_duties_branch_start");
@@ -4374,6 +4600,78 @@ namespace QMgr.Infrastructure.Migrations
                         .HasDatabaseName("idx_staff_duty_report_notes_report");
 
                     b.ToTable("StaffDutyReportNotes", "qmgr");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Staff.StaffMinuteAction", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("AssignedUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("BranchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CompletedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CompletionNote")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("DueAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("DutyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ReminderStage")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DutyId")
+                        .HasDatabaseName("idx_staff_minute_actions_duty");
+
+                    b.HasIndex("AssignedUserId", "Status")
+                        .HasDatabaseName("idx_staff_minute_actions_assignee")
+                        .HasFilter("\"AssignedUserId\" IS NOT NULL");
+
+                    b.HasIndex("BranchId", "Status", "DueAt")
+                        .HasDatabaseName("idx_staff_minute_actions_branch_due");
+
+                    b.ToTable("StaffMinuteActions", "qmgr");
                 });
 
             modelBuilder.Entity("QMgr.Domain.Entities.Staff.StaffNotice", b =>
@@ -6753,6 +7051,17 @@ namespace QMgr.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Report");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Staff.StaffMinuteAction", b =>
+                {
+                    b.HasOne("QMgr.Domain.Entities.Staff.StaffDuty", "Duty")
+                        .WithMany()
+                        .HasForeignKey("DutyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Duty");
                 });
 
             modelBuilder.Entity("QMgr.Domain.Entities.Staff.StaffNotice", b =>

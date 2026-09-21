@@ -29,6 +29,7 @@ public class AuthController : ControllerBase
     private readonly IEmailSender _emailSender;
     private readonly IPlatformSettingsService _platformSettingsService;
     private readonly QMgr.Infrastructure.Services.IActivityLogger _activity;
+    private readonly QMgr.Infrastructure.Email.IEmailBrandService _emailBrands;
 
     public AuthController(
         IUnitOfWork unitOfWork,
@@ -39,8 +40,10 @@ public class AuthController : ControllerBase
         ITenantContextAccessor tenantAccessor,
         IEmailSender emailSender,
         IPlatformSettingsService platformSettingsService,
+        QMgr.Infrastructure.Email.IEmailBrandService emailBrands,
         QMgr.Infrastructure.Services.IActivityLogger activity)
     {
+        _emailBrands = emailBrands;
         _activity = activity;
         _unitOfWork = unitOfWork;
         _dbContext = dbContext;
@@ -579,7 +582,7 @@ public class AuthController : ControllerBase
                 user.PasswordResetTokenExpiry = DateTime.UtcNow.AddHours(1);
                 await _dbContext.SaveChangesAsync();
 
-                await SendPasswordResetEmailAsync(user.Email, user.FirstName, token);
+                await SendPasswordResetEmailAsync(user.Email, user.FirstName, token, user.OrganizationId);
                 _logger.LogInformation("Password reset requested for {Email}", user.Email);
             }
         }
@@ -679,25 +682,31 @@ public class AuthController : ControllerBase
         return Ok(new { message = "Your password has been reset. You can now sign in with your new password." });
     }
 
-    private async Task SendPasswordResetEmailAsync(string toEmail, string? firstName, string token)
+    private async Task SendPasswordResetEmailAsync(string toEmail, string? firstName, string token, Guid? organizationId = null)
     {
-        var saas = await _platformSettingsService.GetSettingsAsync<SaasSettings>("SaaS");
-        var baseUrl = (saas?.BaseUrl ?? "https://qmgr.app").TrimEnd('/');
+        var baseUrl = await _platformSettingsService.GetPublicWebBaseUrlAsync();
         var resetUrl = $"{baseUrl}/reset-password?email={Uri.EscapeDataString(toEmail)}&token={Uri.EscapeDataString(token)}";
 
-        var subject = "Reset your Q-Mgr password";
+        // A password-reset mail is the one a member of staff is most likely to look at twice,
+        // because they are checking it is genuine — so it is the one that most needs their own
+        // school's name on it rather than ours. Falls back to the platform brand for an
+        // organization that is not white-labelled, which is what it has always said.
+        var brand = await _emailBrands.ForOrganizationAsync(organizationId);
+
+        var subject = $"Reset your {brand.Name} password";
         var htmlBody = EmailTemplates.Layout(
             "Reset your password",
             firstName,
             new[]
             {
-                $"We received a request to reset the password on your {EmailTemplates.AppName} account. Click the button below to choose a new one.",
+                $"We received a request to reset the password on your {EmailTemplates.P(brand.Name)} account. Click the button below to choose a new one.",
                 "This link will expire in 1 hour."
             },
             "Reset Password",
             resetUrl,
             footerNote: "If you didn't request this, you can safely ignore this email; your password will not be changed.",
-            showLinkFallback: true);
+            showLinkFallback: true,
+            brand: brand);
 
         await _emailSender.SendAsync(toEmail, subject, htmlBody);
     }

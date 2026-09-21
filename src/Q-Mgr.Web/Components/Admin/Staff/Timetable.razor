@@ -32,9 +32,11 @@
             <p class="subtitle">@(canManage ? "Build a draft for the term, check it, and publish it to the staff." : "Who teaches what, where and when.")</p>
         </div>
         <div class="header-actions">
+            @* The open section's own buttons land here — see QPageActions. *@
+            <SectionOutlet SectionId="QPageActions.Id" />
             @if (detail != null)
             {
-                <QButton Text="Print" Icon="printer" Variant="secondary" OnClick="@(() => Navigation.NavigateTo($"/admin/timetable/{detail.Timetable.Id}/print?by={(by == "master" ? "class" : by)}"))" />
+                <QButton Text="Print" Icon="printer" Variant="secondary" OnClick="@(() => Navigation.NavigateTo(PrintUrl()))" />
             }
             @if (canManage)
             {
@@ -431,41 +433,41 @@
 
 <style>
     .tt-version { min-width: 260px; flex: 1 1 260px; max-width: 420px; }
-    .tt-version-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--qm-text-secondary); }
+    .tt-version-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: var(--qm-text-base); color: var(--qm-text-secondary); }
     .tt-version-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
     .tt-key { min-width: 220px; flex: 0 1 280px; }
     .tt-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin-top: 12px; }
     @@media (min-width: 1200px) { .tt-layout--side { grid-template-columns: minmax(0, 1fr) 340px; } }
     .tt-main, .tt-side { min-width: 0; }
     .tt-side { display: flex; flex-direction: column; gap: 14px; }
-    .tt-hint { font-size: 12.5px; color: var(--qm-text-muted); margin: 0 0 8px; }
-    .tt-muted { font-size: 12.5px; color: var(--qm-text-muted); margin: 6px 0 0; }
-    .tt-error { color: var(--qm-danger); font-size: 13px; margin: 8px 0 0; }
+    .tt-hint { font-size: var(--qm-text-sm); color: var(--qm-text-muted); margin: 0 0 8px; }
+    .tt-muted { font-size: var(--qm-text-sm); color: var(--qm-text-muted); margin: 6px 0 0; }
+    .tt-error { color: var(--qm-danger); font-size: var(--qm-text-base); margin: 8px 0 0; }
     .tt-lesson { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; text-align: left; padding: 4px 6px; margin: 0 0 3px;
                  background: var(--qm-bg-secondary); border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-primary); border-radius: var(--qm-radius-sm);
-                 color: var(--qm-text-primary); font-size: 12px; line-height: 1.3; cursor: pointer; min-height: 44px; }
-    .tt-lesson:hover { background: var(--qm-bg-hover, var(--qm-bg-secondary)); border-color: var(--qm-primary); }
-    .tt-lesson__subject { font-size: 12.5px; }
+                 color: var(--qm-text-primary); font-size: var(--qm-text-sm); line-height: 1.3; cursor: pointer; min-height: 44px; }
+    .tt-lesson:hover { background: var(--qm-bg-secondary); border-color: var(--qm-primary); }
+    .tt-lesson__subject { font-size: var(--qm-text-sm); }
     .tt-lesson__line, .tt-lesson__room { color: var(--qm-text-secondary); overflow-wrap: anywhere; }
     .tt-issues { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 420px; overflow-y: auto; }
     .tt-issues--modal { max-height: 220px; margin-bottom: 12px; }
-    .tt-issue { font-size: 12.5px; }
+    .tt-issue { font-size: var(--qm-text-sm); }
     .tt-issue__btn { display: flex; gap: 8px; align-items: flex-start; width: 100%; text-align: left; background: none; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 6px 8px; color: var(--qm-text-primary); cursor: pointer; }
     .tt-issue--hard .tt-issue__btn { border-left: 3px solid var(--qm-danger); }
     .tt-issue--soft .tt-issue__btn, .tt-issues--modal .tt-issue--soft { border-left: 3px solid var(--qm-warning); }
     .tt-issues--modal .tt-issue { padding: 4px 8px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); }
-    .tt-unplaced { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+    .tt-unplaced { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: var(--qm-text-sm); }
     .tt-unplaced li { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
     .tt-unplaced--done { opacity: .65; }
-    .tt-modal-head { margin: 4px 0 8px; font-size: 14px; font-family: var(--qm-font-display); }
+    .tt-modal-head { margin: 4px 0 8px; font-size: var(--qm-text-base); font-family: var(--qm-font-display); }
     .tt-slot-lessons { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
     .tt-slot-lessons li { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 8px 10px; }
-    .tt-slot-lesson { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; }
+    .tt-slot-lesson { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: var(--qm-text-base); }
     .tt-slot-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
     .tt-move { border-top: 1px solid var(--qm-border); padding-top: 10px; }
-    .tt-import-count { font-size: 13px; margin: 10px 0 6px; }
-    .tt-import-progress { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); margin-bottom: 10px; font-size: 13.5px; }
-    .tt-dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0 0 12px; font-size: 13.5px; }
+    .tt-import-count { font-size: var(--qm-text-base); margin: 10px 0 6px; }
+    .tt-import-progress { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); margin-bottom: 10px; font-size: var(--qm-text-base); }
+    .tt-dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0 0 12px; font-size: var(--qm-text-base); }
     .tt-dl dt { color: var(--qm-text-muted); }
     .tt-dl dd { margin: 0; }
 </style>
@@ -560,7 +562,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
-            Navigation.NavigateTo("/billing/modules");
+            Navigation.NavigateTo(BillingLinks.Modules);
             return;
         }
         hubTabs = await HubTabs.VisibleAsync(PermissionService, Sections);
@@ -666,6 +668,18 @@
     }
 
     // ---- Views ------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Carries the view KEY across to the print route, so printing while looking at one teacher prints
+    /// that teacher rather than all forty. Master is every class on one day and has no single key, so it
+    /// falls back to printing by class, which is what it was doing before.
+    /// </summary>
+    private string PrintUrl()
+    {
+        var axis = by == "master" ? "class" : by;
+        var url = $"/admin/timetable/{detail!.Timetable.Id}/print?by={axis}";
+        return by == "master" || string.IsNullOrEmpty(key) ? url : $"{url}&key={Uri.EscapeDataString(key)}";
+    }
 
     private IReadOnlyList<KeyOption> KeyOptions
     {

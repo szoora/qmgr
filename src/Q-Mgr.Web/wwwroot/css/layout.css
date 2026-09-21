@@ -71,7 +71,7 @@
     justify-content: center;
     cursor: pointer;
     transition: all 0.2s ease;
-    font-size: 22px;
+    font-size: var(--qm-text-stat);
 }
 
 [data-theme="dark"] .sidebar-toggle {
@@ -145,12 +145,12 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 20px;
+    font-size: var(--qm-text-xl);
     color: var(--qm-text-on-primary);
 }
 
 .brand-text {
-    font-size: 20px;
+    font-size: var(--qm-text-xl);
     font-weight: 700;
     font-family: 'Poppins', sans-serif;
     letter-spacing: -0.02em;
@@ -175,7 +175,7 @@
     justify-content: center;
     cursor: pointer;
     transition: all 0.2s ease;
-    font-size: 18px;
+    font-size: var(--qm-text-lg);
 }
 
 [data-theme="dark"] .header-btn {
@@ -212,7 +212,7 @@
     padding: 0 5px;
     background: var(--qm-danger);
     border-radius: var(--qm-radius-full);
-    font-size: 10px;
+    font-size: var(--qm-text-xs);
     font-weight: 600;
     color: var(--qm-text-on-primary);
     display: flex;
@@ -240,7 +240,7 @@
 }
 
 .header-datetime .date {
-    font-size: 11px;
+    font-size: var(--qm-text-xs);
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
@@ -254,7 +254,7 @@
 }
 
 .header-datetime .time {
-    font-size: 18px;
+    font-size: var(--qm-text-lg);
     font-weight: 600;
     font-family: 'JetBrains Mono', monospace;
 }
@@ -303,7 +303,7 @@
     height: 34px;
     border-radius: 50%;
     font-weight: 600;
-    font-size: 14px;
+    font-size: var(--qm-text-base);
 }
 
 /* Dropdown Menu */
@@ -399,7 +399,7 @@
     }
 
     .qm-sidebar.collapsed .nav-link i:first-child {
-        font-size: 20px;
+        font-size: var(--qm-text-xl);
         width: auto;
     }
 
@@ -450,7 +450,7 @@
     }
 
     .qm-sidebar.collapsed:hover .nav-link i:first-child {
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
         width: 24px;
     }
 
@@ -497,7 +497,7 @@
 }
 
 .sidebar-title {
-    font-size: 11px;
+    font-size: var(--qm-text-xs);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.15em;
@@ -536,12 +536,12 @@
     border-radius: var(--qm-radius-md);
     text-decoration: none;
     transition: all 0.2s ease;
-    font-size: 14px;
+    font-size: var(--qm-text-base);
     font-weight: 500;
 }
 
 .nav-link i:first-child {
-    font-size: 18px;
+    font-size: var(--qm-text-lg);
     width: 24px;
     text-align: center;
 }
@@ -587,7 +587,7 @@
     background: var(--qm-primary);
     color: var(--qm-text-on-primary);
     border-radius: var(--qm-radius-full);
-    font-size: 10px;
+    font-size: var(--qm-text-xs);
     font-weight: 700;
     line-height: 1;
 }
@@ -595,7 +595,7 @@
 /* Submenu Arrow */
 .submenu-arrow {
     margin-left: auto;
-    font-size: 12px;
+    font-size: var(--qm-text-sm);
     transition: transform 0.2s ease;
 }
 
@@ -628,12 +628,12 @@
     padding: 10px 16px 10px 52px;
     border-radius: var(--qm-radius-md);
     text-decoration: none;
-    font-size: 13px;
+    font-size: var(--qm-text-base);
     transition: all 0.2s ease;
 }
 
 .submenu a i {
-    font-size: 14px;
+    font-size: var(--qm-text-base);
     width: 18px;
     text-align: center;
 }
@@ -726,7 +726,7 @@
 
 .branch-label {
     display: block;
-    font-size: 10px;
+    font-size: var(--qm-text-xs);
     text-transform: uppercase;
     letter-spacing: 0.1em;
 }
@@ -741,7 +741,7 @@
 
 .branch-name {
     display: block;
-    font-size: 14px;
+    font-size: var(--qm-text-base);
     font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
@@ -794,7 +794,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 0 24px;
-    font-size: 13px;
+    font-size: var(--qm-text-base);
 }
 
 [data-theme="dark"] .qm-footer {
@@ -915,7 +915,7 @@
 }
 
 .branch-item i {
-    font-size: 20px;
+    font-size: var(--qm-text-xl);
 }
 
 .branch-item-info {
@@ -937,7 +937,7 @@
 
 .branch-item-address {
     display: block;
-    font-size: 12px;
+    font-size: var(--qm-text-sm);
 }
 
 [data-theme="dark"] .branch-item-address {
@@ -1015,7 +1015,7 @@
     align-items: center;
     gap: 8px;
     padding: 12px 20px;
-    font-size: 13px;
+    font-size: var(--qm-text-base);
     color: var(--qm-text-secondary);
     text-decoration: none;
     transition: background 0.15s ease, color 0.15s ease;
@@ -1042,8 +1042,8 @@
 }
 
 .notifications-empty i:not(.q-btn__icon) {
-    font-size: 48px;
-    margin-bottom: 12px;
+    font-size: var(--qm-empty-icon);
+    margin-bottom: 4px;
 }
 
 .notification-item {
@@ -1117,7 +1117,7 @@
 .notification-title {
     display: block;
     font-weight: 600;
-    font-size: 14px;
+    font-size: var(--qm-text-base);
 }
 
 [data-theme="dark"] .notification-title {
@@ -1130,7 +1130,7 @@
 
 .notification-message {
     display: block;
-    font-size: 13px;
+    font-size: var(--qm-text-base);
     margin-top: 2px;
 }
 
@@ -1144,7 +1144,7 @@
 
 .notification-time {
     display: block;
-    font-size: 11px;
+    font-size: var(--qm-text-xs);
     margin-top: 6px;
 }
 
@@ -1193,7 +1193,7 @@
     }
 
     .qm-sidebar .nav-link i:first-child {
-        font-size: 20px;
+        font-size: var(--qm-text-xl);
         width: auto;
     }
 
@@ -1241,7 +1241,7 @@
     }
 
     .qm-sidebar:hover .nav-link i:first-child {
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
         width: 24px;
     }
 
@@ -1321,7 +1321,7 @@
     }
 
     .brand-text {
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
     }
 }
 
@@ -1369,7 +1369,7 @@
     }
 
     .qm-sidebar.expanded .nav-link i:first-child {
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
         width: 24px;
     }
 
@@ -1413,7 +1413,7 @@
     .brand-icon {
         width: 32px;
         height: 32px;
-        font-size: 16px;
+        font-size: var(--qm-text-md);
         border-radius: var(--qm-radius-md);
     }
 
@@ -1446,14 +1446,14 @@
     .q-avatar.header-avatar {
         width: 32px;
         height: 32px;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
     }
 
     /* Notification badge adjustments */
     .notification-badge {
         min-width: 16px;
         height: 16px;
-        font-size: 9px;
+        font-size: var(--qm-text-xs);
     }
 
     .notifications-panel {
@@ -1497,7 +1497,7 @@
 
     /* Footer for small screens */
     .qm-footer {
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         padding: 10px 12px;
     }
 
@@ -1535,7 +1535,7 @@
         width: 32px;
         height: 32px;
         border-radius: var(--qm-radius-md);
-        font-size: 16px;
+        font-size: var(--qm-text-md);
     }
 
     .sidebar-toggle,
@@ -1793,7 +1793,7 @@
 
 /* One page title and one body size inside the app shell. Print sheets and public screens are outside
    .qm-main and keep their own paper and large-format sizes. */
-.qm-main { font-size: 14px; }
+.qm-main { font-size: var(--qm-text-base); }
 
 .qm-main h1 {
     font-family: var(--qm-font-display);
@@ -1804,14 +1804,29 @@
        it need not also be the tallest, and on a data-driven screen those pixels are a row of data.
        uniform-check.mjs asserts the computed size against this number on every page, AND that the
        rule winning the cascade is this one. */
-    font-size: 20px;
+    font-size: var(--qm-text-xl);
     font-weight: 700;
     line-height: 1.25;
 }
 
 @media (max-width: 640px) {
-    .qm-main h1 { font-size: 18px; }
+    .qm-main h1 { font-size: var(--qm-text-lg); }
 }
+
+/* THE OTHER HEADINGS ARE ON THE SCALE TOO (2026-09-19). Only the h1 had a size. An h2, h3 or h4 with
+   no class rule of its own fell through to BOOTSTRAP's defaults — 32, 28 and 24px — so a section
+   heading like "Additional Metrics" or a role name in Users & Roles rendered LARGER than the page
+   title above it. Found by type-sweep-all.mjs across 54 pages.
+
+   :where() keeps these at the specificity of a bare element selector, so any class rule a component
+   sets (.q-card__title, .q-empty__title, a page's own heading class) still wins, and this only
+   catches a heading nobody sized. It beats Bootstrap's equal-specificity rule on load order alone:
+   bootstrap.min.css is linked first in App.razor. */
+:where(.qm-main) h2 { font-size: var(--qm-text-lg); }
+:where(.qm-main) h3,
+:where(.qm-main) h4 { font-size: var(--qm-text-md); }
+:where(.qm-main) h5,
+:where(.qm-main) h6 { font-size: var(--qm-text-base); }
 
 
 
@@ -1896,7 +1911,37 @@
     /* The vertical rhythm every page block is built from. */
     --qm-page-header-gap: 6px;      /* below the title, above the rule. Was 8, 12, then 44. */
     --qm-block-gap: 10px;           /* between cards and sections; was 12, 16, then 24. */
-    --qm-field-gap: 12px;           /* between form fields; was 14, and 20 before that. */
+    --qm-field-gap: 12px;
+
+    /* An empty state: one line of news, not a poster (2026-09-19). Both empty-state families read
+       these, and no page sets its own. */
+    --qm-empty-pad: 18px 16px;
+    --qm-empty-icon: 28px;           /* between form fields; was 14, and 20 before that. */
+
+    /* =========================================================================================
+       ONE TYPE SCALE (2026-09-19). Six steps and a figure size — that is all of them.
+
+       Measured before it existed, with scripts/e2e/browser/type-audit.mjs: EIGHTEEN distinct
+       sizes were on screen across fifteen pages — 10, 11, 11.5, 12, 12.5, 12.8, 13, 13.5, 13.6,
+       14, 15, 15.2, 16, 18, 20, 22, 24, 28 — most of them accidents of a rem value against a
+       16px root (0.8rem = 12.8px, 0.85rem = 13.6px, 0.95rem = 15.2px). Body text was 14px and
+       read as heavy on a data screen; it is 13px now, the same size as the text in a control, so
+       a table cell and the input above it finally agree.
+
+       CHANGE THE TOKEN, NEVER A PAGE. A raw px font-size in a page rule is the drift coming back,
+       and type-audit.mjs fails when the count of distinct sizes climbs.
+
+       The excluded set keeps its own sizes and is deliberately outside this: the kiosk, the public
+       display and signage, public feedback, booking, ticket status, shared documents, the print
+       sheets and the sign-in pages are read across a room or off paper.
+       ========================================================================================= */
+    --qm-text-xs:   11px;   /* chip, stat label, table meta, timestamp */
+    --qm-text-sm:   12px;   /* secondary text, hints, table cells */
+    --qm-text-base: 13px;   /* body, controls, almost everything */
+    --qm-text-md:   15px;   /* card title, h3, h4 */
+    --qm-text-lg:   17px;   /* h2, section heading */
+    --qm-text-xl:   20px;   /* h1, the page title */
+    --qm-text-stat: 20px;   /* a figure on a stat tile — the one place a number outranks its label */
 }
 
 /* A page is the frame the content sits in and has no padding of its own — the gutter belongs to
@@ -1937,3 +1982,35 @@
 /* A field that genuinely needs the whole width inside a row says so. */
 .form-row .form-group--wide,
 .form-row .form-row__wide { grid-column: 1 / -1; }
+
+/* Mandatory-field indicators (2026-09-19). A form with required fields opens with one line saying what
+   the asterisk means; each required label carries the same asterisk (QInput/QSelect Required="true",
+   .q-input__required). A form that refused to submit says so once, under its fields, in .form-error —
+   the per-field messages say what is wrong with each. */
+.form-required-note {
+    margin: 0 0 var(--qm-field-gap);
+    font-size: var(--qm-text-xs);
+    color: var(--qm-text-muted);
+}
+
+.form-error {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: var(--qm-field-gap) 0 0;
+    font-size: var(--qm-text-sm);
+    color: var(--qm-danger);
+}
+
+/* Radzen's data grid carries its own 14px (0.875rem), set through its own custom properties on a
+   selector of higher specificity than anything in this file (`.rz-datatable-data td .rz-cell-data`),
+   so a plain font-size rule here lost — measured, not assumed. It was the last off-scale size on a
+   data page after the 2026-09-19 type sweep. Pointing Radzen's VARIABLES at the scale wins without a
+   specificity fight, and keeps working if Radzen reshuffles its selectors. */
+.qm-main {
+    --rz-grid-cell-font-size: var(--qm-text-base);
+    --rz-grid-header-font-size: var(--qm-text-sm);
+    --rz-grid-filter-font-size: var(--qm-text-base);
+    --rz-pager-summary-font-size: var(--qm-text-sm);
+    --rz-body-font-size: var(--qm-text-base);
+}

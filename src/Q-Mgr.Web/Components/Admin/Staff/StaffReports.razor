@@ -19,30 +19,31 @@
 }
 
 <div class="admin-page">
-<div class="page-header">
-    @if (!Embedded)
-    {
-        <div class="header-content">
-            <h1>Staff Performance Reports</h1>
-            <p class="subtitle">
-                @if (reports?.ScopedToDepartments.Any() == true)
-                {
-                    <text>How the departments you head are doing this period, by department, parameter and observer.</text>
-                }
-                else
-                {
-                    <text>How the branch is doing this period, by department, parameter, band and observer.</text>
-                }
-            </p>
-        </div>
-    }
-    <div class="header-actions">
-        <QSelect TValue="string" TItem="StaffPeriods.Option" Value="@period" ValueChanged="@OnPeriodChanged" Items="@periodOptions"
-                 TextSelector="@(p => p.Label)" ValueSelector="@(p => p.Key)" Placeholder="Period" Class="rp-period" />
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1>Staff Performance Reports</h1>
+        <p class="subtitle">
+            @if (reports?.ScopedToDepartments.Any() == true)
+            {
+                <text>How the departments you head are doing this period, by department, parameter and observer.</text>
+            }
+            else
+            {
+                <text>How the branch is doing this period, by department, parameter, band and observer.</text>
+            }
+        </p>
+    </Title>
+    <Actions>
         <QButton Text="Teaching reports" Icon="journal-check" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/timetable?tab=reports"))" />
         <QButton Text="Print / publish" Icon="printer" Variant="secondary" OnClick="@(() => Navigation.NavigateTo($"/admin/staff/reports/report?period={Uri.EscapeDataString(period)}"))" Disabled="@(reports == null)" />
-    </div>
-</div>
+    </Actions>
+</QPageActions>
+
+@* The period is a FILTER, so it sits in the filter bar — the title row holds actions only. *@
+<QFilterBar>
+    <QSelect TValue="string" TItem="StaffPeriods.Option" Value="@period" ValueChanged="@OnPeriodChanged" Items="@periodOptions"
+             TextSelector="@(p => p.Label)" ValueSelector="@(p => p.Key)" Placeholder="Period" Class="rp-period" />
+</QFilterBar>
 
     <StaffScopeNote Departments="@(reports?.ScopedToDepartments)" Noun="figures" />
 
@@ -313,21 +314,21 @@
     .report-columns { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 16px; }
     .report-columns > * { flex: 1 1 380px; min-width: 0; }
     .rp-card { min-width: 0; margin-bottom: 16px; }
-    .chart-card h4 { margin: 0 0 16px; font-size: 16px; font-weight: 600; }
-    .chart-empty { font-size: 13px; color: var(--qm-text-muted); margin: 0; }
+    .chart-card h4 { margin: 0 0 16px; font-size: var(--qm-text-md); font-weight: 600; }
+    .chart-empty { font-size: var(--qm-text-base); color: var(--qm-text-muted); margin: 0; }
     .table-wrap { overflow-x: auto; }
     .rp-table th { white-space: nowrap; }
     .rp-num { text-align: right; font-variant-numeric: tabular-nums; }
     .rp-person { display: flex; align-items: center; gap: 8px; }
     .rp-row { cursor: pointer; }
-    .rp-row:hover td { background: var(--qm-bg-hover, var(--qm-bg-secondary)); }
-    .rp-muted { color: var(--qm-text-muted); font-size: 13px; margin: 0; line-height: 1.5; }
-    .rp-hint { margin-top: 10px; font-size: 12px; }
+    .rp-row:hover td { background: var(--qm-bg-secondary); }
+    .rp-muted { color: var(--qm-text-muted); font-size: var(--qm-text-base); margin: 0; line-height: 1.5; }
+    .rp-hint { margin-top: 10px; font-size: var(--qm-text-sm); }
     .rp-coverage { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
-    .rp-list { margin: 0; padding-left: 18px; font-size: 13.5px; display: flex; flex-direction: column; gap: 4px; }
+    .rp-list { margin: 0; padding-left: 18px; font-size: var(--qm-text-base); display: flex; flex-direction: column; gap: 4px; }
     .rp-list a { color: var(--qm-text-primary); font-weight: 500; }
     .rp-list a:hover { color: var(--qm-primary); }
-    .rp-link { display: inline-block; margin-top: 10px; font-size: 13px; color: var(--qm-primary); }
+    .rp-link { display: inline-block; margin-top: 10px; font-size: var(--qm-text-base); color: var(--qm-primary); }
     .rp-pair { display: flex; flex-wrap: wrap; gap: 6px; }
     .rp-pair--wide td { background: var(--qm-bg-secondary); }
 </style>
@@ -390,7 +391,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
-            Navigation.NavigateTo("/billing/modules");
+            Navigation.NavigateTo(BillingLinks.Modules);
             return;
         }
 

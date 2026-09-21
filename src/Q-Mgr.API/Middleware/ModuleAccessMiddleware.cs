@@ -100,7 +100,7 @@ public class ModuleAccessMiddleware
             error = "MODULE_NOT_PURCHASED",
             module = requiredModule,
             message = $"The '{requiredModule}' module is not active for your organization. Add it from Billing to access this feature.",
-            purchaseUrl = "/billing/modules"
+            purchaseUrl = BillingLinks.Modules
         });
     }
 

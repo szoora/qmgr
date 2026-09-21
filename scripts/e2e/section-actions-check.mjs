@@ -5,6 +5,11 @@
 //
 // Found on 2026-09-19: StaffNotices wrapped its whole page-header in @if (!Embedded), so the
 // Setup hub's Notices tab offered no "New notice" at all.
+//
+// And the second half, found the same day ("standardise the location of the action buttons"): a
+// section that KEEPS its buttons but renders them in a band of its own — `<div class="header-actions">`
+// or a `toolbar-right` — puts them under the hub's tab strip, on the left, instead of on the hub's
+// title row. A section's page actions go through QPageActions, which hands them to the hub.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -15,6 +20,7 @@ const bad = [];
 for (const f of files) {
   const s = fs.readFileSync(f, 'utf8').replace(/\r\n/g, '\n');
   if (!/\[Parameter\] public bool Embedded/.test(s)) continue;
+  if (f.endsWith("QPageActions.razor")) continue; // the one home for the band itself
   const rel = f.replace(/\\/g, '/').replace('src/Q-Mgr.Web/Components/', '');
 
   // Find each `@if (!Embedded) { ... }` block and see whether an actions row is inside it.
@@ -31,6 +37,10 @@ for (const f of files) {
       bad.push({ rel, buttons: buttons.length ? buttons : ['(an actions row)'] });
     }
   }
+
+  // A section rendering its own action band instead of QPageActions.
+  const own = s.match(/class="(header-actions|toolbar-right|doclib-actions)"/);
+  if (own) bad.push({ rel, buttons: [`its own ${own[1]} band — use QPageActions`] });
 }
 
 for (const b of bad) console.log(`  ${b.rel.padEnd(44)} hides: ${b.buttons.join(', ')}`);

@@ -137,6 +137,17 @@ public interface IStaffPerformanceApiService
     Task<StaffRegisterDto> SubmitRegisterAsync(Guid branchId, Guid id, SubmitRegisterRequest request);
     Task<StaffDutyDto> AttachMinutesAsync(Guid branchId, Guid id, AttachMinutesRequest request);
 
+    // Minutes of a meeting (2026-09-20). Note the save is .../minutes/content: AttachMinutesAsync
+    // above already owns PUT .../minutes, and two actions on one method and path is a runtime
+    // AmbiguousMatchException that no build reports.
+    Task<DutyMinutesDto> GetMinutesAsync(Guid branchId, Guid dutyId);
+    Task<DutyMinutesDto> SaveMinutesAsync(Guid branchId, Guid dutyId, SaveMinutesRequest request);
+    Task<DutyMinutesDto> CirculateMinutesAsync(Guid branchId, Guid dutyId);
+    Task<DutyMinutesDto> ApproveMinutesAsync(Guid branchId, Guid dutyId, ApproveMinutesRequest request);
+    Task<DutyMinutesDto> CorrectMinutesAsync(Guid branchId, Guid dutyId, CorrectMinutesRequest request);
+    Task<List<MinuteActionDto>> GetMyMinuteActionsAsync(Guid branchId, bool includeDone = false);
+    Task<MinuteActionDto> CompleteMinuteActionAsync(Guid branchId, Guid actionId, CompleteMinuteActionRequest request);
+
     // Notices
     Task<List<StaffNoticeDto>> GetMyNoticesAsync(Guid branchId);
     Task<List<StaffNoticeDto>> GetManagedNoticesAsync(Guid branchId, bool includeInactive = false);
@@ -403,6 +414,13 @@ public class StaffPerformanceApiService : IStaffPerformanceApiService
     public Task<StaffRegisterDto> GetRegisterAsync(Guid branchId, Guid id) => GetAsync<StaffRegisterDto>($"{B(branchId)}/duties/{id}/register");
     public Task<StaffRegisterDto> SubmitRegisterAsync(Guid branchId, Guid id, SubmitRegisterRequest request) => SendAsync<StaffRegisterDto>(HttpMethod.Post, $"{B(branchId)}/duties/{id}/register", request);
     public Task<StaffDutyDto> AttachMinutesAsync(Guid branchId, Guid id, AttachMinutesRequest request) => SendAsync<StaffDutyDto>(HttpMethod.Put, $"{B(branchId)}/duties/{id}/minutes", request);
+    public Task<DutyMinutesDto> GetMinutesAsync(Guid branchId, Guid dutyId) => GetAsync<DutyMinutesDto>($"{B(branchId)}/duties/{dutyId}/minutes");
+    public Task<DutyMinutesDto> SaveMinutesAsync(Guid branchId, Guid dutyId, SaveMinutesRequest request) => SendAsync<DutyMinutesDto>(HttpMethod.Put, $"{B(branchId)}/duties/{dutyId}/minutes/content", request);
+    public Task<DutyMinutesDto> CirculateMinutesAsync(Guid branchId, Guid dutyId) => SendAsync<DutyMinutesDto>(HttpMethod.Post, $"{B(branchId)}/duties/{dutyId}/minutes/circulate");
+    public Task<DutyMinutesDto> ApproveMinutesAsync(Guid branchId, Guid dutyId, ApproveMinutesRequest request) => SendAsync<DutyMinutesDto>(HttpMethod.Post, $"{B(branchId)}/duties/{dutyId}/minutes/approve", request);
+    public Task<DutyMinutesDto> CorrectMinutesAsync(Guid branchId, Guid dutyId, CorrectMinutesRequest request) => SendAsync<DutyMinutesDto>(HttpMethod.Post, $"{B(branchId)}/duties/{dutyId}/minutes/corrections", request);
+    public Task<List<MinuteActionDto>> GetMyMinuteActionsAsync(Guid branchId, bool includeDone = false) => GetAsync<List<MinuteActionDto>>($"{B(branchId)}/minutes/my-actions{Q(("includeDone", includeDone ? "true" : null))}");
+    public Task<MinuteActionDto> CompleteMinuteActionAsync(Guid branchId, Guid actionId, CompleteMinuteActionRequest request) => SendAsync<MinuteActionDto>(HttpMethod.Post, $"{B(branchId)}/minutes/actions/{actionId}/complete", request);
 
     // ---- Notices ----
     public Task<List<StaffNoticeDto>> GetMyNoticesAsync(Guid branchId) => GetAsync<List<StaffNoticeDto>>($"{B(branchId)}/notices");

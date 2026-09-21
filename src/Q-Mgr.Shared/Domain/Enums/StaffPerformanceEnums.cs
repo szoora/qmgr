@@ -195,3 +195,40 @@ public enum TimetableStatus
     Published = 1,
     Archived = 2
 }
+
+// ---- Minutes of a meeting (2026-09-20). See Application/DTOs/MinutesDto.cs for the standards these follow. ----
+
+/// <summary>
+/// Where a set of minutes is in its life. The gap between Draft and Approved is the whole legal
+/// point — minutes become the official record when the body ADOPTS them, normally at its next
+/// meeting — so it is a stored status, not an inference from which fields happen to be filled.
+/// </summary>
+public enum MinutesStatus
+{
+    /// <summary>Nothing written for this meeting yet.</summary>
+    None = 0,
+    /// <summary>Being written. Readable by the people who may write them, and by nobody else.</summary>
+    Draft = 1,
+    /// <summary>Circulated to the people who were expected, for correction before adoption.</summary>
+    Circulated = 2,
+    /// <summary>Adopted. The official record; every change from here is an append-only correction.</summary>
+    Approved = 3
+}
+
+/// <summary>How a motion was decided. Deferred and Noted are real outcomes and are lost if only carried/not-carried exist.</summary>
+public enum MinutesDecisionOutcome
+{
+    Carried = 0,
+    NotCarried = 1,
+    Deferred = 2,
+    /// <summary>Agreed without a formal vote — the common case in a school staff meeting.</summary>
+    Noted = 3
+}
+
+/// <summary>An action point's state. Cancelled rather than deleted: the minutes said it, so the record keeps it.</summary>
+public enum MinuteActionStatus
+{
+    Open = 0,
+    Done = 1,
+    Cancelled = 2
+}

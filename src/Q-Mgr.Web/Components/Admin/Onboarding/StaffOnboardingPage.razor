@@ -10,6 +10,7 @@
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
 @inject IJSRuntime JS
+@inject IOrganizationApiService OrganizationApi
 @inject NavigationManager Navigation
 @inject HttpClient Http
 @inject System.Text.Json.JsonSerializerOptions JsonOptions
@@ -29,21 +30,18 @@
 }
 
 <div class="admin-page">
-    <div class="page-header">
-        @if (!Embedded)
-        {
-            <div class="header-content">
-                <h1>Staff Onboarding<QInfo Text="Getting staff signed in: who still has to, a new temporary password or invitation for anyone stuck, and the join link for people to ask for an account themselves." Label="Staff Onboarding" /></h1>
-                <p class="subtitle">Getting staff signed in: who still has to, a new temporary password or invitation for anyone stuck, and the join link for people to ask for an account themselves.</p>
-            </div>
-        }
-        @if (pendingJoinRequests > 0)
-        {
-            <div class="header-actions">
+    <QPageActions Embedded="@Embedded">
+        <Title>
+            <h1>Staff Onboarding<QInfo Text="Getting staff signed in: who still has to, a new temporary password or invitation for anyone stuck, and the join link for people to ask for an account themselves." Label="Staff Onboarding" /></h1>
+            <p class="subtitle">Getting staff signed in: who still has to, a new temporary password or invitation for anyone stuck, and the join link for people to ask for an account themselves.</p>
+        </Title>
+        <Actions>
+            @if (pendingJoinRequests > 0)
+            {
                 <QButton Text="@($"{pendingJoinRequests} join request{(pendingJoinRequests == 1 ? "" : "s")} waiting")" Icon="person-check" Variant="primary" OnClick="@(() => Navigation.NavigateTo("/admin/users?tab=requests"))" />
-            </div>
-        }
-    </div>
+            }
+        </Actions>
+    </QPageActions>
 
     @if (moduleMissing)
     {
@@ -176,7 +174,11 @@
     <div class="tps-overlay ob-board" role="dialog" aria-modal="true" aria-label="Join link noticeboard sheet">
         <QPrintSheet SheetId="ob-board-sheet" Title="Join link" OnBack="@(() => showNoticeboard = false)" BackText="Close">
             <div class="ob-board-sheet">
-                <h1>Join @organizationName on Q-Mgr</h1>
+                @* The print-sheet audit (white-label plan, C3) found this: a poster a school pins
+                   up in its own staffroom carrying OUR name, on the one printed surface a
+                   white-labelling tenant is most likely to put on a wall. The other eight sheets
+                   already fetched branding; this one had none at all. *@
+                <h1>Join @organizationName@(brandingRemovesAttribution ? "" : " on Q-Mgr")</h1>
                 <p>Staff: scan the code or type the address to ask for your account. An administrator will approve you.</p>
                 <div id="ob-board-qr" class="ob-board-qr"></div>
                 <p class="ob-board-url">@JoinUrl</p>
@@ -187,23 +189,23 @@
 }
 
 <style>
-    .ob-lede { font-size: 13px; color: var(--qm-text-secondary); margin: 0 0 10px; }
-    .ob-sub { font-size: 12.5px; color: var(--qm-text-muted); }
+    .ob-lede { font-size: var(--qm-text-base); color: var(--qm-text-secondary); margin: 0 0 10px; }
+    .ob-sub { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
     .ob-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; padding: 10px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); }
     .ob-actions { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; margin-top: 10px; }
     .ob-actions > * { min-width: 0; }
     .ob-link { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin: 12px 0; padding: 12px; border: 1px solid var(--qm-warning); border-radius: var(--qm-radius-md); }
     .ob-link-text { flex: 1 1 260px; min-width: 0; display: grid; gap: 6px; }
-    .ob-url { overflow-wrap: anywhere; font-size: 13px; }
+    .ob-url { overflow-wrap: anywhere; font-size: var(--qm-text-base); }
     .ob-link-actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .ob-qr { background: #fff; padding: 8px; border-radius: var(--qm-radius-sm); }
     .ob-save { margin-top: 14px; display: flex; justify-content: flex-end; }
-    .ob-table-title { margin: 18px 0 2px; font-size: 15px; }
+    .ob-table-title { margin: 18px 0 2px; font-size: var(--qm-text-md); }
     .ob-board-sheet { text-align: center; padding-top: 20mm; }
     .ob-board-sheet h1 { font-size: 22pt; margin: 0 0 8px; }
     .ob-board-qr { display: flex; justify-content: center; margin: 14mm 0 8mm; }
     .ob-board-url { font-family: "Courier New", monospace; font-size: 11pt; overflow-wrap: anywhere; }
-    .tps-overlay { position: fixed; inset: 0; z-index: 1200; overflow: auto; background: var(--qm-bg-body, #f3f3f3); }
+    .tps-overlay { position: fixed; inset: 0; z-index: 1200; overflow: auto; background: #f3f3f3; /* fixed paper backdrop: this overlay previews a print sheet */ }
     @@media print {
         body * { visibility: hidden !important; }
         .ob-board, .ob-board * { visibility: visible !important; }
@@ -228,6 +230,12 @@
     private int pendingJoinRequests;
     private Guid branchId;
     private string organizationName = string.Empty;
+
+    /// <summary>
+    /// Whether the printed join poster drops "on Q-Mgr". Defaults to false, so a failed branding
+    /// fetch leaves our name on rather than silently taking it off.
+    /// </summary>
+    private bool brandingRemovesAttribution;
     private OnboardingStatusDto? status;
     private StaffOnboardingSettingsDto? settings;
     private SaveStaffOnboardingSettingsRequest form = new();
@@ -261,6 +269,10 @@
         }
 
         organizationName = (await AuthService.GetCurrentUserAsync())?.OrganizationName ?? string.Empty;
+
+        var branding = await OrganizationApi.GetMyBrandingAsync();
+        if (branding.Resolved && !string.IsNullOrWhiteSpace(branding.BrandName)) organizationName = branding.BrandName!;
+        brandingRemovesAttribution = branding.AttributionRemoved;
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
         TrackBranch();

@@ -1,0 +1,157 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+@*
+    THE ONE HOME FOR A LIST PAGE'S BAR (Phase 1 of docs/plans/LIST_PAGE_STANDARDISATION.md).
+
+    Lifted from StaffRegister, which was reworked on 2026-09-20 after being reported against a real
+    staff meeting. Extracted BEFORE it was copied into fourteen pages by hand, because a filter that
+    decides what a bulk action reaches is the worst possible place for a second copy that drifts.
+
+    It is a state HOLDER and a renderer, not a filter engine: the page computes its own visible rows
+    and owns its own selection, because only the page knows what its rows are. What lives here is the
+    shape — chips with counts, a search box, "select all shown", and the bulk row that appears when
+    something is ticked.
+
+    THE RULE THE COMPONENT CANNOT ENFORCE, and every caller must: a selection may only ever cover
+    rows the reader can SEE. Call PruneSelection (or its equivalent) on every filter and search
+    change, or "apply to 20 selected" silently reaches people the filter is hiding — which is the
+    worst available bulk bug and the reason this component takes `VisibleCount` rather than a total.
+*@
+
+<div class="q-bulkbar @Class">
+    @if (Progress is { } p && p.Total > 0)
+    {
+        <div class="q-bulkbar__progress" role="img" aria-label="@($"{p.Done} of {p.Total} {p.Noun}")">
+            <div class="q-bulkbar__fill" style="width:@(p.Done * 100 / p.Total)%"></div>
+        </div>
+    }
+
+    <div class="q-bulkbar__row">
+        @if (Filters is { Count: > 0 })
+        {
+            <div class="q-bulkbar__filters" role="group" aria-label="Filter the list">
+                @foreach (var f in Filters)
+                {
+                    var on = string.Equals(f.Key, ActiveFilter, StringComparison.OrdinalIgnoreCase);
+                    <button type="button" class="q-bulkbar__chip @(on ? "q-bulkbar__chip--on" : "")"
+                            aria-pressed="@(on ? "true" : "false")" @onclick="@(() => PickFilter(f.Key))">
+                        @f.Label<span class="q-bulkbar__n">@f.Count</span>
+                    </button>
+                }
+            </div>
+        }
+        @Start
+        @if (ShowSearch)
+        {
+            <QInput TValue="string" Value="@Search" ValueChanged="@OnSearch" Class="q-bulkbar__search"
+                    Placeholder="@SearchPlaceholder" IconLeft="search" MaxLength="80" />
+        }
+    </div>
+
+    @if (ShowSelection)
+    {
+        <div class="q-bulkbar__row q-bulkbar__row--bulk">
+            @* aria-label, never Label: QCheckbox prints Label as visible text and the count is already said. *@
+            <QCheckbox Value="@AllSelected" ValueChanged="@OnSelectAll" Class="q-bulkbar__all"
+                       Label="@($"Select all {VisibleCount} shown")" Disabled="@(VisibleCount == 0)" />
+
+            @if (SelectedCount > 0)
+            {
+                <div class="q-bulkbar__bulk" role="group" aria-label="Apply to the selected rows">
+                    <strong class="q-bulkbar__count">@SelectedCount selected</strong>
+                    @Actions
+                    <QButton Text="Clear selection" Icon="x-lg" Variant="ghost" Size="sm" OnClick="@OnClearSelection" />
+                </div>
+            }
+            else if (Idle != null)
+            {
+                <div class="q-bulkbar__bulk q-bulkbar__bulk--idle">
+                    @if (!string.IsNullOrWhiteSpace(IdleHint))
+                    {
+                        <span class="q-bulkbar__hint">@IdleHint</span>
+                    }
+                    @Idle
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<style>
+    .q-bulkbar { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; min-width: 0; }
+    .q-bulkbar__progress { height: 4px; border-radius: 999px; background: var(--qm-bg-secondary); overflow: hidden; }
+    .q-bulkbar__fill { height: 100%; background: var(--qm-success); transition: width .18s ease; }
+    .q-bulkbar__row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+    .q-bulkbar__row--bulk { min-height: var(--q-control-h-lg); }
+    .q-bulkbar__search { flex: 1 1 240px; max-width: 360px; margin-left: auto; }
+    .q-bulkbar__search .q-input-wrapper { margin-bottom: 0; }
+    .q-bulkbar__filters { display: flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
+    .q-bulkbar__chip { display: inline-flex; align-items: center; gap: 5px; height: var(--q-control-h-sm); padding: 0 10px;
+                       border: 1px solid var(--qm-border); border-radius: 999px; background: var(--qm-bg-card);
+                       color: var(--qm-text-secondary); font: inherit; font-size: var(--q-control-font-sm); cursor: pointer; }
+    .q-bulkbar__chip:hover { border-color: var(--qm-primary); }
+    .q-bulkbar__chip--on { background: var(--qm-primary); border-color: var(--qm-primary); color: var(--qm-text-on-primary); }
+    .q-bulkbar__n { font-weight: 700; opacity: .85; }
+    .q-bulkbar__all { margin-bottom: 0; flex: 0 0 auto; }
+    .q-bulkbar__bulk { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+    .q-bulkbar__bulk--idle { color: var(--qm-text-muted); font-size: var(--q-control-font-sm); margin-left: auto; }
+    .q-bulkbar__hint { display: none; }
+    @@media (min-width: 900px) { .q-bulkbar__hint { display: inline; } }
+    .q-bulkbar__count { font-size: var(--q-control-font-sm); color: var(--qm-text-primary); }
+
+    @@media (max-width: 899px) {
+        .q-bulkbar__search { max-width: none; margin-left: 0; }
+        .q-bulkbar__bulk--idle { margin-left: 0; }
+    }
+</style>
+
+@code {
+    /// <summary>One filter chip. The COUNT is what makes a chip worth having — "Unmarked 23" says something "Unmarked" does not.</summary>
+    public sealed record Filter(string Key, string Label, int Count);
+
+    /// <summary>The optional progress strip: how many of the list are done, and what "done" is called.</summary>
+    public sealed record ProgressOf(int Done, int Total, string Noun = "done");
+
+    [Parameter] public IReadOnlyList<Filter>? Filters { get; set; }
+    [Parameter] public string ActiveFilter { get; set; } = "all";
+    [Parameter] public EventCallback<string> ActiveFilterChanged { get; set; }
+
+    [Parameter] public bool ShowSearch { get; set; } = true;
+    [Parameter] public string? SearchPlaceholder { get; set; } = "Search";
+    [Parameter] public string Search { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> SearchChanged { get; set; }
+
+    /// <summary>Whether the selection row shows at all. Off where the page has nothing to apply.</summary>
+    [Parameter] public bool ShowSelection { get; set; }
+
+    /// <summary>How many rows the reader can currently SEE. Select-all covers these and no others.</summary>
+    [Parameter] public int VisibleCount { get; set; }
+    [Parameter] public int SelectedCount { get; set; }
+    [Parameter] public bool AllSelected { get; set; }
+    [Parameter] public EventCallback<bool> AllSelectedChanged { get; set; }
+    [Parameter] public EventCallback ClearSelection { get; set; }
+
+    /// <summary>What applying means for this page. Shown only while something is ticked.</summary>
+    [Parameter] public RenderFragment? Actions { get; set; }
+
+    /// <summary>Shown INSTEAD of the actions while nothing is ticked — a sweep, an export, a hint.</summary>
+    [Parameter] public RenderFragment? Idle { get; set; }
+    [Parameter] public string? IdleHint { get; set; }
+
+    /// <summary>Anything the page wants between the chips and the search box (a date range, a second select).</summary>
+    [Parameter] public RenderFragment? Start { get; set; }
+
+    [Parameter] public ProgressOf? Progress { get; set; }
+    [Parameter] public string? Class { get; set; }
+
+    private Task PickFilter(string key)
+        => string.Equals(key, ActiveFilter, StringComparison.OrdinalIgnoreCase)
+            ? Task.CompletedTask
+            : ActiveFilterChanged.InvokeAsync(key);
+
+    private Task OnSearch(string? value) => SearchChanged.InvokeAsync(value ?? string.Empty);
+
+    private Task OnSelectAll(bool on) => AllSelectedChanged.InvokeAsync(on);
+
+    private Task OnClearSelection() => ClearSelection.InvokeAsync();
+}

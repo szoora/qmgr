@@ -65,6 +65,9 @@ public interface IStaffPerformancePolicyService
     /// <summary>The tenant's duty report template, or the default sections (plan §15 decision 1).</summary>
     IReadOnlyList<DutyReportSectionDto> ReportTemplate(StaffPerformancePolicyDto policy);
 
+    /// <summary>The tenant's minutes template, or the default sections. The ONE reader of MinutesTemplate.</summary>
+    IReadOnlyList<DutyReportSectionDto> MinutesTemplate(StaffPerformancePolicyDto policy);
+
     /// <summary>The Uganda lower-secondary subject set a school sees before configuring anything (plan §5.2).</summary>
     IReadOnlyList<SaveSubjectRequest> DefaultSubjects();
 }
@@ -215,6 +218,9 @@ public class StaffPerformancePolicyService : IStaffPerformancePolicyService
 
     public IReadOnlyList<DutyReportSectionDto> ReportTemplate(StaffPerformancePolicyDto policy)
         => policy.DutyReportTemplate is { Count: > 0 } own ? own : DutyReportTemplateDefaults.Sections;
+
+    public IReadOnlyList<DutyReportSectionDto> MinutesTemplate(StaffPerformancePolicyDto policy)
+        => policy.MinutesTemplate is { Count: > 0 } own ? own : MinutesTemplateDefaults.Sections;
 
     public IReadOnlyList<SaveSubjectRequest> DefaultSubjects() => QMgr.API.Application.Services.SubjectDefaults.Catalogue;
 

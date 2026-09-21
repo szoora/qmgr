@@ -545,7 +545,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
-            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            Navigation.NavigateTo(BillingLinks.Modules, forceLoad: false);
             return;
         }
 
@@ -886,8 +886,8 @@
     .ct-warn-strong { border-left-color: var(--qm-danger); }
     .ct-warn > i, .ct-warn > span { color: var(--qm-warning); flex-shrink: 0; margin-top: 2px; }
     .ct-warn-strong > i, .ct-warn-strong > span { color: var(--qm-danger); }
-    .ct-warn strong { display: block; font-family: var(--qm-font-display); font-size: 14px; margin-bottom: 3px; color: var(--qm-text-primary); }
-    .ct-warn p { margin: 0; font-size: 13px; color: var(--qm-text-secondary); line-height: 1.5; }
+    .ct-warn strong { display: block; font-family: var(--qm-font-display); font-size: var(--qm-text-base); margin-bottom: 3px; color: var(--qm-text-primary); }
+    .ct-warn p { margin: 0; font-size: var(--qm-text-base); color: var(--qm-text-secondary); line-height: 1.5; }
 
     .ct-grid {
         display: grid;
@@ -913,9 +913,9 @@
         border-bottom: 1px solid var(--qm-border);
     }
     .ct-class { display: flex; align-items: center; gap: 10px; min-width: 0; }
-    .ct-class h3 { margin: 0; font-family: var(--qm-font-display); font-size: 17px; font-weight: 700; color: var(--qm-text-primary); }
+    .ct-class h3 { margin: 0; font-family: var(--qm-font-display); font-size: var(--qm-text-lg); font-weight: 700; color: var(--qm-text-primary); }
     .ct-swatch { width: 10px; height: 10px; border-radius: var(--qm-radius-sm); flex-shrink: 0; }
-    .ct-count { font-size: 12px; color: var(--qm-text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .ct-count { font-size: var(--qm-text-sm); color: var(--qm-text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
     .ct-person { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 16px; }
     .ct-person-assistant { border-top: 1px solid var(--qm-border); }
@@ -926,19 +926,19 @@
         display: flex; align-items: center; justify-content: center;
         background: var(--qm-primary-light);
         color: var(--qm-primary);
-        font-family: var(--qm-font-display); font-weight: 700; font-size: 13px;
+        font-family: var(--qm-font-display); font-weight: 700; font-size: var(--qm-text-base);
         flex-shrink: 0;
     }
 
     .ct-person-text { min-width: 0; }
     .ct-name { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; font-weight: 600; color: var(--qm-text-primary); }
-    .ct-title { font-size: 12px; color: var(--qm-text-muted); margin-top: 1px; }
-    .ct-contact { display: flex; flex-direction: column; gap: 3px; margin-top: 7px; font-size: 12.5px; color: var(--qm-text-secondary); }
+    .ct-title { font-size: var(--qm-text-sm); color: var(--qm-text-muted); margin-top: 1px; }
+    .ct-contact { display: flex; flex-direction: column; gap: 3px; margin-top: 7px; font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
     .ct-contact span { display: flex; align-items: center; gap: 6px; min-width: 0; }
     .ct-contact a { color: var(--qm-text-secondary); text-decoration: none; overflow: hidden; text-overflow: ellipsis; }
     .ct-contact a:hover { color: var(--qm-primary); text-decoration: underline; }
 
-    .ct-none { display: flex; align-items: center; gap: 10px; padding: 16px; color: var(--qm-text-muted); font-size: 13.5px; }
+    .ct-none { display: flex; align-items: center; gap: 10px; padding: 16px; color: var(--qm-text-muted); font-size: var(--qm-text-base); }
     /* flex-wrap at source: two buttons on a narrow card is exactly the *-footer shape that
        widened the document and made the whole page scroll sideways. */
     .ct-card-foot { display: flex; flex-wrap: wrap; gap: var(--q-row-gap, 8px); padding: 0 16px 12px; }
@@ -946,12 +946,12 @@
 
     /* The table scrolls; the page never does. */
     .ct-hist-wrap { overflow-x: auto; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); }
-    .ct-hist { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .ct-hist { width: 100%; border-collapse: collapse; font-size: var(--qm-text-base); }
     .ct-hist th {
         text-align: left; padding: 9px 12px; white-space: nowrap;
         background: var(--qm-bg-elevated);
         border-bottom: 1px solid var(--qm-border);
-        font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em;
+        font-size: var(--qm-text-xs); text-transform: uppercase; letter-spacing: 0.04em;
         color: var(--qm-text-muted);
     }
     .ct-hist td { padding: 9px 12px; border-bottom: 1px solid var(--qm-border); vertical-align: top; color: var(--qm-text-secondary); }
@@ -959,38 +959,38 @@
     /* Tinted from --qm-primary-rgb so it follows the theme with no [data-theme] override. */
     .ct-hist-live { background: rgba(var(--qm-primary-rgb), 0.06); }
     .ct-hist-when { white-space: nowrap; font-variant-numeric: tabular-nums; }
-    .ct-hist-sub { display: block; margin-top: 2px; font-size: 11.5px; color: var(--qm-text-muted); }
+    .ct-hist-sub { display: block; margin-top: 2px; font-size: var(--qm-text-xs); color: var(--qm-text-muted); }
 
     .ct-inline-warn {
         display: flex; gap: 9px; align-items: flex-start;
         padding: 11px 13px;
         border-radius: var(--qm-radius-md);
         background: var(--qm-primary-light);
-        font-size: 12.5px;
+        font-size: var(--qm-text-sm);
         line-height: 1.5;
         color: var(--qm-text-secondary);
     }
     .ct-inline-warn i, .ct-inline-warn span:first-child { color: var(--qm-primary); flex-shrink: 0; }
 
-    .ct-end-lead { font-size: 13.5px; color: var(--qm-text-secondary); line-height: 1.6; margin-bottom: 14px; }
+    .ct-end-lead { font-size: var(--qm-text-base); color: var(--qm-text-secondary); line-height: 1.6; margin-bottom: 14px; }
 
     .form-grid { display: flex; flex-direction: column; gap: 14px; }
 
-    .ct-gap-list { margin: 4px 0 0; padding-left: 18px; font-size: 13px; color: var(--qm-text-secondary); line-height: 1.5; }
+    .ct-gap-list { margin: 4px 0 0; padding-left: 18px; font-size: var(--qm-text-base); color: var(--qm-text-secondary); line-height: 1.5; }
     .ct-gap-class { font-weight: 600; color: var(--qm-text-primary); }
-    .ct-level-hint { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: var(--qm-text-muted); margin: -8px 0 16px; line-height: 1.5; }
+    .ct-level-hint { display: flex; align-items: flex-start; gap: 8px; font-size: var(--qm-text-sm); color: var(--qm-text-muted); margin: -8px 0 16px; line-height: 1.5; }
 
     .ct-subjects { border-top: 1px solid var(--qm-border); padding: 10px 16px 12px; }
-    .ct-subjects-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--qm-text-muted); margin-bottom: 6px; }
-    .ct-subjects-none { font-size: 13px; color: var(--qm-text-muted); }
+    .ct-subjects-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: var(--qm-text-xs); text-transform: uppercase; letter-spacing: .04em; color: var(--qm-text-muted); margin-bottom: 6px; }
+    .ct-subjects-none { font-size: var(--qm-text-base); color: var(--qm-text-muted); }
     .ct-subject-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
     .ct-subject { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px dashed var(--qm-border); min-width: 0; }
     .ct-subject:last-child { border-bottom: none; }
-    .ct-subject-main { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; font-size: 13px; }
+    .ct-subject-main { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; font-size: var(--qm-text-base); }
     .ct-subject-name { font-weight: 600; color: var(--qm-text-primary); }
     .ct-subject-teacher { color: var(--qm-text-secondary); display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     .ct-subject-side { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
-    .ct-periods { font-size: 12px; color: var(--qm-text-muted); font-variant-numeric: tabular-nums; margin-right: 4px; white-space: nowrap; }
+    .ct-periods { font-size: var(--qm-text-sm); color: var(--qm-text-muted); font-variant-numeric: tabular-nums; margin-right: 4px; white-space: nowrap; }
 
     @@media (max-width: 480px) {
         .ct-grid { grid-template-columns: minmax(0, 1fr); }

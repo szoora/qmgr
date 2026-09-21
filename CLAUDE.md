@@ -1804,6 +1804,104 @@ Three rules that are easy to break by accident:
   "apply to existing subscribers" option or its repricing will be silent where module repricing
   is not.
 
+## Payments go through the sacc.ug gateway, and only the ledger moves a payment (built 2026-09-19)
+
+Reported as *"card shows though I have not enabled it… mobile money says gateway not found… why is this
+project forcing me to use stripe?"*, then *"I need to see a debit message on my phone. we are using the
+sacc.ug gateway (our crm) for collections"*, *"default currency should be UGX not USD"* and *"keep stripe
+disabled"*. The plan is the payments artifact; the gateway's contract was read from **E:\CRM\CRMApi** (and the
+live `/api/epay/status` and `/validate` answered 401 without a key, as they should). **Never guess that
+contract** — `SaccGateway`'s header comment and `scripts/e2e/sacc-gateway-stub.mjs` both state it.
+
+What was wrong, so nobody reintroduces it: Stripe's `Enabled` defaulted to true and payment-providers read
+that bare switch, so tenants were offered a card on installs with no Stripe key; `MobileMoneyService` called a
+route and body the gateway does not have (the URL and `X-API-Key` were right, everything after was imagined);
+a renewal marked the invoice **PAID the moment the prompt was sent**; a module purchase activated only while
+the browser kept polling, from a note kept 30 minutes in a cache; a Mobile Money purchase wrote no invoice
+and no payment at all; every MTN payment was recorded as Airtel; the default currency was USD.
+
+- **The ledger rule: a row exists before any money moves.** `IPaymentLedger` writes the invoice and a
+  `Pending` `Payment` first; **`Payment.Id` IS the gateway's ReferenceId AND its IdempotencyKey**, so the same
+  payment can never prompt twice. Only `SettleAsync` moves a payment on — reached from the signed webhook, a
+  status read and the reconciliation job, all three the same code, under `pg_advisory_xact_lock` on the
+  reference. **Final is final** (a late "failed" cannot undo a success). **Less money than was due is
+  `Review`, never provisioned.** A purchase that fails or is abandoned voids its invoice; a renewal's stays open.
+- **The webhook body is a doorbell, not a verdict.** `POST api/v1/payments/sacc/webhook` verifies
+  `X-Webhook-Signature` (`t=…,v1=HMAC-SHA256(secret, "{t}.{body}")`, five-minute window, fixed-time compare),
+  dedupes `X-Webhook-Id`, then asks the gateway for the status with Q-Mgr's own key. Nothing in the body is
+  applied. No stored secret → 401, so the gateway keeps retrying until the webhook is registered.
+- **`PaymentReconciliationJob` runs every five minutes** (`reconcile-gateway-payments`) and settles what a lost
+  webhook left open; unknown to the gateway after 30 minutes → Abandoned; open past 72 hours → Abandoned.
+  `generate-monthly-invoices` was replaced by `generate-due-invoices` (daily), because annual cycles exist.
+- **A prompt awaiting approval is not a failure.** The renewal job treats `BillingService.AwaitingConfirmation`
+  as neither success nor PastDue — telling someone their payment failed while their phone is asking them to
+  approve it is the worst available answer.
+- **`GET billing/payment-providers` is the ONE availability rule**, returning `PaymentProvidersDto`: Mobile Money
+  = the gateway switched on with an address and key; card = the gateway's card channel (Pesapal) when switched
+  on, else Stripe only if configured. **Stripe is off unless an administrator configures it**
+  (`StripeSettings.Enabled` defaults false; migration `20260919160000_UgxDefaultAndStripeOff` switched off every
+  row with no secret key). Stripe's code is kept, not removed — user instruction "keep stripe disabled".
+- **Phone numbers have one rule: Shared `UgandaPhone`**, a mirror of CRM's `PhoneNumberHelper` — MTN, Airtel,
+  UTL, Lycamobile. The API, the ledger and `MobileMoneyNumberField` (the Web's one phone field) all use it, so
+  a number the form accepts is never refused later for its shape. Logs and reconciliation show it masked.
+- **The CRM labels a refusal as PENDING (found in production 2026-09-19, an Airtel number).** When no provider is
+  routed for the payer's network, `epay/collect` returns early through `PaymentResponse.Failed(...)`, which never runs
+  `ApplyState`: HTTP 202, `status: "Failed"`, an `errorCode`, the reason — but `state: "Pending"`, `isFinal: false` and
+  **no `referenceId`**. Believing `state` told the payer to approve a prompt that was never sent, then polled a status
+  the gateway 404s (`transaction.notfound`). `SaccGateway` treats a non-final answer with no echoed reference and a
+  Failed status or an error code as a refusal, and `PayerRefusal` words it by network ("Airtel Money is not available
+  right now. Please pay with an MTN number."). The stub reproduces it (`/__stub/refuse`); e2e 16.7 asserts it. The
+  real fix belongs in the CRM (call `ApplyState(Failed)` on that early return) — until then Q-Mgr copes.
+- **`Payment.Metadata` is jsonb. Never `Contains` on it** — it translates to `LIKE`, which Postgres refuses on
+  jsonb (every purchase 500ed until e2e 16.8 found it), and jsonb rewrites the stored text anyway. Read it
+  through `PurposeOf` in memory over a narrowed set.
+- **The gateway's settings have their own page and endpoint**: `/platform/payments` (Gateway · Reconciliation),
+  `api/v1/platform/payments/*`. The generic Platform Settings editor **refuses** the `MobileMoney` category — it
+  knew three of six fields and would have dropped the webhook secret. `ApiKey` and `WebhookSecret` are in
+  `SecretProperties` (masked). The address must be https — **http is allowed only for a loopback address in
+  Development**, which is what lets the e2e point it at the stub. Moving to a different gateway host drops the
+  webhook registration, because its secret belongs to the old one.
+- **The API key Q-Mgr holds needs `payments:collect`, `payments:status` and `webhooks:manage` — nothing that
+  moves money out.** The collect sends `service: "Other"`: `Subscription`/`License` make CRM provision SACC products.
+- **The callback and the card return use `ISaccGateway.PublicBaseUrlAsync`** — `MediaStorage:PublicBaseUrl` (set in
+  the production unit), then the SaaS base URL. Never the request host (the loopback in production).
+- **Development with no gateway configured simulates success through the real `SettleAsync`**; never elsewhere.
+- **The renewal number is always visible on the Payment tab** (`#renewal-number`), whether or not Mobile Money is
+  switched on today, and can be set, changed or REMOVED (`DELETE billing/renewal-number`, then renewals wait on the
+  Invoices tab). The Overview shows it as a tile linking there. Its "invoices waiting" banner counts `Open` — it
+  counted `Pending`/`Overdue`, statuses no invoice is ever given.
+- **The legal pages were rewritten 2026-09-19** (effective date moved to 19 Sep 2026): the modules as they are,
+  UGX per-module pricing, the gateway as processor, and — in Privacy — the student, guardian and staff data schools
+  keep. Terms now says removing a module ends access at once, because that is what the code does.
+- **Default currency is UGX** everywhere a new row is made. The migration moved existing organizations from USD
+  to UGX only where no USD agreed price and no USD invoice exists — four dev organizations kept USD for that reason.
+- **The Web**: every write in `IPaymentApiService` throws `ApiFieldException` carrying the API's per-field
+  errors, so a form marks the field; status reads return null so one dropped poll does not end a wait.
+  `PaymentWait` only REPORTS — the server settles whether or not the dialog is open, and it says so.
+  Mandatory fields carry the asterisk and the dialog opens with "* Required" (`.form-required-note`); a refused
+  submit says "Complete the fields marked in red" once (`.form-error`).
+- **A payment held for REVIEW is decided by a person, on the Reconciliation tab** ("Needs a decision", every
+  held payment whatever the period). `POST api/v1/platform/payments/{ref}/resolve` with `received` or
+  `not-received` and a note of ten characters or more; platform-settings edit only. It goes through the ledger's
+  own `SettleAsync` ("received" confirms the amount due, or it would be held again), so it is FINAL like every
+  settlement, and the decision, who made it and the note live in the payment's existing `Metadata` JSON
+  (`PaymentResolution`) — no new column. The list shows "Marked received by … : note".
+- **The gateway's defaults are the platform's, in ONE place: Shared `SaccGatewayDefaults`** — `BaseUrl`
+  `https://sacc.ug` and the callback path `/api/v1/payments/sacc/webhook` (user direction 2026-09-19: "by default
+  use sacc crm configurations … platform default configurations, not for tenants"). The stored setting, the seed,
+  the client's fallback and the page all read it; an EMPTY address saves as the default; the callback is always
+  this install's public address plus that path, never typed. Nothing about the gateway is ever shown to a tenant.
+- **A flex row with inline text in it splits the sentence into columns.** `display: flex` makes every text run and
+  every `<strong>`/`<a>` its own item — the Decide dialog's warning, the Modules "Pay for **X**" line and the
+  Overview banner all rendered as ragged columns. Icon + ONE `<span>` holding the sentence.
+- **Verified by two suites**: `scripts/e2e/payments-e2e.mjs` (section 16, **121 checks**, wired into
+  `class-teacher-e2e.sh`) and `scripts/e2e/browser/payments-ui.mjs` (**57 checks**, including removing the renewal
+  number, the Overview tile and deciding a held payment). The stub imitates the CRM both BEFORE and AFTER its
+  2026-09-19 fix (`/__stub/refuse {final}`). Both host the gateway stub
+  in-process and switch the gateway back OFF afterwards. **They have not been run against the real sacc.ug** —
+  no money has moved yet; the first real prompt is the platform's own "Send UGX 500 prompt" test on
+  `/platform/payments`, after pasting the real key and registering the webhook.
+
 ## Staff Performance Monitor: a second subject for the welfare machinery (built 2026-09-16)
 
 The plan is `docs/plans/STAFF_PERFORMANCE_MONITOR.md` (artifact linked at its top). The user asked
@@ -1894,8 +1992,8 @@ recorded", and the register chase still fires. The register page says so above i
   tiles, document activity modal, welfare print sheet, feedback and kiosk star ratings, the two
   hand-rolled pagers and three tab strips were moved onto them. Two visible consequences: Dashboard
   tiles lost their left colour stripe and hover glow (in line with the flat decision), and the
-  feedback page's stars now render at the 36px the dead rule intended. `WelfareStatusColor()` still
-  exists in two pages and should get one home.
+  feedback page's stars now render at the 36px the dead rule intended. `WelfareStatusColor()` has one home
+  now, `Components/Admin/WelfareDisplay.cs` (checked 2026-09-19 — the note saying it lived in two pages was stale).
 - **Three pre-existing bugs fixed on the way**, all in the Roles tab: permission counts always read
   0 (the list DTO has no permission list), the grouped permissions response was read as flat, and
   Save Permissions posted codes where the API wanted ids and would have wiped the role's
@@ -2034,12 +2132,13 @@ An audit script measured every parameterless page (buttons, button-row gaps, tit
 buttons at 34 and 39px, dropdowns at 44px, inputs at 48px, row gaps of 2 to 16px, titles at 22 to 32px, body text at 14 or 16px.
 Fonts were already right (Poppins, with Montserrat titles). The scale now lives in two places and nowhere else:
 
-- **`q-components.css` tokens**: `--q-control-h` 36px (`-sm` 30, `-lg` 44), `--q-control-font` 14px (`-sm` 13) and
-  `--q-row-gap` 8px. Every `QButton`, text or time input, `QSelect` / `QMultiSelect` trigger and `QDatePicker` uses them; an
-  icon-only button is square; on a phone every control is at least 40px.
+- **`q-components.css` tokens**: `--q-control-h` 32px (`-sm` 28, `-lg` 38), `--q-control-font` = `--qm-text-base` 13px
+  (`-sm` = `--qm-text-sm` 12px) and `--q-row-gap` 8px. Every `QButton`, text or time input, `QSelect` / `QMultiSelect`
+  trigger and `QDatePicker` uses them; an icon-only button is square; on a phone every control is at least 40px.
+  *(These were 36/30/44 at 14px until 2026-09-19; see "One type scale" below for why they moved.)*
 - **`layout.css`**: `.header-actions` and the shared row names (`.form-actions`, `.modal-actions`, `.card-actions`,
-  `.filter-actions`, `.dialog-actions`, `.q-modal__footer` and a few more) use the row gap; `.qm-main` body text is 14px;
-  `.qm-main h1` is Montserrat 28px, weight 700 (22px on a phone).
+  `.filter-actions`, `.dialog-actions`, `.q-modal__footer` and a few more) use the row gap; `.qm-main` body text is
+  `--qm-text-base` (13px); `.qm-main h1` is Montserrat `--qm-text-xl` (20px), weight 700 (`--qm-text-lg`, 17px, on a phone).
 - **A page must not set a control's height, padding or font size, a shared row's gap, or its title's size.** 77 page rules that
   did were removed, and that is where the drift came from. A new row of buttons uses a shared row name or `var(--q-row-gap)`.
 - **A hand-styled `<button>` is a `QButton`; a hand-rolled tab strip is `QTabs`.** Segmented pickers that carry meaning in
@@ -2202,6 +2301,137 @@ panel that must not be conflated**:
 The two summary endpoints spell their parameters differently (`dateFrom`/`dateTo` versus
 `fromDate`/`toDate`). Both are wire formats; the caller names them rather than either being renamed.
 
+## One type scale: six sizes, and a page never sets one (2026-09-19)
+
+*"the font still looks big. we need to use uniform font and size across the project."* Measured first with
+`scripts/e2e/browser/type-audit.mjs`: **eighteen** distinct sizes were on screen across fifteen pages, most of them
+accidents of a rem against a 16px root (0.8rem = 12.8px, 0.85rem = 13.6px, 0.95rem = 15.2px). Now there are six.
+
+- **The tokens, in `layout.css`**: `--qm-text-xs` 11 · `-sm` 12 · `-base` 13 · `-md` 15 · `-lg` 17 · `-xl` 20, plus
+  `--qm-text-stat` 20 for a figure on a tile. Body text and controls are 13px, so a table cell and the input above it
+  agree. **1,378 raw `font-size` declarations** across 124 files were mapped onto them by nearest value. **Change the
+  token, never a page.** The excluded set (kiosk, displays, public feedback, booking, ticket status, shared documents,
+  print sheets, sign-in pages) keeps its own sizes, as every scale rule here does.
+- **Two deliberate exceptions**, both commented where they sit: the two iOS rules in `app.css` stay at a literal
+  **16px**, because Safari zooms the whole page when a focused input is under 16px; and an icon glyph above 30px
+  (a kiosk preview, a media play button, the connection overlay) is geometry, not type.
+- **The headings were the biggest leak.** Only the `h1` had a size, so an `h2`/`h3`/`h4` with no class rule fell
+  through to **Bootstrap's 32/28/24px** and rendered LARGER than the page title — "Additional Metrics" on Usage, a role
+  name in Users & Roles. `:where(.qm-main) h2 { lg } h3,h4 { md } h5,h6 { base }` in `layout.css` now catches exactly
+  those: `:where()` keeps it at a bare element's specificity, so any class a component sets still wins.
+- **Radzen's grid carries its own 14px** through its own custom properties on a selector more specific than anything
+  here. Setting its VARIABLES (`--rz-grid-cell-font-size` and friends) on `.qm-main` wins without a specificity fight.
+  A plain `font-size` rule lost — measured, not assumed.
+- **A table row is a line of data**: `.data-table` cells are 9px × 12px (were 14px × 16px), and two shared cell kinds
+  live in `app.css` — `.num` (right-aligned, tabular digits) and `.row-actions` (a row's buttons at its right end).
+  A figure card is `QStatTile` in a `QStatRow`: eight pages had hand-built their own (platform dashboard and analytics,
+  reports overview, queue analytics, the feedback report and tab, visitors, expected visitors) and were moved onto it.
+- **A list of things is a table, not a grid of cards.** The Branches hub's three tabs (Branches, Counters, Service
+  Types) were grids of tall cards — one branch took a quarter of the screen for a name, a code and three zeros; four
+  branches now take 260px. Also shared in `app.css` for any table: `.row-muted` (a disabled row), `.cell-sub` (a muted
+  line under a cell's main text) and `.cell-tags` (a wrapping row of chips). Core Queue's per-branch figures show only
+  to a tenant holding Core Queue — to anyone else they are zeros that mean nothing.
+- **Guards:** `type-audit.mjs` fails on any size off the scale across its fifteen pages; `type-sweep-all.mjs` is the
+  wide net — every in-shell page and every hub tab, signed in as a tenant administrator and as the platform SuperAdmin,
+  printing each off-scale, wrong-family or extreme-weight placement with its selector. Both read zero.
+
+## A page's buttons have ONE location: top right, on the title row (2026-09-19)
+
+Reported with two screenshots: *"inconsistent location of the buttons. some are on top right… standardise the location
+of the action buttons."* On every hub the open section's buttons sat in a second band **under** the tab strip, on the
+**left**. Structural, not cosmetic: a hub owns the band, so a section hid its title with `@if (!Embedded)` and was left
+rendering a `.page-header` holding only its buttons — and `.page-header` is space-between, so a lone child sits at the start.
+
+- **`QPageActions` is the one home.** A section writes `<QPageActions Embedded="@Embedded"><Title>…</Title><Actions>…</Actions></QPageActions>`.
+  Embedded, its buttons go into the hub's own title row through Blazor's `SectionOutlet` / `SectionContent`
+  (`QPageActions.Id`); standalone, it renders the ordinary band. **Every hub's `.header-actions` holds
+  `<SectionOutlet SectionId="QPageActions.Id" />`.** Not a cascading `RenderFragment` a section assigns: that re-renders
+  the hub from inside the child's render, and a lambda is a new object every time, so no equality check can stop the loop.
+- **A filter is not an action.** A period picker, a search box or a range belongs in `QFilterBar` below the band — the
+  title row holds buttons only. Two period pickers and the Dashboard's range moved for this reason.
+- `.page-header .header-actions` carries `margin-left: auto` as a backstop, and `:empty` hides an outlet with no section.
+- **Guards:** `scripts/e2e/section-actions-check.mjs` now also fails a section that renders its own `header-actions`,
+  `toolbar-right` or similar band instead of `QPageActions`; `scripts/e2e/browser/action-location.mjs` opens every tab
+  of every hub and asserts one band, buttons right of centre and above the tabs.
+
+## An empty state is one line of news, and there is one of it (2026-09-19)
+
+*"those empty states are unnecessarily big. compact them"*, then *"those empty states must be uniform across the
+project"*. They were ~230px — 60px of padding round a 64px icon and a 20px title — and **50 components** set their own
+sizes on the shared `.empty-state` name, which, since a component `<style>` is not scoped, restyled it app-wide while
+the page was open.
+
+- **`QEmptyState` is the component, and the older `.empty-state` class reads the same tokens** (`--qm-empty-pad`,
+  `--qm-empty-icon` in `layout.css`). The icon sits BESIDE the heading and sentence (a grid, not a stack) and a button
+  sits to the right on the same row; on a phone the button goes underneath. Inside a `QCard` the border and background
+  drop. Typical height is now 63–77px; `scripts/e2e/browser/empty-state-check.mjs` fails anything above 110px or an icon
+  above 30px.
+- `empty-state`, `empty-state-icon` and `q-empty` are on `style-leak-check.mjs`'s list: a page may not restyle them.
+  Seven page-owned variants (survey questions, campaign stats, the Document Library, the Dashboard's "nothing yet", the
+  delivery log, the Feedback report's `empty-card`) became `QEmptyState`. One-line notes inside a chart
+  (`.chart-empty`) are a different thing — a muted sentence in a card, not a block — and stay.
+
+## Billing is one hub, and every billing address comes from `BillingLinks` (2026-09-19)
+
+*"these billing pages are totally off"*, *"the worst page is this one… that dark background / heading is unnecessary"*,
+then *"implement the billing rework, use your recommendations"*. The plan artifact is
+https://claude.ai/artifact/TuKvFVjSoJAQZb2cyfQUKm. Five sidebar entries and five routes became **`/billing`** with tabs
+Overview · Modules · Invoices · Payment · Usage (`Components/Pages/Billing/BillingHub.razor`); the five old routes are
+**deleted, not aliased**, and the sections carry `Embedded` and use `QPageActions`.
+
+- **`QMgr.Domain.Constants.BillingLinks` (Q-Mgr.Shared) is the one home for every billing address** — used by the API
+  (emails, `upgradeUrl` / `purchaseUrl` in refusals, `TenantStatusMiddleware`'s `actionUrl`, Stripe return URLs) and by
+  the Web (56 files: every module gate, the sidebar, the account-status page). **Nine links pointed at pages that never
+  existed** — `/billing/plans` in four emails and four API refusals, `/billing/update-payment`, `/billing/reactivate`,
+  `/billing/success`, `/billing/cancelled` — none was ever an `@page` in this repository. `route-audit.mjs` now reads
+  `EmailTemplates.Link(`, `upgradeUrl` / `purchaseUrl` / `actionUrl` / `returnUrl` values and `WriteForbiddenResponse`,
+  and resolves `BillingLinks.Hub`; run against the last commit's code it reports the dead three.
+- **The Modules tab is open to everyone signed in; the other four need `billing.view`.** Every module gate sends a person
+  without a module there, whoever they are — gating it would turn "not part of your plan" into "not allowed here". Add /
+  Pay / Remove show only to a holder of `billing.manage`, which is what the API enforces. A person without
+  `billing.view` also sees no Billing entry in the sidebar.
+- **A card checkout returned to the API's LOOPBACK.** `ModulesController.PurchaseModuleCard` built Stripe's return
+  address from `Request.Host`, and its same-origin check compared against it too — so in production neither the default
+  nor a URL the Web passed could be right. It now uses the public base (`SaaS` platform setting, else `SaaS:BaseUrl`),
+  the resolution `BillingController` already used. **The same `ApiBaseUrl` rule as uploads: a link a browser or gateway
+  follows is never the request host of a Web-to-API call.**
+- **The public address has ONE reader: `IPlatformSettingsService.GetPublicWebBaseUrlAsync`** (consolidated
+  2026-09-19; the configuration half is `PublicWebBase`). The address the server ANSWERS ON wins —
+  `MediaStorage:PublicBaseUrl` (the unit's `https://$HostName`), then `App:PublicWebBaseUrl` — and only then the
+  SaaS setting's `BaseUrl`, then `SaaS:BaseUrl`. Eleven places built links from the SaaS setting, which is SEEDED
+  as `https://cashbook.ug` — a different site — so on an install where nobody edited it, every password-reset,
+  verification, onboarding and billing email linked to the wrong place. The Platform Settings field now says it is
+  only a fallback. **A new link a person or gateway follows calls that method; it never reads `SaasSettings.BaseUrl`.**
+- **Both ways to pay are real**, each switched on platform-wide by `GET billing/payment-providers`: Mobile Money paid at
+  each purchase (nothing stored) and cards kept on file with Stripe. The Payment tab says which are on; the purchase
+  dialog offers only those. The old page talked only of Stripe while Modules said Mobile Money.
+- **Four silent bugs went with the old pages**: Usage formatted storage **megabytes as bytes** (6 MB showed "6 B", a
+  5,000 MB limit "4.88 KB"); its label map expected `apiCalls` while the API sends `api_calls`, so the raw key was on
+  screen; Overview's private invoice record read an `Amount` the API never sends (it is `Total`), so every recent
+  invoice showed 0; and Overview read payment methods as a bare list when the API sends `{ paymentMethods }`, so it
+  always showed none. **`InvoiceDto` now lives in `Q-Mgr.Shared`** — the Web had two private copies — which is the
+  DTO-duplication rule above, again.
+- **The dashboard's "Unable to load queue data" after sign-in was a RACE, not a failed module list** (found and
+  fixed 2026-09-19). `OnInitializedAsync` created `moduleResolution` only after three awaits; Blazor renders at the
+  first and runs `OnAfterRenderAsync`, so a loader could find it null, skip the wait and read the defaults —
+  `hasCoreQueue = true` sent a queue call the API refused (403), and the other sections' `false` defaults skipped
+  welfare, visitors and communication. Worst with the permission cache cold, i.e. right after sign-in: 3 of 4
+  simultaneous sign-ins lost it. The guard is now a `TaskCompletionSource` that exists from construction and is
+  ALWAYS completed in a `finally`. **Any "wait for X before loading" guard must exist before the first await.**
+- A module's price on Overview is the **agreed** price when one was captured, else list — the grandfathering rule. An
+  annual price is shown as its monthly share. Trial dates show only while a module is actually `Trialing`.
+- **Verified by `scripts/e2e/browser/billing-hub.mjs`** (57 checks): one sidebar entry, the five retired routes gone,
+  five tabs and every `?tab=` deep link, the shared layout on each tab (one band, buttons top right, no hero, no
+  breadcrumb, none of the old layout classes), the three display bugs, and a class teacher reaching the Modules tab only,
+  with no Add / Pay / Remove.
+
+## Four stylesheets that styled nothing were deleted (2026-09-19)
+
+`css/components/content.css`, `reports.css`, `shared.css` and `queue.css` — **3,481 lines, downloaded on every page** —
+held only `.qm-*` selectors, and not one of those class names appeared in any component. `admin.css` is partly used
+(13 of 51 names) and was kept. Before adding a stylesheet, check a component actually renders its classes; before
+trusting one, grep for them.
+
 ## Duty rota build: the rules Phase 0 left (2026-09-17)
 
 The plan is `docs/plans/DUTY_ROTA_AND_TIMETABLE.md`; progress and the resume point are Phase 89 in the tracker.
@@ -2236,7 +2466,8 @@ The plan is `docs/plans/DUTY_ROTA_AND_TIMETABLE.md`; progress and the resume poi
   duty managers and the slot's supervisors get the map. Acknowledgement is the atomic jsonb `||` pattern, and a
   reschedule clears it. A supervisor is told a COUNT by the ladder; names appear only on their portal to-do.
 - **Dates in API-built text must be `string.Create(CultureInfo.InvariantCulture, …)`.** The dev machine is en-GB, so a
-  bare `{x:dd MMM}` reads "Sept" locally and "Sep" on the server. Older API code still has the bare form (see Phase 89).
+  bare `{x:dd MMM}` reads "Sept" locally and "Sep" on the server. A sweep on 2026-09-19 found no bare month format left
+  in the API; keep it that way.
 - **The e2e suite's password `E2eTeacher!2026` is refused by the blocklist for NEW accounts** (it is "teacher" plus a
   year). Accounts the suites create use `NEW_PW` and sign-in tries both. Section 15 is `scripts/e2e/duty-rota-e2e.mjs`.
 - **Who reads a duty report is `StaffDutyReports.AccessForAsync`, and nothing else decides it** — the controller and
@@ -2289,8 +2520,512 @@ The plan is `docs/plans/DUTY_ROTA_AND_TIMETABLE.md`; progress and the resume poi
   that moves students and class-teacher assignments.
 - **A print route is `QPrintSheet`, and its phone margins come out of `max-width`** — a 100% sheet plus side margins
   scrolled every print page sideways by 8px until 2026-09-17.
+- **An individual timetable extract is `?key=` on the print route, and that route is its ONE home (2026-09-20).**
+  `/admin/timetable/{id}/print?by=teacher&key=<user id>` prints one sheet; `key` is comma-separated for a chosen
+  few; **empty means EVERY sheet, never none** — a print route that defaults to nothing prints nothing. The keys
+  are byte-identical to the editor's own view keys (`Timetable.razor`'s `InView`: teacher = user id, class and
+  room = `TimetableCycle.Normalize` of the name), which is what lets the editor's **Print** button and the
+  portal's **Print my timetable** hand a key straight over rather than each deriving its own. Before this the
+  editor's Print button dropped the key and always printed all forty teachers.
+  - **The picker writes the key back into the URL** (`SyncUrl`), because a narrowed sheet that is not linkable
+    cannot be sent to the person it is about — and publishing it to the Library is the same act. It guards on the
+    query values **last acted on**, never on current state, or the write reads itself back and fights the picker:
+    the `HubTabs.FollowQuery` rule, one level down. **Switching axis clears the key**, since a class key means
+    nothing once the axis is teachers.
+  - **The document's NAME follows the selection** (`DocTitle`, `SelectionSummary`, `FileSlug`), so a published
+    extract lands in the Library as *"TERM 3 2026 — Martin Kato"* rather than a fortieth *"… — by teacher"*.
+    Option 4 of that afternoon's plan needed no code of its own; it needed the naming to stop lying.
+  - **The portal card needs a PUBLISHED timetable in force today.** `MyTimetableCard` reads
+    `…/timetable/current`, which answers **204** when none is, and the card then hides itself by design — so a
+    suite that signs in as an administrator with no lessons reports SKIP and proves nothing. Section 9 of
+    `scripts/e2e/browser/timetable-print.mjs` signs in as a **teacher**, which is the half of the feature that is
+    meant to need nobody else: reading a published version carries no permission beyond branch membership
+    (`TimetableController.GetTimetable` has no permission attribute; only a Draft needs `timetable.manage`).
+  - **Verified by `scripts/e2e/browser/timetable-print.mjs`, 29 checks, nothing skipped.** It **refuses to run**
+    against a version with one teacher in it, because "one teacher, not the school" would pass vacuously there.
+    Its Library cleanup matches on the timetable's name AND the teacher's — an earlier bare-name match reached an
+    unrelated *"Staff performance report — <the same teacher>"* left by another suite and deleted it.
+  - **A teacher's sheet also carries their DUTIES (2026-09-20)**, from `GetDutiesAsync` over the timetable's own
+    effective range, because a sheet that shows lessons and hides the Friday duty is one somebody will still
+    double-book themselves against. `DutyKind.Lesson` is EXCLUDED — those ARE the grid above. A duty belongs on a
+    sheet when the person is expected (`ExpectedUserIds == null` means everyone, which is how an all-staff briefing
+    is stored), records it, or supervises it. The load **never fails the print**: a failure prints the timetable
+    with a line saying the duties could not be read, the same call as `VisitorsController.TryIssueVisitToken`.
+    The toggle is deliberately NOT in the URL — `?key=` is the *selection*, which must be linkable; this is a
+    preference about the same selection.
+
+### A register is taken at the size of a staff meeting, not a five-person duty (2026-09-20)
+
+`StaffRegister.razor` is ONE page and serves every register — a session, a meeting, a **rota slot** ("Teacher on
+duty") and a lesson. A report against one of them is a report against all four; do not fix one shape of register.
+
+- **It is a DATA page: no `max-width`, no centring.** It capped at 760px, so a staff meeting used a quarter of a
+  1900px screen while its own rows wrapped inside that quarter.
+- **One person is one line** (a grid row, ~52px), not three stacked blocks at ~150px. Under 900px it stacks again
+  and the mark buttons go back to a **44px** target — that floor is a finger and is not scaled with the desktop
+  size tokens.
+- **Above `SmallRegister` (40) rows the list `<Virtualize>`s**, with its own scroll region on a desktop so the
+  filters above and the footer below stay put. Blazor Server diffs every row of a segmented control and ships it
+  down the circuit; 135 people is the case this exists for, and below the threshold it costs nothing.
+- **Bulk is the point at scale.** Tick rows (or everyone the filter shows) and apply one outcome; **"Rest
+  present" fills only the UNMARKED**, because a sweep that overwrote deliberate marks would be an undo button
+  disguised as a shortcut. **A selection may only ever cover rows the reader can SEE** — `PruneSelection` runs on
+  every filter and search change, or "apply to 20 selected" silently reaches people the filter is hiding.
+- **THE CLIENT ENFORCES WHAT `SubmitRegister` ENFORCES.** Two server refusals were reachable only by submitting
+  and being told, which loses the whole register to one 400: **nobody marks themselves** (except a Lesson duty,
+  where the teacher's own mark is a self-report) — that row now renders no buttons and says why — and **a rota
+  slot marked Not completed needs a reason**, which blocks the submit with a count and a jump to the first
+  offender. A new server-side refusal in this controller needs its counterpart here.
+- **Closing with people unmarked asks first**, and the footer carries an **unsaved** count (`Mark.SavedOutcome`
+  is what the server last said; the difference is what "unsaved" means).
+- Verified by `scripts/e2e/browser/register-and-duty-sheet.mjs` — **22 checks, 0 failed**, against a real 135-row
+  branch-wide register, at 1600px and at 390px. A one-row register passes every one of those assertions while
+  proving none, so seed a branch-wide meeting before trusting a run.
+
+## There are TWO doors, and the sign-in page names both (2026-09-20)
+
+Reported from the sign-in page: *"Don't have an account? **Create one**"* led to `/register`, headed
+*"Create Your Account"*, whose first field is the ORGANIZATION name. A teacher at a school that
+already uses Q-Mgr reads that line, tells the truth, and ends up with a **duplicate school** on a
+trial, themselves as its administrator, with no connection to the real one. The door that served
+them — `/join/{Code}`, with its allowed domains, emailed code and approver queue — existed all along
+and was **unreachable from the sign-in page**.
+
+- **`/login` now offers both, in the order a reader needs them**: *"Joining a school or business that
+  already uses Q-Mgr? Use your join link"*, then *"Setting up a new one? Register an organisation"*.
+  `/register` is headed **"Register your organisation"** and says under it that this creates a NEW
+  one. **Never reintroduce "Create one" here** — the words were the whole bug.
+- **`/join` (no code) is the way in.** `Components/Pages/JoinCode.razor` takes the code or the whole
+  pasted URL and forwards to `/join/{Code}`. It **looks nothing up**: an unknown code must read the
+  same as a revoked or expired one, and `JoinStaff` already makes that judgement carefully. A second
+  copy of that rule here is how the two would drift.
+- **`IOrganizationHintService` answers "does this email domain already belong to a tenant?" — and
+  DISCLOSURE IS CONSENT-BASED.** A tenant is named only when it has switched staff sign-up ON, has a
+  live join link, and listed the domain **itself**. Nothing else matches: not the tenant's contact
+  address, not a similar organization name. Naming a school on a guess is a leak; repeating a domain
+  the school published is repeating its own invitation.
+  - **A free mailbox is never matched** (`gmail.com`, `outlook.com`, …) or the endpoint becomes a way
+    of enumerating which schools use the product.
+  - **The join code is never in the answer.** It is the school's secret and rotating it is how a
+    school closes the door; the answer names the school and sends the applicant to `/join`.
+  - It **never fails a sign-up**: a lookup that throws is logged and read as "found nothing", because
+    all it can ever do is add a warning.
+- **The warning WARNS; it never blocks.** CLAUDE.md's standing rule — a wrongly refused sign-up is a
+  lost customer who cannot appeal — and a second campus is a real thing. Continuing sets
+  `AcknowledgedExistingOrganization`, which adds `ScoreContinuedPastExistingOrganization` (30) and a
+  signal in the reviewer's own words. On its own that does not reach the flag threshold of 50; with
+  anything else it does, which is the right shape.
+- **Provisioning by an administrator stays the primary path and the defaults already say so**:
+  `StaffOnboardingPolicyDto.JoinEnabled` is **false** until a school turns it on, `RequireApproval`
+  is **always true**, and `AllowedEmailDomains` narrows who may even apply. Nobody joins a school
+  without an administrator, which is the sector norm for a system holding safeguarding records.
+- Verified by **`scripts/e2e/registration-doors-e2e.mjs` (section 18, 25 checks)** and
+  **`scripts/e2e/browser/registration-doors.mjs` (18 checks)**, both 0 failed. The browser suite
+  **signs out first** — the headless profile carries a session from whatever ran before, and a
+  signed-in visitor is sent to the dashboard, where every assertion would pass or fail by accident.
+  Both put the tenant's onboarding settings back as they found them.
+
+## A list page has one shape, and `QBulkBar` is its one home (the sweep, 2026-09-20)
+
+The register rework of the same day generalised: `docs/plans/LIST_PAGE_STANDARDISATION.md` names five
+faults and **`scripts/e2e/list-page-audit.mjs` measures them on every list page in the app shell**, with
+a DONE list that FAILS when a swept page regresses. Final state: **58 list pages — 23 swept, 35 ruled
+out of scope, 0 outstanding.**
+
+- **A data page takes the width it has. A row is a line. A list that can pass ~50 rows pages or
+  virtualises. Bulk acts on the VISIBLE selection.**
+- **`Components/Shared/UI/QBulkBar.razor` is the bar** — filter chips with counts, a search box,
+  "select all shown", and the actions row that appears when something is ticked. It was extracted FROM
+  `StaffRegister` before anything else used it, because a filter that decides what a bulk action
+  reaches is the worst possible place for a second copy that drifts.
+  - **The bar is a state holder and a renderer; the PAGE owns its visible rows and its selection**,
+    because only the page knows what a row is.
+  - **THE RULE THE COMPONENT CANNOT ENFORCE: a selection may only ever cover rows the reader can SEE.**
+    Call the page's `PruneSelection` on every filter and search change, or "apply to 20 selected"
+    silently reaches people the filter is hiding.
+  - `ShowSelection="false"` where there is nothing to apply. **A tick box with no action is worse than
+    no tick box.**
+- **A WAIVER IS A DECISION AND IS WRITTEN DOWN.** `list-page-audit.mjs` carries `waive:` with a reason
+  per page, and `OUT_OF_SCOPE` for the pages triage ruled out (a settings form, a dashboard, a week
+  grid, a print sheet, one person's own file). **Never invent a bulk endpoint to satisfy the
+  checklist** — "closing a welfare follow-up is a decision per child", "a wrongly refused sign-up is a
+  lost customer who cannot appeal". Both are waivers, not gaps.
+- **The `row` heuristic cost two corrections and the lesson generalises:** any auto-fit grid looks the
+  same in CSS, so a stat strip, a form grid, an hours editor and a colour palette all read as
+  "card-per-item". It now requires the grid's class to appear **within a few hundred characters of a
+  `@foreach`**. A measurement that flags the wrong thing is worse than no measurement, because work
+  gets done to satisfy it.
+- **Bulk over several rows loops and REPORTS WHAT FAILED, by name.** `JoinRequests.RunOverSelectionAsync`
+  is the pattern: each person is approved individually and individually checked (`RoleAssignmentGuard`
+  refuses a role above the approver's rank), and the ones refused are listed. A bulk action that
+  swallows failures is worse than one that does not exist. Its dialog also says plainly that everything
+  in it applies to all of them, and **class-teacher assignments are withheld from the bulk path** —
+  two people cannot hold the same class.
+- **Phase 3, and it found one: the client enforces what the server enforces.**
+  `scripts/e2e/refusal-audit.mjs` pairs every API refusal with the page that posts to it and reports
+  pages with no pre-submit check at all. The finding was **the School Day page**: the school day and
+  the rooms are TWO calls and the rooms are the second, so a blank room — and "Add a room" creates one
+  — was refused *after* the school day had saved. `TimetableSettings.PreSubmitProblem` now refuses it
+  first, naming the row.
+- **Verified in a browser, not by the build**: `scripts/e2e/browser/list-sweep.mjs` opens all sixteen
+  changed pages (52 checks). It detects the **module redirect** and skips with that reason rather than
+  passing on the Billing page it landed on — a vacuous pass is the trap this project keeps rediscovering
+  — and it skips honestly where the dev tenant's list is genuinely empty.
+
+## Minutes of a meeting: adoption is the boundary (built 2026-09-20)
+
+The standards are written at the top of `Q-Mgr.Shared/Application/DTOs/MinutesDto.cs` — Robert's Rules for the
+CONTENT, open-meeting and records law for the LIFECYCLE, ISO 15489 for the QUALITIES — and the rules that are easy
+to break are on `StaffMinutesController`. Before this, "minutes" meant a PDF written elsewhere and attached by
+hand (`StaffDuty.MinutesMediaContentId`); that column survives and is now the ADOPTED snapshot.
+
+- **ATTENDANCE IS THE REGISTER, NEVER RETYPED.** `BuildAttendanceAsync` reads the meeting's own Final performance
+  records and names them in the language of minutes — **Excused IS "apologies received"**, Late is present AND
+  late. No field anywhere writes an attendance figure, so the minutes and the register cannot disagree, and
+  correcting the register corrects the minutes. Until the register is CLOSED the page and the printed sheet both
+  say the figures are provisional.
+- **`MinutesStatus` None → Draft → Circulated → Approved, and never backwards. There is no unapprove.** Adoption
+  is what makes minutes the official record, so an adopted document is immutable for everyone: a later change is
+  an append-only `MinutesCorrectionDto` carrying who, when and what. Same idiom as a welfare visibility change and
+  a reopened register. `MinutesApprovedAtDutyId` records WHICH meeting adopted them, because "adopted at the
+  meeting of 4 October" is what the record has to be able to state, and a meeting may not adopt its own minutes.
+- **Writing needs `staff.duties.manage` OR membership of the meeting's recorder list** (the minutes-taker
+  delegation the duty already carries); adopting needs the permission. **Reading is deliberately wider**: a
+  circulated or adopted set is readable by everyone who was expected, because circulation for correction is the
+  entire point of that rung. A refusal is **404, never 403**.
+- **A CLOSED PERIOD REFUSES ADOPTION, NOT A DRAFT** — the same call as the register: recording a meeting that
+  happened is never blocked; the act that makes it official is.
+- **An action point is a ROW (`StaffMinuteAction`), and that is the one place the enhance-before-add constraint
+  argues FOR a table.** It is queried across meetings by PERSON (the portal's "my actions"), it has a lifecycle
+  that outlives the draft, and it needs a `ReminderStage` COLUMN — every ladder in this module claims its stage
+  with a conditional `ExecuteUpdateAsync` before sending, and a stage buried in jsonb cannot be claimed that way.
+  The rest of the minutes (sections, motions, corrections) IS jsonb on the duty, read only through the
+  controller's serializer.
+  - An action with **no person is allowed and is never chased** — a meeting can minute one for a body. One with no
+    date was never given a deadline; inventing one would be the system making up the minutes.
+  - A line removed from the document is **Cancelled, not deleted**: the minutes said it. An existing id is UPDATED
+    rather than re-inserted, so its reminder stage and its completion survive an edit around it.
+- **The PDF is the browser's job, so "attached automatically on approval" means the PUBLISH attaches it.**
+  `MinutesPrint.razor` renders, publishes to the Library and calls `AttachMinutesAsync` in one act — and only for
+  an ADOPTED record, because attaching a draft would let an unadopted sheet stand as the record. **A draft prints
+  marked DRAFT.**
+- **The template is `MinutesTemplateDefaults` in Shared, tenant-editable through the policy blob**, read only
+  through `IStaffPerformancePolicyService.MinutesTemplate`. A section key is a wire format and locks once used.
+  **Quorum defaults to 0 = not tracked**: most school staff meetings have no constitutional quorum, and a page
+  announcing "quorum not met" at every meeting teaches people to ignore the one time it matters.
+- **Deliberately absent**: transcription or AI summarisation (a recording pipeline plus a server dependency this
+  project has ruled out) and e-signatures (adoption by motion IS the legal act).
+- Verified by **`scripts/e2e/minutes-e2e.mjs` (section 17, 47 checks)** and
+  **`scripts/e2e/browser/minutes-ui.mjs` (21 checks)**, both 0 failed. Note the API suite must pick a person who
+  does NOT hold `staff.duties.manage` for its "a reader cannot write" assertion, or several seeded roles make it
+  pass for the wrong reason. **A meeting whose register is closed is never cancelled**, so each run leaves one
+  meeting behind, titled with its run id.
 - **A password is temporary after an import or an administrator's RESET, not after account creation**
   (plan §12.3). A test that expects a forced change after `POST /users` is wrong, as the first live run was.
+
+## White label: a tenant's own domain, its own assets, and our name coming off (built 2026-09-20)
+
+Asked for as *"I have a tenant domain dashboard.maryhillug.net ... resolve the tenant and even hide the
+register organisation"*, then *"I would prefer C a fully white labelled experience"*, then *"make SACC
+SOFTWARE Branding a higher tier removal feature"*. The plan is the artifact linked from
+`docs/TASK_TRACKER.md`; the rules that are easy to break:
+
+- **`TenantResolutionMiddleware` resolves a tenant's own domain as a SIBLING of the subdomain branch,
+  never inside it.** It used to be nested in `if (!string.IsNullOrEmpty(slug))`, and
+  `ExtractSubdomainAsync` returns null unless the host ends in the platform's base domain — which a
+  tenant's own domain never does. **The feature was wired end to end and had never once run.** The
+  lookup is cached 30 minutes, negative answers included (the platform host would otherwise pay a
+  query per request), and `ForgetCustomDomain` is what `ICustomDomainService` calls when a domain goes
+  live or is released. Without the eviction a new domain "does not work" for half an hour.
+- **`ICustomDomainService` is the one home, and the ORDER is the point**: accept the domain, give the
+  DNS instructions, verify by TXT, issue the certificate, and only then route. `CustomDomain` is
+  written ONLY at the end; `CustomDomainPending` holds an unproved claim, so traffic never reaches a
+  host nobody proved they own. **A claim in progress outranks the live domain in the status** — a
+  tenant MOVING between hosts has both columns set, and reading the live one first hid the new TXT
+  record so the move could never finish (found by e2e 19.1 on a second run).
+  - **An apex is refused** and that is DNS, not policy: the standard forbids a CNAME at a zone root.
+  - **Back-off is a hard requirement.** A failing domain retried in a loop spends the box's weekly
+    Let's Encrypt budget and blocks issuance for every other tenant. The daily sweep skips anything
+    tried within the hour and gives up after seven failures; a human pressing "Check now" is never
+    throttled. **It is the unattended loop that has to stop, not the person.**
+  - **Every failure names the STEP.** "We could not find the TXT record" sends somebody to their
+    registrar; "the certificate could not be issued" sends them to us. A single "failed" sends them
+    to the wrong one.
+- **`IDnsTxtLookup` is a hand-written DNS/UDP query** (`DnsTxtLookup`), because .NET has no TXT
+  lookup at all and a NuGet resolver is a dependency this project does not take. Behind an interface
+  so `StubDnsTxtLookup` can answer from memory — **Development only, and the environment is checked
+  as well as the `Dns:Stub` key**.
+- **The certificate is issued by ONE root-owned helper, `/usr/local/bin/qmgr-tenant-domain`**, run
+  through a sudoers drop-in that permits that command and nothing else. The API stays `www-data`
+  under `ProtectSystem=strict`: handing a web application the ability to rewrite nginx is a far
+  larger grant than one argument-validated command. The helper **validates the domain itself** — it
+  is the privilege boundary, so the check lives on its side of it. `build-linux.ps1` generates it and
+  the sudoers file; `install.sh` installs both, creates `/etc/nginx/qmgr-tenants` and the ACME
+  webroot, and `visudo -c`s the drop-in (a malformed one locks sudo out of the box). **The nginx
+  include must exist before `nginx -t` runs**, which is why the directory is created first.
+- **Only the platform sets a domain** (decision 2). The tenant's Branding page shows it read-only with
+  a line saying who to ask; the certificate step touches the host.
+
+**`TenantHostContext` is the ONE home for "which host is this".** Resolved in `App.razor` — the only
+file that can see `Request.Host`, and server-rendered on every request whatever the render mode — and
+cascaded from `Routes.razor`. **`IsTenantHost` is false for any host that is not a LIVE tenant domain**,
+so an unverified or half-configured host is indistinguishable from the platform host; a mistyped DNS
+record must not half-brand a page. On a tenant host the sign-in page wears the tenant's name, logo and
+palette, the favicon and PWA manifest are theirs, and **"Register Organisation" is hidden** — the
+address already belongs to one organisation, so offering to create another there is the duplicate-school
+mistake the sign-in page was fixed for two days earlier, with the school's own name over it.
+
+### `BrandPalette` derives the WHOLE token family — three tokens is why it looked broken
+
+Reported as *"looks like whitelabeling engine is not working ... all pages should use tenant scoped css
+tokens"*, and it was right. Every branded surface set `--qm-primary`, `--qm-secondary` and
+`--qm-accent-orange`, while `qm-theme.css` defines seven more as **hardcoded wine literals**:
+`--qm-primary-dark` (every hover), `--qm-primary-light` (every chip and tint), `--qm-primary-glow`,
+`--qm-primary-rgb` (every `rgba(var(--qm-primary-rgb), α)` wash) and the two `--qm-secondary-*`. A
+school that chose green got green buttons on wine hovers with wine tints behind them.
+
+- **`Web/Services/BrandPalette.cs` is the one home**, used by `TenantHostContext`, `MainLayout`,
+  `KioskLayout` and `DisplayLayout` — all four had their own three-token copy. It derives `-dark` by
+  mixing toward black, `-light`/`-glow` at the theme's own alphas, `-rgb` as the triple, and
+  **`--qm-text-on-primary` from the brand's WCAG luminance**, because a school may pick yellow and
+  white text on it is unreadable. No colour library; it is thirty lines of arithmetic.
+- **`--qm-info` was a second copy of the wine literal and is now `var(--qm-primary)`** (both themes,
+  with `--qm-info-rgb` to match). "Info" is the brand-toned status, not a hue of its own, so it was
+  invisible to white-labelling — a rebranded tenant got wine info tiles scattered through green
+  chrome. Nothing changes for an unbranded install, where the token IS that wine.
+- **A new `--qm-*` colour token must derive from an existing one or be genuinely theme-invariant.** A
+  literal is the drift coming back, and it will not be visible until somebody rebrands.
+
+### Attribution removal is a HIGHER TIER, and it is THREE strings
+
+- **`FeatureCodes.RemoveAttribution` is a code of its own and must stay one.** The obvious move was to
+  hang it off `WhiteLabel` — but `engagement-communications` grants `WhiteLabel`, and every tenant
+  running signage buys that, so it would have been free for most of the customer base on day one.
+  Granted by the `white-label-plus` catalogue add-on, or by a platform override. **The price is a
+  placeholder; the Module Catalog editor is where it is set.**
+- **`ModuleCodes.Functional` exists beside `All`** because that add-on opens no screen: "holds any
+  module" turns ads off and grants report exports, and paying to remove a footer line is not buying a
+  reporting feature.
+- **It cannot ride `FeatureFlags.CustomFeatures`.** `GetFeatureValue` falls through to that dictionary
+  and **nothing anywhere populates it** — a real entitlement needs a member on the record, a line in
+  `ApplyModuleGrants` and a case in `GetFeatureValue`.
+- **A platform override lives in `Organization.Settings["FeatureOverrides"]`**, is applied AFTER the
+  module grants, and can only ever turn a flag ON — taking away what a module grants is a refund
+  question, not a switch. **OFF is a removal, never a stored false.** The endpoint calls
+  `InvalidateCacheAsync`, or the person who just granted it watches nothing happen for five minutes.
+- **THREE strings, one flag**: `<p class="powered-by">` on six public pages (now the `PoweredBy`
+  component), `MainLayout`'s footer, and `EmailTemplates`' own footer line. A tenant who pays and then
+  reads "Q-Mgr" at the foot of their own password-reset mail has not got what they bought.
+- **`AttributionRemoved` defaults to FALSE**, unlike `WhiteLabelEntitled` beside it, and the asymmetry
+  is deliberate: a dropped request would otherwise REMOVE the attribution. On the public pages the
+  source is the HOST; in the shell and in email it is the ORGANISATION, because most tenants sign in
+  on the platform address and should not need a domain to get what they paid for.
+- **Attribution removal requires white-labelling to be ON and entitled.** Taking our name off a page
+  that still says Q-Mgr everywhere is a gap, not a product.
+
+### Brand-asset uploads: the bytes decide
+
+- **`ImageProbe` reads PNG/JPEG/WebP headers by hand** — the container formats, not a library — and the
+  file is stored under the extension the BYTES imply, never the client's name or declared type.
+  `UploadFileTypes` lets a listed extension win within a family, so passing the client's name through
+  would let `x.webp` holding PNG bytes be stored as `.webp`.
+- **SVG is refused.** OWASP: it carries ECMAScript in almost every context, and the mitigation is to
+  serve it as `text/plain` or from a separate content domain. A logo served as text/plain is not a logo.
+- **Replacing an asset DELETES the old file** (unless another column still points at it). Without that
+  a school trying five logos leaves four orphans, and an orphan is the one class the authorizer can
+  only ever serve token-gated.
+- **`UploadOwnerKind.Branding` is public by intent** — a sign-in page, a kiosk and a display all fetch
+  it anonymously. Matched on `LogoUrl`/`FaviconUrl`, so a hand-typed link classifies the same way.
+- Limits are stated **before** the picker: 1 MB / 2048px for a logo, 512 KB / square 64–1024px for a
+  favicon. The browser refuses an over-size file and **the server refuses it again** — a client-side
+  check is a courtesy, never a control.
+
+**Verified by `scripts/e2e/white-label-e2e.mjs` (section 19, 52 checks, wired into
+`class-teacher-e2e.sh`) and `scripts/e2e/browser/white-label-ui.mjs` (20 checks).** The browser one is
+the answer to the "not working" report and could not have been an API suite: it brands the dev tenant
+green and **sweeps every visible element on six pages for the shipped wine**, which is what finds a page
+reading a literal instead of a token. Colour PREVIEWS are excluded by selector and by reason — the
+Branding page offers the wine as a ready-made palette and that chip has to be wine.
+
+**Two things remain unexercised and are stated rather than claimed.** The certbot and nginx path (Phase 3)
+can only run on the server; it was checked by rendering the generated helper from `build-linux.ps1` and
+`bash -n`-ing it, the same way the `/uploads/` nginx block was. And **no real certificate has been
+issued** — the e2e runs with `CustomDomains__SkipCertificate=true`, which is Development-only.
+
+## A tenant has a life, and the end of it leaves nothing (built 2026-09-20)
+
+*"I expect many trial accounts, most of which will not translate into business ... capacity to clean
+out a tenant fully, including all related user accounts and any data relating to the tenant, from any
+table ... flexible ... in case we add features ... should not leave any trace."* The plan is the
+artifact linked from `docs/TASK_TRACKER.md`.
+
+**What was there before: a whole pipeline hanging off a value nothing set.** `TenantStatus.Deleted`
+was READ in four places — `TenantStatusMiddleware`, `PlatformAnalyticsController`,
+`RegistrationGuardService` and a nightly purge in `BillingJobs` — and WRITTEN in none. A tenant could
+not be deleted at all. And had it ever reached that state the purge would have thrown: it did a bare
+`Organizations.Remove(org)` against **36 foreign keys with `DeleteBehavior.Restrict`**, sharing one
+`SaveChangesAsync` with the notification pruning and the usage resets, so it would have taken the
+whole nightly cleanup down with it. That block is gone; the comment where it was says why.
+
+### The purge derives itself from the model — that is the "future tables" answer
+
+78 entities: **39 carry an `OrganizationId`, 39 do not**, about six of the second group are the
+platform's own and the other ~33 are tenant data hanging off a parent. A hand-written "delete these
+tables in this order" list would have to encode all 33 join paths AND the safe order, then be
+extended correctly by every future feature — and when it drifted **nothing would break**; the rows
+would simply stay.
+
+- **`TenantPurgeModel` walks `IModel`**: it finds each table's shortest FK path to an
+  `OrganizationId` (breadth-first, so a welfare note goes through its record in one hop rather than
+  its record's student's branch in three), builds the nested `EXISTS` predicate for that path, and
+  orders every table dependents-first so the 36 `Restrict` keys are satisfied rather than fought.
+  Add a table with an `OrganizationId` and it is picked up with no code change.
+- **`TenantDataManifest` is the ONE declared thing**: `TenantOwned` · `TenantDerived` ·
+  `PlatformOwned` · `StatutoryRetention`. **`TenantPurgeModelGuard` FAILS STARTUP** when a table in
+  the model is not classified — hard, not a log line, because the cost of shipping an unclassified
+  table is a purge that reports success and leaves rows behind, found long after a tenant was told
+  their data was gone. Same fail-closed shape as `UploadAuthorizer.LookUpAsync`.
+- **The ordering tolerates the one real cycle** (`Organization.SubscriptionId` ↔
+  `Subscription.OrganizationId`); the purge breaks it explicitly by nulling the pointer first, which
+  is what that key's own `SetNull` intends.
+
+### The order is load-bearing, and step one cannot be recovered from
+
+1. **FILES FIRST, while the rows that name them still exist.** Uploads are GUID-named in one flat
+   directory and nothing in the name says whose they are, so **once the rows are gone the bytes are
+   unattributable and permanent** — a photograph of an injured child, a visitor's face. The columns
+   are found from the model (`FileUrl`, `FilePath`, `PhotoUrl`, `LogoUrl`, `FaviconUrl`,
+   `CoverImageUrl`, `ThumbnailUrl`), so a new table with a `PhotoUrl` is swept without anybody
+   remembering. **Getting this backwards is not fixable.**
+2. **Hangfire.** It runs on **PostgreSQL storage** — the same database, its own schema, which the EF
+   model knows nothing about — and `DispatchAsync(..., string recipient, string subject, string
+   message)` puts **a recipient's email address and the message body** into `hangfire.job`. A purge
+   that only walks `IModel` misses every byte of it. This is the one place the design deliberately
+   reaches outside the model.
+3. Rows, dependents first, in one transaction through the execution strategy.
+4. Statutory rows **de-identified in place**, never deleted.
+5. **VERIFY, before the commit.**
+6. Caches, the custom domain and the external processor, after it.
+
+### Verification is the deliverable, not the delete
+
+Uganda's DPPA requires destruction "in a manner that prevents its reconstruction in an intelligible
+form"; NIST SP 800-88 calls verification "the linchpin". Neither is satisfied by a `DELETE` that
+returned without throwing.
+
+- **The completeness check reads `information_schema`, NOT the EF model**, and that is the whole
+  point: a table the model forgot is still in the catalogue. Two overlapping passes — the catalogue
+  for anything with an `OrganizationId`, the model for the derived tables. **Anything left rolls the
+  transaction back and nothing is deleted.**
+- **Declared survivors are excluded by class, not by name.** `StatutoryRetention` AND
+  `PlatformOwned` — the tombstone, the certificate and the lifecycle log each carry an
+  `OrganizationId` and are meant to outlive the organization. The purge's own last act writes two of
+  them, so without this exclusion **a purge could never commit**: it would find the rows it had just
+  written and roll itself back. Found by the e2e on its first real run, which is exactly what the
+  check is for.
+- **`TenantPurgeCertificate`** records every purge — counts, files, jobs, duration, pass/fail — and
+  is written whether it worked or not. **`purge-reverification`** re-checks a sample monthly by a
+  different route, so a bug in the purge cannot hide in its own check.
+
+### The lifecycle, and the two lanes
+
+Six states with published clocks (`TenantLifecycleService`): Pending →14d→ Suspended →60d→ Cancelled
+→30d→ **PendingDeletion** →14d→ purged. **104 days**, three chances to come back, one explicitly
+reversible window at the end, and the tenant is emailed before each step. The numbers are in
+**Terms §8a** and the Privacy Policy, because a grace period nobody is told about is just latency.
+
+- **`PendingDeletion` is a state, not a flag on Cancelled.** They are different promises: one says
+  your data is here and you can have it, the other says it is going.
+- **A purge is never reachable from a customer-facing action** — only the daily sweep on an elapsed
+  clock, or a platform administrator who has scheduled it AND typed the organisation's name back.
+- **`Deleted` (5) is legacy and nothing writes it.** A purged tenant has NO ROW AT ALL.
+- **The two lanes.** A tenant that PAID keeps `Invoice` and `Payment` for five years (Uganda's Tax
+  Procedures Code), de-identified — amounts, dates and references kept, contact details blanked —
+  and `purge-expired-statutory-records` removes them when the five years are up. **A trial that never
+  paid has no tax record, so it purges whole.** That is the common case here, not the exception.
+
+### What survives, and why it is not a trace
+
+**`TenantTombstone`: two one-way hashes and some counts.** No name, no address, no email. It earns
+its place three times over — `RegistrationGuardService` can still see a purged tenant coming back
+(+25, which flags rather than refuses: a school returning to buy properly is the good case);
+"what happened to this tenant" has an answer; and it is **the ICO's own condition** for treating
+backup data as "put beyond use" — a suppression list any restore checks.
+**`TenantTombstoneHash` is the one home for that hash**, because the purge writes it and the
+registration guard reads it, and a second copy that drifted would silently stop matching with
+nothing looking broken.
+
+**Backups are answered honestly rather than claimed away.** `qmgr-backup-db.sh` keeps 30 days and
+prunes by age, so a purged tenant is genuinely gone from every backup within 30 days — that exact
+sentence is in the Privacy Policy. `qmgr-restore-db.sh` gained `suppression_report` (the drill says
+what a dump would bring back) and `suppression_reapply` (a live restore re-deletes the purged
+tenants, with `session_replication_role = replica` for that transaction only).
+
+**Verified**: `scripts/e2e/tenant-purge-e2e.mjs` (section 20, **32 checks**, wired into
+`class-teacher-e2e.sh`). It **creates its own tenant and destroys it** — it cannot run against the
+dev tenant, because a successful run ends with the tenant gone. It resets its own sign-up budget
+first through a **Development-only** endpoint (404 elsewhere), because three sign-ups an hour is
+right in production and unworkable for a suite that must create a tenant to destroy one.
+
+## A `var()` fallback hides a wrong token name (2026-09-21)
+
+`var(--qm-bg-subtle, #f4f4f5)` looks like a themed panel and is not one: `--qm-bg-subtle` has never
+existed, so that rule ALWAYS took the literal — a light grey panel behind theme-coloured text,
+invisible in dark mode, on the tenant dialog, and nothing failed. The same shape with NO fallback is
+worse: `var(--surface-color)` on the `/unauthorized` card made the whole declaration invalid, so that
+page's card had no background, no radius and no shadow for as long as it existed. Neither is visible
+in a build, a type check or a code read — only the resolved value shows it, and by then somebody has
+to already suspect the token.
+
+**`scripts/e2e/css-token-check.mjs` is the guard**: every token a rule reads must be defined
+somewhere — a stylesheet, a component's own block, an inline style, or a C# string that writes one
+(`BrandPalette` derives the whole `--qm-primary-*` family at runtime, so those tokens exist in no
+`.css` file). Vendor prefixes (`--rz-`, `--bs-`, `--fa-`, `--swiper-`, `--stf-`) are excluded, and
+comment bodies are blanked before scanning so a note quoting the broken rule it replaced does not
+report itself for ever. **Real tokens only, no fallback literal**, and check a colour change in BOTH
+themes.
+
+### Text on a FIXED fill is a different question from text on the BRAND fill
+
+`--qm-text-on-primary` is derived from the tenant's own brand colour by `BrandPalette`, so a
+dark-branded tenant got `#ffffff` on amber `#f59e0b` — about 1.9:1, unreadable, and the reason a
+filled warning button looked washed out. Amber is the same in both themes and is always light, so
+**`--qm-text-on-warning` is near-black and theme-invariant**. A new fixed-colour fill needs its own
+foreground token and must never borrow the brand's, because the brand's follows a colour the tenant
+chooses and this one sits on a colour they do not.
+
+### A colour picker's first swatch is the tenant's brand, stored as NULL
+
+`WelfareCategoriesSetup` and `ServiceTypesSetup` both led their palette with Q-Mgr's own shipped wine
+(`#8c2f52`) and preselected it, so every category and service a white-labelled school created was
+stamped with our colour rather than theirs. The first swatch is now the organization's own brand and
+is **stored as `null`, never as a hex** — every render site already reads `Color ?? var(--qm-primary)`,
+so a null follows the palette wherever it appears, including after a rebrand, which a stored hex never
+would. `Color` is `string?` on both forms for exactly that reason.
+
+## Two certificate decisions on one day, and they do not conflict (2026-09-21)
+
+Read both before changing either. The tracker's 2026-09-21 section carries the full account.
+
+**Morning** — *"the certificate exists on the server and is already shared properly with other
+applications"*, then "use shared cert, never issue". `ICertificateIssuer`/`CertbotCertificateIssuer`
+became **`ITenantDomainActivator`/`NginxTenantDomainActivator`**: it writes the tenant's nginx block
+against the installed certificate and reloads, and **REFUSES a domain that certificate does not
+cover** — a domain marked live behind a browser warning is worse than one that is not live yet. The
+per-tenant renewal date went with it (logged, never stored): the certificate belongs to the server,
+not to the tenant, so a stored copy would go stale the moment it was renewed and would then be a
+wrong date shown confidently.
+
+**The coverage check is the load-bearing part and stays exactly as written.** A wildcard matches
+exactly ONE label, so `a.b.example.com` is NOT covered by `*.example.com`; the names come from the
+SANs plus the common name, the latter for an older certificate carrying no SAN extension at all.
+
+**Afternoon** — *"external domains like dashboard.maryhillug.net should be supported also. this is the
+reason for whitelabelling."* The installed certificate answers for `*.cashbook.ug` and `cashbook.ug`
+only (Sectigo DV, read off the live host on 2026-09-21), so it can never cover somebody's own domain.
+The morning's work therefore becomes the **fast path** of a hybrid rather than the whole answer, with
+per-domain issuance restored as the branch underneath the coverage check. That build is workstream B
+of the completion plan; its rules are written up where it lands, not here.
 
 ## Process note for future sessions
 

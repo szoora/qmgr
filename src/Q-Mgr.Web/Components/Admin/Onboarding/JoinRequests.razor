@@ -26,19 +26,16 @@
 }
 
 <div class="admin-page">
-    <div class="page-header">
-        @if (!Embedded)
-        {
-            <div class="header-content">
-                <h1>Join Requests<QInfo Text="Staff who asked to join through your join link. Nobody can sign in until you approve them and choose their role." Label="Join Requests" /></h1>
-                <p class="subtitle">Staff who asked to join through your join link. Nobody can sign in until you approve them and choose their role.</p>
-            </div>
-        }
-        <div class="header-actions">
+    <QPageActions Embedded="@Embedded">
+        <Title>
+            <h1>Join Requests<QInfo Text="Staff who asked to join through your join link. Nobody can sign in until you approve them and choose their role." Label="Join Requests" /></h1>
+            <p class="subtitle">Staff who asked to join through your join link. Nobody can sign in until you approve them and choose their role.</p>
+        </Title>
+        <Actions>
             <QCheckbox Value="@showClosed" ValueChanged="@ToggleClosed" Label="Show rejected and expired" />
             <QButton Text="Join link and onboarding" Icon="link-45deg" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/users?tab=onboarding"))" />
-        </div>
-    </div>
+        </Actions>
+    </QPageActions>
 
     @if (moduleMissing)
     {
@@ -55,11 +52,39 @@
     }
     else
     {
+        @* Search, paging and a selection (plan Phase 2). A join link left open collects sign-ups
+           for as long as it is open, and a term's worth arrive in a week. *@
+        <QBulkBar Search="@search" SearchChanged="@SetSearch" SearchPlaceholder="Search by name, email or phone"
+                  ShowSelection="@canApprove" VisibleCount="@Visible.Count" SelectedCount="@selected.Count"
+                  AllSelected="@AllVisibleSelected" AllSelectedChanged="@ToggleSelectAllVisible"
+                  ClearSelection="@(() => selected.Clear())"
+                  IdleHint="Tick people to approve or reject several at once.">
+            <Actions>
+                <QButton Text="@($"Approve {selected.Count}")" Icon="check-lg" Variant="primary" Size="sm" OnClick="@OpenBulkApprove" />
+                <QButton Text="@($"Reject {selected.Count}")" Icon="x-lg" Variant="secondary" Size="sm" OnClick="@OpenBulkReject" />
+            </Actions>
+        </QBulkBar>
+
+        @if (Visible.Count == 0)
+        {
+            <QEmptyState Icon="funnel" Title="Nobody matches" Text="Clear the search to see every request.">
+                <Action><QButton Text="Show everyone" Icon="arrow-counterclockwise" Variant="secondary" Size="sm" OnClick="@(() => SetSearch(string.Empty))" /></Action>
+            </QEmptyState>
+        }
+        else
+        {
         <div class="jr-list">
-            @foreach (var r in requests)
+            @foreach (var r in Paged)
             {
                 <QCard>
                     <div class="jr-row">
+                        @if (canApprove)
+                        {
+                            @* aria-label, never Label: QCheckbox prints Label as visible text. *@
+                            <QCheckbox Value="@selected.Contains(r.UserId)" Class="jr-pick"
+                                       ValueChanged="@(v => TogglePick(r.UserId, v))"
+                                       aria-label="@($"Select {r.FirstName} {r.LastName}")" />
+                        }
                         <QAvatar Name="@($"{r.FirstName} {r.LastName}")" Size="md" />
                         <div class="jr-main">
                             <div class="jr-name">
@@ -100,11 +125,21 @@
                 </QCard>
             }
         </div>
+        <QPager Count="@Visible.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="requests" />
+        }
     }
 </div>
 
-<QModal @bind-Visible="showApprove" Title="@($"Approve {approving?.FirstName} {approving?.LastName}")" Icon="person-check" Size="md">
+<QModal @bind-Visible="showApprove" Title="@(bulkMode ? $"Approve {selected.Count} people" : $"Approve {approving?.FirstName} {approving?.LastName}")" Icon="person-check" Size="md">
     <ChildContent>
+        @if (bulkMode)
+        {
+            <p class="jr-lede">
+                <strong>Everything below is applied to all @selected.Count.</strong> Each is still approved one at a time and
+                checked one at a time, so any the rules refuse are listed rather than silently skipped. A class cannot be
+                given to several people, so class-teacher assignments are not offered here.
+            </p>
+        }
         <p class="jr-lede">Choose what this person can do. You can assign only roles at or below your own.</p>
         <QSelect TValue="Guid?" TItem="RoleOption" Label="Role" Required="true" @bind-Value="@form.RoleId"
                  Items="@roles" ValueSelector="@(r => (Guid?)r.Id)" TextSelector="@(r => r.Name)" Placeholder="Choose a role" />
@@ -129,7 +164,7 @@
     </FooterContent>
 </QModal>
 
-<QModal @bind-Visible="showReject" Title="@($"Reject {rejecting?.FirstName} {rejecting?.LastName}")" Icon="x-circle" Size="sm">
+<QModal @bind-Visible="showReject" Title="@(bulkMode ? $"Reject {selected.Count} requests" : $"Reject {rejecting?.FirstName} {rejecting?.LastName}")" Icon="x-circle" Size="sm">
     <ChildContent>
         <p class="jr-lede">They will be emailed that the request was not approved. The request is deleted after @purgeDays days.</p>
         <QInput TValue="string" Type="textarea" Rows="3" Label="Reason (optional, included in the email)" @bind-Value="@rejectReason" MaxLength="500" />
@@ -142,17 +177,18 @@
 
 <style>
     .jr-list { display: grid; gap: 12px; }
+    .jr-pick { margin-bottom: 0; flex: 0 0 auto; }
     .jr-row { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
     .jr-main { flex: 1 1 280px; min-width: 0; }
-    .jr-name { font-weight: 600; font-size: 15px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .jr-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--qm-text-secondary); margin-top: 4px; overflow-wrap: anywhere; }
+    .jr-name { font-weight: 600; font-size: var(--qm-text-md); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .jr-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: var(--qm-text-base); color: var(--qm-text-secondary); margin-top: 4px; overflow-wrap: anywhere; }
     .jr-meta span { display: inline-flex; align-items: center; gap: 5px; }
-    .jr-sub { font-size: 12px; color: var(--qm-text-muted); margin-top: 4px; }
-    .jr-signals { display: flex; gap: 8px; margin-top: 10px; padding: 8px 10px; border: 1px solid var(--qm-warning); border-radius: var(--qm-radius-md); font-size: 13px; }
+    .jr-sub { font-size: var(--qm-text-sm); color: var(--qm-text-muted); margin-top: 4px; }
+    .jr-signals { display: flex; gap: 8px; margin-top: 10px; padding: 8px 10px; border: 1px solid var(--qm-warning); border-radius: var(--qm-radius-md); font-size: var(--qm-text-base); }
     .jr-signals ul { margin: 4px 0 0; padding-left: 18px; }
     .jr-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-    .jr-lede { font-size: 13px; color: var(--qm-text-secondary); margin: 0 0 10px; }
-    .jr-messages { font-size: 13px; color: var(--qm-warning); margin: 8px 0 0; padding-left: 18px; }
+    .jr-lede { font-size: var(--qm-text-base); color: var(--qm-text-secondary); margin: 0 0 10px; }
+    .jr-messages { font-size: var(--qm-text-base); color: var(--qm-warning); margin: 8px 0 0; padding-left: 18px; }
 </style>
 
 @code {
@@ -161,7 +197,16 @@
     /// way — see CLAUDE.md, "A hub owns the route; its sections own nothing".</summary>
     [Parameter] public bool Embedded { get; set; }
 
+    private const int PageSize = 25;
+
     private bool isLoading = true, saving, showClosed, canApprove, moduleMissing, showApprove, showReject;
+    private string search = string.Empty;
+    private int pageIndex;
+    private readonly HashSet<Guid> selected = new();
+
+    /// <summary>Set while a dialog is acting on the SELECTION rather than on one person.</summary>
+    private bool bulkMode;
+    private List<string> bulkProblems = new();
     private int purgeDays = 30;
     private List<JoinRequestDto> requests = new();
     private List<RoleOption> roles = new();
@@ -233,8 +278,55 @@
     private async Task ToggleClosed(bool value)
     {
         showClosed = value;
+        selected.Clear();
         await LoadAsync();
     }
+
+    private List<JoinRequestDto> Visible
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(search)) return requests;
+            var q = search.Trim();
+            bool Has(string? s) => (s ?? string.Empty).Contains(q, StringComparison.OrdinalIgnoreCase);
+            return requests.Where(r => Has(r.FirstName) || Has(r.LastName) || Has(r.Email) || Has(r.Phone)
+                                       || Has($"{r.FirstName} {r.LastName}")).ToList();
+        }
+    }
+
+    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (Visible.Count - 1) / PageSize));
+    private IEnumerable<JoinRequestDto> Paged => Visible.Skip(SafePageIndex * PageSize).Take(PageSize);
+    private bool AllVisibleSelected => Visible.Count > 0 && Visible.All(r => selected.Contains(r.UserId));
+
+    private void SetSearch(string value)
+    {
+        search = value ?? string.Empty;
+        pageIndex = 0;
+        PruneSelection();
+    }
+
+    /// <summary>
+    /// A selection may only ever cover rows the reader can SEE. Without this, "approve 20 selected"
+    /// silently reaches people the search is hiding.
+    /// </summary>
+    private void PruneSelection()
+    {
+        var visible = Visible.Select(r => r.UserId).ToHashSet();
+        selected.RemoveWhere(id => !visible.Contains(id));
+    }
+
+    private void ToggleSelectAllVisible(bool on)
+    {
+        selected.Clear();
+        if (on) foreach (var r in Visible) selected.Add(r.UserId);
+    }
+
+    private void TogglePick(Guid userId, bool on)
+    {
+        if (on) selected.Add(userId); else selected.Remove(userId);
+    }
+
+    private List<JoinRequestDto> SelectedRequests => requests.Where(r => selected.Contains(r.UserId)).ToList();
 
     private async Task OpenApprove(JoinRequestDto r)
     {
@@ -269,9 +361,92 @@
         try { classNames = (await StudentApi.GetVocabulariesAsync(b)).Classes.Select(c => c.Name).OrderBy(n => n).ToList(); } catch { }
     }
 
+    /// <summary>
+    /// Approving several at once. NOT a shortcut around the decision: the dialog is the same one,
+    /// and the role, branch and assignments it collects are applied to every person ticked — which
+    /// is the real case (a term's intake of teachers at one branch), not a convenience.
+    /// Class-teacher assignments are deliberately blanked, because two people cannot hold the same
+    /// class and silently giving it to all of them would be worse than not offering it.
+    /// </summary>
+    private async Task OpenBulkApprove()
+    {
+        if (selected.Count == 0) return;
+        bulkMode = true;
+        approving = null;
+        approveMessages = new();
+        bulkProblems = new();
+        var first = SelectedRequests.FirstOrDefault();
+        form = new ApproveForm
+        {
+            RoleId = roles.FirstOrDefault(x => x.Code == RoleCodes.Teacher)?.Id,
+            BranchId = first?.BranchId ?? (branches.Count == 1 ? branches[0].Id : null)
+        };
+        showApprove = true;
+        await LoadBranchListsAsync();
+    }
+
+    private void OpenBulkReject()
+    {
+        if (selected.Count == 0) return;
+        bulkMode = true;
+        rejecting = null;
+        rejectReason = null;
+        bulkProblems = new();
+        showReject = true;
+    }
+
+    /// <summary>
+    /// Applies the dialog to every ticked person, one call each, and REPORTS WHAT FAILED by name.
+    /// Some will be refused individually — RoleAssignmentGuard refuses a role above the approver's
+    /// rank — and a bulk action that swallows those is worse than one that does not exist.
+    /// </summary>
+    private async Task<int> RunOverSelectionAsync(Func<JoinRequestDto, Task> act)
+    {
+        bulkProblems = new();
+        var done = 0;
+        foreach (var r in SelectedRequests)
+        {
+            try { await act(r); done++; }
+            catch (Exception ex) { bulkProblems.Add($"{r.FirstName} {r.LastName}: {ex.Message}"); }
+        }
+        return done;
+    }
+
     private async Task ApproveAsync()
     {
-        if (approving == null || form.RoleId == null || form.BranchId == null) return;
+        if (form.RoleId == null || form.BranchId == null) return;
+        if (bulkMode)
+        {
+            saving = true;
+            try
+            {
+                var done = await RunOverSelectionAsync(async r =>
+                {
+                    var notes = await Onboarding.ApproveAsync(r.UserId, new ApproveJoinRequest
+                    {
+                        RoleId = form.RoleId!.Value,
+                        BranchId = form.BranchId,
+                        DepartmentIds = form.DepartmentIds.ToList(),
+                        LineManagerUserId = form.LineManagerUserId,
+                        // Never the same class to several people at once — see OpenBulkApprove.
+                        ClassTeacherOf = new List<string>(),
+                        Teaches = string.IsNullOrWhiteSpace(form.Teaches) ? null : form.Teaches.Trim()
+                    });
+                    foreach (var n in notes) bulkProblems.Add($"{r.FirstName} {r.LastName}: {n}");
+                });
+                approveMessages = bulkProblems;
+                Toast.Notify(bulkProblems.Count == 0 ? ToastSeverity.Success : ToastSeverity.Warning,
+                    $"{done} of {selected.Count} approved",
+                    bulkProblems.Count == 0 ? "They have been emailed that they can sign in." : "Some needed a closer look — see the notes.");
+                if (bulkProblems.Count == 0) { showApprove = false; selected.Clear(); }
+                await LoadAsync();
+                PruneSelection();
+            }
+            finally { saving = false; bulkMode = showApprove; }
+            return;
+        }
+
+        if (approving == null) return;
         saving = true;
         try
         {
@@ -301,6 +476,24 @@
 
     private async Task RejectAsync()
     {
+        if (bulkMode)
+        {
+            saving = true;
+            try
+            {
+                var reason = string.IsNullOrWhiteSpace(rejectReason) ? null : rejectReason.Trim();
+                var done = await RunOverSelectionAsync(r => Onboarding.RejectAsync(r.UserId, new RejectJoinRequest { Reason = reason }));
+                Toast.Notify(bulkProblems.Count == 0 ? ToastSeverity.Success : ToastSeverity.Warning,
+                    $"{done} of {selected.Count} rejected",
+                    bulkProblems.Count == 0 ? "Each was emailed." : string.Join(" · ", bulkProblems.Take(3)));
+                if (bulkProblems.Count == 0) { showReject = false; selected.Clear(); }
+                await LoadAsync();
+                PruneSelection();
+            }
+            finally { saving = false; bulkMode = showReject; }
+            return;
+        }
+
         if (rejecting == null) return;
         saving = true;
         try

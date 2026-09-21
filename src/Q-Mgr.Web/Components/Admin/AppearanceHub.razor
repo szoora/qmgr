@@ -28,6 +28,10 @@
             <h1>Appearance<QInfo Text="What the customer sees: the screens and kiosk, your logo and colours, the printed ticket, and the links you share." Label="Appearance" /></h1>
             <p class="subtitle">What the customer sees: the screens and kiosk, your logo and colours, the printed ticket, and the links you share.</p>
         </div>
+        <div class="header-actions">
+            @* The open section's own buttons land here — see QPageActions. *@
+            <SectionOutlet SectionId="QPageActions.Id" />
+        </div>
     </div>
 
     <QTabs Tabs="@tabs" @bind-ActiveKey="@hubTab" IdPrefix="ap" AriaLabel="Appearance sections" />

@@ -279,6 +279,21 @@ public record SharedDocumentGateDto
     public string DocumentName { get; init; } = string.Empty;
     public string? Summary { get; init; }
     public string? OrganizationName { get; init; }
+
+    /// <summary>
+    /// The organization's own logo, when it white-labels. A parent opening a link their child's
+    /// school sent them should see the school, not us — this page is the most outward-facing thing
+    /// in the product and the one most likely to be forwarded on. Null otherwise.
+    /// </summary>
+    public string? OrganizationLogoUrl { get; init; }
+
+    /// <summary>
+    /// Whether this page drops "Shared securely with Q-Mgr" for the organization's own name.
+    /// Resolved server-side from the sharing organization's entitlement, never from the host: the
+    /// reader is a stranger who almost always arrives on the platform address.
+    /// </summary>
+    public bool AttributionRemoved { get; init; }
+
     public string? PublishedFrom { get; init; }
     public DateTime? PublishedAt { get; init; }
     public DocumentShareState State { get; init; }

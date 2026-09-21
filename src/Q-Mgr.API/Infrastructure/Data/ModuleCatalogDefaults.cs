@@ -88,6 +88,22 @@ public class ModuleCatalogDefaults
             MonthlyPriceUsd: 15m, AnnualPriceUsd: 150m, MonthlyPriceUgx: 60_000m, AnnualPriceUgx: 600_000m,
             Description: "API clients, webhooks, and partner integration adapters (hospital/pharmacy/banking).",
             Badge: null, SortOrder: 4),
+        // An ADD-ON, not a product module: it opens no screen and grants exactly one entitlement,
+        // FeatureCodes.RemoveAttribution. Its limits are all zero for the same reason — a tenant
+        // never holds this alone, and a limit here would cap a tenant that also holds Core Queue,
+        // since BillingService takes the HIGHEST limit across the modules held. Zero contributes
+        // nothing and reads honestly as "this module grants no capacity".
+        //
+        // THE PRICE IS A PLACEHOLDER. It is the Module Catalog editor's to set, and setting it is
+        // a commercial decision rather than a default to invent. It ships as the wine-and-dine
+        // number precisely so it is obviously provisional on the platform dashboard.
+        new ModuleDefaults(
+            Name: "White-Label Plus", Code: ModuleCodes.WhiteLabelPlus, ShowAds: false, DedicatedSchema: false,
+            MaxBranches: 0, MaxDisplays: 0, MaxUsersPerBranch: 0, MaxCountersPerBranch: 0,
+            MaxTokensPerMonth: 0, MaxApiCallsPerMonth: 0, MaxStorageMb: 0,
+            MonthlyPriceUsd: 12m, AnnualPriceUsd: 120m, MonthlyPriceUgx: 50_000m, AnnualPriceUgx: 500_000m,
+            Description: "Removes \"Powered by SACC Software\" from your sign-in pages, the Q-Mgr line from the app footer, and our name from the emails your organization sends. Requires white-label branding to be switched on.",
+            Badge: "Add-on", SortOrder: 5),
     };
 
     public async Task RunAsync(CancellationToken cancellationToken = default)

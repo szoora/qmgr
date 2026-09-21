@@ -1,3 +1,4 @@
+using QMgr.Domain.Constants;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -8,6 +9,7 @@ using QMgr.Domain.Entities.Platform;
 using QMgr.Infrastructure.Email;
 using QMgr.Domain.Enums;
 using QMgr.Infrastructure.Data;
+using QMgr.Infrastructure.Services.Billing;
 
 namespace QMgr.Infrastructure.Jobs;
 
@@ -55,8 +57,7 @@ public class BillingJobs
     {
         // Single public host with path-based routing — there is no per-tenant subdomain, so the
         // old "https://{slug}.{baseDomain}/..." links resolved nowhere on the real deployment.
-        var saas = await _platformSettingsService.GetSettingsAsync<SaasSettings>("SaaS");
-        return (saas?.BaseUrl ?? "https://qmgr.app").TrimEnd((char)47);
+        return await _platformSettingsService.GetPublicWebBaseUrlAsync();
     }
 
     /// <summary>
@@ -192,7 +193,7 @@ public class BillingJobs
                     Type = NotificationType.SystemAlert,
                     Priority = NotificationPriority.Normal,
                     Channels = NotificationChannel.InApp,
-                    ActionUrl = "/billing/modules",
+                    ActionUrl = BillingLinks.Modules,
                     IconClass = "clock-history"
                 });
 
@@ -239,7 +240,7 @@ public class BillingJobs
                     Type = NotificationType.SystemAlert,
                     Priority = NotificationPriority.High,
                     Channels = NotificationChannel.InApp,
-                    ActionUrl = "/billing/modules",
+                    ActionUrl = BillingLinks.Modules,
                     IconClass = "lock-fill"
                 });
 
@@ -437,6 +438,13 @@ public class BillingJobs
                 {
                     _logger.LogInformation("Successfully collected payment for invoice {InvoiceId}", invoice.Id);
                 }
+                else if (result.ErrorCode == BillingService.AwaitingConfirmation)
+                {
+                    // A mobile money prompt is out and unanswered. Not a failed payment: marking the
+                    // subscription past due and emailing "payment failed" here would tell a customer
+                    // their payment failed while their phone is still asking them to approve it.
+                    _logger.LogInformation("Invoice {InvoiceId} is waiting on a mobile money approval", invoice.Id);
+                }
                 else
                 {
                     // Payment failed - update subscription status
@@ -542,20 +550,24 @@ public class BillingJobs
         // Clean up old notifications (older than 90 days)
         await _notificationService.CleanupOldNotificationsAsync(90);
 
-        // Clean up deleted organizations (older than 30 days)
-        var deletionCutoff = DateTime.UtcNow.AddDays(-30);
-        var deletedOrgs = await _dbContext.Organizations
-            .Where(o => o.Status == TenantStatus.Deleted &&
-                        o.UpdatedAt <= deletionCutoff)
-            .ToListAsync();
-
-        foreach (var org in deletedOrgs)
-        {
-            // Permanently remove (or archive to cold storage)
-            _dbContext.Organizations.Remove(org);
-            _logger.LogInformation("Permanently removed deleted organization {OrganizationId}", org.Id);
-        }
-
+        // TENANT DELETION IS NOT DONE HERE ANY MORE, and what was here could never have worked.
+        //
+        // This block used to take every organization sitting in TenantStatus.Deleted for 30 days and
+        // call Organizations.Remove(org). Two things were wrong with it:
+        //
+        //   1. NOTHING IN THE CODEBASE EVER SET TenantStatus.Deleted. It was read in four places —
+        //      the status middleware, the platform analytics count, the registration guard, and
+        //      right here — and assigned in none, so this loop had never had a row to work on and
+        //      the whole 30-day grace period was hanging off a state the product could not reach.
+        //   2. Had it ever found one, it would have thrown. The model has 36 foreign keys pointing
+        //      at `organizations` with DeleteBehavior.Restrict; a bare Remove against those is a
+        //      foreign-key violation, and because this all shares one SaveChangesAsync it would
+        //      have taken the notification pruning and the usage resets down with it every night.
+        //
+        // Emptying a tenant out means files first, then Hangfire's own tables, then ~70 tables in
+        // foreign-key order, then a completeness check read from information_schema. That is
+        // ITenantPurgeService, driven by the clocks in ITenantLifecycleService and its own
+        // "tenant-lifecycle-sweep" job. See TenantDataManifest for the classification it rests on.
         await _dbContext.SaveChangesAsync();
         _logger.LogInformation("Completed expired data cleanup");
     }
@@ -603,7 +615,7 @@ public class BillingJobs
                 "If you have any questions, our support team is here to help."
             },
             "Choose a Plan",
-            EmailTemplates.Link(baseUrl, "/billing/plans"));
+            EmailTemplates.Link(baseUrl, BillingLinks.Modules));
 
     private static string GetTrialExpiredEmailBody(string orgName, string baseUrl) =>
         EmailTemplates.Layout(
@@ -616,7 +628,7 @@ public class BillingJobs
                 "Your data is safe and will be available once you subscribe."
             },
             "Subscribe Now",
-            EmailTemplates.Link(baseUrl, "/billing/plans"),
+            EmailTemplates.Link(baseUrl, BillingLinks.Modules),
             tone: EmailTemplates.Tone.Warning);
 
     private static string GetModuleTrialExpiringEmailBody(string orgName, string moduleName, int daysLeft, string baseUrl) =>
@@ -630,7 +642,7 @@ public class BillingJobs
                 "Your other modules and data are unaffected."
             },
             "Manage Modules",
-            EmailTemplates.Link(baseUrl, "/billing/modules"));
+            EmailTemplates.Link(baseUrl, BillingLinks.Modules));
 
     private static string GetModuleTrialExpiredEmailBody(string orgName, string moduleName, string baseUrl) =>
         EmailTemplates.Layout(
@@ -643,7 +655,7 @@ public class BillingJobs
                 "Your data for this module is safe and will be available again once you add it back."
             },
             "Manage Modules",
-            EmailTemplates.Link(baseUrl, "/billing/modules"),
+            EmailTemplates.Link(baseUrl, BillingLinks.Modules),
             tone: EmailTemplates.Tone.Warning);
 
     private static string GetPaymentFailedEmailBody(string orgName, decimal amount, string baseUrl) =>
@@ -657,7 +669,7 @@ public class BillingJobs
                 "If you believe this is an error, please contact our support team."
             },
             "Update Payment Method",
-            EmailTemplates.Link(baseUrl, "/billing/payment-methods"),
+            EmailTemplates.Link(baseUrl, BillingLinks.Payment),
             tone: EmailTemplates.Tone.Warning);
 
     private static string GetAccountSuspendedEmailBody(string orgName, string baseUrl) =>
@@ -671,7 +683,7 @@ public class BillingJobs
                 "Your data is being preserved and will be available once payment is received."
             },
             "Restore Account",
-            EmailTemplates.Link(baseUrl, "/billing/payment-methods"),
+            EmailTemplates.Link(baseUrl, BillingLinks.Payment),
             tone: EmailTemplates.Tone.Warning);
 
     #endregion
@@ -701,7 +713,7 @@ public class BillingJobs
                     "To avoid service interruption, consider upgrading your plan."
                 },
                 "Upgrade Plan",
-                EmailTemplates.Link(baseUrl, "/billing/plans")),
+                EmailTemplates.Link(baseUrl, BillingLinks.Modules)),
             true);
 
         _logger.LogInformation(
@@ -731,7 +743,7 @@ public class BillingJobs
                     "Some features may be restricted until your usage resets next month or you upgrade your plan."
                 },
                 "Upgrade Now",
-                EmailTemplates.Link(baseUrl, "/billing/plans"),
+                EmailTemplates.Link(baseUrl, BillingLinks.Modules),
                 tone: EmailTemplates.Tone.Warning),
             true);
 
@@ -774,11 +786,23 @@ public static class BillingJobsRegistration
             job => job.CheckUsageLimitsAsync(),
             "0 10 * * *");
 
-        // Generate monthly invoices - 1st of each month at midnight
+        // Invoice every module whose period has ended — DAILY at 01:00 UTC (2026-09-19). It ran only on
+        // the 1st, so a module whose period ended on the 2nd was billed about four weeks late. The
+        // method bills only what has fallen due and rolls each period forward, so running it daily
+        // raises nothing twice. The old id is removed so the monthly schedule does not also fire.
+        RecurringJob.RemoveIfExists("generate-monthly-invoices");
         RecurringJob.AddOrUpdate<BillingJobs>(
-            "generate-monthly-invoices",
+            "generate-due-invoices",
             job => job.GenerateMonthlyInvoicesAsync(),
-            "0 0 1 * *");
+            "0 1 * * *");
+
+        // Ask the sacc.ug gateway about every payment still open — every five minutes. The signed
+        // webhook normally settles a payment first; this is what settles it when a webhook is lost,
+        // and what abandons one the gateway never received.
+        RecurringJob.AddOrUpdate<PaymentReconciliationJob>(
+            "reconcile-gateway-payments",
+            job => job.RunAsync(),
+            "*/5 * * * *");
 
         // Process pending invoices - Daily at 6 AM UTC
         RecurringJob.AddOrUpdate<BillingJobs>(

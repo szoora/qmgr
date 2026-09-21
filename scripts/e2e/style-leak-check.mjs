@@ -19,7 +19,9 @@ import path from 'node:path';
 const SHARED = [
   'page-header', 'page-subtitle', 'admin-page', 'page-container', 'subtitle',
   'form-row', 'form-actions', 'filter-row', 'modal-actions', 'q-tabs', 'q-filter-bar',
-  'data-table', 'q-card', 'breadcrumb', 'header-content',
+  'data-table', 'q-card', 'breadcrumb', 'header-content', 'header-actions',
+  // 2026-09-19: 50 components sized their own empty state, so no two matched.
+  'empty-state', 'empty-state-icon', 'q-empty',
 ];
 
 // The excluded set every size rule in CLAUDE.md skips: the kiosk, the public display and signage,

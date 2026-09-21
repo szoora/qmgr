@@ -133,6 +133,10 @@ public class StaffActivityController : StaffPerformanceControllerBase
             StaffExportKinds.NoticeAcknowledgements => (Permissions.StaffNoticesManage, "a notice's acknowledgements"),
             StaffExportKinds.Activity => (Permissions.StaffRecordsView, "the activity log"),
             StaffExportKinds.DutyReports => (Permissions.StaffDutyReportsView, "a duty report pack"),
+            // Adopted minutes are readable by everybody who was expected at the meeting, so the print
+            // carries no permission of its own — but it IS logged, because a set of minutes leaving
+            // the system as a file is the same class of event as a timetable leaving it.
+            StaffExportKinds.Minutes => (string.Empty, "minutes of a meeting"),
             // A published timetable is readable by all branch staff (plan §13.5); the print is logged all the same.
             StaffExportKinds.Timetable => (string.Empty, "a timetable"),
             StaffExportKinds.TeachingReports => (string.Empty, "the lessons report"),

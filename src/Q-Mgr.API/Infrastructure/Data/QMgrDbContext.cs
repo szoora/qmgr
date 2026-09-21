@@ -85,6 +85,7 @@ public class QMgrDbContext : DbContext
     public DbSet<QMgr.Domain.Entities.Staff.StaffDutyReport> StaffDutyReports => Set<QMgr.Domain.Entities.Staff.StaffDutyReport>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffDutyReportNote> StaffDutyReportNotes => Set<QMgr.Domain.Entities.Staff.StaffDutyReportNote>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffDutyReportAttachment> StaffDutyReportAttachments => Set<QMgr.Domain.Entities.Staff.StaffDutyReportAttachment>();
+    public DbSet<QMgr.Domain.Entities.Staff.StaffMinuteAction> StaffMinuteActions => Set<QMgr.Domain.Entities.Staff.StaffMinuteAction>();
     public DbSet<QMgr.Domain.Entities.Staff.Timetable> Timetables => Set<QMgr.Domain.Entities.Staff.Timetable>();
     public DbSet<QMgr.Domain.Entities.Staff.TimetableLesson> TimetableLessons => Set<QMgr.Domain.Entities.Staff.TimetableLesson>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffPerformanceRecord> StaffPerformanceRecords => Set<QMgr.Domain.Entities.Staff.StaffPerformanceRecord>();
@@ -162,6 +163,15 @@ public class QMgrDbContext : DbContext
     #region Platform
 
     public DbSet<PlatformSetting> PlatformSettings => Set<PlatformSetting>();
+
+    // ── Tenant lifecycle and purge ────────────────────────────────────────────────────────────
+    // All three are PLATFORM-owned and outlive the organization they are about: the last row
+    // written to each is written when there is no organization left to point at. None carries
+    // personal data — TenantTombstone holds two one-way hashes and some counts, and that is what
+    // makes keeping it after a purge honest. See TenantDataManifest.
+    public DbSet<TenantLifecycleEvent> TenantLifecycleEvents => Set<TenantLifecycleEvent>();
+    public DbSet<TenantTombstone> TenantTombstones => Set<TenantTombstone>();
+    public DbSet<TenantPurgeCertificate> TenantPurgeCertificates => Set<TenantPurgeCertificate>();
     public DbSet<PlatformConfiguration> PlatformConfigurations => Set<PlatformConfiguration>();
     public DbSet<PlatformSpotifyConnection> PlatformSpotifyConnections => Set<PlatformSpotifyConnection>();
 
@@ -394,6 +404,40 @@ public class QMgrDbContext : DbContext
         });
 
         // Update Organization configuration for new fields
+        // Deliberately NO foreign key from any of these to Organization: each one outlives the
+        // organization it names, and the most important row in each is written when there is
+        // nothing left to point at.
+        modelBuilder.Entity<TenantLifecycleEvent>(entity =>
+        {
+            entity.ToTable("tenant_lifecycle_events");
+            entity.HasIndex(e => new { e.OrganizationId, e.OccurredAt });
+            entity.Property(e => e.OrganizationName).HasMaxLength(300);
+            entity.Property(e => e.Actor).HasMaxLength(200);
+            entity.Property(e => e.Reason).HasMaxLength(500);
+        });
+
+        modelBuilder.Entity<TenantTombstone>(entity =>
+        {
+            entity.ToTable("tenant_tombstones");
+            // One per purged organization, and the restore hook matches on it.
+            entity.HasIndex(e => e.OrganizationId).IsUnique();
+            // The registration guard looks up a returning sign-up by these two hashes.
+            entity.HasIndex(e => e.EmailDomainHash);
+            entity.HasIndex(e => e.NameKeyHash);
+            entity.Property(e => e.EmailDomainHash).HasMaxLength(64);
+            entity.Property(e => e.NameKeyHash).HasMaxLength(64);
+            entity.Property(e => e.PurgedBy).HasMaxLength(200);
+            entity.Property(e => e.Reason).HasMaxLength(500);
+        });
+
+        modelBuilder.Entity<TenantPurgeCertificate>(entity =>
+        {
+            entity.ToTable("tenant_purge_certificates");
+            entity.HasIndex(e => new { e.OrganizationId, e.PurgedAt });
+            entity.Property(e => e.PurgedBy).HasMaxLength(200);
+            entity.Property(e => e.RowsDeletedJson).HasColumnType("jsonb");
+        });
+
         modelBuilder.Entity<Organization>(entity =>
         {
             entity.HasIndex(e => e.Slug).IsUnique().HasDatabaseName("idx_organizations_slug");

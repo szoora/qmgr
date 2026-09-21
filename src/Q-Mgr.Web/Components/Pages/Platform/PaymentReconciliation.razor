@@ -1,0 +1,328 @@
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Payments
+@inject IPaymentApiService PaymentApi
+@inject IPermissionService PermissionService
+@inject IToastService Toast
+
+@*
+    Reconciliation — a section of the platform Payments hub (/platform/payments?tab=reconciliation).
+    No @page.
+
+    Every gateway collection is a ledger row from the moment it is asked for (2026-09-19), so this can
+    answer the question the old code could not: of the prompts sent, how many were confirmed, how many
+    failed, how many were never answered, and how many the gateway is holding for review. "In review"
+    is money that may have arrived for a different amount than was due — it is the one column that
+    needs a person, and it is never counted as confirmed.
+*@
+
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1>Reconciliation</h1>
+        <p class="subtitle">What was asked for, and what arrived.</p>
+    </Title>
+    <Actions>
+        <QButton Icon="arrow-repeat" Text="Refresh" Variant="secondary" OnClick="@LoadAsync" Disabled="@isLoading" />
+    </Actions>
+</QPageActions>
+
+<QFilterBar>
+    <QDateRangePicker Range="@range" RangeChanged="@OnRangeChanged" MaxSpanDays="366" />
+</QFilterBar>
+
+@if (isLoading)
+{
+    <div class="loading-container"><QSpinner Size="lg" /><span>Loading payments...</span></div>
+}
+else if (loadError != null)
+{
+    <QEmptyState Icon="exclamation-triangle-fill" Title="Payments not loaded" Text="@loadError">
+        <Action><QButton Text="Try again" Icon="arrow-repeat" Variant="primary" OnClick="@LoadAsync" /></Action>
+    </QEmptyState>
+}
+else if (data != null)
+{
+    <QStatRow>
+        <QStatTile Label="Prompts sent" Value="@data.Sent.ToString("N0")" Icon="send" />
+        <QStatTile Label="Confirmed" Value="@data.Confirmed.ToString("N0")" Icon="check-circle" Variant="success"
+                   Sub="@($"UGX {data.ConfirmedAmount:N0} received")" />
+        <QStatTile Label="Failed" Value="@data.Failed.ToString("N0")" Icon="x-circle" Variant="@(data.Failed > 0 ? "danger" : "default")" />
+        <QStatTile Label="Not answered" Value="@data.Abandoned.ToString("N0")" Icon="hourglass-bottom" />
+        <QStatTile Label="In review" Value="@data.InReview.ToString("N0")" Icon="exclamation-diamond"
+                   Variant="@(data.InReview > 0 ? "warning" : "default")" Sub="Held by the gateway" />
+        <QStatTile Label="Waiting" Value="@data.Pending.ToString("N0")" Icon="clock" Sub="On a payer's phone" />
+    </QStatRow>
+
+    @if (data.AwaitingReview is { Count: > 0 } held)
+    {
+        <QCard Title="Needs a decision" Icon="exclamation-diamond" NoPadding="true">
+            <HeaderActions>
+                <QInfo Label="Needs a decision" Align="right"
+                       Text="The gateway confirmed a different amount from the amount due, or its operator is holding the payment. Nothing is activated until someone decides. These show here whatever the period above." />
+            </HeaderActions>
+            <ChildContent>
+                <div class="table-wrap">
+                    <table class="data-table q-stack">
+                        <thead><tr><th>Tenant</th><th>For</th><th class="num">Amount due</th><th>Why it is held</th><th>Started</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var payment in held)
+                            {
+                                <tr>
+                                    <td><strong>@payment.OrganizationName</strong></td>
+                                    <td>@payment.Description<span class="cell-sub">@payment.ReferenceId.ToString("N")[..8]</span></td>
+                                    <td class="num">@payment.Currency @payment.Amount.ToString("N0")</td>
+                                    <td>@(string.IsNullOrWhiteSpace(payment.Error) ? "Held by the gateway" : payment.Error)</td>
+                                    <td>@QDateFormat.DT(payment.InitiatedAt.ToLocalTime())</td>
+                                    <td class="row-actions">
+                                        @if (canResolve)
+                                        {
+                                            <QButton Text="Decide" Icon="check2-square" Variant="primary" Size="sm" OnClick="@(() => OpenResolve(payment))" />
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </ChildContent>
+        </QCard>
+    }
+
+    @if (data.Sent == 0)
+    {
+        <QEmptyState Icon="journal-check" Title="No payments in this period" Text="Every Mobile Money and card payment appears here from the moment it is asked for." />
+    }
+    else
+    {
+        <QCard Title="By day" Icon="calendar3" NoPadding="true">
+            <div class="table-wrap">
+                <table class="data-table q-stack">
+                    <thead>
+                        <tr><th>Day</th><th class="num">Sent</th><th class="num">Confirmed</th><th class="num">Failed</th><th class="num">Not answered</th><th class="num">In review</th><th class="num">Waiting</th><th class="num">Received</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var day in data.Days.Where(d => d.Sent > 0).OrderByDescending(d => d.Day))
+                        {
+                            <tr>
+                                <td>@QDateFormat.D(day.Day)</td>
+                                <td class="num">@day.Sent</td>
+                                <td class="num">@day.Confirmed</td>
+                                <td class="num">@day.Failed</td>
+                                <td class="num">@day.Abandoned</td>
+                                <td class="num @(day.InReview > 0 ? "rc-flag" : "")">@day.InReview</td>
+                                <td class="num">@day.Pending</td>
+                                <td class="num">UGX @day.ConfirmedAmount.ToString("N0")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </QCard>
+
+        <QCard Title="Latest payments" Icon="list-ul" NoPadding="true">
+            <div class="table-wrap">
+                <table class="data-table q-stack">
+                    <thead>
+                        <tr><th>Tenant</th><th>For</th><th>Method</th><th class="num">Amount</th><th>State</th><th>Started</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var payment in data.Recent)
+                        {
+                            <tr>
+                                <td><strong>@payment.OrganizationName</strong></td>
+                                <td>@payment.Description<span class="cell-sub">@payment.ReferenceId.ToString("N")[..8]</span></td>
+                                <td>@payment.Method@if (!string.IsNullOrEmpty(payment.Phone)) { <span class="cell-sub">@payment.Phone</span> }</td>
+                                <td class="num">@payment.Currency @payment.Amount.ToString("N0")</td>
+                                <td>
+                                    <QChip Text="@StateLabel(payment.State)" Variant="@StateVariant(payment.State)" Size="sm" />
+                                    @if (!string.IsNullOrEmpty(payment.Resolution)) { <span class="cell-sub">@payment.Resolution</span> }
+                                    else if (!string.IsNullOrEmpty(payment.Error)) { <span class="cell-sub">@payment.Error</span> }
+                                </td>
+                                <td>@QDateFormat.DT(payment.InitiatedAt.ToLocalTime())</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </QCard>
+    }
+}
+
+<QModal Visible="@(resolving != null)" VisibleChanged="@((bool v) => { if (!v) CloseResolve(); })" Title="Decide a held payment" Icon="check2-square" Size="md">
+    <ChildContent>
+        @if (resolving != null)
+        {
+            <dl class="rc-facts">
+                <dt>Tenant</dt><dd>@resolving.OrganizationName</dd>
+                <dt>For</dt><dd>@resolving.Description</dd>
+                <dt>Amount due</dt><dd>@resolving.Currency @resolving.Amount.ToString("N0")</dd>
+                <dt>Why it is held</dt><dd>@(string.IsNullOrWhiteSpace(resolving.Error) ? "Held by the gateway" : resolving.Error)</dd>
+            </dl>
+            <p class="rc-warning"><QIcon Name="exclamation-triangle-fill" /><span>This is final. <strong>Received</strong> marks the invoice paid and activates a purchased module; <strong>not received</strong> voids a purchase's invoice. A later answer from the gateway does not change it. Check the gateway's own record first.</span></p>
+            <p class="form-required-note"><span class="q-input__required">*</span> Required</p>
+            <div class="rc-fields">
+                <QSelect TValue="string" TItem="(string Value, string Text)" Value="@resolveOutcome" ValueChanged="@((string v) => resolveOutcome = v)"
+                         Items="@OutcomeOptions" ValueSelector="@(o => o.Value)" TextSelector="@(o => o.Text)"
+                         Label="What happened?" Required="true" Placeholder="Choose one"
+                         HasError="@(OutcomeError != null)" ErrorMessage="@OutcomeError" />
+                <QInput TValue="string" @bind-Value="resolveNote" Type="textarea" Rows="3" Label="What you checked" Required="true" MaxLength="500"
+                        Placeholder="e.g. CRMPro shows UGX 60,000 received on receipt 12345 — the provider's report was short."
+                        HasError="@(NoteError != null)" ErrorMessage="@NoteError" HelperText="Kept on the payment with your name." />
+            </div>
+            @if (resolveError != null)
+            {
+                <p class="form-error"><QIcon Name="exclamation-circle" /> @resolveError</p>
+            }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="secondary" OnClick="@CloseResolve" Disabled="@resolveSaving" />
+        <QButton Text="Record decision" Icon="check-lg" Variant="primary" OnClick="@SubmitResolveAsync" Loading="@resolveSaving" Disabled="@resolveSaving" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .rc-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0 0 var(--qm-field-gap, 12px); font-size: var(--qm-text-sm); }
+    .rc-facts dt { color: var(--qm-text-muted); }
+    .rc-facts dd { margin: 0; }
+    .rc-warning { display: flex; gap: 8px; align-items: flex-start; margin: 0 0 var(--qm-field-gap, 12px); padding: 8px 10px;
+                  border: 1px solid var(--qm-warning); border-radius: var(--qm-radius-md); color: var(--qm-text-primary); font-size: var(--qm-text-sm); }
+    .rc-warning > i, .rc-warning > .bi { color: var(--qm-warning); flex: 0 0 auto; margin-top: 2px; }
+    .rc-warning > span { flex: 1 1 auto; min-width: 0; }
+    .rc-fields { display: grid; gap: var(--qm-field-gap, 12px); }
+    .rc-flag { color: var(--qm-warning); font-weight: 600; }
+</style>
+
+@code {
+    [Parameter] public bool Embedded { get; set; }
+
+    private DateRange range = DateRange.LastDays(30);
+    private bool isLoading = true;
+    private string? loadError;
+    private ReconciliationDto? data;
+
+    private bool canResolve;
+
+    protected override async Task OnInitializedAsync()
+    {
+        canResolve = await PermissionService.HasPermissionAsync(Permissions.PlatformSettingsEdit);
+        await LoadAsync();
+    }
+
+    // ------------------------------------------------------------------ deciding a held payment
+
+    private static readonly IReadOnlyList<(string Value, string Text)> OutcomeOptions = new[]
+    {
+        (ReviewOutcomes.Received, "The money was received — mark it paid"),
+        (ReviewOutcomes.NotReceived, "The money was not received — mark it failed"),
+    };
+
+    private ReconciliationPaymentDto? resolving;
+    private string? resolveOutcome;
+    private string? resolveNote;
+    private bool resolveAttempted;
+    private bool resolveSaving;
+    private string? resolveError;
+    private readonly Dictionary<string, string> resolveFieldErrors = new(StringComparer.OrdinalIgnoreCase);
+
+    private string? OutcomeError =>
+        resolveFieldErrors.GetValueOrDefault("outcome") ?? (resolveAttempted && string.IsNullOrEmpty(resolveOutcome) ? "Choose what happened." : null);
+
+    private string? NoteError =>
+        resolveFieldErrors.GetValueOrDefault("note")
+        ?? (!resolveAttempted ? null
+            : string.IsNullOrWhiteSpace(resolveNote) ? "Say what you checked."
+            : resolveNote.Trim().Length < 10 ? "Say what you checked, in ten characters or more." : null);
+
+    private void OpenResolve(ReconciliationPaymentDto payment)
+    {
+        resolving = payment;
+        resolveOutcome = null;
+        resolveNote = null;
+        resolveAttempted = false;
+        resolveError = null;
+        resolveFieldErrors.Clear();
+    }
+
+    private void CloseResolve()
+    {
+        if (resolveSaving) return;
+        resolving = null;
+    }
+
+    private async Task SubmitResolveAsync()
+    {
+        if (resolving == null) return;
+        resolveAttempted = true;
+        resolveError = null;
+        resolveFieldErrors.Clear();
+        if (OutcomeError != null || NoteError != null)
+        {
+            resolveError = "Complete the fields marked in red.";
+            return;
+        }
+
+        resolveSaving = true;
+        try
+        {
+            await PaymentApi.ResolveReviewAsync(resolving.ReferenceId, new ResolveReviewRequest(resolveOutcome!, resolveNote!.Trim()));
+            Toast.Notify(ToastSeverity.Success, "Decision recorded",
+                resolveOutcome == ReviewOutcomes.Received ? "Marked received. The invoice is paid." : "Marked not received.");
+            resolving = null;
+            await LoadAsync();
+        }
+        catch (ApiFieldException ex)
+        {
+            foreach (var (field, message) in ex.Errors) resolveFieldErrors[field] = message;
+            resolveError = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            resolveError = ex.Message;
+        }
+        finally
+        {
+            resolveSaving = false;
+        }
+    }
+
+    private async Task OnRangeChanged(DateRange value)
+    {
+        range = value;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        loadError = null;
+        try
+        {
+            data = await PaymentApi.GetReconciliationAsync(range.From, range.To);
+        }
+        catch (Exception ex)
+        {
+            loadError = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private static string StateLabel(string state) => state switch
+    {
+        PaymentStates.Succeeded => "Confirmed",
+        PaymentStates.Abandoned => "Not answered",
+        PaymentStates.Review => "In review",
+        PaymentStates.Pending => "Waiting",
+        _ => state
+    };
+
+    private static string StateVariant(string state) => state switch
+    {
+        PaymentStates.Succeeded => "success",
+        PaymentStates.Failed => "danger",
+        PaymentStates.Review => "warning",
+        _ => "muted"
+    };
+}

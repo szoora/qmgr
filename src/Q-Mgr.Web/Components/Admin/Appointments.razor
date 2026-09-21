@@ -249,11 +249,11 @@
 
 <style>
     .batch-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--qm-primary-light); border: 1px solid var(--qm-primary); border-radius: var(--qm-radius-md); padding: 10px 14px; margin-bottom: 14px; }
-    .batch-bar-count { display: flex; align-items: center; gap: 7px; font-size: 14px; }
+    .batch-bar-count { display: flex; align-items: center; gap: 7px; font-size: var(--qm-text-base); }
     .batch-bar-count strong { font-variant-numeric: tabular-nums; }
-    .batch-clear { margin-left: auto; background: none; border: none; padding: 2px 6px; cursor: pointer; font: inherit; font-size: 13px; color: var(--qm-text-muted); text-decoration: underline; }
+    .batch-clear { margin-left: auto; background: none; border: none; padding: 2px 6px; cursor: pointer; font: inherit; font-size: var(--qm-text-base); color: var(--qm-text-muted); text-decoration: underline; }
     .day-heading-row { display: flex; align-items: baseline; gap: 12px; }
-    .day-select { background: none; border: none; padding: 0; cursor: pointer; font: inherit; font-size: 12px; color: var(--qm-primary); text-decoration: underline; }
+    .day-select { background: none; border: none; padding: 0; cursor: pointer; font: inherit; font-size: var(--qm-text-sm); color: var(--qm-primary); text-decoration: underline; }
     .appointment-select { display: flex; align-items: center; width: 20px; }
     .appointment-select input { width: 16px; height: 16px; accent-color: var(--qm-primary); cursor: pointer; }
 
@@ -283,14 +283,14 @@
         display: inline-flex;
         align-items: center;
         gap: 8px;
-        font-size: 0.875rem;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
         cursor: pointer;
     }
 
     .day-heading {
         margin: 24px 0 12px;
-        font-size: 0.875rem;
+        font-size: var(--qm-text-base);
         text-transform: uppercase;
         letter-spacing: .05em;
         color: var(--qm-text-muted);
@@ -315,8 +315,8 @@
     .appointment-row.status-noshow { border-left-color: var(--qm-danger); }
 
     .appointment-time { min-width: 72px; display: flex; flex-direction: column; }
-    .appointment-time .time { font-weight: 700; font-size: 1.0625rem; color: var(--qm-text-primary); }
-    .appointment-time .duration { font-size: 0.75rem; color: var(--qm-text-muted); }
+    .appointment-time .time { font-weight: 700; font-size: var(--qm-text-lg); color: var(--qm-text-primary); }
+    .appointment-time .duration { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
 
     .appointment-main { flex: 1; min-width: 0; }
     .appointment-main .customer { font-weight: 600; color: var(--qm-text-primary); }
@@ -328,7 +328,7 @@
     .appointment-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 
     .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    .slot-hint { color: var(--qm-text-muted); font-size: 0.875rem; }
+    .slot-hint { color: var(--qm-text-muted); font-size: var(--qm-text-base); }
     .reschedule-note { color: var(--qm-text-secondary); margin-bottom: 16px; }
 
     @@media (max-width: 768px) {

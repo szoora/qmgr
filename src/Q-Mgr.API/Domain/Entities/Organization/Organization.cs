@@ -84,9 +84,52 @@ public class Organization : BaseAuditableEntity
     public string? NameBlockingKey { get; set; }
 
     /// <summary>
-    /// Custom domain for white-label (e.g., "queue.getsacc.com")
+    /// The tenant's own host, LIVE (e.g. "dashboard.maryhillug.net"). Only ever written once
+    /// ownership has been proved and a certificate exists — <see cref="CustomDomainPending"/> is
+    /// where an unproved claim sits. Unique across organizations: two tenants answering on one
+    /// host is a cross-tenant leak, not a clash.
     /// </summary>
     public string? CustomDomain { get; set; }
+
+    /// <summary>
+    /// The host being verified. Separate from <see cref="CustomDomain"/> so that an unverified
+    /// claim can never route traffic: the middleware matches the live column alone.
+    /// </summary>
+    public string? CustomDomainPending { get; set; }
+
+    /// <summary>
+    /// The random value the tenant publishes as a TXT record at <c>_qmgr-verify.&lt;domain&gt;</c>.
+    /// Shown once, in the DNS instructions, and compared in constant time.
+    /// </summary>
+    public string? CustomDomainVerificationToken { get; set; }
+
+    /// <summary>When the TXT record was found and matched. Null until proved.</summary>
+    public DateTime? CustomDomainVerifiedAt { get; set; }
+
+    /// <summary>
+    /// When certbot last issued a certificate for the host. Null until it succeeded, and it is
+    /// the routing gate: the nginx server block is only written once this is set.
+    /// </summary>
+    public DateTime? CustomDomainCertificateAt { get; set; }
+
+    /// <summary>
+    /// Failed verification attempts since the claim was made. BACK-OFF IS A HARD REQUIREMENT, not
+    /// politeness: a failing domain retried in a loop spends the box's weekly ACME budget and
+    /// blocks issuance for every other tenant. The daily sweep gives up at
+    /// <c>CustomDomainService.MaxAttempts</c> (a week's worth) and waits for a human to retry.
+    /// </summary>
+    public int CustomDomainAttempts { get; set; }
+
+    /// <summary>When verification was last attempted, so the sweep does not re-try within the hour.</summary>
+    public DateTime? CustomDomainLastAttemptAt { get; set; }
+
+    /// <summary>
+    /// What failed last, in the tenant administrator's own words. Separate steps read very
+    /// differently — "DNS record not found yet" sends somebody to their registrar, "certificate
+    /// could not be issued" sends them to us — and a single "failed" would send them to the wrong
+    /// place.
+    /// </summary>
+    public string? CustomDomainLastError { get; set; }
 
     /// <summary>
     /// Current tenant status in the SaaS platform
@@ -130,7 +173,9 @@ public class Organization : BaseAuditableEntity
     /// <summary>
     /// Preferred currency (USD, UGX)
     /// </summary>
-    public string PreferredCurrency { get; set; } = "USD";
+    /// <summary>UGX unless an organization chose otherwise (owner decision, 2026-09-19): modules are sold
+    /// in UGX and the sacc.ug gateway collects UGX only.</summary>
+    public string PreferredCurrency { get; set; } = "UGX";
 
     #endregion
 

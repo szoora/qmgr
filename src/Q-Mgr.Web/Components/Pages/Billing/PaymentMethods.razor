@@ -1,631 +1,263 @@
-@page "/billing/payment-methods"
 @using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Payments
 @using System.Text.Json
 @inject HttpClient Http
+@inject IPaymentApiService PaymentApi
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
 @inject JsonSerializerOptions JsonOptions
 @inject IJSRuntime JSRuntime
 @inject IToastService ToastService
 
-<PageTitle>Payment Methods - Q-Mgr</PageTitle>
+@*
+    Payment — a section of the Billing hub (/billing?tab=payment). No @page of its own.
 
-<div class="page-header">
-    <div class="header-left">
-        <h1>
-            <QIcon Name="wallet2" Size="32" />
-            Payment Methods
-        </h1>
-        <div class="breadcrumb">
-            <a href="/billing/overview">Billing</a>
-            <span>/</span>
-            <span>Payment Methods</span>
-        </div>
-    </div>
-    <div class="header-right">
-        <QButton Icon="arrow-repeat"
-                 Text="Refresh"
-                 Variant="secondary"
-                 OnClick="@LoadPaymentMethods"
-                 Disabled="@isLoading" />
-    </div>
-</div>
+    Reworked 2026-09-19 for the sacc.ug gateway. The tab says which ways this account can pay — read
+    from GET billing/payment-providers, the ONE availability rule, so a way to pay the platform has not
+    switched on is shown as off and never offered — and holds the renewal number: the Mobile Money
+    number renewals are charged to. That number lived on the organization from sign-up and no screen
+    showed or changed it. Stripe's cards-on-file table appears only when the platform has configured
+    Stripe, which it has not by default.
+*@
+
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1>Payment</h1>
+        <p class="subtitle">How this account pays for its modules.</p>
+    </Title>
+    <Actions>
+        <QButton Icon="arrow-repeat" Text="Refresh" Variant="secondary" OnClick="@LoadAsync" Disabled="@isLoading" />
+        @if (StripeOn && canManageBilling)
+        {
+            <QButton Text="Add card" Icon="plus-lg" Variant="primary" OnClick="@(() => showStripeCheckout = true)" Disabled="@isProcessing" />
+        }
+    </Actions>
+</QPageActions>
 
 @if (isLoading)
 {
-    <div class="loading-overlay">
-        <div class="webster-spinner"></div>
-        <span class="loading-text">Loading payment methods...</span>
-    </div>
+    <div class="loading-container"><QSpinner Size="lg" /><span>Loading payment settings...</span></div>
 }
 else if (hasError)
 {
-    <div class="error-card">
-        <QIcon Name="exclamation-triangle-fill" Size="48" />
-        <h3>Failed to Load Payment Methods</h3>
-        <p>@errorMessage</p>
-        <QButton Text="Try Again" Icon="arrow-repeat" Variant="primary" OnClick="@LoadPaymentMethods" />
-    </div>
+    <QEmptyState Icon="exclamation-triangle-fill" Title="Payment settings not loaded" Text="@errorMessage">
+        <Action><QButton Text="Try again" Icon="arrow-repeat" Variant="primary" OnClick="@LoadAsync" /></Action>
+    </QEmptyState>
 }
 else
 {
-    <!-- Add Payment Method Card — hidden entirely when Stripe is disabled platform-wide
-         (Platform Settings > Stripe Billing > Enabled), rather than showing a button that
-         would just fail once clicked. -->
-    @if (stripeEnabled)
-    {
-        <div class="add-payment-card">
-            <div class="add-payment-content">
-                <QIcon Name="plus-circle-fill" Size="48" />
-                <h3>Add New Payment Method</h3>
-                <p>Securely add a credit card or bank account via Stripe</p>
+    <QCard Title="Ways to pay" Icon="wallet2" NoPadding="true">
+        <HeaderActions>
+            <QInfo Label="Payment security" Align="right"
+                   Text="Mobile Money is approved on the phone that pays, with its own PIN; nothing is taken without it. Card details are entered on the payment gateway's own secure page, never on this platform, which never sees or stores a card number." />
+        </HeaderActions>
+        <ChildContent>
+            <div class="table-wrap">
+                <table class="data-table q-stack">
+                    <thead><tr><th>Method</th><th>How it works</th><th>Status</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td><QIcon Name="phone" /> <strong>Mobile Money</strong></td>
+                            <td>MTN or Airtel. A prompt is sent to the phone for each payment; renewals go to the renewal number below.</td>
+                            <td><QChip Text="@(providers.MobileMoneyEnabled ? "Available" : "Off")" Variant="@(providers.MobileMoneyEnabled ? "success" : "muted")" Size="sm" /></td>
+                        </tr>
+                        <tr>
+                            <td><QIcon Name="credit-card" /> <strong>Card</strong></td>
+                            <td>@(StripeOn ? "A card kept on file with Stripe and charged each period." : "Visa or Mastercard, paid on the gateway's secure card page when you add a module.")</td>
+                            <td><QChip Text="@(providers.CardEnabled ? "Available" : "Off")" Variant="@(providers.CardEnabled ? "success" : "muted")" Size="sm" /></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </ChildContent>
+    </QCard>
+
+    @* Always shown (2026-09-19): the number belongs to the account, not to whether Mobile Money happens to be
+       switched on today, and an administrator looking for where to change it must be able to find it. *@
+    <div id="renewal-number">
+        <QCard Title="Renewal number" Icon="phone">
+            <HeaderActions>
+                <QInfo Label="Renewal number" Align="right"
+                       Text="When a module renews, a Mobile Money prompt for the amount due is sent to this number. The invoice is marked paid only once the payment is approved. You can also pay any open invoice by hand from the Invoices tab." />
+            </HeaderActions>
+            <ChildContent>
+                @if (!providers.MobileMoneyEnabled)
+                {
+                    <p class="pm-note"><QIcon Name="info-circle" /> Mobile Money is not switched on for this platform right now. The number is kept and used once it is.</p>
+                }
                 @if (canManageBilling)
                 {
-                    <QButton Text="Add Payment Method"
-                             Icon="plus"
-                             Variant="primary"
-                             OnClick="@OpenStripeCheckout"
-                             Disabled="@isProcessing" />
-                }
-            </div>
-        </div>
-    }
-    else
-    {
-        <div class="add-payment-card disabled">
-            <div class="add-payment-content">
-                <QIcon Name="credit-card-fill" Size="48" />
-                <h3>Card Payments Currently Unavailable</h3>
-                <p>Card payment collection is turned off platform-wide right now. Contact support if you need to add or update a payment method.</p>
-            </div>
-        </div>
-    }
-
-    <!-- Payment Methods List -->
-    @if (paymentMethods.Any())
-    {
-        <div class="payment-methods-section">
-            <h2>
-                <QIcon Name="credit-card-fill" Size="24" />
-                Your Payment Methods
-            </h2>
-
-            <div class="payment-methods-grid">
-                @foreach (var method in paymentMethods)
-                {
-                    <div class="payment-method-card @(method.IsDefault ? "default" : "")">
-                        @if (method.IsDefault)
+                    <p class="form-required-note"><span class="q-input__required">*</span> Required</p>
+                    <div class="form-row">
+                        <MobileMoneyNumberField @bind-Value="renewalInput" Label="Number renewals are charged to" Disabled="@savingRenewal"
+                                                ShowErrors="@renewalAttempted" ServerError="@renewalServerError"
+                                                Hint="@(renewal?.Display is { } shown ? $"Currently {shown}" : "No number set yet — renewals cannot be collected.")" />
+                    </div>
+                    <div class="form-actions">
+                        <QButton Text="@(renewal?.PhoneNumber == null ? "Save number" : "Change number")" Icon="check-lg" Variant="primary" OnClick="@SaveRenewalAsync"
+                                 Loading="@savingRenewal" Disabled="@(savingRenewal || !RenewalChanged)" />
+                        @if (renewal?.PhoneNumber != null)
                         {
-                            <div class="default-badge">
-                                <QIcon Name="star-fill" />
-                                Default
-                            </div>
+                            <QButton Text="Remove number" Icon="trash" Variant="ghost" OnClick="@(() => confirmRemoveRenewal = true)" Disabled="@savingRenewal" />
                         }
-
-                        <div class="card-visual">
-                            <div class="card-brand-icon">
-                                <QIcon Name="@GetCardIcon(method.CardBrand)" Size="32" />
-                            </div>
-                            <div class="card-details">
-                                <span class="card-brand">@method.CardBrand</span>
-                                <span class="card-number">•••• •••• •••• @method.CardLast4</span>
-                                <span class="card-expiry">
-                                    Expires @(method.CardExpMonth?.ToString("D2") ?? "--")/@(method.CardExpYear?.ToString() ?? "----")
-                                </span>
-                            </div>
-                        </div>
-
-                        <div class="card-info">
-                            <div class="info-row">
-                                <QIcon Name="calendar-plus-fill" />
-                                <span>Added @(method.CreatedAt.HasValue ? QDateFormat.D(method.CreatedAt.Value) : "recently")</span>
-                            </div>
-                        </div>
-
-                        <div class="card-actions">
-                            @if (canManageBilling)
-                            {
-                                @if (!method.IsDefault)
-                                {
-                                    <QButton Text="Set as Default"
-                                             Icon="star-fill"
-                                             Variant="outline-primary"
-                                             Size="sm"
-                                             OnClick="@(() => SetAsDefault(method))"
-                                             Disabled="@isProcessing" />
-                                }
-                                <QButton Text="Remove"
-                                         Icon="trash-fill"
-                                         Variant="outline-danger"
-                                         Size="sm"
-                                         OnClick="@(() => ShowDeleteConfirmation(method))"
-                                         Disabled="@isProcessing" />
-                            }
-                        </div>
                     </div>
                 }
-            </div>
-        </div>
-    }
-    else
-    {
-        <div class="empty-state">
-            <QIcon Name="wallet2" Size="64" />
-            <h3>No Payment Methods</h3>
-            <p>You haven't added any payment methods yet. Add one to manage your subscription.</p>
-        </div>
-    }
-
-    <!-- Payment Security Info -->
-    <div class="security-info">
-        <div class="security-icon">
-            <QIcon Name="shield-fill-check" Size="32" />
-        </div>
-        <div class="security-content">
-            <h4>Your payment information is secure</h4>
-            <p>
-                All payment data is encrypted and securely processed by <strong>Stripe</strong>.
-                We never store your full credit card details on our servers.
-            </p>
-            <div class="security-badges">
-                <QBadge Variant="light" Pill="false" Icon="lock-fill" Text="256-bit SSL Encryption" Class="security-badge" />
-                <QBadge Variant="light" Pill="false" Icon="shield-fill-check" Text="PCI DSS Compliant" Class="security-badge" />
-                <QBadge Variant="light" Pill="false" Icon="check-circle-fill" Text="Stripe Verified" Class="security-badge" />
-            </div>
-        </div>
+                else
+                {
+                    <p class="pm-readonly">@(renewal?.Display is { } shown ? $"{shown} ({renewal.Operator})" : "No number set yet.")</p>
+                }
+            </ChildContent>
+        </QCard>
     </div>
+
+    @if (StripeOn)
+    {
+        @if (paymentMethods.Any())
+        {
+            <QCard Title="Cards on file" Icon="credit-card-fill" NoPadding="true">
+                <div class="table-wrap">
+                    <table class="data-table q-stack">
+                        <thead><tr><th>Card</th><th>Expires</th><th>Added</th><th></th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var method in paymentMethods)
+                            {
+                                <tr>
+                                    <td><QIcon Name="credit-card" /> <strong>@method.CardBrand</strong> •••• @method.CardLast4</td>
+                                    <td class="num">@(method.CardExpMonth?.ToString("D2") ?? "--")/@(method.CardExpYear?.ToString() ?? "----")</td>
+                                    <td>@(method.CreatedAt.HasValue ? QDateFormat.D(method.CreatedAt.Value) : "—")</td>
+                                    <td>@if (method.IsDefault) { <QChip Text="Default" Variant="primary" Size="sm" Icon="star-fill" /> }</td>
+                                    <td class="row-actions">
+                                        @if (canManageBilling)
+                                        {
+                                            @if (!method.IsDefault)
+                                            {
+                                                <QButton Text="Make default" Variant="ghost" Size="sm" OnClick="@(() => SetAsDefault(method))" Disabled="@isProcessing" />
+                                            }
+                                            <QButton Icon="trash" Variant="ghost" Size="sm" Title="Remove card" OnClick="@(() => ShowDeleteConfirmation(method))" Disabled="@isProcessing" />
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </QCard>
+        }
+        else
+        {
+            <QEmptyState Icon="credit-card" Title="No cards on file"
+                         Text="Add a card to be charged automatically, or pay by Mobile Money when you add a module." />
+        }
+    }
 }
 
+<!-- Remove renewal number -->
+<QModal @bind-Visible="confirmRemoveRenewal" Title="Remove the renewal number?" Icon="exclamation-triangle-fill" Size="sm">
+    <ChildContent>
+        <p>Renewals will no longer be charged automatically. Each renewal invoice will wait on the Invoices tab until somebody pays it.</p>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="secondary" OnClick="@(() => confirmRemoveRenewal = false)" Disabled="@savingRenewal" />
+        <QButton Text="Remove number" Icon="trash" Variant="danger" OnClick="@RemoveRenewalAsync" Loading="@savingRenewal" Disabled="@savingRenewal" />
+    </FooterContent>
+</QModal>
+
 <!-- Delete Confirmation Modal -->
-<QModal @bind-Visible="showDeleteConfirmation" Title="Remove Payment Method" Icon="exclamation-triangle-fill" Size="sm" OnClose="@CancelDelete">
+<QModal @bind-Visible="showDeleteConfirmation" Title="Remove this card?" Icon="exclamation-triangle-fill" Size="sm" OnClose="@CancelDelete">
     <ChildContent>
         @if (methodToDelete != null)
         {
-            <p>Are you sure you want to remove this payment method?</p>
-            <div class="method-preview">
-                <QIcon Name="@GetCardIcon(methodToDelete.CardBrand)" Size="24" />
-                <div>
-                    <strong>@methodToDelete.CardBrand</strong>
-                    <span class="text-muted">•••• @methodToDelete.CardLast4</span>
-                </div>
-            </div>
+            <p><strong>@methodToDelete.CardBrand</strong> •••• @methodToDelete.CardLast4 will be removed from this account.</p>
             @if (methodToDelete.IsDefault)
             {
-                <div class="alert alert-warning mt-3">
-                    <QIcon Name="exclamation-triangle-fill" />
-                    This is your default payment method. You'll need to set another as default if you have active subscriptions.
-                </div>
+                <p class="pm-warning"><QIcon Name="exclamation-triangle-fill" /> This is the default card. Set another as default first if any module is paid by card.</p>
             }
         }
     </ChildContent>
     <FooterContent>
-        <QButton Text="Cancel" Icon="x-lg" Variant="secondary" OnClick="@CancelDelete" />
-        <QButton Text="Remove Payment Method"
-                 Icon="trash-fill"
-                 Variant="danger"
-                 OnClick="@ConfirmDelete"
-                 Disabled="@isProcessing"
-                 Loading="@isProcessing" />
+        <QButton Text="Cancel" Variant="secondary" OnClick="@CancelDelete" Disabled="@isProcessing" />
+        <QButton Text="Remove card" Icon="trash" Variant="danger" OnClick="@ConfirmDelete" Disabled="@isProcessing" Loading="@isProcessing" />
     </FooterContent>
 </QModal>
 
 <!-- Stripe Checkout Modal -->
-<QModal @bind-Visible="showStripeCheckout" Title="Add Payment Method" Icon="credit-card-fill" Size="md">
+<QModal @bind-Visible="showStripeCheckout" Title="Add a card" Icon="credit-card-fill" Size="sm">
     <ChildContent>
-        @if (isProcessing)
-        {
-            <div class="text-center py-4">
-                <div class="webster-spinner"></div>
-                <p class="text-muted mt-2">Opening Stripe checkout...</p>
-            </div>
-        }
-        else
-        {
-            <p>You will be redirected to Stripe's secure payment form to add your payment method.</p>
-            <p class="text-muted small">
-                Stripe is a certified PCI Service Provider Level 1, which is the most stringent level of certification in the payments industry.
-            </p>
-        }
+        <p>You will be taken to Stripe's secure page to enter the card, then brought back here.</p>
     </ChildContent>
     <FooterContent>
-        <QButton Text="Cancel" Icon="x-lg" Variant="secondary" OnClick="@CloseStripeCheckout" Disabled="@isProcessing" />
-        <QButton Text="Continue to Stripe"
-                 Icon="arrow-right"
-                 Variant="primary"
-                 OnClick="@ProceedToStripe"
-                 Disabled="@isProcessing"
-                 Loading="@isProcessing" />
+        <QButton Text="Cancel" Variant="secondary" OnClick="@(() => showStripeCheckout = false)" Disabled="@isProcessing" />
+        <QButton Text="Continue to Stripe" Icon="arrow-right" Variant="primary" OnClick="@ProceedToStripe" Disabled="@isProcessing" Loading="@isProcessing" />
     </FooterContent>
 </QModal>
 
 <style>
-    .add-payment-card {
-        background: var(--qm-gradient-primary);
-        border-radius: var(--qm-radius-xl);
-        padding: 48px;
-        margin-bottom: 32px;
-        text-align: center;
-        color: var(--qm-text-on-primary);
-    }
-
-    .add-payment-card.disabled {
-        background: var(--qm-bg-elevated);
-        border: 1px dashed var(--qm-border);
-        color: var(--qm-text-secondary);
-    }
-
-    .add-payment-card.disabled .q-icon {
-        color: var(--qm-text-muted);
-    }
-
-    .add-payment-content {
-        max-width: 500px;
-        margin: 0 auto;
-    }
-
-    .add-payment-content i {
-        margin-bottom: 16px;
-        opacity: 0.9;
-    }
-
-    .add-payment-content h3 {
-        margin: 16px 0 8px 0;
-        font-size: 24px;
-        font-weight: 700;
-    }
-
-    .add-payment-content p {
-        margin-bottom: 24px;
-        opacity: 0.9;
-    }
-
-    .payment-methods-section {
-        background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-        padding: 24px;
-        margin-bottom: 24px;
-    }
-
-    .payment-methods-section h2 {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        margin: 0 0 24px 0;
-        font-size: 20px;
-        font-weight: 600;
-    }
-
-    .payment-methods-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-        gap: 20px;
-    }
-
-    .payment-method-card {
-        background: var(--qm-bg-elevated);
-        border: 2px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-        padding: 24px;
-        position: relative;
-        transition: all 0.3s ease;
-    }
-
-    .payment-method-card:hover {
-        border-color: var(--qm-primary);
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-    }
-
-    .payment-method-card.default {
-        border-color: var(--qm-primary);
-        background: var(--qm-primary-light);
-    }
-
-    .default-badge {
-        position: absolute;
-        top: -12px;
-        right: 24px;
-        background: var(--qm-primary);
-        color: var(--qm-text-on-primary);
-        padding: 6px 16px;
-        border-radius: var(--qm-radius-full);
-        font-size: 12px;
-        font-weight: 600;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-    }
-
-    .card-visual {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        margin-bottom: 20px;
-        padding-bottom: 20px;
-        border-bottom: 1px solid var(--qm-border);
-    }
-
-    .card-brand-icon {
-        width: 64px;
-        height: 64px;
-        background: var(--qm-bg-card);
-        border-radius: var(--qm-radius-lg);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: var(--qm-primary);
-        flex-shrink: 0;
-    }
-
-    .card-details {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-    }
-
-    .card-brand {
-        font-size: 12px;
-        font-weight: 600;
-        text-transform: uppercase;
-        color: var(--qm-text-muted);
-    }
-
-    .card-number {
-        font-size: 18px;
-        font-weight: 700;
-        color: var(--qm-text-primary);
-        letter-spacing: 1px;
-    }
-
-    .card-expiry {
-        font-size: 13px;
-        color: var(--qm-text-secondary);
-    }
-
-    .card-info {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        margin-bottom: 20px;
-    }
-
-    .info-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-size: 13px;
-        color: var(--qm-text-secondary);
-    }
-
-    .card-actions {
-        display: flex;
-        flex-wrap: wrap;
-    }
-
-    .security-info {
-        background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-        padding: 24px;
-        display: flex;
-        gap: 24px;
-    }
-
-    .security-icon {
-        width: 64px;
-        height: 64px;
-        background: color-mix(in srgb, var(--qm-success) 15%, transparent);
-        color: var(--qm-success);
-        border-radius: var(--qm-radius-xl);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-    }
-
-    .security-content h4 {
-        margin: 0 0 8px 0;
-        font-size: 18px;
-        font-weight: 600;
-        color: var(--qm-text-primary);
-    }
-
-    .security-content p {
-        margin: 0 0 16px 0;
-        color: var(--qm-text-secondary);
-        line-height: 1.6;
-    }
-
-    .security-badges {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-    }
-
-    .security-badge {
-        background: var(--qm-bg-elevated);
-        color: var(--qm-text-secondary);
-        border: 1px solid var(--qm-border);
-        padding: 8px 12px;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 12px;
-    }
-
-    .security-badge i {
-        color: var(--qm-success);
-    }
-
-    .empty-state {
-        background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-        padding: 64px 24px;
-        margin-bottom: 24px;
-        text-align: center;
-    }
-
-    .empty-state i {
-        color: var(--qm-text-muted);
-        margin-bottom: 16px;
-    }
-
-    .empty-state h3 {
-        margin: 16px 0 8px 0;
-        color: var(--qm-text-primary);
-    }
-
-    .empty-state p {
-        color: var(--qm-text-secondary);
-        margin-bottom: 0;
-    }
-
-    .error-card {
-        background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-        padding: 48px;
-        text-align: center;
-    }
-
-    .error-card i {
-        color: var(--qm-danger);
-        margin-bottom: 16px;
-    }
-
-    .error-card h3 {
-        margin: 16px 0 8px 0;
-        color: var(--qm-text-primary);
-    }
-
-    .error-card p {
-        color: var(--qm-text-secondary);
-        margin-bottom: 24px;
-    }
-
-    .method-preview {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 16px;
-        background: var(--qm-bg-elevated);
-        border-radius: var(--qm-radius-lg);
-    }
-
-    .method-preview i {
-        color: var(--qm-primary);
-    }
-
-    .method-preview div {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-    }
-
-    .alert {
-        padding: 12px 16px;
-        border-radius: var(--qm-radius-lg);
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
-
-    .alert-warning {
-        background: color-mix(in srgb, var(--qm-warning) 15%, transparent);
-        border: 1px solid var(--qm-warning);
-        color: var(--qm-warning);
-    }
-
-    .alert-warning i {
-        color: var(--qm-warning);
-    }
-
-    @@media (max-width: 768px) {
-        .payment-methods-grid {
-            grid-template-columns: 1fr;
-        }
-
-        .security-info {
-            flex-direction: column;
-        }
-
-        .add-payment-card {
-            padding: 32px 20px;
-        }
-    }
+    .pm-warning { display: flex; gap: 6px; align-items: flex-start; color: var(--qm-warning); margin: 8px 0 0; }
+    .pm-readonly { margin: 0; font-variant-numeric: tabular-nums; }
+    .pm-note { display: flex; gap: 6px; align-items: flex-start; margin: 0 0 var(--qm-field-gap, 12px); color: var(--qm-text-muted); }
 </style>
 
 @code {
+    /// <summary>True when the Billing hub hosts this section (always, since 2026-09-19).</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private bool isLoading = true;
-    private bool isProcessing = false;
-    private bool hasError = false;
+    private bool isProcessing;
+    private bool hasError;
     private string errorMessage = "";
-    private bool showDeleteConfirmation = false;
-    private bool showStripeCheckout = false;
-    private bool canManageBilling = false;
-    private bool stripeEnabled = true;
+    private bool showDeleteConfirmation;
+    private bool showStripeCheckout;
+    private bool canManageBilling;
+
+    private PaymentProvidersDto providers = new(false, false, null, false);
+    private bool StripeOn => providers.StripeEnabled;
+
+    private RenewalNumberDto? renewal;
+    private string? renewalInput;
+    private bool renewalAttempted;
+    private bool savingRenewal;
+    private string? renewalServerError;
+    private bool confirmRemoveRenewal;
+
+    private bool RenewalChanged =>
+        !string.Equals(UgandaPhone.Normalize(renewalInput), renewal?.PhoneNumber ?? "", StringComparison.Ordinal);
 
     private List<PaymentMethodDto> paymentMethods = new();
     private PaymentMethodDto? methodToDelete;
 
     protected override async Task OnInitializedAsync()
     {
-        var hasPermission = await PermissionService.HasPermissionAsync("billing.view");
-        if (!hasPermission)
-        {
-            Navigation.NavigateTo("/unauthorized");
-            return;
-        }
-
+        // The hub gates this tab on billing.view; the section does not redirect on its own.
         canManageBilling = await PermissionService.HasPermissionAsync(Permissions.BillingManage);
-
-        await LoadPaymentProviders();
-        await LoadPaymentMethods();
+        await LoadAsync();
     }
 
-    private async Task LoadPaymentProviders()
-    {
-        try
-        {
-            var result = await Http.GetFromJsonAsync<PaymentProvidersResponse>("api/v1/billing/payment-providers", JsonOptions);
-            stripeEnabled = result?.StripeEnabled ?? true;
-        }
-        catch
-        {
-            // Fail open — if this check itself fails, fall back to showing the button rather
-            // than silently hiding a working feature; OpenStripeCheckout still handles a real
-            // failure from Stripe itself if it comes to that.
-            stripeEnabled = true;
-        }
-    }
-
-    private async Task LoadPaymentMethods()
+    private async Task LoadAsync()
     {
         isLoading = true;
         hasError = false;
         errorMessage = "";
-
         try
         {
-            var response = await Http.GetAsync("api/v1/billing/payment-methods");
-            if (response.IsSuccessStatusCode)
+            providers = await PaymentApi.GetProvidersAsync();
+            renewal = await PaymentApi.GetRenewalNumberAsync();
+            renewalInput = renewal.PhoneNumber is { } stored ? UgandaPhone.Display(stored) : null;
+            renewalAttempted = false;
+            renewalServerError = null;
+
+            paymentMethods = new();
+            if (StripeOn)
             {
-                var result = await response.Content.ReadFromJsonAsync<PaymentMethodsResponse>(JsonOptions);
-                paymentMethods = result?.PaymentMethods ?? new();
-            }
-            else
-            {
-                hasError = true;
-                errorMessage = $"Failed to load payment methods: {response.StatusCode}";
+                var response = await Http.GetAsync("api/v1/billing/payment-methods");
+                if (response.IsSuccessStatusCode)
+                    paymentMethods = (await response.Content.ReadFromJsonAsync<PaymentMethodsResponse>(JsonOptions))?.PaymentMethods ?? new();
             }
         }
         catch (Exception ex)
         {
             hasError = true;
             errorMessage = ex.Message;
-            Console.WriteLine($"Error loading payment methods: {ex.Message}");
         }
         finally
         {
@@ -633,45 +265,81 @@ else
         }
     }
 
-    private void OpenStripeCheckout()
+    private async Task SaveRenewalAsync()
     {
-        showStripeCheckout = true;
+        renewalAttempted = true;
+        renewalServerError = null;
+        if (!MobileMoneyNumberField.IsValid(renewalInput)) return;
+
+        savingRenewal = true;
+        try
+        {
+            renewal = await PaymentApi.UpdateRenewalNumberAsync(renewalInput!.Trim());
+            renewalInput = renewal.Display;
+            renewalAttempted = false;
+            ToastService.Notify(ToastSeverity.Success, "Renewal number saved", $"Renewals will be charged to {renewal.Display}.");
+        }
+        catch (ApiFieldException ex)
+        {
+            renewalServerError = ex.For("phoneNumber") ?? ex.Message;
+        }
+        catch (Exception ex)
+        {
+            ToastService.Notify(ToastSeverity.Error, "Number not saved", ex.Message);
+        }
+        finally
+        {
+            savingRenewal = false;
+        }
     }
 
-    private void CloseStripeCheckout()
+    private async Task RemoveRenewalAsync()
     {
-        showStripeCheckout = false;
+        savingRenewal = true;
+        try
+        {
+            renewal = await PaymentApi.ClearRenewalNumberAsync();
+            renewalInput = null;
+            renewalAttempted = false;
+            renewalServerError = null;
+            confirmRemoveRenewal = false;
+            ToastService.Notify(ToastSeverity.Success, "Renewal number removed", "Renewals will wait on the Invoices tab to be paid.");
+        }
+        catch (Exception ex)
+        {
+            ToastService.Notify(ToastSeverity.Error, "Number not removed", ex.Message);
+        }
+        finally
+        {
+            savingRenewal = false;
+        }
     }
 
     private async Task ProceedToStripe()
     {
         isProcessing = true;
-
         try
         {
-            // Create a Stripe checkout session for adding payment method
             var response = await Http.PostAsJsonAsync("api/v1/billing/portal-session", new
             {
-                ReturnUrl = $"{Navigation.BaseUri}billing/payment-methods"
+                ReturnUrl = Navigation.BaseUri.TrimEnd('/') + BillingLinks.Payment
             });
 
             if (response.IsSuccessStatusCode)
             {
                 var result = await response.Content.ReadFromJsonAsync<PortalSessionResponse>(JsonOptions);
                 if (!string.IsNullOrEmpty(result?.Url))
-                {
-                    // Redirect to Stripe billing portal
                     await JSRuntime.InvokeVoidAsync("open", result.Url, "_self");
-                }
             }
             else
             {
-                Console.WriteLine("Failed to create Stripe portal session");
+                ToastService.Notify(ToastSeverity.Warning, "Card not added",
+                    await ApiErrorService.GetErrorMessageAsync(response, "Stripe could not be opened just now."));
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error creating Stripe session: {ex.Message}");
+            ToastService.Notify(ToastSeverity.Error, "Card not added", ex.Message);
         }
         finally
         {
@@ -683,14 +351,13 @@ else
     private async Task SetAsDefault(PaymentMethodDto method)
     {
         isProcessing = true;
-
         try
         {
             var response = await Http.PostAsJsonAsync($"api/v1/billing/payment-methods/{method.Id}/set-default", new { });
             if (response.IsSuccessStatusCode)
             {
                 ToastService.Notify(ToastSeverity.Success, "Default updated", $"{method.CardBrand} •••• {method.CardLast4} is now your default payment method.");
-                await LoadPaymentMethods();
+                await LoadAsync();
             }
             else
             {
@@ -722,9 +389,7 @@ else
     private async Task ConfirmDelete()
     {
         if (methodToDelete == null) return;
-
         isProcessing = true;
-
         try
         {
             var response = await Http.DeleteAsync($"api/v1/billing/payment-methods/{methodToDelete.Id}");
@@ -733,7 +398,7 @@ else
                 showDeleteConfirmation = false;
                 methodToDelete = null;
                 ToastService.Notify(ToastSeverity.Success, "Payment method removed", "The card has been detached from your account.");
-                await LoadPaymentMethods();
+                await LoadAsync();
             }
             else
             {
@@ -750,30 +415,10 @@ else
         }
     }
 
-    private string GetCardIcon(string? brand) => brand?.ToLower() switch
-    {
-        "visa" => "credit-card",
-        "mastercard" => "credit-card-2-front",
-        "amex" or "american express" => "credit-card",
-        "discover" => "credit-card",
-        "diners" or "diners club" => "credit-card",
-        "jcb" => "credit-card",
-        "unionpay" => "credit-card",
-        _ => "wallet2"
-    };
-
-    // DTOs
     private record PaymentMethodsResponse
     {
         public List<PaymentMethodDto> PaymentMethods { get; init; } = new();
     }
-
-    private record PaymentProvidersResponse
-    {
-        public bool StripeEnabled { get; init; }
-        public bool MobileMoneyEnabled { get; init; }
-    }
-
 
     private record PortalSessionResponse
     {

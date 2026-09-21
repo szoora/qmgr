@@ -6,6 +6,7 @@ using QMgr.Domain.Entities.Platform;
 using QMgr.Domain.Enums;
 using QMgr.Domain.Identity;
 using QMgr.Infrastructure.Data;
+using QMgr.Infrastructure.Data.Purge;
 
 namespace QMgr.Infrastructure.Services;
 
@@ -33,6 +34,21 @@ public class RegistrationGuardService : IRegistrationGuardService
     private const int ScoreSameContactName = 15;
     private const int ScoreSameAddressRecently = 20;
     private const int ScoreDisposableEmail = 30;
+    /// <summary>
+    /// Told the organization already uses Q-Mgr and continued. On its own it does not reach the flag
+    /// threshold — a second campus is a real thing — but with anything else it does, which is the
+    /// right shape: a reviewer sees it beside whatever else was odd.
+    /// </summary>
+    private const int ScoreContinuedPastExistingOrganization = 30;
+
+    /// <summary>
+    /// A sign-up that matches a tenant which was purged. Below the flag threshold on its own,
+    /// deliberately: a school whose trial lapsed and has come back to buy properly is the common
+    /// case, and refusing them would be the worst possible outcome. It flags when something else
+    /// agrees with it.
+    /// </summary>
+    private const int ScoreMatchesPurgedTenant = 25;
+
     private const int ScoreHoneypotTripped = 100;
     private const int ScoreImplausiblyFast = 40;
 
@@ -159,6 +175,32 @@ public class RegistrationGuardService : IRegistrationGuardService
             signals.Add($"The address uses {RegistrationIdentity.EmailDomain(input.Email)}, a known throwaway mailbox provider.");
         }
 
+        // ---- A tenant that was PURGED, coming back. ----
+        // The whole point of TenantTombstone. Without it a purged tenant re-registers the next day
+        // with no signal at all — and the premise of the purge feature is a high volume of trials
+        // that never convert, which is exactly the population that would come back.
+        //
+        // It matches on HASHES, never on stored personal data: the tombstone keeps a one-way hash
+        // of the sign-up email's DOMAIN and of the organization's blocking key, and nothing else.
+        // A match raises the score; it never refuses. A school whose trial lapsed and who has come
+        // back to buy properly is the good case here, not the bad one.
+        var emailDomainHash = TenantTombstoneHash.Of(RegistrationIdentity.EmailDomain(input.Email));
+        var nameKeyHash = TenantTombstoneHash.Of(blockingKey);
+        if (emailDomainHash != null || nameKeyHash != null)
+        {
+            var tombstone = await _dbContext.TenantTombstones.AsNoTracking()
+                .Where(t => (emailDomainHash != null && t.EmailDomainHash == emailDomainHash)
+                            || (nameKeyHash != null && t.NameKeyHash == nameKeyHash))
+                .OrderByDescending(t => t.PurgedAt)
+                .FirstOrDefaultAsync();
+
+            if (tombstone != null)
+            {
+                score += ScoreMatchesPurgedTenant;
+                signals.Add($"An account matching this one was deleted on {tombstone.PurgedAt:dd MMM yyyy}. That may simply be the same school coming back, and the data itself is gone.");
+            }
+        }
+
         // ---- Business name. Narrowed by the blocking key, then compared in process. ----
         if (!string.IsNullOrEmpty(normalizedName))
         {
@@ -227,6 +269,14 @@ public class RegistrationGuardService : IRegistrationGuardService
             }
         }
 
+        if (input.AcknowledgedExistingOrganization)
+        {
+            score += ScoreContinuedPastExistingOrganization;
+            signals.Add(string.IsNullOrWhiteSpace(input.AcknowledgedOrganizationName)
+                ? "They were told an organization at their email domain already uses Q-Mgr, and registered a new one anyway."
+                : $"They were told \"{input.AcknowledgedOrganizationName}\" already uses Q-Mgr at their email domain, and registered a new one anyway.");
+        }
+
         var decision = score >= FlagThreshold ? RegistrationRiskDecision.Flag : RegistrationRiskDecision.Allow;
 
         if (decision == RegistrationRiskDecision.Flag)
@@ -281,6 +331,16 @@ public class RegistrationGuardService : IRegistrationGuardService
             // the customer's registration because we could not write it would be worse.
             _logger.LogError(ex, "Could not record the registration attempt for {Email}", input.Email);
         }
+    }
+
+    public async Task ResetAttemptBudgetAsync(string? clientAddress, CancellationToken cancellationToken = default)
+    {
+        var hash = RegistrationIdentity.Fingerprint(clientAddress);
+        if (string.IsNullOrEmpty(hash)) return;
+
+        var now = DateTime.UtcNow;
+        await _cache.RemoveAsync($"{AttemptCachePrefix}h:{hash}:{now:yyyyMMddHH}", cancellationToken);
+        await _cache.RemoveAsync($"{AttemptCachePrefix}d:{hash}:{now:yyyyMMdd}", cancellationToken);
     }
 
     public async Task<(bool Allowed, int RetryAfterSeconds)> TryConsumeAttemptAsync(

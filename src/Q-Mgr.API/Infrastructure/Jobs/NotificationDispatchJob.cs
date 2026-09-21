@@ -28,6 +28,7 @@ public class NotificationDispatchJob
 {
     private readonly QMgrDbContext _context;
     private readonly INotificationService _notificationService;
+    private readonly Infrastructure.Email.IEmailBrandService _brands;
     private readonly ILogger<NotificationDispatchJob> _logger;
 
     /// <summary>
@@ -40,10 +41,12 @@ public class NotificationDispatchJob
     public NotificationDispatchJob(
         QMgrDbContext context,
         INotificationService notificationService,
+        Infrastructure.Email.IEmailBrandService brands,
         ILogger<NotificationDispatchJob> logger)
     {
         _context = context;
         _notificationService = notificationService;
+        _brands = brands;
         _logger = logger;
     }
 
@@ -95,7 +98,7 @@ public class NotificationDispatchJob
         var result = channel switch
         {
             NotificationChannel.Sms => await _notificationService.SendSmsAsync(organizationId, recipient, message),
-            NotificationChannel.Email => await _notificationService.SendEmailAsync(organizationId, recipient, subject, bodyIsHtml ? message : WrapEmailBody(subject, message), isHtml: true),
+            NotificationChannel.Email => await _notificationService.SendEmailAsync(organizationId, recipient, subject, bodyIsHtml ? message : WrapEmailBody(subject, message, await _brands.ForOrganizationAsync(organizationId)), isHtml: true),
             _ => ChannelSendResult.Skipped($"{channel} has no dispatcher.")
         };
 
@@ -229,7 +232,7 @@ public class NotificationDispatchJob
     /// existed and was already used by the queue notifier — staff notifications were the one path
     /// still sending an unstyled bare string.
     /// </summary>
-    private static string WrapEmailBody(string subject, string message)
+    private static string WrapEmailBody(string subject, string message, Infrastructure.Email.EmailTemplates.EmailBrand brand)
         => Infrastructure.Email.EmailTemplates.Layout(
             title: subject,
             greeting: null,
@@ -238,5 +241,9 @@ public class NotificationDispatchJob
             // it is not optional.
             paragraphs: message
                 .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(Infrastructure.Email.EmailTemplates.P));
+                .Select(Infrastructure.Email.EmailTemplates.P),
+            // This is the busiest email path in the app — every staff notification a tenant sends
+            // goes through here — so it is the one that most needs to carry the school's name
+            // rather than ours.
+            brand: brand);
 }

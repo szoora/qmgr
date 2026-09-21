@@ -1,3 +1,4 @@
+using QMgr.Domain.Constants;
 using QMgr.Application.Interfaces.Billing;
 using QMgr.Application.Tenant;
 using System.Text.Json;
@@ -206,7 +207,7 @@ public class UsageLimitMiddleware
                 remaining = limitCheck.Remaining,
                 percentUsed = limitCheck.PercentageUsed
             },
-            upgradeUrl = "/billing/plans"
+            upgradeUrl = BillingLinks.Modules
         };
 
         await context.Response.WriteAsync(JsonSerializer.Serialize(response));
@@ -224,7 +225,7 @@ public class UsageLimitMiddleware
         {
             error = errorCode,
             message,
-            upgradeUrl = "/billing/plans"
+            upgradeUrl = BillingLinks.Modules
         };
 
         await context.Response.WriteAsync(JsonSerializer.Serialize(response));

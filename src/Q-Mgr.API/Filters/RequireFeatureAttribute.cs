@@ -1,3 +1,4 @@
+using QMgr.Domain.Constants;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using QMgr.Application.Interfaces.Billing;
@@ -48,7 +49,7 @@ public class RequireFeatureAttribute : Attribute, IAsyncActionFilter
                 error = "FEATURE_NOT_AVAILABLE",
                 feature = FeatureCode,
                 message,
-                upgradeUrl = "/billing/plans"
+                upgradeUrl = BillingLinks.Modules
             })
             {
                 StatusCode = StatusCodes.Status403Forbidden
@@ -114,7 +115,7 @@ public class RequireModuleAttribute : Attribute, IAsyncActionFilter
                 error = "MODULE_NOT_PURCHASED",
                 module = ModuleCode,
                 message,
-                purchaseUrl = "/billing/modules"
+                purchaseUrl = BillingLinks.Modules
             })
             {
                 StatusCode = StatusCodes.Status403Forbidden
@@ -172,7 +173,7 @@ public class CheckLimitAttribute : Attribute, IAsyncActionFilter
                 current = limitCheck.CurrentUsage,
                 limit = limitCheck.MaxAllowed,
                 message,
-                upgradeUrl = "/billing/plans"
+                upgradeUrl = BillingLinks.Modules
             })
             {
                 StatusCode = StatusCodes.Status402PaymentRequired

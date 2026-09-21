@@ -53,11 +53,28 @@ public enum TenantStatus
     /// <summary>Payment failed or admin suspended</summary>
     Suspended = 3,
 
-    /// <summary>User cancelled</summary>
+    /// <summary>User cancelled. Data is still here and can still be exported; nothing has been removed.</summary>
     Cancelled = 4,
 
-    /// <summary>Soft-deleted</summary>
-    Deleted = 5
+    /// <summary>
+    /// LEGACY. A soft-delete nothing has ever written: until 2026-09-20 this value was read in four
+    /// places — the status middleware, the platform analytics count, the registration guard and a
+    /// nightly purge job — and assigned in none, so the whole pipeline hung off a state the product
+    /// could not reach. New code does not write it either, because a purged tenant has NO ROW AT
+    /// ALL; what survives is a <c>TenantTombstone</c>. It is kept so that any row an old database
+    /// still carries keeps being refused by the middleware rather than silently coming back to life.
+    /// </summary>
+    Deleted = 5,
+
+    /// <summary>
+    /// Scheduled for irreversible deletion, and still restorable by a platform administrator.
+    ///
+    /// A STATE OF ITS OWN rather than a flag on <see cref="Cancelled"/>, because the two are
+    /// different promises: Cancelled says your data is here and you can have it, this says it is
+    /// going. Collapsing them means either deleting data a customer still believes they can export,
+    /// or never actually deleting anything.
+    /// </summary>
+    PendingDeletion = 6
 }
 
 /// <summary>
@@ -123,7 +140,15 @@ public enum PaymentStatus
     Refunded = 4,
 
     /// <summary>Payment cancelled</summary>
-    Cancelled = 5
+    Cancelled = 5,
+
+    /// <summary>Held for a human at the payment gateway (sacc.ug "Review"). NOT final: the money may
+    /// still be applied or returned, so nothing is provisioned and dunning does not start.</summary>
+    Review = 6,
+
+    /// <summary>The payer never answered and the gateway gave up (sacc.ug "Abandoned", its webhook
+    /// "payment.expired"), or the gateway never received the request. Final; nothing was collected.</summary>
+    Abandoned = 7
 }
 
 /// <summary>Status of one organization's purchase of one module</summary>

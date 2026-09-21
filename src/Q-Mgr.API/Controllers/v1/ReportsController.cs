@@ -108,7 +108,7 @@ public class ReportsController : ControllerBase
             error = "FEATURE_NOT_AVAILABLE",
             feature = FeatureCodes.ExportReports,
             message = "Report export is not available on your current plan. Add a module from Billing to enable exports.",
-            upgradeUrl = "/billing/modules"
+            upgradeUrl = BillingLinks.Modules
         })
         {
             StatusCode = StatusCodes.Status403Forbidden

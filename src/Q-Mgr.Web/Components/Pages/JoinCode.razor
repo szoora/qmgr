@@ -1,0 +1,95 @@
+@page "/join"
+@layout PublicLayout
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@using Microsoft.AspNetCore.Authorization
+@using QMgr.Web.Components.Shared
+@attribute [AllowAnonymous]
+@inject NavigationManager Navigation
+
+@*
+    THE SECOND DOOR (2026-09-20). /join/{Code} has always existed and has always worked; what did not
+    exist was any way to reach it without being sent the whole URL. So the sign-in page said "Don't
+    have an account? Create one", a teacher at a school that already uses Q-Mgr told the truth, and
+    got a duplicate school on a trial.
+
+    This page is deliberately thin: it takes the code and forwards to the page that does the work.
+    It looks up NOTHING — an unknown code must read the same here as a revoked or expired one, and
+    that judgement belongs on the page that already makes it carefully (JoinStaff), not in a second
+    copy of the rule. A code pasted as a whole URL is accepted too, because that is what people are
+    sent and asking them to edit it is a way of losing them.
+*@
+
+<PageTitle>Join with a code - Q-Mgr</PageTitle>
+
+<div class="login-container">
+    <AmbientBackground />
+    <div class="login-card">
+        <div class="login-header">
+            <div class="logo-wrapper"><div class="logo-circle"><QIcon Name="link-45deg" Size="32" /></div></div>
+            <h1>Join your organisation</h1>
+            <p>Enter the link or code your administrator gave you.</p>
+        </div>
+
+        <form @onsubmit="Go" @onsubmit:preventDefault="true">
+            <div class="form-group">
+                <label for="code"><QIcon Name="key-fill" Size="16" /><span>Join link or code</span></label>
+                <input id="code" class="form-control" autocomplete="off" spellcheck="false" maxlength="200"
+                       placeholder="https://… /join/ABCD1234 — or just ABCD1234"
+                       @bind="raw" @bind:event="oninput" />
+                <small class="form-hint">Your school's administrator issues this. It is not the same as a password, and it can be revoked at any time.</small>
+            </div>
+
+            <button type="submit" class="btn-login" disabled="@(Extracted.Length == 0)">
+                <QIcon Name="arrow-right" Size="18" /><span>Continue</span>
+            </button>
+        </form>
+
+        <div class="login-footer">
+            <div class="auth-doors">
+                <a href="/login" class="auth-door"><QIcon Name="box-arrow-in-right" Size="18" /><span>Sign In</span></a>
+                @* Hidden on a tenant's own domain, the same rule as the sign-in page: this address
+                   already belongs to one organisation. *@
+                @if (!Host.IsTenantHost)
+                {
+                    <a href="/register" class="auth-door"><QIcon Name="building-add" Size="18" /><span>Register Organisation</span></a>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [CascadingParameter] public QMgr.Web.Services.TenantHostContext Host { get; set; } = QMgr.Web.Services.TenantHostContext.Platform;
+
+    private string raw = string.Empty;
+
+    /// <summary>
+    /// The code out of whatever was pasted: a whole URL, a URL with a trailing slash or query, or
+    /// the bare code. Nothing is validated here — an unknown code and a revoked one must read the
+    /// same, and JoinStaff already answers that way.
+    /// </summary>
+    private string Extracted
+    {
+        get
+        {
+            var text = (raw ?? string.Empty).Trim();
+            if (text.Length == 0) return string.Empty;
+
+            var marker = text.LastIndexOf("/join/", StringComparison.OrdinalIgnoreCase);
+            if (marker >= 0) text = text[(marker + "/join/".Length)..];
+
+            var cut = text.IndexOfAny(new[] { '?', '#', '/', ' ' });
+            if (cut >= 0) text = text[..cut];
+
+            // Base32 codes only, so a pasted sentence cannot become a route segment.
+            return new string(text.Where(char.IsLetterOrDigit).ToArray());
+        }
+    }
+
+    private void Go()
+    {
+        var code = Extracted;
+        if (code.Length == 0) return;
+        Navigation.NavigateTo($"/join/{code}");
+    }
+}

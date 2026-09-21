@@ -23,7 +23,7 @@ public class Invoice : BaseAuditableEntity
     public InvoiceStatus Status { get; set; } = InvoiceStatus.Draft;
 
     /// <summary>Currency code (USD, UGX)</summary>
-    public string Currency { get; set; } = "USD";
+    public string Currency { get; set; } = "UGX";
 
     #endregion
 

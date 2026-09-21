@@ -394,8 +394,7 @@ public class TenantProvisioningService : ITenantProvisioningService
 
     private async Task<bool> SendVerificationEmailAsync(User user, Organization organization, string token, CancellationToken cancellationToken)
     {
-        var saas = await _platformSettingsService.GetSettingsAsync<SaasSettings>("SaaS");
-        var baseUrl = (saas?.BaseUrl ?? "https://qmgr.app").TrimEnd('/');
+        var baseUrl = await _platformSettingsService.GetPublicWebBaseUrlAsync();
         var verificationUrl = $"{baseUrl}/verify?org={organization.Id}&token={token}";
 
         var subject = "Verify your Q-Mgr account";

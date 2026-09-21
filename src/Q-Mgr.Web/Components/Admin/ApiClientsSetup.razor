@@ -237,22 +237,6 @@
         padding: 80px;
     }
 
-    .empty-state {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        padding: 80px 20px;
-        text-align: center;
-        background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-    }
-
-    .empty-state .q-icon { font-size: 48px; color: var(--qm-text-muted); margin-bottom: 16px; }
-    .empty-state h3 { margin: 0 0 8px; color: var(--qm-text-primary); }
-    .empty-state p { margin: 0 0 24px; color: var(--qm-text-muted); max-width: 400px; }
-
     .api-clients-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
@@ -293,7 +277,7 @@
         display: flex;
         align-items: center;
         gap: 8px;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-muted);
     }
 
@@ -308,11 +292,11 @@
 
     .client-body { padding: 16px; }
     .client-body h4 { margin: 0 0 8px; color: var(--qm-text-primary); }
-    .client-description { margin: 0 0 16px; font-size: 13px; color: var(--qm-text-muted); }
+    .client-description { margin: 0 0 16px; font-size: var(--qm-text-base); color: var(--qm-text-muted); }
 
     .client-key label {
         display: block;
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         text-transform: uppercase;
         color: var(--qm-text-muted);
         margin-bottom: 6px;
@@ -331,7 +315,7 @@
     .key-container code {
         flex: 1;
         font-family: var(--qm-font-mono);
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-primary);
         word-break: break-all;
     }
@@ -339,7 +323,7 @@
     .client-webhook { margin-top: 14px; }
     .client-webhook label {
         display: block;
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         text-transform: uppercase;
         color: var(--qm-text-muted);
         margin-bottom: 6px;
@@ -350,7 +334,7 @@
         align-items: center;
         gap: 6px;
         font-family: var(--qm-font-mono);
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-primary);
         margin-bottom: 6px;
     }
@@ -358,12 +342,12 @@
     .webhook-url span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .webhook-url .q-icon { color: var(--qm-primary); flex-shrink: 0; }
     .webhook-events { display: flex; gap: 6px; flex-wrap: wrap; }
-    .webhook-muted { font-size: 12px; color: var(--qm-text-muted); }
+    .webhook-muted { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
 
     .event-badge {
         padding: 2px 8px;
         border-radius: var(--qm-radius-sm);
-        font-size: 10px;
+        font-size: var(--qm-text-xs);
         background: var(--qm-bg-elevated);
         color: var(--qm-text-secondary);
         border: 1px solid var(--qm-border);
@@ -373,8 +357,8 @@
     .client-body .client-key + .client-key,
     .client-webhook + .client-key { margin-top: 14px; }
 
-    .field-hint { display: block; margin-top: 6px; font-size: 12px; color: var(--qm-text-muted); }
-    .field-hint code { font-family: var(--qm-font-mono); font-size: 11px; color: var(--qm-primary); }
+    .field-hint { display: block; margin-top: 6px; font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
+    .field-hint code { font-family: var(--qm-font-mono); font-size: var(--qm-text-xs); color: var(--qm-primary); }
 
     .secret-warning {
         display: flex;
@@ -384,7 +368,7 @@
         margin: 0 0 16px;
         background: color-mix(in srgb, var(--qm-warning) 15%, transparent);
         border-radius: var(--qm-radius-lg);
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-primary);
     }
 
@@ -404,8 +388,8 @@
         text-align: center;
     }
 
-    .stat-value { display: block; font-size: 18px; font-weight: 600; color: var(--qm-text-primary); }
-    .stat-label { font-size: 11px; color: var(--qm-text-muted); text-transform: uppercase; }
+    .stat-value { display: block; font-size: var(--qm-text-lg); font-weight: 600; color: var(--qm-text-primary); }
+    .stat-label { font-size: var(--qm-text-xs); color: var(--qm-text-muted); text-transform: uppercase; }
 
     .client-footer {
         display: flex;
@@ -421,7 +405,7 @@
     .scope-badge {
         padding: 4px 8px;
         border-radius: var(--qm-radius-md);
-        font-size: 10px;
+        font-size: var(--qm-text-xs);
         background: var(--qm-primary-light);
         color: var(--qm-primary);
         font-weight: 500;
@@ -434,7 +418,7 @@
     .form-group > label {
         display: block;
         margin-bottom: 6px;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         font-weight: 500;
         color: var(--qm-text-secondary);
     }
@@ -452,7 +436,7 @@
 
     .scope-info { display: flex; flex-direction: column; }
     .scope-name { font-weight: 500; color: var(--qm-text-primary); }
-    .scope-desc { font-size: 12px; color: var(--qm-text-muted); }
+    .scope-desc { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
 </style>
 
 @code {
@@ -483,7 +467,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.IntegrationsApi))
         {
-            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            Navigation.NavigateTo(BillingLinks.Modules, forceLoad: false);
             return;
         }
 

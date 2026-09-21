@@ -22,19 +22,16 @@
 *@
 
 <div class="admin-page">
-<div class="page-header">
-    @if (!Embedded)
-    {
-        <div class="header-content">
-            <h1>Duty Reports<QInfo Text="Reports from the people on duty and the administrators who supervise them: what is waiting for review, what came back, and what was never written." Label="Duty Reports" /></h1>
-            <p class="subtitle">Reports from the people on duty and the administrators who supervise them: what is waiting for review, what came back, and what was never written.</p>
-        </div>
-    }
-    <div class="header-actions">
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1>Duty Reports<QInfo Text="Reports from the people on duty and the administrators who supervise them: what is waiting for review, what came back, and what was never written." Label="Duty Reports" /></h1>
+        <p class="subtitle">Reports from the people on duty and the administrators who supervise them: what is waiting for review, what came back, and what was never written.</p>
+    </Title>
+    <Actions>
         <QButton Text="Print pack" Icon="printer" Variant="secondary" Disabled="@(queue == null || !queue.Items.Any())"
                  OnClick="@(() => Navigation.NavigateTo($"/admin/staff/duty-reports/print?from={range.From:yyyy-MM-dd}&to={range.To:yyyy-MM-dd}"))" />
-    </div>
-</div>
+    </Actions>
+</QPageActions>
 
     <QFilterBar Wrap="true">
         <QDateRangePicker Range="@range" RangeChanged="@OnRangeChanged" CaptionPrefix="Due" />
@@ -70,12 +67,27 @@
         }
         else
         {
+            @* Search and paging (plan Phase 2). The period and status filters above are QFilterBar's
+               and are the ones that matter here; this adds finding one report by duty or author, and
+               stops a term's queue rendering whole. No selection: reviewing a duty report is reading
+               it and writing a remark, which is not a thing done to twenty at once. *@
+            <QBulkBar Search="@search" SearchChanged="@SetSearch" ShowSelection="false"
+                      SearchPlaceholder="Search by duty or author" />
+
+            @if (Visible.Count == 0)
+            {
+                <QEmptyState Icon="funnel" Title="Nothing matches" Text="Clear the search to see the whole queue.">
+                    <Action><QButton Text="Show everything" Icon="arrow-counterclockwise" Variant="secondary" Size="sm" OnClick="@(() => SetSearch(string.Empty))" /></Action>
+                </QEmptyState>
+            }
+            else
+            {
             <QCard NoPadding="true">
                 <div class="table-wrap">
                     <table class="data-table q-stack">
                         <thead><tr><th>Duty</th><th>Period</th><th>Author</th><th>Status</th><th>Due</th><th>Notes</th><th></th></tr></thead>
                         <tbody>
-                            @foreach (var r in queue.Items)
+                            @foreach (var r in Paged)
                             {
                                 <tr class="@(r.IsOverdue ? "drq-overdue" : "")">
                                     <td><strong>@r.DutyTitle</strong></td>
@@ -104,16 +116,19 @@
                         </tbody>
                     </table>
                 </div>
+                <QPager Count="@Visible.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="reports" />
             </QCard>
             @if (queue.Total > queue.Items.Count) { <p class="drq-muted">Showing @queue.Items.Count of @queue.Total. Narrow the period to see the rest.</p> }
+            }
         }
     }
 </div>
 
 <style>
-    .drq-scope { font-size: 13px; color: var(--qm-text-secondary); margin: 8px 0; }
+    .drq-scope { font-size: var(--qm-text-base); color: var(--qm-text-secondary); margin: 8px 0; }
+    /* The bar is QBulkBar; nothing of it is restyled here. */
     .drq-overdue td:first-child { box-shadow: inset 3px 0 0 var(--qm-danger); }
-    .drq-muted { font-size: 12.5px; color: var(--qm-text-muted); }</style>
+    .drq-muted { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }</style>
 
 @code {
     /// <summary>True when a hub is hosting this section inside its own tab strip: the host then owns
@@ -123,6 +138,28 @@
     private bool isLoading = true, forbidden;
     private Guid branchId;
     private DutyReportQueueDto? queue;
+    private const int PageSize = 25;
+    private string search = string.Empty;
+    private int pageIndex;
+
+    /// <summary>The queue the API returned, narrowed by the page search. The period and status
+    /// filters are the API's; this one only finds a report inside what it sent.</summary>
+    private List<DutyReportSummaryDto> Visible
+    {
+        get
+        {
+            var items = queue?.Items ?? new List<DutyReportSummaryDto>();
+            if (string.IsNullOrWhiteSpace(search)) return items;
+            var q = search.Trim();
+            bool Has(string? x) => (x ?? string.Empty).Contains(q, StringComparison.OrdinalIgnoreCase);
+            return items.Where(r => Has(r.DutyTitle) || Has(r.AuthorName)).ToList();
+        }
+    }
+
+    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (Visible.Count - 1) / PageSize));
+    private IEnumerable<DutyReportSummaryDto> Paged => Visible.Skip(SafePageIndex * PageSize).Take(PageSize);
+
+    private void SetSearch(string value) { search = value ?? string.Empty; pageIndex = 0; }
     private DateRange range = new(DateOnly.FromDateTime(DateTime.Today.AddDays(-30)), DateOnly.FromDateTime(DateTime.Today.AddDays(1)));
     private string statusKey = "all";
 
@@ -136,7 +173,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
-            Navigation.NavigateTo("/billing/modules");
+            Navigation.NavigateTo(BillingLinks.Modules);
             return;
         }
         await BranchState.InitializeAsync();

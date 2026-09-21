@@ -14,9 +14,12 @@
 @inject IJSRuntime JSRuntime
 @inject AuthenticationStateProvider AuthStateProvider
 
-<PageTitle>Sign In - Q-Mgr</PageTitle>
+<PageTitle>Sign In - @Host.AppName</PageTitle>
 
-<div class="login-container">
+@* On a tenant's own domain the page wears the tenant's palette. Nothing here decides whether it
+   may: TenantHostContext is only branded for a host that is a LIVE tenant domain whose organization
+   has white-labelling switched on and is entitled to it, all checked server-side. *@
+<div class="login-container" style="@Host.BrandingStyle">
     <AmbientBackground />
     <div class="login-card @(isLoading ? "loading" : "")">
         @if (currentStep == LoginStep.Email)
@@ -25,11 +28,18 @@
             <div class="login-header">
                 <div class="logo-wrapper">
                     <div class="logo-circle">
-                        <QIcon Name="people-fill" Size="32" />
+                        @if (Host.IsTenantHost && !string.IsNullOrWhiteSpace(Host.Branding.LogoUrl))
+                        {
+                            <img src="@Host.Branding.LogoUrl" alt="@Host.AppName" class="brand-logo-img" />
+                        }
+                        else
+                        {
+                            <QIcon Name="people-fill" Size="32" />
+                        }
                     </div>
                 </div>
-                <h1>Welcome</h1>
-                <p>Sign in to your Q-Mgr account</p>
+                <h1>@(Host.IsTenantHost ? Host.AppName : "Welcome")</h1>
+                <p>Sign in to your @Host.AppName account</p>
             </div>
 
             @if (!string.IsNullOrEmpty(errorMessage))
@@ -194,11 +204,28 @@
             </EditForm>
         }
 
+        @*
+            TWO DOORS, NAMED (2026-09-20). "Don't have an account? Create one" was one door, and it
+            led to registering a whole new ORGANIZATION with a trial. A teacher at a school that
+            already uses Q-Mgr reads that line, tells the truth, and ends up with a duplicate school
+            — themselves as its administrator, no connection to the real one. The join link that
+            actually serves them existed all along and was unreachable from here.
+        *@
         <div class="login-footer">
-            <p>
-                Don't have an account?
-                <a href="/register" class="link-register">Create one</a>
-            </p>
+            @* Two buttons, an icon each. The sentences that named the two doors were the fix for
+               "Create one"; once the doors are separate buttons the labels carry it. *@
+            <div class="auth-doors">
+                <a href="/join" class="auth-door"><QIcon Name="link-45deg" Size="18" /><span>Join Using Link</span></a>
+                @* HIDDEN on a tenant's own domain, and that is the point of the whole feature: the
+                   domain is already attached to ONE organisation, so offering to create a second
+                   one here is the duplicate-school mistake this page was just fixed for, with the
+                   school's own name over it. Joining stays — that is what a member of staff
+                   arriving at their school's address is trying to do. *@
+                @if (!Host.IsTenantHost)
+                {
+                    <a href="/register" class="auth-door"><QIcon Name="building-add" Size="18" /><span>Register Organisation</span></a>
+                }
+            </div>
             <div class="footer-links">
                 <a href="/privacy">Privacy Policy</a>
                 <span>•</span>
@@ -208,7 +235,7 @@
             </div>
             @* The product's own sentence, not the module's: the queue is one of six things it does. *@
             <p class="powered-by">Queues, visitors, signage, welfare and secure documents &mdash; one system for the front office.</p>
-            <p class="powered-by">Powered by SACC Software</p>
+            <PoweredBy />
         </div>
     </div>
 
@@ -216,6 +243,9 @@
 
 
 @code {
+    /// <summary>Which host this browser arrived on (see TenantHostContext). Platform by default.</summary>
+    [CascadingParameter] public TenantHostContext Host { get; set; } = TenantHostContext.Platform;
+
     [SupplyParameterFromQuery]
     private string? ReturnUrl { get; set; }
 

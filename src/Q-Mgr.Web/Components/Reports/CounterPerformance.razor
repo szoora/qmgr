@@ -53,7 +53,7 @@
             <span>@errorMessage</span>
             @if (isForbidden)
             {
-                <QButton Text="View plans" Icon="box-seam" Variant="secondary" Size="sm" OnClick="@(() => Navigation.NavigateTo("/billing/modules"))" />
+                <QButton Text="View plans" Icon="box-seam" Variant="secondary" Size="sm" OnClick="@(() => Navigation.NavigateTo(BillingLinks.Modules))" />
             }
             else
             {
@@ -244,7 +244,7 @@
 
     .range-caption {
         margin: 14px 0 0 0;
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-muted);
     }
 
@@ -254,7 +254,7 @@
         align-items: center;
         gap: 12px;
         color: var(--qm-text-secondary);
-        font-size: 13px;
+        font-size: var(--qm-text-base);
     }
 
     .counter-cards {
@@ -285,11 +285,11 @@
         align-items: center;
         gap: 8px;
         font-weight: 600;
-        font-size: 16px;
+        font-size: var(--qm-text-md);
     }
 
     .counter-staff {
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-secondary);
         margin-bottom: 12px;
     }
@@ -309,13 +309,13 @@
     }
 
     .stat-value {
-        font-size: 20px;
+        font-size: var(--qm-text-xl);
         font-weight: 700;
         color: var(--qm-text-primary);
     }
 
     .stat-label {
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         color: var(--qm-text-secondary);
         text-transform: uppercase;
     }
@@ -336,7 +336,7 @@
     }
 
     .counter-footnote {
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         color: var(--qm-text-muted);
     }
 
@@ -346,19 +346,19 @@
 
     .chart-card h4, .table-card h4 {
         margin: 0 0 16px 0;
-        font-size: 16px;
+        font-size: var(--qm-text-md);
         font-weight: 600;
     }
 
     .chart-empty {
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-muted);
         margin: 0;
     }
 
     .definition-note {
         margin: 14px 0 0 0;
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         line-height: 1.6;
         color: var(--qm-text-muted);
     }
@@ -422,22 +422,15 @@
         display: flex;
         justify-content: center;
         align-items: center;
-        min-height: 400px;
     }
 
     .empty-state-content {
         text-align: center;
         max-width: 400px;
-        padding: 3rem;
+        padding: var(--qm-empty-pad);
         background: var(--qm-bg-card);
         border-radius: var(--qm-radius-xl);
         border: 1px solid var(--qm-border);
-    }
-
-    .empty-state-icon {
-        font-size: 3rem;
-        color: var(--qm-text-muted);
-        margin-bottom: 1rem;
     }
 
     .empty-state-content h3 {
@@ -447,7 +440,7 @@
 
     .empty-state-content p {
         color: var(--qm-text-secondary);
-        margin-bottom: 1.5rem;
+        margin-bottom: 4px;
     }
 </style>
 

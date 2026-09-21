@@ -28,6 +28,8 @@
             <p class="subtitle">What plays on this branch's screens, where it plays, and when.</p>
         </div>
         <div class="header-actions">
+            @* The open section's own buttons land here — see QPageActions. *@
+            <SectionOutlet SectionId="QPageActions.Id" />
             <QButton Text="Open full-screen signage" Icon="fullscreen" Variant="secondary"
                      OnClick="@OpenFullScreen" Disabled="@(BranchState.CurrentBranchId == Guid.Empty)"
                      Title="@(BranchState.CurrentBranchId == Guid.Empty ? "Select a branch from the header first." : null)" />
@@ -80,7 +82,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
         {
-            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            Navigation.NavigateTo(BillingLinks.Modules, forceLoad: false);
             return;
         }
 

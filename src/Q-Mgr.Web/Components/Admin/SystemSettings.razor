@@ -16,16 +16,16 @@
 }
 
 <div class="admin-page">
-    <div class="page-header">
-        @if (!Embedded)
-        {
-            <div class="header-content">
-                <h1>System Settings</h1>
-                <p class="subtitle">Configure global system preferences and defaults</p>
-            </div>
-        }
-        <QButton Text="Save All Changes" Icon="check-lg" Variant="primary" OnClick="@SaveSettings" Disabled="@(isLoading || isSaving)" />
-    </div>
+    <QPageActions Embedded="@Embedded">
+        <Title>
+            <h1>System Settings</h1>
+            <p class="subtitle">Configure global system preferences and defaults</p>
+        </Title>
+        <Actions>
+
+            <QButton Text="Save All Changes" Icon="check-lg" Variant="primary" OnClick="@SaveSettings" Disabled="@(isLoading || isSaving)" />
+        </Actions>
+    </QPageActions>
 
     @if (isLoading)
     {
@@ -281,13 +281,13 @@
         border-left-color: var(--qm-primary);
     }
 
-    .settings-nav-item .rzi { font-size: 20px; }
+    .settings-nav-item .rzi { font-size: var(--qm-text-xl); }
 
     .settings-content { padding: 24px; }
 
     .settings-section h3 {
         margin: 0 0 24px;
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
         color: var(--qm-text-primary);
         padding-bottom: 12px;
         border-bottom: 1px solid var(--qm-border);
@@ -298,7 +298,7 @@
         padding: 10px 14px;
         background: var(--qm-bg-elevated);
         border-radius: var(--qm-radius-lg);
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
     }
 
@@ -327,7 +327,7 @@
 
     .setting-info p {
         margin: 0;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-muted);
     }
 

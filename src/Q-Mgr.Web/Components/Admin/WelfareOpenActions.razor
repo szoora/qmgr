@@ -29,16 +29,29 @@
     }
     else if (!actions.Any())
     {
-        <div class="empty-state">
-            <QIcon Name="check2-circle" Size="xl" />
-            <h3>Nothing open right now</h3>
-            <p>Any welfare record assigned to you for follow-up will show up here.</p>
-        </div>
+        <QEmptyState Icon="check2-circle" Title="Nothing open right now"
+                     Text="Any welfare record assigned to you for follow-up will show up here." />
     }
     else
     {
+        @* Chips with counts, a search and paging (plan Phase 2). A to-do list only grows, and the
+           one thing a reader wants from it is "what is overdue" — which a chip answers and a wall
+           of rows does not. No selection: closing a welfare follow-up is a decision per child with
+           its own record, and a bulk "resolve" would be the sweep inventing a safeguarding action. *@
+        <QBulkBar Filters="@FilterChips" ActiveFilter="@filter" ActiveFilterChanged="@SetFilter"
+                  Search="@search" SearchChanged="@SetSearch" ShowSelection="false"
+                  SearchPlaceholder="Search by student, category or action" />
+
+        @if (Visible.Count == 0)
+        {
+            <QEmptyState Icon="funnel" Title="Nothing matches" Text="Clear the search or choose a different filter.">
+                <Action><QButton Text="Show everything" Icon="arrow-counterclockwise" Variant="secondary" Size="sm" OnClick="@ClearFilters" /></Action>
+            </QEmptyState>
+        }
+        else
+        {
         <div class="action-list">
-            @foreach (var record in actions)
+            @foreach (var record in Paged)
             {
                 var isOverdue = record.ActionDueDate.HasValue && record.ActionDueDate.Value < DateTime.UtcNow;
                 <div class="action-row @(isOverdue ? "action-row--overdue" : "")" @onclick="@(() => Navigation.NavigateTo($"/admin/students/{record.StudentId}/welfare"))">
@@ -64,14 +77,13 @@
                 </div>
             }
         </div>
+        <QPager Count="@Visible.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="actions" />
+        }
     }
 </div>
 
 <style>.header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: var(--qm-text-muted); background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border); }
-    .empty-state .rzi { font-size: 64px; margin-bottom: 16px; color: var(--qm-primary); }
-    .empty-state h3 { margin: 0 0 8px; color: var(--qm-text-primary); }
-    .empty-state p { margin: 0; }
+    .loading-container { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: var(--qm-text-muted); background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border); }
 
     .action-list { display: flex; flex-direction: column; gap: 10px; }
     .action-row { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 14px 16px; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); cursor: pointer; transition: all 0.15s ease; }
@@ -81,16 +93,60 @@
     .action-row-marker { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--qm-text-on-primary); flex-shrink: 0; }
     .action-row-body { flex: 1; min-width: 0; }
     .action-row-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--qm-text-primary); }
-    .action-row-desc { margin: 4px 0; font-size: 13px; color: var(--qm-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .action-row-due { font-size: 12px; color: var(--qm-text-muted); }
+    .action-row-desc { margin: 4px 0; font-size: var(--qm-text-base); color: var(--qm-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .action-row-due { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
 
-    .overdue-tag { padding: 1px 7px; border-radius: 999px; background: rgba(var(--qm-danger-rgb), 0.12); color: var(--qm-danger); font-weight: 700; font-size: 10px; text-transform: uppercase; }
+    .overdue-tag { padding: 1px 7px; border-radius: 999px; background: rgba(var(--qm-danger-rgb), 0.12); color: var(--qm-danger); font-weight: 700; font-size: var(--qm-text-xs); text-transform: uppercase; }
 </style>
 
 @code {
+    private const int PageSize = 25;
+
     private Guid branchId;
     private bool isLoading = true;
     private List<WelfareRecordDto> actions = new();
+    private string search = string.Empty;
+    private string filter = "all";
+    private int pageIndex;
+
+    private bool IsOverdue(WelfareRecordDto r) => r.ActionDueDate.HasValue && r.ActionDueDate.Value < DateTime.UtcNow;
+
+    private List<QBulkBar.Filter> FilterChips => new()
+    {
+        new("all", "All", actions.Count),
+        new("overdue", "Overdue", actions.Count(IsOverdue)),
+        new("dated", "With a date", actions.Count(r => r.ActionDueDate.HasValue && !IsOverdue(r))),
+        new("undated", "No date", actions.Count(r => !r.ActionDueDate.HasValue)),
+    };
+
+    private List<WelfareRecordDto> Visible
+    {
+        get
+        {
+            IEnumerable<WelfareRecordDto> rows = actions;
+            rows = filter switch
+            {
+                "overdue" => rows.Where(IsOverdue),
+                "dated" => rows.Where(r => r.ActionDueDate.HasValue && !IsOverdue(r)),
+                "undated" => rows.Where(r => !r.ActionDueDate.HasValue),
+                _ => rows
+            };
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var q = search.Trim();
+                bool Has(string? s) => (s ?? string.Empty).Contains(q, StringComparison.OrdinalIgnoreCase);
+                rows = rows.Where(r => Has(r.StudentName) || Has(r.CategoryName) || Has(r.ActionTaken));
+            }
+            return rows.ToList();
+        }
+    }
+
+    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (Visible.Count - 1) / PageSize));
+    private IEnumerable<WelfareRecordDto> Paged => Visible.Skip(SafePageIndex * PageSize).Take(PageSize);
+
+    private void SetFilter(string key) { filter = key; pageIndex = 0; }
+    private void SetSearch(string value) { search = value ?? string.Empty; pageIndex = 0; }
+    private void ClearFilters() { filter = "all"; search = string.Empty; pageIndex = 0; }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -105,7 +161,7 @@
             await ModuleState.LoadAsync(ModuleApi);
             if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
             {
-                Navigation.NavigateTo("/billing/modules", forceLoad: false);
+                Navigation.NavigateTo(BillingLinks.Modules, forceLoad: false);
                 return;
             }
 

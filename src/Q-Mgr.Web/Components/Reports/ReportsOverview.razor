@@ -42,7 +42,7 @@
             <span>@loadError</span>
             @if (isForbidden)
             {
-                <QButton Text="View plans" Icon="box-seam" Variant="secondary" Size="sm" OnClick="@(() => Navigation.NavigateTo("/billing/modules"))" />
+                <QButton Text="View plans" Icon="box-seam" Variant="secondary" Size="sm" OnClick="@(() => Navigation.NavigateTo(BillingLinks.Modules))" />
             }
             else
             {
@@ -61,59 +61,12 @@
     else
     {
         <!-- Quick Stats Summary — every figure below is measured over the selected range -->
-        <div class="stats-row">
-            <div class="stats-card primary">
-                <div class="stats-content">
-                    <div class="stats-info">
-                        <span class="stats-number">@(overview?.TotalServed.ToString() ?? Dash)</span>
-                        <span class="stats-label">Tokens Served</span>
-                        <span class="stats-sub">@ServedSubLabel</span>
-                    </div>
-                    <div class="stats-icon">
-                        <QIcon Name="check-circle-fill" />
-                    </div>
-                </div>
-            </div>
-
-            <div class="stats-card success">
-                <div class="stats-content">
-                    <div class="stats-info">
-                        <span class="stats-number">@FormatMinutes(overview?.AvgWaitMinutes)</span>
-                        <span class="stats-label">Avg Wait Time</span>
-                        <span class="stats-sub">@AverageSubLabel</span>
-                    </div>
-                    <div class="stats-icon">
-                        <QIcon Name="clock-fill" />
-                    </div>
-                </div>
-            </div>
-
-            <div class="stats-card warning">
-                <div class="stats-content">
-                    <div class="stats-info">
-                        <span class="stats-number">@FormatMinutes(overview?.AvgServiceMinutes)</span>
-                        <span class="stats-label">Avg Service Time</span>
-                        <span class="stats-sub">@AverageSubLabel</span>
-                    </div>
-                    <div class="stats-icon">
-                        <QIcon Name="stopwatch-fill" />
-                    </div>
-                </div>
-            </div>
-
-            <div class="stats-card info">
-                <div class="stats-content">
-                    <div class="stats-info">
-                        <span class="stats-number">@(overview is null ? Dash : $"{overview.ActiveCounters}/{overview.TotalCounters}")</span>
-                        <span class="stats-label">Active Counters</span>
-                        <span class="stats-sub">Right now, not over the range</span>
-                    </div>
-                    <div class="stats-icon">
-                        <QIcon Name="door-open-fill" />
-                    </div>
-                </div>
-            </div>
-        </div>
+        <QStatRow>
+            <QStatTile Icon="check-circle-fill" Variant="primary" Value="@(overview?.TotalServed.ToString() ?? Dash)" Label="Tokens served" Sub="@ServedSubLabel" />
+            <QStatTile Icon="clock-fill" Variant="success" Value="@FormatMinutes(overview?.AvgWaitMinutes)" Label="Average wait" Sub="@AverageSubLabel" />
+            <QStatTile Icon="stopwatch-fill" Variant="warning" Value="@FormatMinutes(overview?.AvgServiceMinutes)" Label="Average service" Sub="@AverageSubLabel" />
+            <QStatTile Icon="door-open-fill" Variant="info" Value="@(overview is null ? Dash : $"{overview.ActiveCounters}/{overview.TotalCounters}")" Label="Active counters" Sub="Right now, not over the range" />
+        </QStatRow>
 
         <!-- Daily series -->
         <QCard Class="chart-card">
@@ -197,57 +150,14 @@
         gap: 20px;
     }
 
-    .stats-row {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-        gap: 20px;
-    }
 
-    .stats-card {
-        background: var(--qm-bg-card);
-        border-radius: var(--qm-radius-xl);
-        padding: 24px;
-        box-shadow: var(--qm-shadow-sm);
-        border-left: 4px solid;
-    }
 
-    .stats-card.primary { border-left-color: var(--qm-primary); }
-    .stats-card.success { border-left-color: var(--qm-success); }
-    .stats-card.warning { border-left-color: var(--qm-warning); }
-    .stats-card.info { border-left-color: var(--qm-info); }
 
-    .stats-content {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
 
-    .stats-info {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-    }
 
-    .stats-number {
-        font-size: 32px;
-        font-weight: 700;
-        color: var(--qm-text-primary);
-    }
 
-    .stats-label {
-        font-size: 14px;
-        color: var(--qm-text-secondary);
-    }
 
-    .stats-sub {
-        font-size: 11px;
-        color: var(--qm-text-muted);
-    }
 
-    .stats-icon {
-        font-size: 48px;
-        opacity: 0.3;
-    }
 
     .report-cards {
         display: grid;
@@ -273,7 +183,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 28px;
+        font-size: var(--qm-text-stat);
         margin-bottom: 16px;
         color: var(--qm-text-on-primary);
     }
@@ -284,14 +194,14 @@
 
     .report-card h3 {
         margin: 0 0 8px 0;
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
         font-weight: 600;
     }
 
     .report-card p {
         margin: 0 0 16px 0;
         color: var(--qm-text-secondary);
-        font-size: 14px;
+        font-size: var(--qm-text-base);
     }
 
     .report-link {
@@ -308,7 +218,7 @@
 
     .filter-card h4, .chart-card h4 {
         margin: 0 0 20px 0;
-        font-size: 16px;
+        font-size: var(--qm-text-md);
         font-weight: 600;
     }
 
@@ -317,7 +227,7 @@
     }
 
     .chart-empty {
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-muted);
         margin: 0;
     }
@@ -335,7 +245,7 @@
 
     .range-caption {
         margin: 14px 0 0 0;
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-muted);
     }
 
@@ -367,7 +277,7 @@
     }
 
     .error-banner .rzi {
-        font-size: 24px;
+        font-size: var(--qm-text-stat);
     }
 </style>
 
@@ -556,13 +466,13 @@
                 <title>Queue Summary{{branchLabel}}</title>
                 <style>
                     body { font-family: Arial, sans-serif; margin: 24px; color: #222; }
-                    h1 { font-size: 18px; margin-bottom: 2px; }
-                    .meta-line { color: #666; font-size: 12px; margin-bottom: 20px; }
+                    h1 { font-size: var(--qm-text-lg); margin-bottom: 2px; }
+                    .meta-line { color: #666; font-size: var(--qm-text-sm); margin-bottom: 20px; }
                     table { border-collapse: collapse; width: 100%; max-width: 520px; }
-                    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #ddd; font-size: 13px; }
-                    th { font-size: 11px; text-transform: uppercase; color: #888; letter-spacing: .03em; }
-                    td.value { font-weight: 700; font-size: 16px; text-align: right; }
-                    .note { margin-top: 20px; color: #888; font-size: 11px; }
+                    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #ddd; font-size: var(--qm-text-base); }
+                    th { font-size: var(--qm-text-xs); text-transform: uppercase; color: #888; letter-spacing: .03em; }
+                    td.value { font-weight: 700; font-size: var(--qm-text-md); text-align: right; }
+                    .note { margin-top: 20px; color: #888; font-size: var(--qm-text-xs); }
                 </style>
             </head>
             <body>

@@ -36,4 +36,12 @@ public interface IPlatformSettingsService
     /// Reload settings cache (if caching is implemented)
     /// </summary>
     Task ReloadCacheAsync();
+
+    /// <summary>
+    /// The public address every link a person or a gateway follows is built on — the ONE reader of it
+    /// (2026-09-19). The address the server actually answers on (<c>MediaStorage:PublicBaseUrl</c>, then
+    /// <c>App:PublicWebBaseUrl</c>) wins; the SaaS setting's <c>BaseUrl</c> and then <c>SaaS:BaseUrl</c>
+    /// decide only where neither is configured. Never ends with a slash. See <c>PublicWebBase</c>.
+    /// </summary>
+    Task<string> GetPublicWebBaseUrlAsync();
 }

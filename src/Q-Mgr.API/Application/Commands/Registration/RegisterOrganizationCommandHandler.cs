@@ -254,8 +254,7 @@ public class RegisterOrganizationCommandHandler : IRequestHandler<RegisterOrgani
             // environment other than that exact production domain (this was previously
             // hardcoded and never caught because dev SMTP is unconfigured, so the email — and
             // therefore this URL — never actually got sent/seen).
-            var saas = await _platformSettingsService.GetSettingsAsync<SaasSettings>("SaaS");
-            var baseUrl = (saas?.BaseUrl ?? "https://qmgr.app").TrimEnd('/');
+            var baseUrl = await _platformSettingsService.GetPublicWebBaseUrlAsync();
             var verificationUrl = $"{baseUrl}/verify?org={organizationId}&token={verificationToken}";
 
             var subject = "Verify your Q-Mgr account";

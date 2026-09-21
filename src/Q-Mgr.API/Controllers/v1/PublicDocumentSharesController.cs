@@ -1,3 +1,4 @@
+using QMgr.Application.Interfaces.Billing;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -33,6 +34,7 @@ public class PublicDocumentSharesController : ControllerBase
     private readonly IDocumentShareService _shares;
     private readonly IConfiguration _configuration;
     private readonly IWebHostEnvironment _environment;
+    private readonly QMgr.Application.Interfaces.Billing.IFeatureFlagService _featureFlags;
     private readonly ILogger<PublicDocumentSharesController> _logger;
 
     public PublicDocumentSharesController(
@@ -40,12 +42,14 @@ public class PublicDocumentSharesController : ControllerBase
         IDocumentShareService shares,
         IConfiguration configuration,
         IWebHostEnvironment environment,
+        QMgr.Application.Interfaces.Billing.IFeatureFlagService featureFlags,
         ILogger<PublicDocumentSharesController> logger)
     {
         _db = db;
         _shares = shares;
         _configuration = configuration;
         _environment = environment;
+        _featureFlags = featureFlags;
         _logger = logger;
     }
 
@@ -92,7 +96,19 @@ public class PublicDocumentSharesController : ControllerBase
 
         var state = _shares.EvaluateState(share, DateTime.UtcNow);
         var doc = share.MediaContent!;
-        var orgName = await _db.Organizations.IgnoreQueryFilters().AsNoTracking().Where(o => o.Id == doc.OrganizationId).Select(o => o.Name).FirstOrDefaultAsync();
+        var org = await _db.Organizations.IgnoreQueryFilters().AsNoTracking()
+            .Where(o => o.Id == doc.OrganizationId)
+            .Select(o => new { o.Name, o.BrandName, o.LogoUrl, o.WhitelabelEnabled })
+            .FirstOrDefaultAsync();
+
+        // A white-labelling organization's own name and logo: the reader is a parent or an external
+        // recipient, and the school's name is what tells them the link is genuine. The brand name
+        // wins where one is set, because that is what the school calls itself.
+        var whiteLabel = org is { WhitelabelEnabled: true }
+            && await _featureFlags.IsFeatureEnabledAsync(doc.OrganizationId, FeatureCodes.WhiteLabel);
+        var orgName = whiteLabel && !string.IsNullOrWhiteSpace(org!.BrandName) ? org.BrandName : org?.Name;
+        var attributionRemoved = whiteLabel
+            && await _featureFlags.IsFeatureEnabledAsync(doc.OrganizationId, FeatureCodes.RemoveAttribution);
 
         // A link that cannot be opened reveals nothing about the document but the refusal.
         var open = state == DocumentShareState.Active;
@@ -101,6 +117,8 @@ public class PublicDocumentSharesController : ControllerBase
             DocumentName = open ? doc.Name : "Shared document",
             Summary = open ? doc.Summary : null,
             OrganizationName = orgName,
+            OrganizationLogoUrl = whiteLabel ? org!.LogoUrl : null,
+            AttributionRemoved = attributionRemoved,
             PublishedFrom = open ? doc.PublishedFrom : null,
             PublishedAt = open ? doc.PublishedAt : null,
             State = state,

@@ -13,22 +13,20 @@ public interface IModuleApiService
     /// <summary>This organization's status for every module.</summary>
     Task<List<OrganizationModuleStatusDto>> GetMineAsync();
 
-    /// <summary>Self-service purchase via Mobile Money. Throws InvalidOperationException with the
-    /// API's message on failure.</summary>
-    Task<ModulePurchaseResult> PurchaseAsync(string moduleCode, string phoneNumber, string billingCycle);
+    /// <summary>Buy a module through the sacc.ug gateway — Mobile Money or card (2026-09-19). Throws
+    /// <see cref="ApiFieldException"/> with the API's message when it is refused.</summary>
+    Task<PaymentStartDto> PurchaseAsync(string moduleCode, ModulePurchaseRequest request);
 
-    /// <summary>Polls a pending purchase after PurchaseAsync returns a transaction id.</summary>
-    Task<string> CheckPurchaseStatusAsync(string transactionId);
+    /// <summary>Where a purchase stands, by the reference PurchaseAsync returned. Null on a failed read,
+    /// so one dropped poll does not end the wait.</summary>
+    Task<PaymentStatusDto?> GetPurchaseStatusAsync(Guid referenceId);
 
-    /// <summary>Self-service purchase via Stripe (card). Throws InvalidOperationException with the
-    /// API's message on failure — including the "Stripe isn't configured for this module yet"
-    /// case, which is expected until real Stripe products/prices are set up for production.</summary>
+    /// <summary>Self-service purchase via Stripe (card) — used only when the platform has configured
+    /// Stripe, which it is not by default (2026-09-19). Cards otherwise go through the gateway.</summary>
     Task<ModuleCardPurchaseResult> PurchaseWithCardAsync(string moduleCode, string billingCycle);
 
     Task RemoveModuleAsync(string moduleCode, string? reason);
 }
-
-public record ModulePurchaseResult(bool Simulated, string Status, string Message, string? TransactionId);
 
 public record ModuleCardPurchaseResult(bool RequiresCheckout, string? CheckoutUrl, string? Status, string? Message);
 
@@ -65,28 +63,28 @@ public class ModuleApiService : IModuleApiService
     public async Task<List<OrganizationModuleStatusDto>> GetMineAsync()
         => await _httpClient.GetFromJsonAsync<List<OrganizationModuleStatusDto>>("api/v1/modules/mine", _jsonOptions) ?? new();
 
-    public async Task<ModulePurchaseResult> PurchaseAsync(string moduleCode, string phoneNumber, string billingCycle)
+    public async Task<PaymentStartDto> PurchaseAsync(string moduleCode, ModulePurchaseRequest request)
     {
-        var response = await _httpClient.PostAsJsonAsync($"api/v1/modules/{moduleCode}/purchase",
-            new { PhoneNumber = phoneNumber, BillingCycle = billingCycle }, _jsonOptions);
-        if (!response.IsSuccessStatusCode)
-            throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
-
-        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        var root = doc.RootElement;
-        var simulated = root.TryGetProperty("simulated", out var s) && s.GetBoolean();
-        var status = root.TryGetProperty("status", out var st) ? st.GetString() ?? "" : "";
-        var message = root.TryGetProperty("message", out var m) ? m.GetString() ?? "" : "";
-        var txId = root.TryGetProperty("transactionId", out var t) ? t.GetString() : null;
-        return new ModulePurchaseResult(simulated, status, message, txId);
+        var response = await _httpClient.PostAsJsonAsync($"api/v1/modules/{Uri.EscapeDataString(moduleCode)}/purchase", request, _jsonOptions);
+        if (!response.IsSuccessStatusCode) await ApiFieldException.ThrowAsync(response);
+        return (await response.Content.ReadFromJsonAsync<PaymentStartDto>(_jsonOptions))!;
     }
 
-    public async Task<string> CheckPurchaseStatusAsync(string transactionId)
+    public async Task<PaymentStatusDto?> GetPurchaseStatusAsync(Guid referenceId)
     {
-        var response = await _httpClient.GetAsync($"api/v1/modules/purchase-status/{transactionId}");
-        if (!response.IsSuccessStatusCode) return "Failed";
-        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        return doc.RootElement.TryGetProperty("status", out var s) ? s.GetString() ?? "Failed" : "Failed";
+        try
+        {
+            var response = await _httpClient.GetAsync($"api/v1/modules/purchase-status/{referenceId}");
+            return response.IsSuccessStatusCode ? await response.Content.ReadFromJsonAsync<PaymentStatusDto>(_jsonOptions) : null;
+        }
+        catch (HttpRequestException)
+        {
+            return null;
+        }
+        catch (TaskCanceledException)
+        {
+            return null;
+        }
     }
 
     public async Task<ModuleCardPurchaseResult> PurchaseWithCardAsync(string moduleCode, string billingCycle)

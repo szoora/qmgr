@@ -22,8 +22,11 @@
                     <QIcon Name="people-fill" Size="32" />
                 </div>
             </div>
-            <h1>Create Your Account</h1>
-            <p>Start your @trialDays-day free trial &mdash; no card required</p>
+            @* ONE LINE under the heading, and the other door as a button below the form — the same
+               shape on every auth page (Login, Register, Join). The paragraph that used to sit here
+               said in four lines what the "Join Using Link" button says in three words. *@
+            <h1>Register your organisation</h1>
+            <p>@trialDays-day free trial</p>
         </div>
 
         @if (!string.IsNullOrEmpty(errorMessage))
@@ -188,11 +191,36 @@
 
                         <div class="form-group">
                             <label for="email"><QIcon Name="envelope-fill" Size="16" /><span>Email Address *</span></label>
-                            <input type="email" id="email" @bind="formData.Email"
+                            <input type="email" id="email" @bind="formData.Email" @bind:after="CheckDomainAsync"
                                    placeholder="support@getsacc.com" class="form-control" />
                             <ValidationMessage For="@(() => formData.Email)" class="validation-message" />
                             <small class="form-hint">This will be your admin login email</small>
                         </div>
+
+                        @*
+                            THE DUPLICATE-SCHOOL WARNING (2026-09-20). Shown only when the domain was
+                            published by a tenant that switched staff sign-up on — its own invitation,
+                            not a guess. It WARNS and never blocks: a second campus is a real thing, and
+                            CLAUDE.md's standing rule is that a wrongly refused sign-up is a lost
+                            customer who cannot appeal. Continuing raises the risk score and puts the
+                            sign-up in front of a reviewer instead.
+                        *@
+                        @if (hint is { Found: true } h)
+                        {
+                            <div class="auth-alert auth-alert-warning auth-animate-in" role="status">
+                                <div class="auth-alert-icon"><QIcon Name="info-circle-fill" /></div>
+                                <div class="auth-alert-content">
+                                    <p><strong>@h.OrganizationName</strong> already uses Q-Mgr, and invites people at <strong>@h.MatchedDomain</strong> to join.</p>
+                                    <p class="auth-alert-sub">If that is your organisation, join it instead of setting up a second one &mdash; your colleagues, students and records are already there. Ask an administrator for the join link.</p>
+                                    <div class="auth-alert-actions">
+                                        <a href="/join" class="btn-login btn-login--sm"><QIcon Name="link-45deg" Size="16" /><span>I have a join link</span></a>
+                                        <button type="button" class="btn-ghost-sm" @onclick="@(() => acknowledgedExisting = true)" disabled="@acknowledgedExisting">
+                                            @(acknowledgedExisting ? "Continuing with a new organisation" : "This is a different organisation — continue")
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        }
 
                         <div class="form-group">
                             <label for="phone"><QIcon Name="telephone" Size="16" /><span>Phone Number</span></label>
@@ -355,10 +383,10 @@
         }
 
         <div class="login-footer">
-            <p>
-                Already have an account?
-                <a href="/login" class="link-register">Sign in</a>
-            </p>
+            <div class="auth-doors">
+                <a href="/login" class="auth-door"><QIcon Name="box-arrow-in-right" Size="18" /><span>Sign In</span></a>
+                <a href="/join" class="auth-door"><QIcon Name="link-45deg" Size="18" /><span>Join Using Link</span></a>
+            </div>
             <div class="footer-links">
                 <a href="/privacy">Privacy Policy</a>
                 <span>•</span>
@@ -366,7 +394,7 @@
                 <span>•</span>
                 <a href="/support">Support</a>
             </div>
-            <p class="powered-by">Powered by SACC Software</p>
+            <PoweredBy />
         </div>
     </div>
 </div>
@@ -464,7 +492,7 @@
         gap: 0.375rem;
         padding: 0 0.875rem;
         border-radius: var(--qm-radius-md);
-        background: var(--qm-success-light, rgba(34, 160, 90, 0.12));
+        background: rgba(var(--qm-success-rgb), 0.12);
         color: var(--qm-success, #22a05a);
         font-weight: 600;
         font-size: 0.875rem;
@@ -666,7 +694,7 @@
 
     .module-trial {
         font-size: 11px;
-        color: var(--qm-text-tertiary, var(--qm-text-secondary));
+        color: var(--qm-text-muted);
     }
 
     .summary-section {
@@ -756,6 +784,36 @@
 @code {
     private RegisterFormData formData = new();
     private int currentStep = 1;
+
+    // ---- The duplicate-school check (2026-09-20) ------------------------------------------------
+    // Asked when the email address is finished, never keystroke by keystroke: it is one call per
+    // address, it can only ever ADD a warning, and a failure is swallowed — a hint that cannot be
+    // produced must not stand between somebody and a sign-up.
+    private OrganizationHintDto? hint;
+    private string? hintedDomainFor;
+    private bool acknowledgedExisting;
+
+    private async Task CheckDomainAsync()
+    {
+        var email = (formData.Email ?? string.Empty).Trim();
+        var at = email.LastIndexOf('@');
+        var domain = at >= 0 && at < email.Length - 1 ? email[(at + 1)..].ToLowerInvariant() : null;
+
+        if (string.IsNullOrEmpty(domain)) { hint = null; hintedDomainFor = null; acknowledgedExisting = false; return; }
+        if (string.Equals(domain, hintedDomainFor, StringComparison.OrdinalIgnoreCase)) return;
+
+        hintedDomainFor = domain;
+        acknowledgedExisting = false;
+        try
+        {
+            hint = await Http.GetFromJsonAsync<OrganizationHintDto>($"api/v1/register/organization-hint?email={Uri.EscapeDataString(email)}");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Organization hint lookup failed for {Domain}", domain);
+            hint = null;
+        }
+    }
     private bool isSubmitting = false;
     private string? errorMessage;
     private bool showPassword = false;
@@ -916,7 +974,9 @@
                 selectedModuleCodes = selectedModuleCode != null ? new List<string> { selectedModuleCode } : new List<string>(),
                 phoneVerificationToken = phoneVerificationToken,
                 contactReference = formData.ContactReference,
-                formRenderedAt = formRenderedAt
+                formRenderedAt = formRenderedAt,
+                acknowledgedExistingOrganization = acknowledgedExisting,
+                acknowledgedOrganizationName = hint?.OrganizationName
             };
 
             var response = await Http.PostAsJsonAsync("api/v1/register", request);

@@ -1,0 +1,690 @@
+@page "/admin/staff/duties/{Id:guid}/minutes"
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
+@using QMgr.Web.Components.Shared
+@inject IStaffPerformanceApiService StaffApi
+@inject IAuthService AuthService
+@inject IToastService Toast
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@inherits BranchAwareComponentBase
+
+<PageTitle>Minutes - Q-Mgr</PageTitle>
+
+@*
+    MINUTES OF A MEETING (2026-09-20). The standards are set out at the top of
+    Q-Mgr.Shared/Application/DTOs/MinutesDto.cs and the server rules in StaffMinutesController.
+    What this page has to keep right:
+
+    * ATTENDANCE IS SHOWN, NEVER TYPED. The figures and the names come from the register that was
+      already taken. There is no field here that could disagree with it, and when the register is
+      still open the page says the figures are provisional rather than quietly presenting them as
+      final.
+    * ADOPTION IS A ONE-WAY DOOR and the page must look like one. Draft and Circulated edit in
+      place; Approved is read-only for everybody and offers "Add a correction" instead of a save.
+      There is no Unapprove button because there is no unapprove.
+    * AN ACTION IS A REAL TO-DO. It carries a person and a date, and it is the same row the portal
+      shows them and the reminder ladder chases. Leaving the person blank is allowed — a meeting
+      can minute an action for a body rather than a name — and then nobody is chased.
+*@
+
+<div class="admin-page min-page">
+    <QPageActions>
+        <Title>
+            <QButton Text="Back to duties" Icon="arrow-left" Variant="ghost" Size="sm" Class="min-back" OnClick="@(() => Navigation.NavigateTo("/admin/staff/duties"))" />
+            <h1>
+                Minutes
+                <QInfo Label="Minutes of a meeting"
+                       Text="Minutes record what was decided, not everything that was said. They stay a draft until the meeting adopts them — normally at the next meeting — and after that they are the official record and can only be corrected, never edited. Attendance comes from the register, so it is never retyped." />
+            </h1>
+            @if (minutes != null)
+            {
+                <p class="subtitle">
+                    @minutes.DutyTitle · @QDateFormat.DD(Local(minutes.StartsAt)) · @QDateFormat.T(Local(minutes.StartsAt))–@QDateFormat.T(Local(minutes.EndsAt))
+                    @if (!string.IsNullOrEmpty(minutes.Location)) { <text> · @minutes.Location</text> }
+                </p>
+            }
+        </Title>
+        <Actions>
+            @if (minutes != null)
+            {
+                <QChip Text="@StatusLabel" Icon="@StatusIcon" Variant="@StatusVariant" />
+                @if (minutes.CanWrite)
+                {
+                    <QButton Text="Save draft" Icon="save" Variant="secondary" Loading="@saving" Disabled="@(saving || busy)" OnClick="@SaveAsync" />
+                    @if (minutes.Status != MinutesStatus.Circulated)
+                    {
+                        <QButton Text="Circulate for correction" Icon="send" Variant="secondary" Disabled="@(saving || busy || minutes.Status == MinutesStatus.None)" OnClick="@(() => showCirculate = true)" />
+                    }
+                }
+                @if (minutes.CanApprove)
+                {
+                    <QButton Text="Adopt" Icon="check2-circle" Variant="primary" Disabled="@(saving || busy)" OnClick="@OpenApprove" />
+                }
+                @if (minutes.Status == MinutesStatus.Approved)
+                {
+                    <QButton Text="Print / PDF" Icon="printer" Variant="secondary" OnClick="@(() => Navigation.NavigateTo($"/admin/staff/duties/{Id}/minutes/print"))" />
+                    @if (canCorrect)
+                    {
+                        <QButton Text="Add a correction" Icon="pencil-square" Variant="secondary" Disabled="@busy" OnClick="@(() => { correction = string.Empty; showCorrect = true; })" />
+                    }
+                }
+            }
+        </Actions>
+    </QPageActions>
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading the minutes...</span></div>
+    }
+    else if (minutes == null)
+    {
+        <QEmptyState Icon="journal-x" Title="Minutes not available" Text="@(loadError ?? "The meeting may have been cancelled, or you may not be able to read its minutes.")">
+            <Action><QButton Text="Back to duties" Icon="arrow-left" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/staff/duties"))" /></Action>
+        </QEmptyState>
+    }
+    else
+    {
+        @if (minutes.Status == MinutesStatus.Approved)
+        {
+            <p class="min-note min-note--ok">
+                <QIcon Name="shield-check" Size="sm" />
+                <span>
+                    Adopted @QDateFormat.LocalDT(minutes.ApprovedAt!.Value)@(string.IsNullOrEmpty(minutes.ApprovedByName) ? "" : $" by {minutes.ApprovedByName}")@(string.IsNullOrEmpty(minutes.ApprovedAtDutyTitle) ? "" : $", at \"{minutes.ApprovedAtDutyTitle}\"").
+                    This is the official record of the meeting and is no longer edited — a change is added as a correction below.
+                </span>
+            </p>
+        }
+        else if (minutes.Status == MinutesStatus.Circulated)
+        {
+            <p class="min-note min-note--muted">
+                <QIcon Name="send" Size="sm" />
+                <span>Circulated @QDateFormat.LocalDT(minutes.CirculatedAt!.Value) for correction. They become the record when the meeting adopts them.</span>
+            </p>
+        }
+        else if (!minutes.CanWrite)
+        {
+            <p class="min-note min-note--muted"><QIcon Name="eye" Size="sm" /><span>You can read these minutes but not change them.</span></p>
+        }
+
+        <div class="min-grid">
+            <div class="min-main">
+                @* ---- The template sections ---- *@
+                @foreach (var section in minutes.Template)
+                {
+                    <QCard Title="@section.Title" Subtitle="@section.Hint" Class="min-card">
+                        @if (minutes.CanWrite)
+                        {
+                            <textarea class="min-text" rows="4" maxlength="8000"
+                                      placeholder="@section.Hint"
+                                      @bind="SectionBody(section.Key).Body" @bind:event="oninput"></textarea>
+                        }
+                        else if (string.IsNullOrWhiteSpace(SectionBody(section.Key).Body))
+                        {
+                            <p class="min-empty">Nothing recorded.</p>
+                        }
+                        else
+                        {
+                            <p class="min-read">@SectionBody(section.Key).Body</p>
+                        }
+                    </QCard>
+                }
+
+                @* ---- Decisions ---- *@
+                <QCard Title="Decisions" Icon="check2-square" Subtitle="What the meeting resolved. One row per motion." Class="min-card">
+                    @if (!decisions.Any())
+                    {
+                        <QEmptyState Icon="check2-square" Title="No decisions yet" Text="@(minutes.CanWrite ? "Add each resolution as its own row." : "The meeting minuted no resolutions.")" />
+                    }
+                    else
+                    {
+                        <div class="min-rows">
+                            @foreach (var d in decisions)
+                            {
+                                <div class="min-row min-row--decision" @key="d.Id">
+                                    @if (minutes.CanWrite)
+                                    {
+                                        <textarea class="min-text min-text--sm" rows="2" maxlength="2000" placeholder="The resolution, as agreed"
+                                                  @bind="d.Text" @bind:event="oninput"></textarea>
+                                        <div class="min-row__meta">
+                                            <QInput TValue="string" Value="@d.MovedBy" ValueChanged="@(v => d.MovedBy = v)" Placeholder="Moved by" MaxLength="120" Class="min-narrow" />
+                                            <QInput TValue="string" Value="@d.SecondedBy" ValueChanged="@(v => d.SecondedBy = v)" Placeholder="Seconded by" MaxLength="120" Class="min-narrow" />
+                                            <QSelect TValue="MinutesDecisionOutcome" TItem="OutcomeOption" Value="@d.Outcome" ValueChanged="@(v => d.Outcome = v)"
+                                                     Items="@OutcomeOptions" ValueSelector="@(o => o.Value)" TextSelector="@(o => o.Label)" Class="min-narrow" />
+                                            <QButton Icon="trash" Variant="ghost" Size="sm" Title="Remove this decision" OnClick="@(() => decisions.Remove(d))" />
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <p class="min-read">@d.Text</p>
+                                        <div class="min-row__meta min-row__meta--read">
+                                            <QChip Text="@OutcomeLabel(d.Outcome)" Size="sm" Variant="@OutcomeVariant(d.Outcome)" />
+                                            @if (!string.IsNullOrWhiteSpace(d.MovedBy)) { <span>Moved by @d.MovedBy</span> }
+                                            @if (!string.IsNullOrWhiteSpace(d.SecondedBy)) { <span>Seconded by @d.SecondedBy</span> }
+                                            @if (d.VotesFor.HasValue || d.VotesAgainst.HasValue) { <span>@d.VotesFor for · @d.VotesAgainst against · @d.Abstentions abstained</span> }
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                    @if (minutes.CanWrite)
+                    {
+                        <div class="min-add"><QButton Text="Add a decision" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@(() => decisions.Add(new MinutesDecisionDto { Id = Guid.NewGuid() }))" /></div>
+                    }
+                </QCard>
+
+                @* ---- Actions ---- *@
+                <QCard Title="Actions" Icon="list-check" Subtitle="Who does what, by when. Each one becomes a to-do for the person named." Class="min-card">
+                    @if (!actions.Any())
+                    {
+                        <QEmptyState Icon="list-check" Title="No actions yet" Text="@(minutes.CanWrite ? "An action with a person and a date is chased; one without a person is only recorded." : "The meeting minuted no actions.")" />
+                    }
+                    else
+                    {
+                        <div class="min-rows">
+                            @foreach (var a in actions)
+                            {
+                                <div class="min-row min-row--action @(a.Status == MinuteActionStatus.Done ? "min-row--done" : "")" @key="a.Key">
+                                    @if (minutes.CanWrite)
+                                    {
+                                        <QInput TValue="string" Value="@a.Text" ValueChanged="@(v => a.Text = v ?? string.Empty)" Placeholder="What is to be done" MaxLength="1000" />
+                                        <div class="min-row__meta">
+                                            <QSelect TValue="Guid?" TItem="PersonOption" Value="@a.AssignedUserId" ValueChanged="@(v => a.AssignedUserId = v)"
+                                                     Items="@people" ValueSelector="@(p => p.Id)" TextSelector="@(p => p.Name)" Placeholder="Nobody named" Class="min-narrow" />
+                                            <QDatePicker Value="@a.DueAt" ValueChanged="@(v => a.DueAt = v)" Placeholder="By when" Class="min-narrow" />
+                                            @if (a.Status == MinuteActionStatus.Done)
+                                            {
+                                                <QChip Text="Done" Icon="check2" Size="sm" Variant="success" />
+                                            }
+                                            <QButton Icon="trash" Variant="ghost" Size="sm" Title="Remove this action" OnClick="@(() => actions.Remove(a))" />
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <p class="min-read">@a.Text</p>
+                                        <div class="min-row__meta min-row__meta--read">
+                                            <span>@(string.IsNullOrEmpty(a.AssignedName) ? "Nobody named" : a.AssignedName)</span>
+                                            @if (a.DueAt is { } due) { <span>by @QDateFormat.DD(Local(due))</span> }
+                                            @if (a.Status == MinuteActionStatus.Done) { <QChip Text="Done" Icon="check2" Size="sm" Variant="success" /> }
+                                            else if (a.IsOverdue) { <QChip Text="Overdue" Icon="exclamation-triangle" Size="sm" Variant="danger" /> }
+                                            @if (a.Status == MinuteActionStatus.Open && a.Id != Guid.Empty && a.AssignedUserId == meId)
+                                            {
+                                                <QButton Text="Mark done" Icon="check2" Variant="ghost" Size="sm" Disabled="@busy" OnClick="@(() => CompleteAsync(a.Id))" />
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                    @if (minutes.CanWrite)
+                    {
+                        <div class="min-add"><QButton Text="Add an action" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@(() => actions.Add(new ActionRow()))" /></div>
+                    }
+                </QCard>
+
+                @* ---- Corrections (adopted minutes only) ---- *@
+                @if (minutes.Corrections.Any())
+                {
+                    <QCard Title="Corrections since adoption" Icon="journal-text" Subtitle="Appended, never applied: the adopted text stands." Class="min-card">
+                        <div class="min-rows">
+                            @foreach (var c in minutes.Corrections)
+                            {
+                                <div class="min-row min-row--correction" @key="c.Id">
+                                    <p class="min-read">@c.Text</p>
+                                    <div class="min-row__meta min-row__meta--read"><span>@c.ByName · @QDateFormat.LocalDT(c.At)</span></div>
+                                </div>
+                            }
+                        </div>
+                    </QCard>
+                }
+            </div>
+
+            @* ---- Attendance, from the register ---- *@
+            <aside class="min-side">
+                <QCard Title="Attendance" Icon="people" Subtitle="From the register — never retyped" Class="min-card">
+                    @if (!minutes.Attendance.RegisterClosed)
+                    {
+                        <p class="min-note min-note--warn min-note--tight">
+                            <QIcon Name="exclamation-triangle" Size="sm" />
+                            <span>The register for this meeting has not been closed, so these figures are provisional.</span>
+                        </p>
+                    }
+
+                    <QStatRow>
+                        <QStatTile Label="Present" Value="@minutes.Attendance.Present.ToString()" Icon="person-check" />
+                        <QStatTile Label="Apologies" Value="@minutes.Attendance.Apologies.ToString()" Icon="envelope" />
+                        <QStatTile Label="Absent" Value="@minutes.Attendance.Absent.ToString()" Icon="person-dash" />
+                    </QStatRow>
+
+                    @if (minutes.Attendance.QuorumRequired is { } need)
+                    {
+                        <p class="min-note @(minutes.Attendance.QuorumMet == true ? "min-note--ok" : "min-note--warn") min-note--tight">
+                            <QIcon Name="@(minutes.Attendance.QuorumMet == true ? "check2-circle" : "exclamation-triangle")" Size="sm" />
+                            <span>
+                                @(minutes.Attendance.QuorumMet == true ? "Quorum met" : "Quorum NOT met") — @minutes.Attendance.Present present of @need needed.
+                                @if (minutes.Attendance.QuorumMet != true) { <text>Without a quorum no business may be transacted.</text> }
+                            </span>
+                        </p>
+                    }
+
+                    <div class="min-names">
+                        @if (minutes.Attendance.Late > 0) { <p class="min-names__line"><strong>@minutes.Attendance.Late</strong> of those present arrived late.</p> }
+                        @if (minutes.Attendance.Unmarked > 0) { <p class="min-names__line"><strong>@minutes.Attendance.Unmarked</strong> expected but never marked.</p> }
+                        @NameLine("Present", minutes.Attendance.PresentNames)
+                        @NameLine("Apologies", minutes.Attendance.ApologyNames)
+                        @NameLine("Absent", minutes.Attendance.AbsentNames)
+                    </div>
+
+                    <div class="min-add">
+                        <QButton Text="Open the register" Icon="clipboard-check" Variant="ghost" Size="sm"
+                                 OnClick="@(() => Navigation.NavigateTo($"/admin/staff/duties/{Id}/register"))" />
+                    </div>
+                </QCard>
+
+                @if (minutes.MinutesMediaContentId.HasValue && !string.IsNullOrEmpty(minutes.MinutesFileUrl))
+                {
+                    <QCard Title="In the Library" Icon="file-earmark-pdf" Subtitle="The adopted copy, shareable from the Library" Class="min-card">
+                        <QButton Text="Open the document" Icon="box-arrow-up-right" Variant="secondary" Size="sm" Href="@minutes.MinutesFileUrl" />
+                    </QCard>
+                }
+            </aside>
+        </div>
+    }
+</div>
+
+<ConfirmDialog @bind-IsVisible="showCirculate" Title="Circulate the draft?"
+               Message="Everybody who was expected at the meeting will be told, and will be able to read the draft and say if anything is wrong. This is the step before adoption; it does not make the minutes official."
+               ConfirmText="Circulate" ConfirmButtonClass="btn-primary" OnClose="@CirculateConfirmed" />
+
+<QModal @bind-Visible="showApprove" Title="Adopt these minutes?" Icon="check2-circle" Size="md">
+    <ChildContent>
+        <p class="min-modal-note">
+            Adoption makes these minutes the official record of the meeting. <strong>They can never be edited again</strong> —
+            a later change is added as a correction, kept beside the adopted text with who made it and why.
+        </p>
+        <QSelect TValue="Guid?" TItem="MeetingOption" Label="Adopted at" Value="@approveAtDutyId" ValueChanged="@(v => approveAtDutyId = v)"
+                 Items="@adoptingMeetings" ValueSelector="@(m => m.Id)" TextSelector="@(m => m.Label)"
+                 Placeholder="Not recorded"
+                 HelperText="The meeting that adopted them — normally the next one. Leave it blank if they were adopted by circulation." />
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showApprove = false)" />
+        <QButton Text="Adopt" Icon="check2-circle" Variant="primary" Loading="@busy" OnClick="@ApproveAsync" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showCorrect" Title="Add a correction" Icon="pencil-square" Size="md">
+    <ChildContent>
+        <p class="min-modal-note">The adopted text stands. This correction is kept beside it, with your name and the date.</p>
+        <textarea class="min-text" rows="4" maxlength="4000" placeholder="What is wrong, and what it should say" @bind="correction" @bind:event="oninput"></textarea>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showCorrect = false)" />
+        <QButton Text="Add the correction" Icon="check-lg" Variant="primary" Loading="@busy"
+                 Disabled="@(busy || (correction ?? string.Empty).Trim().Length < 10)" OnClick="@CorrectAsync" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .min-back { margin-left: -8px; margin-bottom: 2px; }
+    .min-grid { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(280px, 1fr); gap: var(--qm-block-gap); align-items: start; }
+    @@media (max-width: 1100px) { .min-grid { grid-template-columns: 1fr; } }
+    .min-main, .min-side { display: flex; flex-direction: column; gap: var(--qm-block-gap); min-width: 0; }
+
+    .min-note { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 10px; padding: 7px 10px; border-radius: var(--qm-radius-md); font-size: var(--qm-text-base); }
+    .min-note--tight { margin-bottom: 8px; }
+    .min-note--muted { background: var(--qm-bg-secondary); color: var(--qm-text-secondary); }
+    .min-note--ok { background: rgba(var(--qm-success-rgb), 0.10); color: var(--qm-text-primary); border: 1px solid var(--qm-success); }
+    .min-note--warn { background: rgba(var(--qm-warning-rgb), 0.12); color: var(--qm-text-primary); border: 1px solid var(--qm-warning); }
+
+    .min-text { width: 100%; min-width: 0; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-input, var(--qm-bg-card));
+                color: var(--qm-text-primary); font: inherit; font-size: var(--q-control-font); padding: 7px 10px; resize: vertical; }
+    .min-text:focus { outline: none; border-color: var(--qm-primary); }
+    .min-read { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--qm-text-base); }
+    .min-empty { margin: 0; color: var(--qm-text-muted); font-size: var(--qm-text-base); }
+
+    .min-rows { display: flex; flex-direction: column; gap: 8px; }
+    .min-row { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); min-width: 0; }
+    .min-row--done { opacity: .7; }
+    .min-row--correction { border-left: 3px solid var(--qm-warning); }
+    .min-row__meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+    .min-row__meta--read { color: var(--qm-text-muted); font-size: var(--qm-text-sm); }
+    .min-narrow { flex: 1 1 150px; max-width: 220px; margin-bottom: 0; }
+    .min-narrow .q-input-wrapper { margin-bottom: 0; }
+    .min-add { display: flex; justify-content: flex-end; margin-top: 8px; }
+
+    .min-names { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+    .min-names__line { margin: 0; font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
+    .min-modal-note { margin: 0 0 12px; font-size: var(--qm-text-base); color: var(--qm-text-secondary); }
+
+    .loading-container { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border); }
+</style>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private bool isLoading = true, saving, busy;
+    private string? loadError;
+    private Guid branchId, meId;
+    private DutyMinutesDto? minutes;
+    private bool canCorrect;
+
+    private readonly List<MinutesDecisionDto> decisions = new();
+    private readonly List<ActionRow> actions = new();
+    private List<PersonOption> people = new();
+    private List<MeetingOption> adoptingMeetings = new();
+
+    private bool showCirculate, showApprove, showCorrect;
+    private Guid? approveAtDutyId;
+    private string correction = string.Empty;
+
+    /// <summary>An editable action. Separate from the DTO so a new row has a stable key before it has an id.</summary>
+    private sealed class ActionRow
+    {
+        public Guid Key { get; } = Guid.NewGuid();
+        public Guid Id { get; set; }
+        public string Text { get; set; } = string.Empty;
+        public Guid? AssignedUserId { get; set; }
+        public string? AssignedName { get; set; }
+        public DateTime? DueAt { get; set; }
+        public MinuteActionStatus Status { get; set; }
+        public bool IsOverdue { get; set; }
+    }
+
+    private sealed record PersonOption(Guid? Id, string Name);
+    private sealed record MeetingOption(Guid? Id, string Label);
+    private sealed record OutcomeOption(MinutesDecisionOutcome Value, string Label);
+
+    private static readonly IReadOnlyList<OutcomeOption> OutcomeOptions = new List<OutcomeOption>
+    {
+        new(MinutesDecisionOutcome.Noted, "Agreed"),
+        new(MinutesDecisionOutcome.Carried, "Carried"),
+        new(MinutesDecisionOutcome.NotCarried, "Not carried"),
+        new(MinutesDecisionOutcome.Deferred, "Deferred"),
+    };
+
+    private static string OutcomeLabel(MinutesDecisionOutcome o) => OutcomeOptions.First(x => x.Value == o).Label;
+
+    private static string OutcomeVariant(MinutesDecisionOutcome o) => o switch
+    {
+        MinutesDecisionOutcome.Carried => "success",
+        MinutesDecisionOutcome.NotCarried => "danger",
+        MinutesDecisionOutcome.Deferred => "warning",
+        _ => "muted"
+    };
+
+    private string StatusLabel => minutes?.Status switch
+    {
+        MinutesStatus.Approved => "Adopted",
+        MinutesStatus.Circulated => "Circulated for correction",
+        MinutesStatus.Draft => "Draft",
+        _ => "Not started"
+    };
+
+    private string StatusIcon => minutes?.Status switch
+    {
+        MinutesStatus.Approved => "shield-check",
+        MinutesStatus.Circulated => "send",
+        MinutesStatus.Draft => "pencil-square",
+        _ => "journal"
+    };
+
+    private string StatusVariant => minutes?.Status switch
+    {
+        MinutesStatus.Approved => "success",
+        MinutesStatus.Circulated => "info",
+        MinutesStatus.Draft => "warning",
+        _ => "muted"
+    };
+
+    private static DateTime Local(DateTime value) => value.Kind == DateTimeKind.Utc ? value.ToLocalTime() : value;
+
+    /// <summary>The answer for a template section, created on first touch so a new section is editable straight away.</summary>
+    private MinutesSectionAnswerDto SectionBody(string key)
+    {
+        var existing = minutes!.Sections.FirstOrDefault(s => s.Key == key);
+        if (existing != null) return existing;
+        var fresh = new MinutesSectionAnswerDto { Key = key };
+        minutes.Sections.Add(fresh);
+        return fresh;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
+        {
+            Navigation.NavigateTo(BillingLinks.Modules);
+            return;
+        }
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        loadError = null;
+        try
+        {
+            branchId = BranchState.CurrentBranchId;
+            if (branchId == Guid.Empty)
+                branchId = (await StaffApi.GetPortalAsync()).BranchId;
+
+            minutes = await StaffApi.GetMinutesAsync(branchId, Id);
+            Adopt(minutes);
+
+            // A correction needs the same right as writing; the server checks it again.
+            canCorrect = minutes.Status == MinutesStatus.Approved && (minutes.CanApprove || minutes.CanWrite || await CanRecordAsync());
+
+            if (people.Count == 0)
+            {
+                try
+                {
+                    var members = (await StaffApi.GetDirectoryAsync(branchId)).Items;
+                    people = new List<PersonOption> { new(null, "Nobody named") }
+                        .Concat(members.OrderBy(m => m.FullName, StringComparer.OrdinalIgnoreCase).Select(m => new PersonOption(m.UserId, m.FullName)))
+                        .ToList();
+                }
+                catch
+                {
+                    // A failed lookup must not make the page unusable: the minutes still save, and an
+                    // action simply cannot name somebody until it loads. Better than an empty page.
+                    people = new List<PersonOption> { new(null, "Nobody named") };
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            minutes = null;
+            loadError = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task<bool> CanRecordAsync()
+    {
+        try { return (await StaffApi.GetRegisterAsync(branchId, Id)).Duty.CanIRecord; }
+        catch { return false; }
+    }
+
+    /// <summary>Copies the server's answer into the editable lists. Never edit the DTO's own lists in place.</summary>
+    private void Adopt(DutyMinutesDto dto)
+    {
+        decisions.Clear();
+        foreach (var d in dto.Decisions) decisions.Add(d);
+        actions.Clear();
+        foreach (var a in dto.Actions.Where(a => a.Status != MinuteActionStatus.Cancelled))
+            actions.Add(new ActionRow
+            {
+                Id = a.Id, Text = a.Text, AssignedUserId = a.AssignedUserId, AssignedName = a.AssignedName,
+                DueAt = a.DueAt, Status = a.Status, IsOverdue = a.IsOverdue
+            });
+    }
+
+    private async Task SaveAsync()
+    {
+        if (minutes == null || saving) return;
+        saving = true;
+        try
+        {
+            var request = new SaveMinutesRequest
+            {
+                Sections = minutes.Sections.Where(s => !string.IsNullOrWhiteSpace(s.Body)).ToList(),
+                Decisions = decisions.Where(d => !string.IsNullOrWhiteSpace(d.Text)).ToList(),
+                Actions = actions.Where(a => !string.IsNullOrWhiteSpace(a.Text)).Select(a => new SaveMinuteActionRequest
+                {
+                    Id = a.Id == Guid.Empty ? null : a.Id,
+                    Text = a.Text.Trim(),
+                    AssignedUserId = a.AssignedUserId,
+                    DueAt = a.DueAt,
+                    Status = a.Status
+                }).ToList()
+            };
+            minutes = await StaffApi.SaveMinutesAsync(branchId, Id, request);
+            Adopt(minutes);
+            Toast.Notify(ToastSeverity.Success, "Minutes saved", "Saved as a draft. Circulate them when they are ready to be checked.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not save the minutes", ex.Message);
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private async Task CirculateConfirmed(bool confirmed)
+    {
+        if (!confirmed || minutes == null) return;
+        busy = true;
+        try
+        {
+            // Save first: circulating whatever is on screen is what the person means by the button.
+            await SaveAsync();
+            minutes = await StaffApi.CirculateMinutesAsync(branchId, Id);
+            Adopt(minutes);
+            Toast.Notify(ToastSeverity.Success, "Circulated", "Everyone who was expected has been told and can now read the draft.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not circulate the minutes", ex.Message);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task OpenApprove()
+    {
+        approveAtDutyId = null;
+        adoptingMeetings = new List<MeetingOption> { new(null, "Not recorded") };
+        try
+        {
+            // Meetings after this one are the candidates: minutes are adopted by a LATER meeting.
+            var from = minutes!.StartsAt;
+            var to = DateTime.UtcNow.AddDays(30);
+            var later = await StaffApi.GetDutiesAsync(branchId, from, to > from ? to : from.AddDays(30));
+            adoptingMeetings = adoptingMeetings
+                .Concat(later
+                    .Where(d => d.Id != Id && d.IsActive && d.Kind != DutyKind.Lesson && d.StartsAt > minutes.StartsAt)
+                    .OrderBy(d => d.StartsAt)
+                    .Take(30)
+                    .Select(d => new MeetingOption(d.Id, $"{d.Title} — {QDateFormat.DD(Local(d.StartsAt))}")))
+                .ToList();
+        }
+        catch { /* the list is a convenience; adoption works without naming a meeting */ }
+        showApprove = true;
+    }
+
+    private async Task ApproveAsync()
+    {
+        if (minutes == null || busy) return;
+        busy = true;
+        try
+        {
+            minutes = await StaffApi.ApproveMinutesAsync(branchId, Id, new ApproveMinutesRequest { ApprovedAtDutyId = approveAtDutyId });
+            Adopt(minutes);
+            showApprove = false;
+            Toast.Notify(ToastSeverity.Success, "Minutes adopted", "They are now the official record of that meeting and can only be corrected.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not adopt the minutes", ex.Message);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task CorrectAsync()
+    {
+        if (minutes == null || busy) return;
+        busy = true;
+        try
+        {
+            minutes = await StaffApi.CorrectMinutesAsync(branchId, Id, new CorrectMinutesRequest { Text = correction.Trim() });
+            Adopt(minutes);
+            showCorrect = false;
+            Toast.Notify(ToastSeverity.Success, "Correction added", "It sits beside the adopted text, with your name and the date.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not add the correction", ex.Message);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task CompleteAsync(Guid actionId)
+    {
+        busy = true;
+        try
+        {
+            await StaffApi.CompleteMinuteActionAsync(branchId, actionId, new CompleteMinuteActionRequest());
+            minutes = await StaffApi.GetMinutesAsync(branchId, Id);
+            Adopt(minutes);
+            Toast.Notify(ToastSeverity.Success, "Action closed", "It will stop appearing on your to-do list.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not close the action", ex.Message);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    /// <summary>One line per group, and nothing at all when the group is empty.</summary>
+    private RenderFragment NameLine(string title, List<string> names) => __builder =>
+    {
+        if (names.Count == 0) return;
+        <p class="min-names__line"><strong>@title (@names.Count):</strong> @string.Join(", ", names)</p>
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await BranchState.InitializeAsync();
+        TrackBranch();
+    }
+
+    protected override async Task OnBranchChangedAsync(Guid branchId)
+    {
+        this.branchId = branchId;
+        people.Clear();
+        await LoadAsync();
+    }
+}

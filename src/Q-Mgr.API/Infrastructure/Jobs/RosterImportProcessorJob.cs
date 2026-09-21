@@ -1011,10 +1011,7 @@ public class RosterImportProcessorJob
             else
             {
                 if (ctx.BaseUrl == "https://qmgr.app")
-                {
-                    var saas = await _platformSettings.GetSettingsAsync<Domain.Entities.Platform.SaasSettings>("SaaS");
-                    ctx.BaseUrl = (saas?.BaseUrl ?? "https://qmgr.app").TrimEnd('/');
-                }
+                    ctx.BaseUrl = await _platformSettings.GetPublicWebBaseUrlAsync();
                 var sms = await _notifications.SendSmsAsync(job.OrganizationId, user.Phone,
                     StaffOnboardingController.TemporaryPasswordSms(user.Username, temporaryPassword!, ctx.BaseUrl));
                 inviteNote = sms.IsSent ? " Temporary password sent by SMS." : $" The SMS was not sent ({sms.Reason ?? sms.Outcome.ToString()}) — print this person's slip.";
@@ -1049,10 +1046,7 @@ public class RosterImportProcessorJob
         try
         {
             if (ctx.BaseUrl == "https://qmgr.app")
-            {
-                var saas = await _platformSettings.GetSettingsAsync<Domain.Entities.Platform.SaasSettings>("SaaS");
-                ctx.BaseUrl = (saas?.BaseUrl ?? "https://qmgr.app").TrimEnd('/');
-            }
+                ctx.BaseUrl = await _platformSettings.GetPublicWebBaseUrlAsync();
             var resetUrl = $"{ctx.BaseUrl}/reset-password?email={Uri.EscapeDataString(user.Email)}&token={Uri.EscapeDataString(user.PasswordResetToken!)}";
 
             var subject = $"You have been added to {ctx.OrganizationName} on {Email.EmailTemplates.AppName} — set your password";

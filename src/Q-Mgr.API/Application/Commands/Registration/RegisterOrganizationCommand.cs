@@ -38,7 +38,7 @@ public record RegisterOrganizationCommand : IRequest<RegisterOrganizationResult>
     public string? IndustryType { get; init; }
 
     /// <summary>Preferred currency for billing (USD, UGX)</summary>
-    public string PreferredCurrency { get; init; } = "USD";
+    public string PreferredCurrency { get; init; } = "UGX";
 
     /// <summary>Accept terms and conditions</summary>
     public bool AcceptTerms { get; init; }

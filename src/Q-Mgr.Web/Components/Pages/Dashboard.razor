@@ -16,15 +16,11 @@
 
 <!-- Page Header -->
 <div class="page-header">
-    <div class="header-left">
+    <div class="header-content">
         <h1>Dashboard<QInfo Label="Dashboard" Text="Figures marked with a period cover the range you choose. Now Serving, counters and visitors on site are LIVE and always show this moment — a date range cannot apply to who is in the building." /></h1>
         <span class="subtitle">@dashboardSubtitle</span>
     </div>
     <div class="header-actions">
-        @* THE PERIOD. A dashboard without one answers "how many ever", which is not a question
-           anybody asks twice — the standard for a data-driven screen is that its figures carry a
-           range and say which. Live panels are deliberately outside it; see PeriodNote. *@
-        <QDateRangePicker Range="@range" RangeChanged="@OnRangeChanged" ShowCaption="false" Presets="@DashboardPresets" />
         @if (lastUpdated != default)
         {
             <span class="last-updated">@QDateFormat.TS(lastUpdated)</span>
@@ -32,6 +28,14 @@
         <QButton Icon="arrow-clockwise" Text="Refresh" Variant="secondary" OnClick="@RefreshData" Disabled="@isLoading" />
     </div>
 </div>
+
+@* THE PERIOD. A dashboard without one answers "how many ever", which is not a question anybody asks
+   twice — a data-driven screen's figures carry a range and say which. Live panels are deliberately
+   outside it; see PeriodNote. It is a FILTER, so it sits in the filter bar, not the title band: in
+   the band it made the header three rows tall (2026-09-19). *@
+<QFilterBar>
+    <QDateRangePicker Range="@range" RangeChanged="@OnRangeChanged" ShowCaption="false" Presets="@DashboardPresets" />
+</QFilterBar>
 
 @if (!string.IsNullOrEmpty(errorMessage))
 {
@@ -115,23 +119,14 @@ else if (!hasCoreQueue && !hasStudentWelfare && !hasVisitorManagement && !hasEng
     @* Only when the organization holds nothing this dashboard can report on. It used to be shown
        to anyone without Core Queue Management, so a school that had bought Student Welfare opened
        on an advert for a module they had deliberately not bought. *@
-    <div class="module-empty">
-        <div class="module-empty-icon"><QIcon Name="grid-3x3-gap-fill" /></div>
-        <h2>Nothing to show here yet</h2>
-        <p>
-            Your dashboard fills in as you add modules — waiting lists and counters from Core Queue
-            Management, welfare actions from Student Welfare, and so on.
-        </p>
-        <div class="module-empty-actions">
-            <QButton Text="Browse modules" Icon="grid-3x3-gap-fill" Variant="primary" OnClick="@(() => Navigation.NavigateTo("/billing/modules"))" />
-        </div>
-        @if (activeModuleNames.Any())
-        {
-            <p class="module-empty-note">
-                Your active modules: @string.Join(", ", activeModuleNames). Use the sidebar to open them.
-            </p>
-        }
-    </div>
+    <QEmptyState Icon="grid-3x3-gap-fill" Title="Nothing to show yet"
+                 Text="@(activeModuleNames.Any()
+                     ? $"The dashboard fills in as you add modules. Active: {string.Join(", ", activeModuleNames)}."
+                     : "The dashboard fills in as you add modules.")">
+        <Action>
+            <QButton Text="Browse modules" Icon="grid-3x3-gap-fill" Variant="primary" OnClick="@(() => Navigation.NavigateTo(BillingLinks.Modules))" />
+        </Action>
+    </QEmptyState>
 }
 else if (hasCoreQueue && queueStatus != null)
 {
@@ -334,12 +329,8 @@ else if (hasCoreQueue && queueStatus != null)
             }
             else
             {
-                <QCard>
-                    <p class="module-section-empty">
-                        No welfare records yet. Add students to the roster, then log achievements,
-                        behaviour or safeguarding concerns against them.
-                    </p>
-                </QCard>
+                <QEmptyState Class="q-empty--compact" Icon="journal-text" Title="No welfare records yet"
+                             Text="Add students to the roster, then log achievements, behaviour or concerns against them." />
             }
         }
     </div>
@@ -464,15 +455,17 @@ else if (hasCoreQueue && queueStatus != null)
 }
 
 <style>
-    .module-section { margin-top: 28px; }
+    /* Sections are spaced like any other block, and their headings rank BELOW the page title:
+       they were 20px, the same size as "Dashboard" itself (2026-09-19). */
+    .module-section { margin-top: 18px; }
 
-    .module-section-note { font-size: 13px; color: var(--qm-text-secondary); margin: 0 0 8px; }
+    .module-section-note { font-size: var(--qm-text-base); color: var(--qm-text-secondary); margin: 0 0 8px; }
     .module-section-head {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 16px;
-        margin-bottom: 14px;
+        margin-bottom: 8px;
     }
 
     .module-section-head h2 {
@@ -481,18 +474,12 @@ else if (hasCoreQueue && queueStatus != null)
         gap: 10px;
         margin: 0;
         font-family: var(--qm-font-display);
-        font-size: 20px;
-        font-weight: 700;
+        font-size: var(--qm-text-md);
+        font-weight: 600;
         color: var(--qm-text-primary);
     }
 
     .module-section-loading { padding: 24px; text-align: center; }
-
-    .module-section-empty {
-        margin: 0;
-        color: var(--qm-text-secondary);
-        font-size: 14px;
-    }
 
     .welfare-category-list { display: flex; flex-direction: column; }
 
@@ -502,7 +489,7 @@ else if (hasCoreQueue && queueStatus != null)
         align-items: center;
         padding: 10px 0;
         border-bottom: 1px solid var(--qm-border);
-        font-size: 14px;
+        font-size: var(--qm-text-base);
     }
 
     .welfare-category-row:last-child { border-bottom: none; }
@@ -513,50 +500,10 @@ else if (hasCoreQueue && queueStatus != null)
 <style>
     /* The period a panel covers, stated on the panel. A scoped figure read as all-time is a wrong
        conclusion drawn from a correct query — the same rule as WelfareSummaryDto.ScopedToClasses. */
-    .module-section-period { font-family: var(--qm-font-primary); font-size: 11.5px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--qm-text-muted); }
+    .module-section-period { font-family: var(--qm-font-primary); font-size: var(--qm-text-xs); font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--qm-text-muted); }
     .module-section-period--live { color: var(--qm-success); }
 
-    .module-empty {
-        max-width: 620px;
-        margin: 48px auto;
-        padding: 40px 32px;
-        text-align: center;
-        background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-lg);
-    }
-
-    .module-empty-icon {
-        font-size: 40px;
-        line-height: 1;
-        color: var(--qm-primary);
-        margin-bottom: 16px;
-    }
-
-    .module-empty h2 {
-        font-family: var(--qm-font-display);
-        font-size: 22px;
-        color: var(--qm-text-primary);
-        margin: 0 0 12px 0;
-    }
-
-    .module-empty p {
-        color: var(--qm-text-secondary);
-        line-height: 1.6;
-        margin: 0 0 20px 0;
-    }
-
-    .module-empty-actions {
-        display: flex;
-        justify-content: center;
-        gap: 12px;
-    }
-
-    .module-empty-note {
-        margin-top: 20px !important;
-        font-size: 13px;
-        color: var(--qm-text-muted);
-    }/* Wraps under the title on a phone: "Last updated" plus Refresh were wider than the space beside
+    /* Wraps under the title on a phone: "Last updated" plus Refresh were wider than the space beside
        "Dashboard", and the button hung 15px past the edge at 390px (UI sweep, 2026-09-17). */
     .header-right {
         display: flex;
@@ -566,7 +513,7 @@ else if (hasCoreQueue && queueStatus != null)
     }
 
     .last-updated {
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-muted);
     }
 
@@ -583,7 +530,7 @@ else if (hasCoreQueue && queueStatus != null)
     }
 
     .error-banner .rzi {
-        font-size: 24px;
+        font-size: var(--qm-text-stat);
     }
 
     /* The summary tiles are QStatRow / QStatTile (q-components.css). A tile whose Href is null —
@@ -614,7 +561,7 @@ else if (hasCoreQueue && queueStatus != null)
 
     .dashboard-card .card-header h3 {
         margin: 0;
-        font-size: 16px;
+        font-size: var(--qm-text-md);
         font-weight: 600;
         color: var(--qm-text-primary);
         display: flex;
@@ -643,7 +590,7 @@ else if (hasCoreQueue && queueStatus != null)
         background: var(--qm-danger);
         color: var(--qm-text-on-primary);
         border-radius: var(--qm-radius-full);
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         font-weight: 600;
         letter-spacing: 1px;
     }
@@ -683,7 +630,7 @@ else if (hasCoreQueue && queueStatus != null)
     }
 
     .counter-agent {
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-muted);
     }
 
@@ -697,7 +644,7 @@ else if (hasCoreQueue && queueStatus != null)
     }
 
     .no-serving .rz-icon {
-        font-size: 48px;
+        font-size: var(--qm-empty-icon);
         margin-bottom: 12px;
         color: var(--qm-border);
     }
@@ -716,7 +663,7 @@ else if (hasCoreQueue && queueStatus != null)
         width: 32px;
         height: 32px;
         border-radius: var(--qm-radius-lg);
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         font-weight: 600;
         color: var(--qm-text-on-primary);
     }
@@ -736,17 +683,17 @@ else if (hasCoreQueue && queueStatus != null)
         color: var(--qm-text-on-primary);
         border-radius: var(--qm-radius-full);
         font-weight: 600;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
     }
 
     .wait-time {
         color: var(--qm-text-muted);
-        font-size: 13px;
+        font-size: var(--qm-text-base);
     }
 
     .counter-count {
         color: var(--qm-success);
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         font-weight: 500;
     }
 
@@ -794,7 +741,7 @@ else if (hasCoreQueue && queueStatus != null)
     }
 
     .counter-number {
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         font-weight: 600;
         color: var(--qm-text-primary);
     }
@@ -821,19 +768,19 @@ else if (hasCoreQueue && queueStatus != null)
     }
 
     .current-token {
-        font-size: 28px;
+        font-size: var(--qm-text-stat);
         font-weight: 700;
         color: var(--qm-primary);
     }
 
     .no-token {
-        font-size: 28px;
+        font-size: var(--qm-text-stat);
         font-weight: 300;
         color: var(--qm-text-muted);
     }
 
     .counter-footer {
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-muted);
     }
 
@@ -865,12 +812,12 @@ else if (hasCoreQueue && queueStatus != null)
     }
 
     .quick-action-btn .rz-icon {
-        font-size: 28px;
+        font-size: var(--qm-text-stat);
         color: var(--qm-primary);
     }
 
     .quick-action-btn span {
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         font-weight: 500;
         color: var(--qm-text-primary);
     }
@@ -886,7 +833,7 @@ else if (hasCoreQueue && queueStatus != null)
         color: var(--qm-text-muted) !important;
         border-bottom: 1px solid var(--qm-border) !important;
         font-weight: 600;
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         text-transform: uppercase;
         letter-spacing: 0.5px;
     }
@@ -963,7 +910,7 @@ else if (hasCoreQueue && queueStatus != null)
     }
 
     .welcome-icon {
-        font-size: 4rem;
+        font-size: var(--qm-empty-icon);
         color: var(--qm-primary);
         margin-bottom: 1.5rem;
     }
@@ -973,14 +920,14 @@ else if (hasCoreQueue && queueStatus != null)
     }
 
     .welcome-content h2 {
-        font-size: 1.75rem;
+        font-size: var(--qm-text-stat);
         font-weight: 600;
         color: var(--qm-text-primary);
         margin-bottom: 1rem;
     }
 
     .welcome-message {
-        font-size: 1rem;
+        font-size: var(--qm-text-md);
         color: var(--qm-text-secondary);
         margin-bottom: 2rem;
         line-height: 1.6;
@@ -1014,7 +961,7 @@ else if (hasCoreQueue && queueStatus != null)
         color: var(--qm-text-on-primary);
         border-radius: 50%;
         font-weight: 600;
-        font-size: 0.875rem;
+        font-size: var(--qm-text-base);
         flex-shrink: 0;
     }
 
@@ -1030,7 +977,7 @@ else if (hasCoreQueue && queueStatus != null)
     }
 
     .step-content span {
-        font-size: 0.875rem;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-muted);
     }
 
@@ -1047,7 +994,7 @@ else if (hasCoreQueue && queueStatus != null)
         background: color-mix(in srgb, var(--qm-warning) 10%, transparent);
         border: 1px solid color-mix(in srgb, var(--qm-warning) 30%, transparent);
         border-radius: var(--qm-radius-lg);
-        font-size: 0.875rem;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
     }
 
@@ -1147,11 +1094,28 @@ else if (hasCoreQueue && queueStatus != null)
 
     protected override async Task OnInitializedAsync()
     {
+        var resolved = false;
+        try
+        {
+            resolved = await InitializeCoreAsync();
+        }
+        finally
+        {
+            // Whatever happened, the loaders waiting in OnAfterRenderAsync must be released — and
+            // if the module list was never read, a refused queue call means "not owned", not "down".
+            if (!resolved) modulesUnknown = true;
+            modulesResolved.TrySetResult();
+        }
+    }
+
+    /// <summary>Returns true once the modules have been resolved.</summary>
+    private async Task<bool> InitializeCoreAsync()
+    {
         // Check permission
         if (!await PermissionService.HasPermissionAsync(Permissions.DashboardView))
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
-            return;
+            return false;
         }
 
         // Subscribe to branch changes
@@ -1165,14 +1129,10 @@ else if (hasCoreQueue && queueStatus != null)
         // matters when the dashboard is the first page rendered on a fresh circuit.
         await ModuleState.LoadAsync(ModuleApi);
 
-        // Held as a task, not just awaited: Blazor renders the component as soon as this method
-        // yields at an await and then fires OnAfterRenderAsync, so the data loaders there could
-        // start while the catalog call was still in flight and read `hasCoreQueue` at its `= true`
-        // default. A welfare-only tenant then made a queue request the API refused, and the
-        // resulting "Unable to load queue data" banner stayed on screen even once the flag
-        // resolved to false. The loaders await this first.
-        moduleResolution = ResolveModulesAsync();
-        await moduleResolution;
+        // The loaders in OnAfterRenderAsync wait on modulesResolved, which is completed in
+        // OnInitializedAsync's finally once this has run. See modulesResolved for why it is a
+        // TaskCompletionSource and not the task of this call.
+        await ResolveModulesAsync();
 
         // What the stat cards are allowed to link to. A card whose destination the caller can't
         // open stays a plain tile rather than a link that bounces them off /unauthorized — see
@@ -1188,9 +1148,14 @@ else if (hasCoreQueue && queueStatus != null)
         canViewContent = await PermissionService.HasPermissionAsync(Permissions.ContentView);
 
         // Note: We'll load data in OnAfterRenderAsync when BranchState is properly initialized
+        return true;
     }
 
     private bool hasCoreQueue = true;
+
+    /// <summary>True when the module list could not be read and hasCoreQueue is the fail-open guess,
+    /// not a fact. A refused queue call then means "not owned", not "the API is down".</summary>
+    private bool modulesUnknown;
 
     // ---- Stat-card destinations -------------------------------------------------------------
     //
@@ -1240,11 +1205,24 @@ else if (hasCoreQueue && queueStatus != null)
     /// The in-flight module resolution. Anything that reads the `has*` flags awaits this first,
     /// so it sees the tenant's real holdings rather than the optimistic defaults.
     /// </summary>
-    private Task? moduleResolution;
+    /// <summary>
+    /// Completed once the modules are resolved (or once initialization gives up). It EXISTS from the
+    /// moment the page is constructed, which is the whole point (found 2026-09-19).
+    /// <para>
+    /// It used to be a <c>Task?</c> assigned only after three awaits in OnInitializedAsync. Blazor
+    /// renders at the FIRST await and runs OnAfterRenderAsync, so a loader could arrive while it was
+    /// still null, skip the wait, and read the defaults — <c>hasCoreQueue = true</c> sent a queue
+    /// request the API refused with 403 ("Unable to load queue data" on a tenant without Core Queue),
+    /// and the other sections' <c>false</c> defaults skipped loading welfare, visitors and
+    /// communication. The awaits are slowest right after sign-in, with the permission cache cold —
+    /// which is why it was "sometimes, right after sign-in": 3 of 4 simultaneous sign-ins lost it.
+    /// </para>
+    /// </summary>
+    private readonly TaskCompletionSource modulesResolved = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private async Task EnsureModulesResolvedAsync()
     {
-        if (moduleResolution != null) await moduleResolution;
+        await modulesResolved.Task;
     }
 
     /// <summary>Which module sections to render. Each is resolved once, from the same catalog call.</summary>
@@ -1291,6 +1269,7 @@ else if (hasCoreQueue && queueStatus != null)
         try
         {
             var catalog = await ModuleApi.GetMineAsync();
+            modulesUnknown = false;
             hasCoreQueue = catalog.Any(m => m.Purchased && m.ModuleCode == ModuleCodes.CoreQueue);
             hasStudentWelfare = catalog.Any(m => m.Purchased && m.ModuleCode == ModuleCodes.StudentWelfare);
             hasStaffPerformance = hasStudentWelfare; // one module since 2026-09-17
@@ -1306,6 +1285,7 @@ else if (hasCoreQueue && queueStatus != null)
             // Fail open: if we can't tell, show the normal dashboard rather than telling a paying
             // customer they don't own Core Queue Management. Its data calls are gated server-side.
             hasCoreQueue = true;
+            modulesUnknown = true;
             hasStudentWelfare = false;
             hasStaffPerformance = false;
             hasVisitorManagement = false;
@@ -1355,7 +1335,6 @@ else if (hasCoreQueue && queueStatus != null)
             await LoadQueueStatus();
             await LoadWelfareSummaryAsync();
             await LoadStaffCoverageAsync();
-        await LoadTeachingTilesAsync();
             await LoadTeachingTilesAsync();
             await LoadVisitorSummaryAsync();
             await LoadEngagementSummaryAsync();
@@ -1564,7 +1543,13 @@ else if (hasCoreQueue && queueStatus != null)
             queueStatus = await QueueApi.GetQueueStatusAsync(BranchId);
             if (queueStatus == null)
             {
-                errorMessage = "Unable to load queue data. Please ensure the API is running and the selected branch is valid.";
+                // When the module list could not be read, Core Queue was ASSUMED (fail open), and a
+                // tenant without it gets a 403 here by design. Reporting that as "ensure the API is
+                // running" put a red outage banner on a working dashboard (seen 2026-09-19, three
+                // times in one afternoon on the dev tenant, which has Core Queue cancelled).
+                errorMessage = modulesUnknown
+                    ? null
+                    : "Unable to load queue data. Please ensure the API is running and the selected branch is valid.";
             }
             else
             {

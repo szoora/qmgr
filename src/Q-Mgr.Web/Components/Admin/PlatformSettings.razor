@@ -92,9 +92,6 @@ else if (settings != null && settings.Any())
                                 case "Stripe":
                                     @RenderStripeForm()
                                     break;
-                                case "MobileMoney":
-                                    @RenderMobileMoneyForm()
-                                    break;
                                 case "Ads":
                                     @RenderAdsForm()
                                     break;
@@ -149,7 +146,12 @@ else if (settings != null && settings.Any())
                             </span>
                         }
 
-                        @if (setting.IsEditable && canEdit)
+                        @if (setting.Category == "MobileMoney")
+                        {
+                            <QButton Text="Open Payments" Icon="arrow-right" Variant="primary" Size="sm"
+                                     OnClick="@(() => Navigation.NavigateTo("/platform/payments"))" />
+                        }
+                        else if (setting.IsEditable && canEdit)
                         {
                             <QButton Text="Edit"
                                      Icon="pencil-fill"
@@ -199,7 +201,7 @@ else if (settings != null && settings.Any())
 
     .ps-head-left h3 {
         margin: 0;
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
         font-weight: 600;
         color: var(--qm-text-primary);
     }
@@ -211,7 +213,7 @@ else if (settings != null && settings.Any())
 
     .card-description {
         color: var(--qm-text-secondary);
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         margin-bottom: 16px;
         line-height: 1.5;
     }
@@ -239,13 +241,13 @@ else if (settings != null && settings.Any())
     }
 
     .summary-label {
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
         flex-shrink: 0;
     }
 
     .summary-value {
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         font-weight: 500;
         color: var(--qm-text-primary);
         text-align: right;
@@ -261,7 +263,7 @@ else if (settings != null && settings.Any())
     }
 
     .last-updated {
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-muted);
     }
 
@@ -282,7 +284,7 @@ else if (settings != null && settings.Any())
 
     .json-error {
         color: var(--qm-danger);
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         margin-top: 8px;
         padding: 8px;
         background: color-mix(in srgb, var(--qm-danger) 15%, transparent);
@@ -304,13 +306,13 @@ else if (settings != null && settings.Any())
     }
 
     .settings-form-group label {
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         font-weight: 500;
         color: var(--qm-text-primary);
     }
 
     .settings-form-group small {
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-secondary);
     }
 
@@ -325,14 +327,14 @@ else if (settings != null && settings.Any())
         border-radius: var(--qm-radius-sm);
         background: var(--qm-bg-elevated);
         color: var(--qm-text-secondary);
-        font-size: 0.875rem;
+        font-size: var(--qm-text-base);
         line-height: 1.5;
     }
 
     .settings-note code {
         color: var(--qm-text-primary);
         font-family: var(--qm-font-mono);
-        font-size: 0.8125rem;
+        font-size: var(--qm-text-base);
     }
 
     .settings-toggle-group {
@@ -349,13 +351,13 @@ else if (settings != null && settings.Any())
     }
 
     .settings-toggle-label {
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         font-weight: 500;
         color: var(--qm-text-primary);
     }
 
     .settings-toggle-info small {
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-secondary);
     }
 
@@ -365,7 +367,7 @@ else if (settings != null && settings.Any())
 
     .settings-list-section > label {
         display: block;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         font-weight: 500;
         color: var(--qm-text-primary);
         margin-bottom: 8px;
@@ -447,7 +449,6 @@ else if (settings != null && settings.Any())
             .ToList();
     }
     private StripeSettingsModel? editStripe;
-    private MobileMoneySettingsModel? editMobileMoney;
     private AdsSettingsModel? editAds;
     private EmailSettingsModel? editEmail;
     private SecuritySettingsModel? editSecurity;
@@ -520,9 +521,6 @@ else if (settings != null && settings.Any())
                 case "Stripe":
                     editStripe = JsonSerializer.Deserialize<StripeSettingsModel>(setting.SettingsJson, JsonOpts) ?? new();
                     break;
-                case "MobileMoney":
-                    editMobileMoney = JsonSerializer.Deserialize<MobileMoneySettingsModel>(setting.SettingsJson, JsonOpts) ?? new();
-                    break;
                 case "Ads":
                     editAds = JsonSerializer.Deserialize<AdsSettingsModel>(setting.SettingsJson, JsonOpts) ?? new();
                     break;
@@ -550,7 +548,6 @@ else if (settings != null && settings.Any())
         editRateLimit = null;
         editSaas = null;
         editStripe = null;
-        editMobileMoney = null;
         editAds = null;
         editEmail = null;
         editSecurity = null;
@@ -572,7 +569,6 @@ else if (settings != null && settings.Any())
                 "RateLimiting" => JsonSerializer.Serialize(editRateLimit, JsonWriteOpts),
                 "SaaS" => JsonSerializer.Serialize(editSaas, JsonWriteOpts),
                 "Stripe" => JsonSerializer.Serialize(editStripe, JsonWriteOpts),
-                "MobileMoney" => JsonSerializer.Serialize(editMobileMoney, JsonWriteOpts),
                 "Ads" => JsonSerializer.Serialize(editAds, JsonWriteOpts),
                 "Email" => JsonSerializer.Serialize(editEmail, JsonWriteOpts),
                 "Security" => JsonSerializer.Serialize(editSecurity, JsonWriteOpts),
@@ -693,7 +689,9 @@ else if (settings != null && settings.Any())
                     {
                         ("Enabled", mm.Enabled ? "Yes" : "No"),
                         ("Gateway URL", string.IsNullOrEmpty(mm.CrmApiUrl) ? "(not set)" : mm.CrmApiUrl),
-                        ("API Key", string.IsNullOrEmpty(mm.ApiKey) ? "(not set)" : SecretMask)
+                        ("API Key", string.IsNullOrEmpty(mm.ApiKey) ? "(not set)" : SecretMask),
+                        ("Cards", mm.CardsEnabled ? "Yes" : "No"),
+                        ("Webhook", string.IsNullOrEmpty(mm.WebhookId) ? "(not registered)" : "Registered")
                     };
                 case "Ads":
                     var ads = JsonSerializer.Deserialize<AdsSettingsModel>(json, JsonOpts) ?? new();
@@ -837,7 +835,7 @@ else if (settings != null && settings.Any())
             </div>
             <div class="settings-form-group">
                 <label>Base URL</label>
-                <QInput TValue="string" @bind-Value="editSaas!.BaseUrl" Placeholder="https://qmgr.app" />
+                <QInput TValue="string" @bind-Value="editSaas!.BaseUrl" Placeholder="https://qmgr.cashbook.ug" HelperText="Used for links in emails and SMS only when the server has no public address of its own configured. A deployed server uses its own host." />
             </div>
             <div class="settings-form-group">
                 <label>Trial Length (days)</label>
@@ -891,26 +889,6 @@ else if (settings != null && settings.Any())
                 <span class="settings-toggle-label">Test Mode</span>
                 <small>Use Stripe's test environment — no real charges happen</small>
             </div>
-        </div>
-    </div>;
-
-    private RenderFragment RenderMobileMoneyForm() => @<div>
-        <div class="settings-toggle-group">
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" @bind="editMobileMoney!.Enabled" />
-            </div>
-            <div class="settings-toggle-info">
-                <span class="settings-toggle-label">Enabled</span>
-                <small>When off, mobile money payment collection is disabled platform-wide regardless of the fields below</small>
-            </div>
-        </div>
-        <div class="settings-form-group">
-            <label>Gateway URL</label>
-            <QInput TValue="string" @bind-Value="editMobileMoney!.CrmApiUrl" Placeholder="https://gateway.example.com" HelperText="Base URL of your mobile money payment gateway (e.g. CRM Epay) — not a CRM system." />
-        </div>
-        <div class="settings-form-group">
-            <label>API Key</label>
-            <QInput TValue="string" @bind-Value="editMobileMoney!.ApiKey" Type="password" HelperText="Shown as dots once saved; leave the dots to keep the saved key." />
         </div>
     </div>;
 
@@ -1084,14 +1062,20 @@ else if (settings != null && settings.Any())
         public string PublishableKey { get; set; } = string.Empty;
         public string WebhookSecret { get; set; } = string.Empty;
         public bool TestMode { get; set; }
-        public bool Enabled { get; set; } = true;
+        // Off unless switched on — the API's StripeSettings says why (2026-09-19).
+        public bool Enabled { get; set; }
     }
 
+    /// <summary>Read-only here: the gateway is edited on the platform Payments page (2026-09-19). This
+    /// page's editor knew three of its fields and would have dropped the webhook secret on every save;
+    /// the API now refuses a MobileMoney save through this path.</summary>
     private class MobileMoneySettingsModel
     {
         public string CrmApiUrl { get; set; } = string.Empty;
         public string ApiKey { get; set; } = string.Empty;
         public bool Enabled { get; set; }
+        public bool CardsEnabled { get; set; }
+        public string WebhookId { get; set; } = string.Empty;
     }
 
     private class AdsSettingsModel

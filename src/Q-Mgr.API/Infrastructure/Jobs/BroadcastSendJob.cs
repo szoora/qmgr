@@ -4,6 +4,7 @@ using QMgr.Application.Interfaces;
 using QMgr.Domain.Entities.Marketing;
 using QMgr.Domain.Enums;
 using QMgr.Infrastructure.Data;
+using QMgr.API.Application.Services;
 
 namespace QMgr.Infrastructure.Jobs;
 
@@ -37,7 +38,8 @@ public class BroadcastSendJob
     /// </summary>
     private string AppendUnsubscribeFooter(string message, Guid optOutToken, bool isHtml)
     {
-        var webBaseUrl = (_configuration["App:PublicWebBaseUrl"] ?? "https://localhost:5002").TrimEnd('/');
+        // The deploy's own address, the same rule every other link uses (PublicWebBase).
+        var webBaseUrl = PublicWebBase.FromDeployment(_configuration) ?? "https://localhost:5002";
         var unsubscribeUrl = $"{webBaseUrl}/unsubscribe/{optOutToken}";
 
         return isHtml

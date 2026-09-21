@@ -47,6 +47,31 @@ public static class DependencyInjection
         // caller's HTTP context and memoises the student scope, so it is scoped like that service.
         services.AddSingleton<IUploadAccessService, UploadAccessService>();
         services.AddScoped<IUploadAuthorizer, UploadAuthorizer>();
+
+        // Whose name an outbound email carries. One reader, so the twenty-two senders do not each decide it.
+        services.AddScoped<QMgr.Infrastructure.Email.IEmailBrandService, QMgr.Infrastructure.Email.EmailBrandService>();
+
+        // A tenant's own domain. IDnsTxtLookup is an interface with one method so the verification
+        // flow can be exercised with no zone to publish in; ITenantDomainActivator so it can be
+        // exercised with no host to touch.
+        services.AddScoped<ICustomDomainService, QMgr.Infrastructure.Services.Domains.CustomDomainService>();
+
+        // Tenant lifecycle and purge. The purge derives its own plan from the EF model; the only
+        // hand-maintained part is TenantDataManifest, and TenantPurgeModelGuard refuses to start
+        // the application when a table in the model is missing from it.
+        services.AddScoped<ITenantPurgeService, QMgr.Infrastructure.Data.Purge.TenantPurgeService>();
+        services.AddScoped<ITenantLifecycleService, QMgr.Infrastructure.Data.Purge.TenantLifecycleService>();
+        // The stub answers from memory and is DEVELOPMENT ONLY — the environment is checked here
+        // as well as the key, so a Dns:Stub left in a production config file does nothing. It
+        // exists so the verification flow can be exercised against a live database without owning
+        // a zone; everything else in CustomDomainService runs for real either way.
+        // No IHostEnvironment here, so the environment is read the way this method already reads
+        // configuration: ASPNETCORE_ENVIRONMENT is what sets it, and both have to agree.
+        if (string.Equals(configuration["ASPNETCORE_ENVIRONMENT"] ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"), "Development", StringComparison.OrdinalIgnoreCase) && configuration.GetValue("Dns:Stub", false))
+            services.AddSingleton<IDnsTxtLookup, QMgr.Infrastructure.Services.Domains.StubDnsTxtLookup>();
+        else
+            services.AddSingleton<IDnsTxtLookup, QMgr.Infrastructure.Services.Domains.DnsTxtLookup>();
+        services.AddSingleton<QMgr.Infrastructure.Services.Domains.ITenantDomainActivator, QMgr.Infrastructure.Services.Domains.NginxTenantDomainActivator>();
         services.AddScoped<IDocumentShareService, DocumentShareService>();
         services.AddScoped<IVisitorActivityBroadcaster, VisitorActivityBroadcaster>();
         services.AddScoped<QMgr.API.Application.Services.IVisitorReportingService, QMgr.API.Application.Services.VisitorReportingService>();
@@ -91,6 +116,9 @@ public static class DependencyInjection
         services.AddScoped<IQueueCustomerNotifier, QueueCustomerNotifier>();
         // Duplicate-registration detection and phone ownership proof.
         services.AddScoped<IRegistrationGuardService, RegistrationGuardService>();
+        // "Does this email domain already belong to a tenant that invites people at it?" — the
+        // registration form asks before somebody creates a second copy of their own school.
+        services.AddScoped<IOrganizationHintService, OrganizationHintService>();
         services.AddScoped<IPhoneVerificationService, PhoneVerificationService>();
         services.AddScoped<INotificationSettingsService, NotificationSettingsService>();
 
@@ -193,13 +221,17 @@ public static class DependencyInjection
             }
         });
 
-        // HTTP Client for Mobile Money (CRM Epay Gateway)
-        // BaseAddress and the API key are resolved by the service itself from Platform Settings
-        // (with configuration as fallback), so nothing config-specific is baked in here.
-        services.AddHttpClient<IMobileMoneyService, MobileMoneyService>(client =>
+        // The sacc.ug payment gateway (2026-09-19). A named client with NO retry policy, deliberately:
+        // a retried collect can prompt the payer twice (the gateway's own rule, CRM-4.6). The address
+        // and key are read from Platform Settings on every call, so nothing is baked in here. The
+        // collect call answers 202 at once; 30 seconds is ample and keeps a slow gateway from holding
+        // a customer's request open.
+        services.AddHttpClient(SaccGateway.HttpClientName, client =>
         {
-            client.Timeout = TimeSpan.FromSeconds(60); // Mobile money can be slow
+            client.Timeout = TimeSpan.FromSeconds(30);
         });
+        services.AddScoped<ISaccGateway, SaccGateway>();
+        services.AddScoped<IPaymentLedger, PaymentLedger>();
 
         // Redis caching (optional)
         var redisConnection = configuration.GetConnectionString("Redis");

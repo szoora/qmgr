@@ -135,7 +135,7 @@ public class EmailSettings
 /// </summary>
 public class BillingSettings
 {
-    public string Currency { get; set; } = "USD";
+    public string Currency { get; set; } = "UGX";
     public bool EnableTrials { get; set; } = true;
     public int TrialDurationDays { get; set; } = 14;
     public bool RequirePaymentMethod { get; set; } = false;

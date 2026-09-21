@@ -19,15 +19,12 @@
 }
 
 <div class="admin-page">
-    <div class="page-header">
-        @if (!Embedded)
-        {
-            <div class="header-content">
-                <h1>Users & Roles</h1>
-                <p class="subtitle">Manage system users and their permissions</p>
-            </div>
-        }
-        <div class="header-actions">
+    <QPageActions Embedded="@Embedded">
+        <Title>
+            <h1>Users & Roles</h1>
+            <p class="subtitle">Manage system users and their permissions</p>
+        </Title>
+        <Actions>
             @* Gated on the same read this page already needed to render at all. *@
             <QDataExport TItem="UserInfo"
                          Title="Users"
@@ -41,8 +38,8 @@
             {
                 <QButton Text="Add User" Icon="person-plus-fill" Variant="primary" OnClick="@ShowAddDialog" />
             }
-        </div>
-    </div>
+        </Actions>
+    </QPageActions>
 
     @* Its own strip until 2026-09-19. Users and Roles are tabs of the Users & Roles hub now,
        beside Join Requests and Onboarding — a strip inside a strip whose parent carried this very
@@ -524,13 +521,13 @@
 <style>
 
     .batch-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--qm-primary-light); border: 1px solid var(--qm-primary); border-radius: var(--qm-radius-md); padding: 10px 14px; margin-bottom: 14px; }
-    .batch-bar-count { display: flex; align-items: center; gap: 7px; font-size: 14px; }
+    .batch-bar-count { display: flex; align-items: center; gap: 7px; font-size: var(--qm-text-base); }
     .batch-bar-count strong { font-variant-numeric: tabular-nums; }
     .batch-bar .dropdown { display: inline-flex; }
     .batch-menu { min-width: 190px; padding: 6px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); box-shadow: var(--qm-shadow-md); }
-    .batch-menu .dropdown-item { display: block; width: 100%; padding: 8px 10px; border: none; background: none; border-radius: var(--qm-radius-sm); font-size: 13px; text-align: left; color: var(--qm-text-primary); cursor: pointer; }
+    .batch-menu .dropdown-item { display: block; width: 100%; padding: 8px 10px; border: none; background: none; border-radius: var(--qm-radius-sm); font-size: var(--qm-text-base); text-align: left; color: var(--qm-text-primary); cursor: pointer; }
     .batch-menu .dropdown-item:hover { background: var(--qm-primary-light); }
-    .batch-clear { margin-left: auto; background: none; border: none; padding: 2px 6px; cursor: pointer; font: inherit; font-size: 13px; color: var(--qm-text-muted); text-decoration: underline; }
+    .batch-clear { margin-left: auto; background: none; border: none; padding: 2px 6px; cursor: pointer; font: inherit; font-size: var(--qm-text-base); color: var(--qm-text-muted); text-decoration: underline; }
     .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .loading-container {
         display: flex;
@@ -562,7 +559,7 @@
 
     .user-info { display: flex; flex-direction: column; }
     .user-name { font-weight: 500; color: var(--qm-text-primary); }
-    .user-email { font-size: 12px; color: var(--qm-text-muted); }
+    .user-email { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
 
     .roles-grid {
         display: grid;
@@ -598,7 +595,7 @@
         min-width: 48px;
         min-height: 48px;
         /* One glyph size for every card, rather than whatever each icon's intrinsic size is. */
-        font-size: 20px;
+        font-size: var(--qm-text-xl);
         line-height: 1;
         border-radius: var(--qm-radius-xl);
         display: flex;
@@ -612,11 +609,11 @@
     .role-title { min-width: 0; }
 
     .role-title h4 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .role-title span { font-size: 13px; color: var(--qm-text-muted); }
+    .role-title span { font-size: var(--qm-text-base); color: var(--qm-text-muted); }
 
     .role-permissions h5 {
         margin: 0 0 10px;
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         text-transform: uppercase;
         color: var(--qm-text-muted);
     }
@@ -632,11 +629,11 @@
         align-items: center;
         gap: 8px;
         padding: 6px 0;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
     }
 
-    .role-permissions li .rzi { color: var(--qm-success); font-size: 16px; }
+    .role-permissions li .rzi { color: var(--qm-success); font-size: var(--qm-text-md); }
     .role-permissions li.more { color: var(--qm-text-muted); font-style: italic; }
 
     /* A button row wraps rather than widening the card: the page must never scroll sideways. */
@@ -660,7 +657,7 @@
         margin-bottom: 16px;
     }
 
-    .roles-intro { margin: 0; font-size: 13px; color: var(--qm-text-muted); max-width: 60ch; }
+    .roles-intro { margin: 0; font-size: var(--qm-text-base); color: var(--qm-text-muted); max-width: 60ch; }
 
     .role-card--inactive { opacity: 0.7; border-style: dashed; }
 
@@ -670,7 +667,7 @@
     .inactive-badge {
         padding: 2px 8px;
         border-radius: var(--qm-radius-sm);
-        font-size: 10px;
+        font-size: var(--qm-text-xs);
         font-weight: 600;
         text-transform: uppercase;
         background: var(--qm-bg-elevated);
@@ -678,7 +675,7 @@
         border: 1px solid var(--qm-border);
     }
 
-    .role-description { margin: -6px 0 14px; font-size: 13px; color: var(--qm-text-secondary); }
+    .role-description { margin: -6px 0 14px; font-size: var(--qm-text-base); color: var(--qm-text-secondary); }
 
     /* Scope chips: the tint derives from the brand token so it follows the theme (CLAUDE.md). */
     .role-scopes { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
@@ -688,7 +685,7 @@
         gap: 5px;
         padding: 3px 9px;
         border-radius: var(--qm-radius-sm);
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         font-weight: 500;
         color: var(--qm-primary);
         background: rgba(var(--qm-primary-rgb), 0.12);
@@ -723,12 +720,12 @@
         align-items: center;
         gap: 8px;
         margin: 0 0 14px;
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         text-transform: uppercase;
         letter-spacing: 0.04em;
         color: var(--qm-text-muted);
     }
-    .scope-help { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--qm-text-muted); }
+    .scope-help { margin: 6px 0 0; font-size: var(--qm-text-sm); line-height: 1.5; color: var(--qm-text-muted); }
     .scope-help strong { color: var(--qm-text-secondary); font-weight: 600; }
 
     @@media (max-width: 640px) {
@@ -778,13 +775,13 @@
     .form-group label {
         display: block;
         margin-bottom: 6px;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         font-weight: 500;
         color: var(--qm-text-secondary);
     }/* Role code badge */
     .role-code {
         display: block;
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         color: var(--qm-text-muted);
         font-family: monospace;
     }
@@ -793,7 +790,7 @@
     .system-badge {
         padding: 2px 8px;
         border-radius: var(--qm-radius-sm);
-        font-size: 10px;
+        font-size: var(--qm-text-xs);
         font-weight: 600;
         text-transform: uppercase;
         background: color-mix(in srgb, var(--qm-danger) 15%, transparent);
@@ -831,7 +828,7 @@
         margin: 0 0 12px;
         padding-bottom: 8px;
         border-bottom: 1px solid var(--qm-border);
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-primary);
         text-transform: uppercase;
     }
@@ -841,7 +838,7 @@
         border: 1px solid var(--qm-border);
         padding: 4px 10px;
         border-radius: var(--qm-radius-sm);
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         cursor: pointer;
         color: var(--qm-text-secondary);
         transition: all 0.2s ease;
@@ -867,7 +864,7 @@
 
     .permission-description {
         display: block;
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         color: var(--qm-text-muted);
         margin-top: 4px;
         margin-left: 28px;

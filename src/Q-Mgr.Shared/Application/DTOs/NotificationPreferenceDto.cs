@@ -89,6 +89,14 @@ public static class NotificationEventKeys
     /// <summary>Staff join requests are waiting for approval (approvers). Content-free: a count and a link.</summary>
     public const string StaffJoinRequests = "staff.join-requests";
 
+    // ---- Minutes of a meeting (2026-09-20). ----
+
+    /// <summary>Minutes of a meeting I was expected at were circulated for correction, or adopted.</summary>
+    public const string StaffMinutes = "staff.minutes";
+
+    /// <summary>An action point minuted for me is due, or overdue.</summary>
+    public const string StaffMinuteAction = "staff.minute-action";
+
     /// <summary>Everything else — system alerts, queue events, and anything sent without a key.</summary>
     public const string General = "general";
 
@@ -187,6 +195,12 @@ public static class NotificationEventKeys
         new(StaffJoinRequests, "Staff join requests are waiting",
             "For approvers: people who registered through the join link and are waiting for a decision.",
             "User Management", DefaultEmail: true, DefaultSms: false),
+        new(StaffMinutes, "Minutes of a meeting I attended",
+            "Draft minutes circulated for correction, and the moment they are adopted as the record of that meeting.",
+            "Staff Performance", DefaultEmail: true, DefaultSms: false),
+        new(StaffMinuteAction, "An action minuted for me",
+            "An action point the minutes gave you, as its date approaches and after it passes.",
+            "Staff Performance", DefaultEmail: true, DefaultSms: false),
         new(General, "Everything else",
             "System alerts and anything not covered above.",
             "General", DefaultEmail: false, DefaultSms: false),

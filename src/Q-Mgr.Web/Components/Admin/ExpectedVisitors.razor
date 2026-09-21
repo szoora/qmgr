@@ -28,29 +28,11 @@
         </div>
     </div>
 
-    <div class="summary-cards">
-        <div class="summary-card">
-            <div class="card-icon"><QIcon Name="calendar-day" /></div>
-            <div class="card-content">
-                <span class="card-value">@TodayGroup.Count</span>
-                <span class="card-label">Due Today</span>
-            </div>
-        </div>
-        <div class="summary-card">
-            <div class="card-icon"><QIcon Name="calendar-week" /></div>
-            <div class="card-content">
-                <span class="card-value">@UpcomingGroup.Count</span>
-                <span class="card-label">Upcoming</span>
-            </div>
-        </div>
-        <div class="summary-card @(OverdueGroup.Any() ? "alert" : "")">
-            <div class="card-icon"><QIcon Name="clock-history" /></div>
-            <div class="card-content">
-                <span class="card-value">@OverdueGroup.Count</span>
-                <span class="card-label">Overdue Today</span>
-            </div>
-        </div>
-    </div>
+    <QStatRow>
+        <QStatTile Icon="calendar-day" Variant="primary" Value="@TodayGroup.Count.ToString()" Label="Due today" />
+        <QStatTile Icon="calendar-week" Variant="info" Value="@UpcomingGroup.Count.ToString()" Label="Upcoming" />
+        <QStatTile Icon="clock-history" Variant="@(OverdueGroup.Any() ? "danger" : "secondary")" Value="@OverdueGroup.Count.ToString()" Label="Overdue today" />
+    </QStatRow>
 
     @if (isLoading)
     {
@@ -58,14 +40,23 @@
     }
     else if (!expected.Any())
     {
-        <div class="empty-state">
-            <QIcon Name="calendar-event" />
-            <h3>Nobody is expected</h3>
-            <p>Pre-register arrivals so reception knows who is due before they walk through the door.</p>
-        </div>
+        <QEmptyState Icon="calendar-event" Title="Nobody is expected"
+                     Text="Pre-register arrivals so reception knows who is due before they walk through the door." />
     }
     else
     {
+        @* Search only (plan Phase 2). The three groups below ARE this page's filter and are more
+           useful than chips, so the bar carries no chips; and no selection, because the action here
+           is checking one person in at the desk, which is not a thing done to twenty people. *@
+        <QBulkBar Search="@search" SearchChanged="@SetSearch" ShowSelection="false"
+                  SearchPlaceholder="Search by name, badge, company, host or purpose" />
+
+        @if (OverdueGroup.Count + TodayGroup.Count + UpcomingGroup.Count == 0)
+        {
+            <QEmptyState Icon="funnel" Title="Nobody matches" Text="Clear the search to see everyone expected.">
+                <Action><QButton Text="Show everyone" Icon="arrow-counterclockwise" Variant="secondary" Size="sm" OnClick="@(() => SetSearch(string.Empty))" /></Action>
+            </QEmptyState>
+        }
         @RenderGroup("Overdue — due earlier today and not arrived", OverdueGroup, "overdue")
         @RenderGroup("Due today", TodayGroup, "today")
         @RenderGroup("Upcoming", UpcomingGroup, "upcoming")
@@ -199,19 +190,10 @@
                OnClose="@HandleCancelConfirm" />
 
 <style>.header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr)); gap: var(--qm-statcard-gap); margin-bottom: 18px; }
-    .summary-card { display: flex; align-items: center; gap: 10px; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: var(--qm-statcard-pad); }
-    .summary-card.alert { border-color: var(--qm-danger); }
-    .card-icon { width: 44px; height: 44px; border-radius: var(--qm-radius-full, 50%); display: flex; align-items: center; justify-content: center; font-size: 20px; background: var(--qm-primary-light); color: var(--qm-primary); flex-shrink: 0; }
-    .card-content { display: flex; flex-direction: column; }
-    .card-value { font-size: 24px; font-weight: 700; color: var(--qm-text-primary); line-height: 1.1; }
-    .card-label { font-size: 12px; color: var(--qm-text-muted); margin-top: 2px; }
 
-    .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); text-align: center; }
-    .empty-state .q-icon { font-size: 40px; opacity: 0.5; }
-    .empty-state h3 { margin: 0; color: var(--qm-text-primary); }
+    .loading-container { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); text-align: center; }
 
-    .group-head { margin: 22px 0 10px; font-size: 15px; font-weight: 600; color: var(--qm-text-primary); display: flex; align-items: center; gap: 8px; }
+    .group-head { margin: 22px 0 10px; font-size: var(--qm-text-md); font-weight: 600; color: var(--qm-text-primary); display: flex; align-items: center; gap: 8px; }
     .group-head.overdue { color: var(--qm-accent-orange); }
 
     .expected-list { display: flex; flex-direction: column; gap: 12px; }
@@ -221,47 +203,48 @@
     .expected-main { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
     .expected-identity { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .expected-name { font-weight: 600; color: var(--qm-text-primary); display: inline-flex; align-items: center; gap: 6px; }
-    .expected-company { color: var(--qm-text-muted); font-size: 13px; }
-    .badge-code { font-family: monospace; font-size: 12px; color: var(--qm-text-muted); background: var(--qm-bg-secondary); padding: 2px 8px; border-radius: var(--qm-radius-md); }
-    .when-badge { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
+    .expected-company { color: var(--qm-text-muted); font-size: var(--qm-text-base); }
+    .badge-code { font-family: monospace; font-size: var(--qm-text-sm); color: var(--qm-text-muted); background: var(--qm-bg-secondary); padding: 2px 8px; border-radius: var(--qm-radius-md); }
+    .when-badge { font-size: var(--qm-text-sm); padding: 3px 10px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
     .when-badge.overdue { background: rgba(var(--qm-warning-rgb), 0.15); color: var(--qm-accent-orange); }
-    .type-badge { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; background: var(--qm-primary-light); color: var(--qm-primary); }
+    .type-badge { font-size: var(--qm-text-xs); text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; background: var(--qm-primary-light); color: var(--qm-primary); }
     .watchlist-flag { color: var(--qm-danger); }
-    .induction-flag { font-size: 11px; color: var(--qm-accent-orange); background: rgba(var(--qm-warning-rgb), 0.12); padding: 2px 8px; border-radius: 999px; display: inline-flex; align-items: center; gap: 4px; }
+    .induction-flag { font-size: var(--qm-text-xs); color: var(--qm-accent-orange); background: rgba(var(--qm-warning-rgb), 0.12); padding: 2px 8px; border-radius: 999px; display: inline-flex; align-items: center; gap: 4px; }
 
-    .expected-details { display: flex; flex-wrap: wrap; gap: 14px; margin: 10px 0; font-size: 13px; color: var(--qm-text-muted); }
+    .expected-details { display: flex; flex-wrap: wrap; gap: 14px; margin: 10px 0; font-size: var(--qm-text-base); color: var(--qm-text-muted); }
     .detail-item { display: inline-flex; align-items: center; gap: 5px; }
     .expected-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
+    .expected-more { display: flex; justify-content: center; margin: 6px 0 12px; }
     .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
-    .form-grid label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); }
+    .form-grid label { display: flex; flex-direction: column; gap: 6px; font-size: var(--qm-text-base); color: var(--qm-text-muted); }
     .form-grid label.full-width { grid-column: 1 / -1; }
-    .form-grid input, .form-grid textarea, .form-grid select { width: 100%; box-sizing: border-box; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: 14px; background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
+    .form-grid input, .form-grid textarea, .form-grid select { width: 100%; box-sizing: border-box; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: var(--qm-text-base); background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
 
     .settings-section { margin-top: 20px; }
-    .settings-section h3 { margin: 0 0 6px; font-size: 15px; color: var(--qm-text-primary); }
-    .settings-hint { font-size: 12px; color: var(--qm-text-muted); margin: 0 0 10px; }
-    .confirm-message { font-size: 14px; color: var(--qm-text-primary); margin: 0; }
+    .settings-section h3 { margin: 0 0 6px; font-size: var(--qm-text-md); color: var(--qm-text-primary); }
+    .settings-hint { font-size: var(--qm-text-sm); color: var(--qm-text-muted); margin: 0 0 10px; }
+    .confirm-message { font-size: var(--qm-text-base); color: var(--qm-text-primary); margin: 0; }
 
     .entry-row { display: flex; align-items: flex-start; gap: 10px; padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--qm-border); }
     .entry-row:last-of-type { border-bottom: none; }
     .entry-grid { flex: 1; margin-top: 0; }
 
-    .hint-box { display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; padding: 10px 12px; font-size: 12px; line-height: 1.45;
+    .hint-box { display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; padding: 10px 12px; font-size: var(--qm-text-sm); line-height: 1.45;
                 border: 1px solid var(--qm-border); background: var(--qm-bg-secondary); color: var(--qm-text-muted); border-radius: var(--qm-radius-sm); }
 
     .block-box { margin-top: 14px; padding: 12px; border: 1px solid rgba(var(--qm-danger-rgb), 0.40); background: rgba(var(--qm-danger-rgb), 0.08); border-radius: var(--qm-radius-sm); }
-    .block-box p { margin: 0 0 8px; font-size: 13px; color: var(--qm-danger); display: flex; align-items: flex-start; gap: 6px; }
+    .block-box p { margin: 0 0 8px; font-size: var(--qm-text-base); color: var(--qm-danger); display: flex; align-items: flex-start; gap: 6px; }
     .block-box p.reason { color: var(--qm-text-primary); }
-    .block-box label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); }
+    .block-box label { display: flex; flex-direction: column; gap: 6px; font-size: var(--qm-text-base); color: var(--qm-text-muted); }
     .block-box input { width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-card); color: var(--qm-text-primary); }
 
     .warn-box { margin-top: 14px; padding: 12px; border: 1px solid rgba(var(--qm-warning-rgb), 0.35); background: rgba(var(--qm-warning-rgb), 0.08); border-radius: var(--qm-radius-sm); }
-    .warn-box p { margin: 0 0 8px; font-size: 13px; color: var(--qm-accent-orange); display: flex; align-items: flex-start; gap: 6px; }
-    .warn-box label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); margin-top: 8px; }
+    .warn-box p { margin: 0 0 8px; font-size: var(--qm-text-base); color: var(--qm-accent-orange); display: flex; align-items: flex-start; gap: 6px; }
+    .warn-box label { display: flex; flex-direction: column; gap: 6px; font-size: var(--qm-text-base); color: var(--qm-text-muted); margin-top: 8px; }
     .warn-box input { width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-card); color: var(--qm-text-primary); }
 
-    .consent-check { display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; font-size: 13px; color: var(--qm-text-muted); cursor: pointer; }
+    .consent-check { display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; font-size: var(--qm-text-base); color: var(--qm-text-muted); cursor: pointer; }
     .consent-check input { margin-top: 3px; }
 </style>
 
@@ -278,15 +261,37 @@
     // actually makes and short enough that the list stays a working list, not an archive.
     private const int UpcomingWindowDays = 14;
 
-    private List<VisitorDto> OverdueGroup => expected
+    private string search = string.Empty;
+
+    private void SetSearch(string value)
+    {
+        search = value ?? string.Empty;
+        // A group's "show the rest" belongs to the list that was showing, not to the new one.
+        shown.Clear();
+    }
+
+    /// <summary>The search runs over every group, so a name is found wherever it is due.</summary>
+    private IEnumerable<VisitorDto> Searched
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(search)) return expected;
+            var q = search.Trim();
+            bool Has(string? s) => (s ?? string.Empty).Contains(q, StringComparison.OrdinalIgnoreCase);
+            return expected.Where(v => Has(v.FullName) || Has(v.BadgeCode) || Has(v.Company)
+                                       || Has(v.HostName) || Has(v.Purpose) || Has(v.Phone));
+        }
+    }
+
+    private List<VisitorDto> OverdueGroup => Searched
         .Where(v => DueAt(v) is { } due && due.ToLocalTime() < DateTime.Now && due.ToLocalTime().Date == DateTime.Today)
         .ToList();
 
-    private List<VisitorDto> TodayGroup => expected
+    private List<VisitorDto> TodayGroup => Searched
         .Where(v => DueAt(v) is { } due && due.ToLocalTime().Date == DateTime.Today && due.ToLocalTime() >= DateTime.Now)
         .ToList();
 
-    private List<VisitorDto> UpcomingGroup => expected
+    private List<VisitorDto> UpcomingGroup => Searched
         .Where(v => DueAt(v) is { } due && due.ToLocalTime().Date > DateTime.Today)
         .ToList();
 
@@ -340,7 +345,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.VisitorManagement))
         {
-            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            Navigation.NavigateTo(BillingLinks.Modules, forceLoad: false);
             return;
         }
 
@@ -368,16 +373,27 @@
         await InvokeAsync(StateHasChanged);
     }
 
+    /// <summary>
+    /// How many of a group are rendered before "show the rest". A school open day pre-registers
+    /// hundreds, and every card here is a component subtree Blazor Server diffs and ships down the
+    /// circuit — the same reasoning as QTimelinePaging.
+    /// </summary>
+    private const int GroupCap = 25;
+
+    private readonly Dictionary<string, int> shown = new();
+    private int ShownIn(string key) => shown.TryGetValue(key, out var n) ? n : GroupCap;
+
     private RenderFragment RenderGroup(string heading, List<VisitorDto> group, string cssClass) => __builder =>
     {
         if (group.Count == 0) return;
+        var cap = ShownIn(cssClass);
 
         <div class="group-head @cssClass">
             <QIcon Name="@(cssClass == "overdue" ? "exclamation-triangle" : "calendar-event")" />
             @heading (@group.Count)
         </div>
         <div class="expected-list">
-            @foreach (var visitor in group)
+            @foreach (var visitor in group.Take(cap))
             {
                 var due = DueAt(visitor);
                 <div class="expected-card @cssClass @(visitor.IsWatchlisted ? "watchlisted" : "")">
@@ -436,6 +452,13 @@
                 </div>
             }
         </div>
+        @if (group.Count > cap)
+        {
+            <div class="expected-more">
+                <QButton Text="@($"Show the remaining {group.Count - cap}")" Icon="chevron-down" Variant="ghost" Size="sm"
+                         OnClick="@(() => shown[cssClass] = group.Count)" />
+            </div>
+        }
     };
 
     private void OpenCreateModal()

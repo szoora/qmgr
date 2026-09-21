@@ -22,6 +22,8 @@
             <p class="subtitle">Every record in the ledger for this branch — search it, log to it, open a person's timeline from it.</p>
         </div>
         <div class="header-actions">
+            @* The open section's own buttons land here — see QPageActions. *@
+            <SectionOutlet SectionId="QPageActions.Id" />
             @if (canCreate && hubTab == "records")
             {
                 <QButton Text="Log record" Icon="journal-plus" Variant="primary" OnClick="@(() => showRecordDialog = true)" Disabled="@(directory.Count == 0)" />
@@ -151,14 +153,14 @@
     .sr-filter { flex: 0 1 190px; min-width: 150px; }
     .table-wrap { overflow-x: auto; }
     .sr-row { cursor: pointer; }
-    .sr-row:hover td { background: var(--qm-bg-hover, var(--qm-bg-secondary)); }
+    .sr-row:hover td { background: var(--qm-bg-secondary); }
     .sr-row--annulled td { opacity: 0.6; text-decoration: line-through; }
     .sr-nowrap { white-space: nowrap; }
     .sr-person { display: flex; align-items: center; gap: 8px; }
     .sr-late { color: var(--qm-warning); margin-left: 4px; }
     .sr-pos { color: var(--qm-success); font-weight: 600; margin-left: 4px; }
     .sr-neg { color: var(--qm-danger); font-weight: 600; margin-left: 4px; }
-    .sr-muted { color: var(--qm-text-muted); font-size: 12.5px; margin-left: 4px; }
+    .sr-muted { color: var(--qm-text-muted); font-size: var(--qm-text-sm); margin-left: 4px; }
     .sr-actions { white-space: nowrap; text-align: right; cursor: default; }
     .sr-row--annulled .sr-actions { text-decoration: none; }
 </style>
@@ -254,7 +256,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
-            Navigation.NavigateTo("/billing/modules");
+            Navigation.NavigateTo(BillingLinks.Modules);
             return;
         }
 

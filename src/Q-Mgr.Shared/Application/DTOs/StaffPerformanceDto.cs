@@ -587,6 +587,9 @@ public record StaffPerformancePolicyDto
     /// <summary>The tenant's duty report sections (plan §15 decision 1). Empty means the default template.</summary>
     public List<DutyReportSectionDto> DutyReportTemplate { get; set; } = new();
     public DutyReportDefaultsDto DutyReportDefaults { get; set; } = new();
+    /// <summary>The tenant's minutes sections (2026-09-20). Empty means <see cref="MinutesTemplateDefaults"/>.</summary>
+    public List<DutyReportSectionDto> MinutesTemplate { get; set; } = new();
+    public MinutesDefaultsDto MinutesDefaults { get; set; } = new();
     public TeachingLoadNormsDto TeachingLoadNorms { get; set; } = new();
     /// <summary>Minutes before a lesson its in-app reminder goes (plan §7.2, decision 8: 10).</summary>
     public int LessonReminderMinutes { get; set; } = 10;

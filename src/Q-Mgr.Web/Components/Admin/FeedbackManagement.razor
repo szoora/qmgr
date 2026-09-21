@@ -21,15 +21,12 @@
 }
 
 <div class="admin-page">
-    <div class="page-header">
-        @if (!Embedded)
-        {
-            <div class="header-content">
-                <h1>Customer Feedback</h1>
-                <p class="subtitle">View and respond to customer feedback</p>
-            </div>
-        }
-        <div class="header-actions">
+    <QPageActions Embedded="@Embedded">
+        <Title>
+            <h1>Customer Feedback</h1>
+            <p class="subtitle">View and respond to customer feedback</p>
+        </Title>
+        <Actions>
             <PermissionGuard Permission="feedback.analytics">
                 @* Four formats over the same paged fetch this page already did for its CSV. *@
                 <QDataExport TItem="FeedbackDto"
@@ -40,8 +37,8 @@
                              RowProvider="@ProvideExportRowsAsync" />
             </PermissionGuard>
             <QButton Text="Refresh" Icon="arrow-clockwise" Variant="primary" OnClick="@LoadData" />
-        </div>
-    </div>
+        </Actions>
+    </QPageActions>
 
     @* Its own tab strip until 2026-09-19. Responses and Questions are tabs of the Feedback hub
        now, beside Reports — one strip, not a strip inside a strip. *@
@@ -57,44 +54,12 @@
     <!-- Summary Cards -->
     @if (summary != null)
     {
-        <div class="summary-cards">
-            <div class="summary-card">
-                <div class="card-icon total">
-                    <QIcon Name="chat-quote-fill" />
-                </div>
-                <div class="card-content">
-                    <span class="card-value">@summary.TotalFeedbacks</span>
-                    <span class="card-label">Total Feedbacks</span>
-                </div>
-            </div>
-            <div class="summary-card">
-                <div class="card-icon rating">
-                    <QIcon Name="star-fill" />
-                </div>
-                <div class="card-content">
-                    <span class="card-value">@summary.AverageRating.ToString("F1")</span>
-                    <span class="card-label">Average Rating</span>
-                </div>
-            </div>
-            <div class="summary-card">
-                <div class="card-icon positive">
-                    <QIcon Name="emoji-smile-fill" />
-                </div>
-                <div class="card-content">
-                    <span class="card-value">@(summary.FiveStarCount + summary.FourStarCount)</span>
-                    <span class="card-label">Positive (4-5 stars)</span>
-                </div>
-            </div>
-            <div class="summary-card">
-                <div class="card-icon pending">
-                    <QIcon Name="hourglass-split" />
-                </div>
-                <div class="card-content">
-                    <span class="card-value">@summary.PendingResponseCount</span>
-                    <span class="card-label">Awaiting Response</span>
-                </div>
-            </div>
-        </div>
+        <QStatRow>
+            <QStatTile Icon="chat-quote-fill" Variant="primary" Value="@summary.TotalFeedbacks.ToString()" Label="Responses" />
+            <QStatTile Icon="star-fill" Variant="warning" Value="@summary.AverageRating.ToString("F1")" Label="Average rating" />
+            <QStatTile Icon="emoji-smile-fill" Variant="success" Value="@((summary.FiveStarCount + summary.FourStarCount).ToString())" Label="Positive (4–5 stars)" />
+            <QStatTile Icon="hourglass-split" Variant="secondary" Value="@summary.PendingResponseCount.ToString()" Label="Awaiting reply" />
+        </QStatRow>
 
         <!-- Rating Distribution -->
         <div class="rating-distribution">
@@ -281,10 +246,8 @@
             }
             else if (questions.Count == 0)
             {
-                <div class="questions-empty">
-                    <QIcon Name="ui-checks" />
-                    <span>No survey questions yet. The public form still asks for a star rating, a recommendation score and a comment.</span>
-                </div>
+                <QEmptyState Icon="ui-checks" Title="No survey questions yet"
+                             Text="The public form still asks for a star rating, a recommendation score and a comment." />
             }
             else
             {
@@ -448,7 +411,7 @@
         display: flex;
         align-items: center;
         gap: 10px;
-        padding: 28px;
+        padding: var(--qm-empty-pad);
         justify-content: center;
         color: var(--qm-text-muted);
         text-align: center;
@@ -489,7 +452,7 @@
     .question-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 
     .question-chip {
-        font-size: 0.75rem;
+        font-size: var(--qm-text-sm);
         padding: 2px 8px;
         border-radius: var(--qm-radius-full);
         background: var(--qm-bg-card);
@@ -531,12 +494,12 @@
         border-radius: 50%;
         background: var(--qm-primary);
         color: var(--qm-text-on-primary);
-        font-size: 0.75rem;
+        font-size: var(--qm-text-sm);
         font-weight: 700;
     }
 
     .preview-required { color: var(--qm-accent-orange); font-weight: 700; }
-    .preview-type { margin-left: auto; font-size: 0.75rem; color: var(--qm-text-muted); }
+    .preview-type { margin-left: auto; font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
 
     .question-form { display: flex; flex-direction: column; gap: 16px; }
     .choice-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
@@ -544,72 +507,16 @@
         margin: 0 0 4px;
         color: var(--qm-text-primary);
     }/* Summary Cards */
-    .summary-cards {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr));
-        gap: var(--qm-statcard-gap);
-        margin-bottom: 18px;
-    }
 
-    .summary-card {
-        background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-        padding: var(--qm-statcard-pad);
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
 
-    .card-icon {
-        width: var(--qm-statcard-icon);
-        height: var(--qm-statcard-icon);
-        border-radius: var(--qm-radius-xl);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
 
-    .card-icon .rzi {
-        font-size: 28px;
-    }
 
-    .card-icon.total {
-        background: color-mix(in srgb, var(--qm-info) 15%, transparent);
-        color: var(--qm-info);
-    }
 
-    .card-icon.rating {
-        background: color-mix(in srgb, var(--qm-warning) 15%, transparent);
-        color: var(--qm-warning);
-    }
 
-    .card-icon.positive {
-        background: color-mix(in srgb, var(--qm-success) 15%, transparent);
-        color: var(--qm-success);
-    }
 
-    .card-icon.pending {
-        background: var(--qm-secondary-light);
-        color: var(--qm-secondary);
-    }
 
-    .card-content {
-        display: flex;
-        flex-direction: column;
-    }
 
-    .card-value {
-        font-size: 28px;
-        font-weight: 700;
-        color: var(--qm-text-primary);
-        line-height: 1.2;
-    }
 
-    .card-label {
-        font-size: 13px;
-        color: var(--qm-text-muted);
-    }
 
     /* Rating Distribution */
     .rating-distribution {
@@ -622,7 +529,7 @@
 
     .rating-distribution h3 {
         margin: 0 0 20px;
-        font-size: 16px;
+        font-size: var(--qm-text-md);
         color: var(--qm-text-primary);
     }
 
@@ -651,7 +558,7 @@
     }
 
     .filter-group .filter-select .q-select__label {
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         font-weight: 500;
         color: var(--qm-text-muted);
         text-transform: uppercase;
@@ -659,7 +566,7 @@
     }
 
     /* Loading & Empty States */
-    .loading-container, .empty-state {
+    .loading-container {
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -669,21 +576,6 @@
         background: var(--qm-bg-card);
         border-radius: var(--qm-radius-xl);
         border: 1px solid var(--qm-border);
-    }
-
-    .empty-state .rzi {
-        font-size: 64px;
-        margin-bottom: 16px;
-        color: var(--qm-primary);
-    }
-
-    .empty-state h3 {
-        margin: 0 0 8px;
-        color: var(--qm-text-primary);
-    }
-
-    .empty-state p {
-        margin: 0;
     }
 
     /* Feedback List */
@@ -724,7 +616,7 @@
     }
 
     .rating-display .rzi {
-        font-size: 20px;
+        font-size: var(--qm-text-xl);
         color: color-mix(in srgb, var(--qm-text-primary) 20%, transparent);
     }
 
@@ -744,7 +636,7 @@
         gap: 6px;
         padding: 4px 10px;
         border-radius: var(--qm-radius-md);
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         font-weight: 500;
     }
 
@@ -769,7 +661,7 @@
     }
 
     .timestamp {
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-muted);
     }
 
@@ -778,7 +670,7 @@
     }
 
     .comment {
-        font-size: 15px;
+        font-size: var(--qm-text-md);
         color: var(--qm-text-primary);
         line-height: 1.6;
         margin: 0 0 16px;
@@ -786,7 +678,7 @@
     }
 
     .no-comment {
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-muted);
         font-style: italic;
         margin: 0 0 16px;
@@ -802,12 +694,12 @@
         display: flex;
         align-items: center;
         gap: 6px;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
     }
 
     .detail-item .rzi {
-        font-size: 16px;
+        font-size: var(--qm-text-md);
         color: var(--qm-primary);
     }
 
@@ -824,12 +716,12 @@
         display: flex;
         align-items: center;
         gap: 6px;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-muted);
     }
 
     .customer-info .rzi {
-        font-size: 14px;
+        font-size: var(--qm-text-base);
     }
 
     .feedback-footer {
@@ -850,13 +742,13 @@
         align-items: center;
         gap: 8px;
         margin-bottom: 8px;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         font-weight: 600;
         color: var(--qm-success);
     }
 
     .response-header .rzi {
-        font-size: 16px;
+        font-size: var(--qm-text-md);
     }
 
     .response-time {
@@ -867,7 +759,7 @@
 
     .response-text {
         margin: 0;
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
         line-height: 1.5;
     }
@@ -884,7 +776,7 @@
         background: var(--qm-bg-card);
         border: 1px solid var(--qm-border);
         border-radius: var(--qm-radius-lg);
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-primary);
         resize: none;
     }
@@ -1278,7 +1170,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
         {
-            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            Navigation.NavigateTo(BillingLinks.Modules, forceLoad: false);
             return;
         }
 

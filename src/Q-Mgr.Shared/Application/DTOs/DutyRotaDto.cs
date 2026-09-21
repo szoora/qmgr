@@ -24,7 +24,9 @@ public enum ReminderSubject
     /// <summary>A Session duty (meeting, invigilation) is approaching — the pre-existing single-shot reminder, moved onto the ladder.</summary>
     SessionStart = 4,
     /// <summary>A duty has ended with its register not taken — the pre-existing chase, moved onto the ladder.</summary>
-    RegisterChase = 5
+    RegisterChase = 5,
+    /// <summary>An action point out of a meeting's minutes is approaching, or past, its date (2026-09-20).</summary>
+    MinuteActionDue = 6
 }
 
 /// <summary>Where a stage goes. Flags: a stage may ring the bell AND send an email.</summary>
@@ -230,6 +232,15 @@ public static class ReminderLadderDefaults
         new() { Subject = ReminderSubject.RegisterChase, Stages = new()
         {
             new() { Stage = 1, OffsetMinutes = 1 * Hour, Channels = ReminderChannels.Bell | ReminderChannels.Email },
+        } },
+        // An action minuted for somebody: a day before it is due, then on the day, then once after.
+        // Deliberately gentle and never Interruptive — an action point is a commitment, not an
+        // emergency, and a ladder that shouts about one trains people to ignore the ones that matter.
+        new() { Subject = ReminderSubject.MinuteActionDue, Stages = new()
+        {
+            new() { Stage = 1, OffsetMinutes = -1 * Day, AtLocalHour = policy.QuietHours?.MorningHour ?? 7, Channels = ReminderChannels.Bell },
+            new() { Stage = 2, OffsetMinutes = 0, Channels = ReminderChannels.Bell | ReminderChannels.Email },
+            new() { Stage = 3, OffsetMinutes = 3 * Day, Channels = ReminderChannels.Bell | ReminderChannels.Email },
         } },
     };
 }

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using QMgr.Application.Interfaces;
 using QMgr.Application.Tenant;
 using QMgr.Domain.Entities.Platform;
@@ -137,16 +138,19 @@ public class TenantResolutionMiddleware
             {
                 return TenantContext.FromOrganization(org.Id, org.Slug, org.Status, org.SchemaName);
             }
+        }
 
-            // Check custom domain
-            org = await dbContext.Organizations
-                .AsNoTracking()
-                .FirstOrDefaultAsync(o => o.CustomDomain == host);
-
-            if (org != null)
-            {
-                return TenantContext.FromOrganization(org.Id, org.Slug, org.Status, org.SchemaName);
-            }
+        // 3b. Try to resolve from a tenant's OWN domain.
+        //
+        // This used to be nested INSIDE the `if (!string.IsNullOrEmpty(slug))` block above, which
+        // made it unreachable for every host it was written for: ExtractSubdomainAsync returns
+        // null unless the host ends in the platform's base domain, and a tenant's own domain —
+        // "dashboard.maryhillug.net" — by definition does not. So the custom-domain feature was
+        // wired end to end and dead. It is a sibling of the subdomain branch, not a child of it.
+        var byDomain = await ResolveCustomDomainAsync(dbContext, host);
+        if (byDomain != null)
+        {
+            return TenantContext.FromOrganization(byDomain.Id, byDomain.Slug, byDomain.Status, byDomain.SchemaName);
         }
 
         // 4. Try to resolve from query string
@@ -182,6 +186,52 @@ public class TenantResolutionMiddleware
             .AsNoTracking()
             .FirstOrDefaultAsync(o => o.Slug == identifier);
     }
+
+    /// <summary>
+    /// The organization whose live <c>CustomDomain</c> is this host, cached for 30 minutes — the
+    /// same window the SaaS settings use, and for the same reason: this runs on every request and
+    /// a tenant's domain changes about once in its lifetime. A NEGATIVE answer is cached too, or
+    /// the platform host itself pays a query per request for a row that will never exist.
+    /// <see cref="CustomDomainCacheKey"/> is what <c>ICustomDomainService</c> evicts when a domain
+    /// goes live or is released.
+    /// </summary>
+    private static async Task<Domain.Entities.Organization.Organization?> ResolveCustomDomainAsync(QMgrDbContext dbContext, string host)
+    {
+        if (string.IsNullOrWhiteSpace(host)) return null;
+
+        var key = CustomDomainCacheKey(host);
+        if (CustomDomainCache.TryGetValue(key, out CustomDomainHit? cached) && cached != null)
+            return cached.Organization;
+
+        var normalized = host.Trim().ToLowerInvariant();
+        var org = await dbContext.Organizations
+            .AsNoTracking()
+            .FirstOrDefaultAsync(o => o.CustomDomain != null && o.CustomDomain.ToLower() == normalized);
+
+        CustomDomainCache.Set(key, new CustomDomainHit(org), CustomDomainCacheFor);
+        return org;
+    }
+
+    /// <summary>The cache key a custom-domain lookup is stored under. One home, so eviction cannot miss.</summary>
+    public static string CustomDomainCacheKey(string host) => "tenant-by-domain:" + host.Trim().ToLowerInvariant();
+
+    /// <summary>Evict one host, after a domain went live or was released.</summary>
+    public static void ForgetCustomDomain(string? host)
+    {
+        if (!string.IsNullOrWhiteSpace(host))
+            CustomDomainCache.Remove(CustomDomainCacheKey(host));
+    }
+
+    private sealed record CustomDomainHit(Domain.Entities.Organization.Organization? Organization);
+
+    private static readonly TimeSpan CustomDomainCacheFor = TimeSpan.FromMinutes(30);
+
+    /// <summary>
+    /// Static rather than an injected <c>IMemoryCache</c>: this middleware is constructed once per
+    /// pipeline and the cache has to outlive the scoped DbContext each request brings with it.
+    /// </summary>
+    private static readonly MemoryCache CustomDomainCache =
+        new(new MemoryCacheOptions());
 
     private async Task<string?> ExtractSubdomainAsync(string host, IPlatformSettingsService platformSettings)
     {

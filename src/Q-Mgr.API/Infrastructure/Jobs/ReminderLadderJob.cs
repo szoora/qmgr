@@ -70,6 +70,7 @@ public class ReminderLadderJob
         await RunAsync("register-chase", () => RegisterChaseAsync(now));
         await RunAsync("lesson-start", () => LessonStartAsync(now));
         await RunAsync("my-day", () => MyDayAsync(now));
+        await RunAsync("minute-action", () => MinuteActionAsync(now));
     }
 
     private async Task RunAsync(string name, Func<Task<int>> ladder)
@@ -447,6 +448,75 @@ public class ReminderLadderJob
         }
         return sent;
     }
+
+    /// <summary>
+    /// Action points out of a meeting's minutes (2026-09-20). Same shape as every other ladder here:
+    /// the stage is CLAIMED with a conditional update on the row before anything is sent, so two
+    /// workers cannot both send stage 2. That claim is the whole reason an action is a row rather
+    /// than a line in the minutes blob.
+    ///
+    /// Only actions with a DATE and a PERSON are chased. An action minuted for a body rather than a
+    /// name is recorded and not chased, and one with no date was never given a deadline — inventing
+    /// one and then nagging about it would be the system making up the minutes.
+    /// </summary>
+    private async Task<int> MinuteActionAsync(DateTime now)
+    {
+        var since = now.AddDays(-MaxLeadDays);
+        var actions = await _context.StaffMinuteActions.IgnoreQueryFilters().AsNoTracking()
+            .Include(a => a.Duty)!.ThenInclude(d => d!.Branch)
+            .Where(a => a.Status == MinuteActionStatus.Open
+                        && a.AssignedUserId != null
+                        && a.DueAt != null && a.DueAt > since && a.DueAt < now.AddDays(MaxLeadDays))
+            .Take(500)
+            .ToListAsync();
+
+        var sent = 0;
+        foreach (var action in actions)
+        {
+            try
+            {
+                if (!await ModuleActiveAsync(action.OrganizationId)) continue;
+                var policy = await PolicyAsync(action.OrganizationId);
+                var zone = AppointmentScheduling.ResolveTimeZone(action.Duty?.Branch?.Timezone);
+                var stage = _ladders.DueStage(_policy.LadderFor(policy, ReminderSubject.MinuteActionDue),
+                    action.DueAt!.Value, action.ReminderStage, now, zone, policy.QuietHours);
+                if (stage == null) continue;
+
+                var previous = action.ReminderStage;
+                var claimed = await _context.StaffMinuteActions.IgnoreQueryFilters()
+                    .Where(a => a.Id == action.Id && a.Status == MinuteActionStatus.Open && a.ReminderStage == previous)
+                    .ExecuteUpdateAsync(s => s.SetProperty(a => a.ReminderStage, stage.Stage));
+                if (claimed == 0) continue;
+                sent++;
+
+                var channels = _ladders.ChannelsFor(stage);
+                if (channels == NotificationChannel.None) continue;
+
+                var overdue = action.DueAt.Value < now;
+                await SafeSendAsync(new CreateNotificationRequest
+                {
+                    UserId = action.AssignedUserId!.Value,
+                    OrganizationId = action.OrganizationId,
+                    BranchId = action.BranchId,
+                    Title = overdue ? "An action from the minutes is overdue" : "An action from the minutes is due",
+                    Message = $"\"{Truncate(action.Text)}\" — from the minutes of \"{action.Duty?.Title ?? "a meeting"}\".",
+                    Type = NotificationType.StaffPerformance,
+                    Priority = overdue ? NotificationPriority.High : NotificationPriority.Normal,
+                    Channels = channels,
+                    EventKey = NotificationEventKeys.StaffMinuteAction,
+                    ActionUrl = $"/admin/staff/duties/{action.DutyId}/minutes",
+                    IconClass = "list-check"
+                }, action.Id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Minute-action reminder failed for action {ActionId}", action.Id);
+            }
+        }
+        return sent;
+    }
+
+    private static string Truncate(string s) => s.Length <= 90 ? s : s[..87] + "…";
 
     // ---------------------------------------------------------------------------------------------------------
 

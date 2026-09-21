@@ -25,6 +25,10 @@
             <h1>Library<QInfo Text="Everything this organization has uploaded: pictures and video for the screens, and PDF documents that can be put on a screen, shared by secure link, or both." Label="Library" /></h1>
             <p class="subtitle">Everything this organization has uploaded: pictures and video for the screens, and PDF documents that can be put on a screen, shared by secure link, or both.</p>
         </div>
+        <div class="header-actions">
+            @* The open section's own buttons land here — see QPageActions. *@
+            <SectionOutlet SectionId="QPageActions.Id" />
+        </div>
     </div>
 
     <QTabs Tabs="@tabs" @bind-ActiveKey="@hubTab" IdPrefix="lib" AriaLabel="Library sections" />
@@ -86,7 +90,7 @@
         // next LoadAsync retries.
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
         {
-            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            Navigation.NavigateTo(BillingLinks.Modules, forceLoad: false);
             return;
         }
 

@@ -24,6 +24,10 @@
             <h1>Feedback<QInfo Text="What customers said, the questions they were asked, and what it adds up to over a period." Label="Feedback" /></h1>
             <p class="subtitle">What customers said, the questions they were asked, and what it adds up to over a period.</p>
         </div>
+        <div class="header-actions">
+            @* The open section's own buttons land here — see QPageActions. *@
+            <SectionOutlet SectionId="QPageActions.Id" />
+        </div>
     </div>
 
     <QTabs Tabs="@tabs" @bind-ActiveKey="@hubTab" IdPrefix="fb" AriaLabel="Feedback sections" />
@@ -83,7 +87,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
         {
-            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            Navigation.NavigateTo(BillingLinks.Modules, forceLoad: false);
             return;
         }
 

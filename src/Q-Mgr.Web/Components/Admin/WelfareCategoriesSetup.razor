@@ -129,7 +129,8 @@
                 @foreach (var color in availableColors)
                 {
                     <div class="color-option @(formData.Color == color ? "selected" : "")"
-                         style="background-color: @color"
+                         style="background-color: @(color ?? "var(--qm-primary)")"
+                         title="@(color is null ? "Your organisation's own brand colour" : color)"
                          @onclick="@(() => formData.Color = color)"></div>
                 }
             </div>
@@ -154,7 +155,7 @@
         margin: 0 0 4px;
         color: var(--qm-text-primary);
     }
-    .loading-container, .empty-state {
+    .loading-container {
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -166,26 +167,11 @@
         border: 1px solid var(--qm-border);
     }
 
-    .empty-state .rzi {
-        font-size: 64px;
-        margin-bottom: 16px;
-        color: var(--qm-primary);
-    }
-
-    .empty-state h3 {
-        margin: 0 0 8px;
-        color: var(--qm-text-primary);
-    }
-
-    .empty-state p {
-        margin: 0 0 20px;
-    }
-
     .case-type-heading {
         display: flex;
         align-items: center;
         gap: 10px;
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
         color: var(--qm-text-primary);
         margin: 28px 0 14px;
     }
@@ -244,13 +230,13 @@
 
     .category-body h4 {
         margin: 0 0 8px;
-        font-size: 16px;
+        font-size: var(--qm-text-md);
         color: var(--qm-text-primary);
     }
 
     .category-description {
         margin: 0;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-muted);
         line-height: 1.5;
     }
@@ -268,7 +254,7 @@
         display: flex;
         align-items: center;
         gap: 6px;
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-muted);
         text-transform: capitalize;
     }
@@ -279,14 +265,14 @@
     }
 
     .category-stat .rzi {
-        font-size: 16px;
+        font-size: var(--qm-text-md);
         color: var(--qm-primary);
     }
 
     .form-group label {
         display: block;
         margin-bottom: 6px;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         font-weight: 500;
         color: var(--qm-text-secondary);
     }
@@ -294,7 +280,7 @@
     .form-group small {
         display: block;
         margin-top: 4px;
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-muted);
     }
     .color-picker {
@@ -334,9 +320,21 @@
     private bool pointsError = false;
     private string pointsErrorText = "";
 
-    private readonly string[] availableColors = new[]
+    // THE FIRST SWATCH IS THE TENANT'S OWN BRAND COLOUR, stored as NULL rather than as a hex.
+    // Every render site already reads `Color ?? var(--qm-primary)`, so a null follows the
+    // organization's palette wherever it appears — including after a rebrand, which a stored hex
+    // never would.
+    //
+    // It leads the list because the four entries that used to lead it were Q-Mgr's own shipped
+    // wine (#8c2f52 and its family) and the first of them was the pre-selected default. A
+    // white-labelled school therefore created every category in the OLD product's colours with
+    // nothing to say why — reported 2026-09-21 as "this page is not using tenant scoped css
+    // tokens ... based on the brown color". The rest are distinct hues that belong to no brand: a
+    // category picker exists to tell categories apart.
+    private readonly string?[] availableColors = new string?[]
     {
-        "#8c2f52", "#a8446e", "#47393f", "#2e242a",
+        null,
+        "#2f6f8c", "#5b4a9e", "#47535f",
         "#16a34a", "#10b981", "#f59e0b", "#d97706",
         "#dc2626", "#ef4444", "#2f5a54", "#5a9c92"
     };
@@ -376,7 +374,7 @@
             await ModuleState.LoadAsync(ModuleApi);
             if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
             {
-                Navigation.NavigateTo("/billing/modules", forceLoad: false);
+                Navigation.NavigateTo(BillingLinks.Modules, forceLoad: false);
                 return;
             }
 
@@ -450,7 +448,7 @@
             CaseType = WelfareCaseType.Achievement,
             Name = "",
             DefaultTier = WelfareTier.Low,
-            Color = availableColors[0],
+            Color = null,
             SortOrder = categories.Any() ? categories.Max(c => c.SortOrder) + 1 : 0,
             IsActive = true
         };
@@ -469,7 +467,7 @@
             Description = category.Description,
             DefaultTier = category.DefaultTier,
             DefaultPoints = category.DefaultPoints,
-            Color = category.Color ?? availableColors[0],
+            Color = category.Color,
             SortOrder = category.SortOrder,
             IsActive = category.IsActive
         };
@@ -622,7 +620,7 @@
         public string? Description { get; set; }
         public WelfareTier DefaultTier { get; set; } = WelfareTier.Low;
         public int? DefaultPoints { get; set; }
-        public string? Color { get; set; } = "#8c2f52";
+        public string? Color { get; set; }
         public int SortOrder { get; set; }
         public bool IsActive { get; set; } = true;
     }

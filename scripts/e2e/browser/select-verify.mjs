@@ -128,7 +128,7 @@ await key('Escape', 'Escape', 27); await t.sleep(500);
 const migrated = [
   ['/reports/visitors', /visitor type/i, 'Visitor report: Visitor type filter'],
   ['/reports/visitors', /status/i, 'Visitor report: Status filter'],
-  ['/billing/usage', null, 'Usage: trend metric'],
+  ['/billing?tab=usage', null, 'Usage: trend metric'],
   ['/admin/appearance?tab=links', /select branch/i, 'Customer links: branch'],
 ];
 for (const [path, label, name] of migrated) {

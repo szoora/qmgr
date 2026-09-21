@@ -84,20 +84,20 @@
 
     .scanner-side { display: flex; flex-direction: column; gap: 16px; }
     .direction-toggle { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 16px; }
-    .direction-label { font-size: 13px; color: var(--qm-text-muted); display: block; margin-bottom: 10px; }
+    .direction-label { font-size: var(--qm-text-base); color: var(--qm-text-muted); display: block; margin-bottom: 10px; }
     .direction-buttons { display: flex; gap: 8px; }
     .direction-btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; min-height: var(--q-control-h); padding: 0 12px; font-size: var(--q-control-font); border-radius: var(--qm-radius-sm); border: 1px solid var(--qm-border); background: var(--qm-bg-secondary); color: var(--qm-text-muted); cursor: pointer; }
     .direction-btn.active { background: var(--qm-primary); border-color: var(--qm-primary); color: var(--qm-text-on-primary); }
-    .direction-hint { font-size: 12px; color: var(--qm-text-muted); margin: 10px 0 0; }
+    .direction-hint { font-size: var(--qm-text-sm); color: var(--qm-text-muted); margin: 10px 0 0; }
 
     .scan-result { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 20px; text-align: center; }
     .scan-result.watchlisted { border-color: var(--qm-danger); background: rgba(var(--qm-danger-rgb), 0.06); }
     .scan-result-alert { color: var(--qm-danger); font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; justify-content: center; gap: 6px; }
     .scan-result-icon { font-size: 32px; color: var(--qm-primary); margin-bottom: 8px; }
     .scan-result-message { font-weight: 600; color: var(--qm-text-primary); }
-    .scan-result-detail { font-size: 13px; color: var(--qm-text-muted); margin-top: 4px; }
+    .scan-result-detail { font-size: var(--qm-text-base); color: var(--qm-text-muted); margin-top: 4px; }
 
-    .scan-error { background: rgba(var(--qm-danger-rgb), 0.1); color: var(--qm-danger); border-radius: var(--qm-radius-sm); padding: 12px 14px; display: flex; align-items: center; gap: 8px; font-size: 14px; }
+    .scan-error { background: rgba(var(--qm-danger-rgb), 0.1); color: var(--qm-danger); border-radius: var(--qm-radius-sm); padding: 12px 14px; display: flex; align-items: center; gap: 8px; font-size: var(--qm-text-base); }
 </style>
 
 @code {

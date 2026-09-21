@@ -9,7 +9,9 @@
    hardcoded demo branch's settings regardless of who was actually visiting. Real per-branch
    branding stays on KioskLayout for the customer-facing screens that are actually reached via a
    specific branch (Kiosk, Customer Display, Feedback entry/page). *@
-<div class="public-layout" data-theme="light">
+@* The tenant's palette, on every public page at once, so a branded sign-in page and a branded
+   password reset cannot drift apart. Empty on the platform host, which renders no attribute. *@
+<div class="public-layout" data-theme="light" style="@Host.BrandingStyle">
     @Body
 </div>
 
@@ -20,3 +22,7 @@
         min-height: 100vh;
     }
 </style>
+
+@code {
+    [CascadingParameter] public QMgr.Web.Services.TenantHostContext Host { get; set; } = QMgr.Web.Services.TenantHostContext.Platform;
+}

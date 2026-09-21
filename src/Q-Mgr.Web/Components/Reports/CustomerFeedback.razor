@@ -45,7 +45,7 @@
             <span>@errorMessage</span>
             @if (isForbidden)
             {
-                <QButton Text="View plans" Icon="box-seam" Variant="secondary" Size="sm" OnClick="@(() => Navigation.NavigateTo("/billing/modules"))" />
+                <QButton Text="View plans" Icon="box-seam" Variant="secondary" Size="sm" OnClick="@(() => Navigation.NavigateTo(BillingLinks.Modules))" />
             }
             else
             {
@@ -62,13 +62,13 @@
     }
     else if (report is null || report.TotalCount == 0)
     {
-        <QCard Class="empty-card">
-            <div class="empty-state-icon"><QIcon Name="chat-dots-fill" /></div>
-            <h3>No feedback in this range</h3>
-            <p>No customer submitted feedback between @RangeCaption. Pick a wider date range, or check back once customers have rated a visit.</p>
-            <QDataExport TItem="string[]" Title="Customer feedback" FileStem="customer-feedback"
-                         Subtitle="@RangeCaption" SourceProvider="@ProvideExportSourceAsync" />
-        </QCard>
+        <QEmptyState Icon="chat-dots-fill" Title="No feedback in this range"
+                     Text="@($"Nothing was submitted between {RangeCaption}. Try a wider date range.")">
+            <Action>
+                <QDataExport TItem="string[]" Title="Customer feedback" FileStem="customer-feedback"
+                             Subtitle="@RangeCaption" SourceProvider="@ProvideExportSourceAsync" />
+            </Action>
+        </QEmptyState>
     }
     else
     {
@@ -89,29 +89,11 @@
                 </div>
             </QCard>
 
-            <div class="mini-stats">
-                <div class="mini-stat positive">
-                    <QIcon Name="emoji-smile-fill" />
-                    <div class="mini-info">
-                        <span class="mini-value">@report.PositivePercent.ToString("0.#")%</span>
-                        <span class="mini-label">Positive (4-5 stars) · @report.PositiveCount</span>
-                    </div>
-                </div>
-                <div class="mini-stat neutral">
-                    <QIcon Name="emoji-neutral-fill" />
-                    <div class="mini-info">
-                        <span class="mini-value">@report.NeutralPercent.ToString("0.#")%</span>
-                        <span class="mini-label">Neutral (3 stars) · @report.NeutralCount</span>
-                    </div>
-                </div>
-                <div class="mini-stat negative">
-                    <QIcon Name="emoji-frown-fill" />
-                    <div class="mini-info">
-                        <span class="mini-value">@report.NegativePercent.ToString("0.#")%</span>
-                        <span class="mini-label">Negative (1-2 stars) · @report.NegativeCount</span>
-                    </div>
-                </div>
-            </div>
+            <QStatRow>
+                <QStatTile Icon="emoji-smile-fill" Variant="success" Value="@($"{report.PositivePercent:0.#}%")" Label="Positive (4–5 stars)" Sub="@($"{report.PositiveCount} responses")" />
+                <QStatTile Icon="emoji-neutral-fill" Variant="warning" Value="@($"{report.NeutralPercent:0.#}%")" Label="Neutral (3 stars)" Sub="@($"{report.NeutralCount} responses")" />
+                <QStatTile Icon="emoji-frown-fill" Variant="danger" Value="@($"{report.NegativePercent:0.#}%")" Label="Negative (1–2 stars)" Sub="@($"{report.NegativeCount} responses")" />
+            </QStatRow>
         </div>
 
         <!-- Rating Distribution + Trend -->
@@ -289,72 +271,39 @@
     }
 
     .rating-value {
-        font-size: 56px;
+        font-size: var(--qm-text-stat);
         font-weight: 700;
         color: var(--qm-text-primary);
         line-height: 1;
     }
 
     .rating-stars {
-        font-size: 24px;
+        font-size: var(--qm-text-stat);
         display: flex;
         gap: 2px;
     }
 
     .star-on { color: var(--qm-accent-yellow); }
     .star-off { color: var(--qm-text-muted); }
-    .star-on.small, .star-off.small { font-size: 16px; }
+    .star-on.small, .star-off.small { font-size: var(--qm-text-md); }
 
     .rating-label {
-        font-size: 16px;
+        font-size: var(--qm-text-md);
         font-weight: 600;
         margin-top: 8px;
     }
 
     .rating-count {
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
     }
 
-    .mini-stats {
-        display: flex;
-        gap: 16px;
-        align-items: stretch;
-    }
 
-    .mini-stat {
-        flex: 1;
-        background: var(--qm-bg-card);
-        border-radius: var(--qm-radius-xl);
-        padding: 20px;
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        box-shadow: var(--qm-shadow-sm);
-    }
 
-    .mini-stat .rzi {
-        font-size: 40px;
-    }
 
-    .mini-stat.positive .rzi { color: var(--qm-success); }
-    .mini-stat.neutral .rzi { color: var(--qm-warning); }
-    .mini-stat.negative .rzi { color: var(--qm-danger); }
 
-    .mini-info {
-        display: flex;
-        flex-direction: column;
-    }
 
-    .mini-value {
-        font-size: 28px;
-        font-weight: 700;
-    }
 
-    .mini-label {
-        font-size: 12px;
-        color: var(--qm-text-secondary);
-    }
 
     .filter-card {
         padding: 16px 24px;
@@ -367,7 +316,7 @@
 
     .range-caption {
         margin: 14px 0 0 0;
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-muted);
         max-width: 900px;
     }
@@ -384,18 +333,18 @@
 
     .chart-card h4, .table-card h4 {
         margin: 0 0 20px 0;
-        font-size: 16px;
+        font-size: var(--qm-text-md);
         font-weight: 600;
     }
 
     .chart-empty {
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-muted);
         margin: 0;
     }
 
     .chart-note {
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         color: var(--qm-text-muted);
         margin: 12px 0 0 0;
     }
@@ -415,7 +364,7 @@
 
     .list-header h4 {
         margin: 0;
-        font-size: 16px;
+        font-size: var(--qm-text-md);
         font-weight: 600;
     }
 
@@ -452,13 +401,13 @@
     }
 
     .feedback-service {
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         font-weight: 600;
         color: var(--qm-primary);
     }
 
     .feedback-date {
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         color: var(--qm-text-secondary);
     }
 
@@ -486,7 +435,7 @@
     }
 
     .feedback-category {
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         color: var(--qm-text-muted);
     }
 
@@ -500,12 +449,12 @@
     }
 
     .feedback-counter {
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         font-weight: 600;
     }
 
     .feedback-token {
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         color: var(--qm-text-secondary);
     }
 
@@ -514,8 +463,6 @@
        screen every card hung past the right edge (found by the UI sweep's clipped-edge check, 2026-09-17). */
     @@media (max-width: 768px) {
         .stats-row { grid-template-columns: minmax(0, 1fr); }
-        .mini-stats { flex-wrap: wrap; }
-        .mini-stat { flex: 1 1 140px; min-width: 0; }
         .charts-row { grid-template-columns: minmax(0, 1fr); }
         .feedback-item { flex-wrap: wrap; gap: 12px; }
         .feedback-left, .feedback-right { width: auto; }
@@ -550,14 +497,8 @@
     }
 
     .empty-card {
-        padding: 48px 24px;
+        padding: var(--qm-empty-pad);
         text-align: center;
-    }
-
-    .empty-state-icon {
-        font-size: 3rem;
-        color: var(--qm-text-muted);
-        margin-bottom: 1rem;
     }
 
     .empty-card h3 {
@@ -567,7 +508,7 @@
 
     .empty-card p {
         color: var(--qm-text-secondary);
-        margin-bottom: 1.5rem;
+        margin-bottom: 4px;
     }
 </style>
 
@@ -658,7 +599,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
         {
-            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            Navigation.NavigateTo(BillingLinks.Modules, forceLoad: false);
             return;
         }
 

@@ -25,22 +25,19 @@
 *@
 
 <div class="admin-page tts-page">
-<div class="page-header">
-    @if (!Embedded)
-    {
-        <div class="header-content">
-            <h1>School Day<QInfo Text="Teaching days, periods and breaks, the cycle, and when teachers cannot be timetabled." Label="School Day" /></h1>
-            <p class="subtitle">Teaching days, periods and breaks, the cycle, and when teachers cannot be timetabled.</p>
-        </div>
-    }
-    <div class="header-actions">
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1>School Day<QInfo Text="Teaching days, periods and breaks, the cycle, and when teachers cannot be timetabled." Label="School Day" /></h1>
+        <p class="subtitle">Teaching days, periods and breaks, the cycle, and when teachers cannot be timetabled.</p>
+    </Title>
+    <Actions>
         <QButton Text="Timetable" Icon="grid-3x3-gap" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/timetable"))" />
         @if (canManage && settings != null)
         {
             <QButton Text="@(saving ? "Saving..." : "Save")" Icon="check-lg" Variant="primary" OnClick="@SaveAsync" Disabled="@saving" />
         }
-    </div>
-</div>
+    </Actions>
+</QPageActions>
 
     @if (isLoading)
     {
@@ -236,9 +233,9 @@
     }
 </div>
 
-<style>.tts-note { font-size: 13px; color: var(--qm-text-secondary); margin: 8px 0 0; }
-    .tts-help { font-size: 12.5px; color: var(--qm-text-muted); margin: 8px 0 0; }
-    .tts-error { color: var(--qm-danger); font-size: 13px; margin: 12px 0 0; }
+<style>.tts-note { font-size: var(--qm-text-base); color: var(--qm-text-secondary); margin: 8px 0 0; }
+    .tts-help { font-size: var(--qm-text-sm); color: var(--qm-text-muted); margin: 8px 0 0; }
+    .tts-error { color: var(--qm-danger); font-size: var(--qm-text-base); margin: 12px 0 0; }
     .tts-days { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 4px 0 12px; }
     .tts-actions { display: flex; flex-wrap: wrap; margin-top: 8px; }
     .tts-actions--page { margin-top: 12px; }
@@ -276,7 +273,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
-            Navigation.NavigateTo("/billing/modules");
+            Navigation.NavigateTo(BillingLinks.Modules);
             return;
         }
         canManage = await PermissionService.HasPermissionAsync(Permissions.TimetableManage);
@@ -371,9 +368,53 @@
 
     private static string KindLabel(BellPeriodKind k) => k switch { BellPeriodKind.Lesson => "Lesson", BellPeriodKind.Break => "Break", _ => "Assembly" };
 
+    /// <summary>
+    /// PHASE 3 OF THE LIST-PAGE SWEEP (2026-09-20): the client enforces what the server enforces.
+    ///
+    /// The school day and the rooms are TWO calls, and the rooms are the second. A blank room — and
+    /// "Add a room" creates one — was refused by the API with "Every room needs a name", AFTER the
+    /// school day had already saved: the page said so honestly ("The school day was saved; the rooms
+    /// were not"), but the reader still lost the room edit and had no idea which row was at fault.
+    /// Refused here instead, naming the row, before either call goes out.
+    /// </summary>
+    private string? PreSubmitProblem()
+    {
+        var blankRoom = rooms.FindIndex(r => string.IsNullOrWhiteSpace(r.Name));
+        if (blankRoom >= 0) return $"Room {blankRoom + 1} has no name. Name it or remove it.";
+
+        if (rooms.Count > 500) return "A branch can list at most 500 rooms.";
+
+        var dupe = rooms.Where(r => !string.IsNullOrWhiteSpace(r.Name))
+            .GroupBy(r => r.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(g => g.Count() > 1);
+        if (dupe != null) return $"\"{dupe.Key}\" is listed twice. Two rooms of the same name cannot be told apart on a timetable.";
+
+        var blankDay = settings!.DayTypes.FirstOrDefault(t => string.IsNullOrWhiteSpace(t.Name));
+        if (blankDay != null) return "A day type has no name.";
+
+        var blankPeriod = settings.DayTypes
+            .SelectMany(t => t.Periods.Select(p => (Day: t.Name, p.Key, p.Label)))
+            .FirstOrDefault(x => string.IsNullOrWhiteSpace(x.Key) || string.IsNullOrWhiteSpace(x.Label));
+        if (blankPeriod.Key != null || blankPeriod.Label != null)
+        {
+            if (string.IsNullOrWhiteSpace(blankPeriod.Key) || string.IsNullOrWhiteSpace(blankPeriod.Label))
+                return $"A period in \"{blankPeriod.Day}\" has no key or no label. A lesson is stored against the key, so it cannot be blank.";
+        }
+
+        return null;
+    }
+
     private async Task SaveAsync()
     {
         if (settings == null) return;
+
+        if (PreSubmitProblem() is { } problem)
+        {
+            saveError = problem;
+            Toast.Notify(ToastSeverity.Warning, "Not saved", problem);
+            return;
+        }
+
         saving = true;
         saveError = null;
         try

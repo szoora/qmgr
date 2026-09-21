@@ -14,22 +14,19 @@
 }
 
 <div class="admin-page">
-    <div class="page-header">
-        @if (!Embedded)
-        {
-            <div class="header-content">
-                <h1>Printer Settings<QInfo Text="Configure ticket printing for kiosk and counter terminals" Label="Printer Settings" /></h1>
-                <p class="subtitle">Configure ticket printing for kiosk and counter terminals</p>
-            </div>
-        }
-        <div class="header-actions">
+    <QPageActions Embedded="@Embedded">
+        <Title>
+            <h1>Printer Settings<QInfo Text="Configure ticket printing for kiosk and counter terminals" Label="Printer Settings" /></h1>
+            <p class="subtitle">Configure ticket printing for kiosk and counter terminals</p>
+        </Title>
+        <Actions>
             @if (canEdit)
             {
                 <QButton Text="Test Print" Icon="printer-fill" Variant="secondary" OnClick="@TestPrint" Disabled="@isTesting" />
                 <QButton Text="Save Settings" Icon="check-lg" Variant="primary" OnClick="@SaveSettings" Disabled="@(isSaving || loadFailed)" />
             }
-        </div>
-    </div>
+        </Actions>
+    </QPageActions>
 
     @if (isLoading)
     {
@@ -247,7 +244,7 @@
     }
 
     .card-header > .rzi {
-        font-size: 24px;
+        font-size: var(--qm-text-stat);
         color: var(--qm-primary);
         padding: 12px;
         background: color-mix(in srgb, var(--qm-primary) 10%, transparent);
@@ -256,14 +253,14 @@
 
     .card-header h3 {
         margin: 0 0 4px;
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
         font-weight: 600;
         color: var(--qm-text-primary);
     }
 
     .card-header p {
         margin: 0;
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-muted);
     }
 
@@ -306,7 +303,7 @@
     }
 
     .method-icon .rzi {
-        font-size: 24px;
+        font-size: var(--qm-text-stat);
         color: var(--qm-text-muted);
     }
 
@@ -322,7 +319,7 @@
     }
 
     .method-desc {
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-muted);
         line-height: 1.4;
     }
@@ -335,7 +332,7 @@
 
     .method-check .rzi {
         color: var(--qm-primary);
-        font-size: 20px;
+        font-size: var(--qm-text-xl);
     }
 
     /* Form Grid */
@@ -357,13 +354,13 @@
     }
 
     .form-group label {
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         font-weight: 500;
         color: var(--qm-text-primary);
     }
 
     .form-group small {
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         color: var(--qm-text-muted);
     }
 
@@ -405,7 +402,7 @@
     }
 
     .option-desc {
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-muted);
     }
 
@@ -423,7 +420,7 @@
 
     .info-box .rzi {
         color: var(--qm-warning);
-        font-size: 20px;
+        font-size: var(--qm-text-xl);
         flex-shrink: 0;
     }
 
@@ -435,7 +432,7 @@
 
     .info-box p {
         margin: 0;
-        font-size: 13px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-muted);
     }
 
@@ -459,14 +456,14 @@
         color: black;
         padding: 16px;
         font-family: 'Courier New', monospace;
-        font-size: 12px;
+        font-size: var(--qm-text-sm);
         text-align: center;
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     }
 
     .preview-header {
         font-weight: bold;
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         margin-bottom: 8px;
     }
 
@@ -485,14 +482,14 @@
     }
 
     .preview-service {
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         font-weight: bold;
         margin-bottom: 8px;
     }
 
     .preview-details {
         text-align: left;
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         line-height: 1.6;
     }
 
@@ -510,18 +507,18 @@
         padding: 8px;
         background: #f0f0f0;
         border-radius: var(--qm-radius-sm);
-        font-size: 10px;
+        font-size: var(--qm-text-xs);
     }
 
     .preview-feedback .feedback-code {
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         font-weight: bold;
         letter-spacing: 2px;
         margin-top: 4px;
     }
 
     .preview-footer {
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         margin-top: 8px;
     }
 </style>

@@ -142,6 +142,13 @@ public class PlatformSettingsController : ControllerBase
             return BadRequest(new { message = "This setting is not editable" });
         }
 
+        // The payment gateway has its own page and its own validated endpoint (2026-09-19). This generic
+        // path would take the whole blob from the client and could drop the webhook secret on the way.
+        if (category == "MobileMoney")
+        {
+            return BadRequest(new { error = "USE_PAYMENTS_PAGE", message = "Payment gateway settings are edited on the platform Payments page." });
+        }
+
         // Update based on category (with validation)
         bool success = category switch
         {
@@ -150,7 +157,6 @@ public class PlatformSettingsController : ControllerBase
             "RateLimiting" => await UpdateTypedSettings<RateLimitSettings>(category, request.SettingsJson, setting.SettingsJson),
             "SaaS" => await UpdateTypedSettings<SaasSettings>(category, request.SettingsJson, setting.SettingsJson),
             "Stripe" => await UpdateTypedSettings<StripeSettings>(category, request.SettingsJson, setting.SettingsJson),
-            "MobileMoney" => await UpdateTypedSettings<MobileMoneySettings>(category, request.SettingsJson, setting.SettingsJson),
             "Ads" => await UpdateTypedSettings<AdsSettings>(category, request.SettingsJson, setting.SettingsJson),
             "Email" => await UpdateTypedSettings<EmailSettings>(category, request.SettingsJson, setting.SettingsJson),
             _ => false
@@ -327,7 +333,7 @@ public class PlatformSettingsController : ControllerBase
     {
         ["Email"] = new[] { "SmtpPassword" },
         ["Stripe"] = new[] { "SecretKey", "WebhookSecret" },
-        ["MobileMoney"] = new[] { "ApiKey" },
+        ["MobileMoney"] = new[] { "ApiKey", "WebhookSecret" },
         ["JWT"] = new[] { "Secret" }
     };
 

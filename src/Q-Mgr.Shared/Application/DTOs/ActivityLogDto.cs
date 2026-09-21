@@ -64,6 +64,13 @@ public static class ActivityActions
     public const string RegisterSubmitted = "staff.duty.register-submitted";
     public const string RegisterReopened = "staff.duty.register-reopened";
     public const string MinutesAttached = "staff.duty.minutes-attached";
+    // Minutes of a meeting (2026-09-20). One event per transition, because the transitions are what
+    // make a set of minutes the official record and "who adopted this, and when" has to be answerable.
+    public const string MinutesSaved = "staff.duty.minutes-saved";
+    public const string MinutesCirculated = "staff.duty.minutes-circulated";
+    public const string MinutesApproved = "staff.duty.minutes-approved";
+    public const string MinutesCorrected = "staff.duty.minutes-corrected";
+    public const string MinuteActionCompleted = "staff.duty.minute-action-completed";
 
     public const string AppraisalOpened = "staff.appraisal.opened";
     public const string AppraisalTargetsSet = "staff.appraisal.targets-set";
@@ -177,6 +184,12 @@ public static class StaffExportKinds
     /// activity log and made a published appraisal indistinguishable from a performance file.
     /// </summary>
     public const string Appraisal = "appraisal";
+    /// <summary>
+    /// Printed or published minutes of a meeting (2026-09-20). Its own kind rather than "duty-reports":
+    /// the two are gated differently and reading "a duty report pack was published" when somebody
+    /// published the minutes of the staff meeting would be the wrong entry in the log.
+    /// </summary>
+    public const string Minutes = "minutes";
 }
 
 public record RecordStaffExportRequest

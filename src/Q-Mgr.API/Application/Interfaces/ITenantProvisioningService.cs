@@ -103,7 +103,7 @@ public record ProvisionTenantRequest
     public string? IndustryType { get; init; }
 
     /// <summary>Preferred currency (USD, UGX)</summary>
-    public string PreferredCurrency { get; init; } = "USD";
+    public string PreferredCurrency { get; init; } = "UGX";
 
     /// <summary>Source of registration (web, api, referral)</summary>
     public string? Source { get; init; }

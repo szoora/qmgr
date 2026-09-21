@@ -1,679 +1,285 @@
-@page "/billing/overview"
 @using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using System.Globalization
 @using System.Text.Json
 @inject HttpClient Http
 @inject IPermissionService PermissionService
+@inject IModuleApiService ModuleApi
+@inject IPaymentApiService PaymentApi
+@using QMgr.Domain.Payments
 @inject NavigationManager Navigation
 @inject JsonSerializerOptions JsonOptions
 
-<PageTitle>Billing Overview - Q-Mgr</PageTitle>
+@*
+    Overview — the first tab of the Billing hub (/billing, /billing?tab=overview). No @page.
 
-<!-- Page Header -->
-<div class="page-header">
-    <div class="header-left">
-        <h1>
-            <QIcon Name="credit-card-fill" Size="32" />
-            Billing Overview
-        </h1>
-        <div class="breadcrumb">
-            <span>Manage your subscription, invoices, and payment methods</span>
-        </div>
-    </div>
-    <div class="header-right">
-        <QButton Icon="arrow-repeat"
-                 Text="Refresh"
-                 Variant="secondary"
-                 OnClick="@LoadData"
-                 Disabled="@isLoading" />
-    </div>
-</div>
+    Rebuilt 2026-09-19. The old page was a half-width "Current Plan" card beside empty space, then
+    two big section cards repeating the Invoices and Payment Methods pages — and nothing at a
+    glance. It is four figures and two short tables now. Two silent bugs went with it:
+
+      * EVERY RECENT INVOICE READ 0. The page kept its own InvoiceDto with an Amount the API has never
+        sent (it is Total). It reads the shared QMgr.Application.DTOs.InvoiceDto now.
+      * PAYMENT METHODS WERE ALWAYS NONE. It read GET billing/payment-methods as a bare list; the API
+        answers { paymentMethods: [...] }, the read threw, and a bare catch swallowed it. This tab no
+        longer shows payment methods at all — the Payment tab owns them.
+
+    What a module costs comes from the module's AGREED price when one was captured, else the list
+    price — the grandfathering rule in CLAUDE.md ("never charge from a catalog row"). An annual price
+    is shown as its monthly share so the total is one comparable figure.
+*@
+
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1>Billing</h1>
+        <p class="subtitle">What this account pays for.</p>
+    </Title>
+    <Actions>
+        <QButton Icon="arrow-repeat" Text="Refresh" Variant="secondary" OnClick="@LoadData" Disabled="@isLoading" />
+    </Actions>
+</QPageActions>
 
 @if (isLoading)
 {
-    <div class="loading-overlay">
-        <div class="webster-spinner"></div>
-        <span class="loading-text">Loading billing information...</span>
-    </div>
+    <div class="loading-container"><QSpinner Size="lg" /><span>Loading billing...</span></div>
 }
 else
 {
-@if (billingInfo != null)
-{
-    <!-- Subscription Status Card -->
-    <div class="billing-grid">
-        <QCard Class="subscription-card" Title="Current Plan" Icon="star-fill">
+    <QStatRow>
+        <QStatTile Icon="@PlanIcon" Variant="@PlanVariant" Value="@PlanValue" Label="Plan" Sub="@PlanSub" />
+        <QStatTile Icon="cash-stack" Variant="primary" Value="@($"UGX {MonthlyTotal.ToString("N0", CultureInfo.InvariantCulture)}")" Label="Per month"
+                   Sub="@(Held.Any() ? $"{Held.Count} module{(Held.Count == 1 ? "" : "s")}" : "Nothing held")" />
+        <QStatTile Icon="grid-3x3-gap-fill" Variant="info" Value="@($"{Held.Count} of {catalog.Count}")" Label="Modules" Href="@BillingLinks.Modules"
+                   Sub="@(catalog.Count > Held.Count ? $"{catalog.Count - Held.Count} more available" : "All modules held")" />
+        <QStatTile Icon="calendar-event" Variant="@RenewalVariant" Value="@RenewalValue" Label="Next renewal" Sub="@RenewalLabel" />
+        <QStatTile Icon="phone" Variant="@(renewalNumber?.PhoneNumber == null ? "warning" : "default")"
+                   Value="@(renewalNumber?.Display ?? "Not set")" Label="Renewal number" Href="@RenewalNumberLink"
+                   Sub="@(renewalNumber?.PhoneNumber == null ? "Set the number renewals are charged to" : $"{renewalNumber.Operator} · Change")" />
+    </QStatRow>
+
+    @if (unpaidCount > 0)
+    {
+        <p class="ov-alert"><QIcon Name="exclamation-triangle-fill" /><span>@unpaidCount invoice@(unpaidCount == 1 ? " is" : "s are") waiting to be paid. <a href="@BillingLinks.Invoices">See invoices</a></span></p>
+    }
+
+    <div class="ov-grid">
+        <QCard Title="Your modules" Icon="grid-3x3-gap-fill" NoPadding="true">
             <HeaderActions>
-                <span class="plan-badge @GetPlanClass(billingInfo.PlanName)">
-                    @billingInfo.PlanName
-                </span>
+                <QButton Text="Manage" Icon="arrow-right" Variant="ghost" Size="sm" OnClick="@(() => Navigation.NavigateTo(BillingLinks.Modules))" />
             </HeaderActions>
             <ChildContent>
-                <div class="plan-price">
-                    <span class="currency">@billingInfo.Currency</span>
-                    <span class="amount">@billingInfo.MonthlyAmount.ToString("N2")</span>
-                    <span class="period">/month</span>
-                </div>
-                <div class="plan-details">
-                    <div class="detail-item">
-                        <QIcon Name="calendar-check-fill" />
-                        <span>Billing Period: @billingInfo.BillingCycle</span>
-                    </div>
-                    <div class="detail-item">
-                        <QIcon Name="clock-fill" />
-                        <span>Next Billing: @QDateFormat.D(billingInfo.NextBillingDate)</span>
-                    </div>
-                    <div class="detail-item">
-                        <QIcon Name="credit-card-fill" />
-                        <span>Status: <strong class="@GetStatusClass(billingInfo.Status)">@billingInfo.Status</strong></span>
-                    </div>
-                </div>
-                <div class="card-actions">
-                    <QButton Text="Manage Modules"
-                             Icon="arrow-up-circle-fill"
-                             Variant="primary"
-                             OnClick="@(() => Navigation.NavigateTo("/billing/modules"))" />
-                </div>
-            </ChildContent>
-        </QCard>
-
-        <!-- Quick Stats -->
-        <QStatRow Class="stats-grid billing-stats">
-            <QStatTile Value="@billingInfo.Status" Label="Account Status" Icon="check-circle-fill" Variant="success" />
-            <QStatTile Value="@GetDaysUntilRenewal().ToString()" Label="Days Until Renewal" Icon="calendar-event-fill" Variant="primary" />
-            <QStatTile Value="@unpaidInvoices.Count.ToString()" Label="Unpaid Invoices" Icon="receipt" Variant="warning" />
-            <QStatTile Value="@($"{billingInfo.Currency} {billingInfo.MonthlyAmount:N2}")" Label="This Month's Total" Icon="graph-up" Variant="info" />
-        </QStatRow>
-    </div>
-
-    <!-- Usage Summary -->
-    <div class="usage-summary">
-        <h2>
-            <QIcon Name="bar-chart-line-fill" Size="24" />
-            Usage This Month
-        </h2>
-        <div class="usage-grid">
-            <div class="usage-item">
-                <div class="usage-header">
-                    <span class="usage-label">
-                        <QIcon Name="people-fill" />
-                        Active Users
-                    </span>
-                    <span class="usage-value">@billingInfo.ActiveUsers / @billingInfo.MaxUsers</span>
-                </div>
-                <div class="progress-bar">
-                    <div class="progress-fill" style="width: @GetUsagePercentage(billingInfo.ActiveUsers, billingInfo.MaxUsers)%"></div>
-                </div>
-            </div>
-
-            <div class="usage-item">
-                <div class="usage-header">
-                    <span class="usage-label">
-                        <QIcon Name="building-fill" />
-                        Branches
-                    </span>
-                    <span class="usage-value">@billingInfo.ActiveBranches / @billingInfo.MaxBranches</span>
-                </div>
-                <div class="progress-bar">
-                    <div class="progress-fill" style="width: @GetUsagePercentage(billingInfo.ActiveBranches, billingInfo.MaxBranches)%"></div>
-                </div>
-            </div>
-
-            <div class="usage-item">
-                <div class="usage-header">
-                    <span class="usage-label">
-                        <QIcon Name="ticket-fill" />
-                        Tokens Issued
-                    </span>
-                    <span class="usage-value">@billingInfo.TokensThisMonth / @(billingInfo.MaxTokensPerMonth == 0 ? "∞" : billingInfo.MaxTokensPerMonth.ToString())</span>
-                </div>
-                <div class="progress-bar">
-                    <div class="progress-fill" style="width: @GetUsagePercentage(billingInfo.TokensThisMonth, billingInfo.MaxTokensPerMonth)%"></div>
-                </div>
-            </div>
-
-            <div class="usage-item">
-                <div class="usage-header">
-                    <span class="usage-label">
-                        <QIcon Name="database-fill" />
-                        Storage Used
-                    </span>
-                    <span class="usage-value">@FormatBytes(billingInfo.StorageUsedBytes) / @FormatBytes(billingInfo.MaxStorageBytes)</span>
-                </div>
-                <div class="progress-bar">
-                    <div class="progress-fill" style="width: @GetUsagePercentage(billingInfo.StorageUsedBytes, billingInfo.MaxStorageBytes)%"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-}
-else
-{
-    <!-- No plan selected yet — the common state for a trialing org that hasn't subscribed -->
-    <div class="billing-grid">
-        <QCard Class="subscription-card trial-status-card" Title="Current Plan" Icon="star-fill">
-            <HeaderActions>
-                <span class="plan-badge @(IsTrialExpired ? "status-expired" : "status-trial")">
-                    @(organizationStatus ?? "Trialing")
-                </span>
-            </HeaderActions>
-            <ChildContent>
-                <h2 class="trial-headline">
-                    @if (trialEndsAt.HasValue && !IsTrialExpired)
-                    {
-                        <text>@TrialDaysRemaining day@(TrialDaysRemaining == 1 ? "" : "s") left in your free trial</text>
-                    }
-                    else if (IsTrialExpired)
-                    {
-                        <text>Your free trial has ended</text>
-                    }
-                    else
-                    {
-                        <text>No active plan</text>
-                    }
-                </h2>
-                <p class="text-muted">
-                    @if (IsTrialExpired)
-                    {
-                        <text>Choose a plan to keep using Q-Mgr — your data is safe and waiting.</text>
-                    }
-                    else
-                    {
-                        <text>Pick a plan any time before @QDateFormat.D(trialEndsAt) to keep uninterrupted access.</text>
-                    }
-                </p>
-                <div class="card-actions">
-                    <QButton Text="Add a Module"
-                             Icon="arrow-up-circle-fill"
-                             Variant="primary"
-                             OnClick="@(() => Navigation.NavigateTo("/billing/modules"))" />
-                </div>
-            </ChildContent>
-        </QCard>
-    </div>
-}
-
-    <!-- Recent Invoices -->
-    <div class="recent-invoices">
-        <div class="section-header">
-            <h2>
-                <QIcon Name="receipt" Size="24" />
-                Recent Invoices
-            </h2>
-            <QButton Text="View All"
-                     Icon="arrow-right"
-                     Variant="link"
-                     OnClick="@(() => Navigation.NavigateTo("/billing/invoices"))" />
-        </div>
-
-        @if (recentInvoices.Any())
-        {
-            <div class="table-responsive">
-                <table class="table recent-invoices-table">
-                    <thead>
-                        <tr>
-                            <th>Invoice #</th>
-                            <th>Date</th>
-                            <th>Description</th>
-                            <th>Amount</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var invoice in recentInvoices.Take(5))
-                        {
-                            <tr>
-                                <td class="invoice-number">@invoice.InvoiceNumber</td>
-                                <td>@QDateFormat.D(invoice.InvoiceDate)</td>
-                                <td>@invoice.Description</td>
-                                <td><strong>@invoice.Currency @invoice.Amount.ToString("N2")</strong></td>
-                                <td>
-                                    <QBadge Variant="@GetInvoiceStatusVariant(invoice.Status)" Text="@invoice.Status" />
-                                </td>
-                                <td>
-                                    <QButton Icon="box-arrow-up-right" Variant="outline-primary" Size="sm" Title="Open in Invoices" OnClick="@(() => DownloadInvoice(invoice.Id))" />
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
-        }
-        else
-        {
-            <div class="empty-state">
-                <QIcon Name="receipt" Size="48" />
-                <p>No invoices yet</p>
-            </div>
-        }
-    </div>
-
-    <!-- Payment Methods -->
-    <div class="payment-methods">
-        <div class="section-header">
-            <h2>
-                <QIcon Name="wallet2" Size="24" />
-                Payment Methods
-            </h2>
-            <QButton Text="Manage"
-                     Icon="gear-fill"
-                     Variant="link"
-                     OnClick="@(() => Navigation.NavigateTo("/billing/payment-methods"))" />
-        </div>
-
-        @if (paymentMethods.Any())
-        {
-            <div class="payment-cards">
-                @foreach (var method in paymentMethods)
+                @if (Held.Any())
                 {
-                    <div class="payment-card @(method.IsDefault ? "default" : "")">
-                        <div class="card-icon">
-                            <QIcon Name="@GetCardIcon(method.CardBrand)" Size="32" />
-                        </div>
-                        <div class="card-details">
-                            <span class="card-brand">@method.CardBrand</span>
-                            <span class="card-number">•••• @method.CardLast4</span>
-                            <span class="card-expiry">Expires @(method.CardExpMonth?.ToString("D2") ?? "--")/@(method.CardExpYear?.ToString() ?? "----")</span>
-                        </div>
-                        @if (method.IsDefault)
-                        {
-                            <span class="default-badge">Default</span>
-                        }
+                    <div class="table-wrap">
+                        <table class="data-table q-stack">
+                            <thead><tr><th>Module</th><th>Status</th><th class="num">Per month</th></tr></thead>
+                            <tbody>
+                                @foreach (var m in Held)
+                                {
+                                    <tr>
+                                        <td><strong>@m.ModuleName</strong></td>
+                                        <td>
+                                            <QChip Text="@StatusLabel(m.Status)" Variant="@StatusVariant(m.Status)" Size="sm" />
+                                            @if (m.Status == "Trialing" && m.TrialEndsAt.HasValue)
+                                            {
+                                                <span class="ov-sub">Trial ends @QDateFormat.D(m.TrialEndsAt.Value)</span>
+                                            }
+                                        </td>
+                                        <td class="num">@(MonthlyPrice(m) is { } p ? $"UGX {p.ToString("N0", CultureInfo.InvariantCulture)}" : "—")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
                     </div>
                 }
-            </div>
-        }
-        else
-        {
-            <div class="empty-state">
-                <QIcon Name="wallet2" Size="48" />
-                <p>No payment methods added</p>
-                <QButton Text="Add Payment Method"
-                         Icon="plus"
-                         Variant="primary"
-                         OnClick="@(() => Navigation.NavigateTo("/billing/payment-methods"))" />
-            </div>
-        }
+                else
+                {
+                    <QEmptyState Class="q-empty--compact" Icon="grid-3x3-gap" Title="No modules yet" Text="Add one from the Modules tab." />
+                }
+            </ChildContent>
+        </QCard>
+
+        <QCard Title="Recent invoices" Icon="receipt" NoPadding="true">
+            <HeaderActions>
+                <QButton Text="All invoices" Icon="arrow-right" Variant="ghost" Size="sm" OnClick="@(() => Navigation.NavigateTo(BillingLinks.Invoices))" />
+            </HeaderActions>
+            <ChildContent>
+                @if (recentInvoices.Any())
+                {
+                    <div class="table-wrap">
+                        <table class="data-table q-stack">
+                            <thead><tr><th>Invoice</th><th>Date</th><th class="num">Amount</th><th>Status</th></tr></thead>
+                            <tbody>
+                                @foreach (var inv in recentInvoices)
+                                {
+                                    <tr>
+                                        <td><a href="@BillingLinks.Invoice(inv.Id)">@inv.InvoiceNumber</a></td>
+                                        <td>@QDateFormat.D(inv.InvoiceDate)</td>
+                                        <td class="num">@inv.Currency @inv.Total.ToString("N2", CultureInfo.InvariantCulture)</td>
+                                        <td><QChip Text="@inv.Status" Variant="@InvoiceVariant(inv.Status)" Size="sm" /></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                else
+                {
+                    <QEmptyState Class="q-empty--compact" Icon="receipt" Title="No invoices yet" Text="One appears each time a module is paid for." />
+                }
+            </ChildContent>
+        </QCard>
     </div>
 }
 
 <style>
-    .plan-badge.status-trial {
-        background: color-mix(in srgb, var(--qm-warning) 20%, transparent);
-        color: var(--qm-warning);
-    }
-
-    .plan-badge.status-expired {
-        background: color-mix(in srgb, var(--qm-danger) 20%, transparent);
-        color: var(--qm-danger);
-    }
-
-    .trial-status-card .trial-headline {
-        margin: 8px 0;
-        font-size: 20px;
-        font-weight: 600;
-        color: var(--qm-text-primary);
-    }
-
-    .billing-grid {
+    /* Two short tables side by side on a desktop, one above the other on a phone. The tables
+       themselves are the shared .data-table; nothing here sizes type or controls. */
+    .ov-grid {
         display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 24px;
-        margin-bottom: 32px;
+        grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+        gap: var(--qm-block-gap, 10px);
+        align-items: start;
+        margin-top: var(--qm-block-gap, 10px);
     }
-
-    .subscription-card {
-        background: var(--qm-bg-card);
-        border-radius: var(--qm-radius-xl);
-        border: 1px solid var(--qm-border);
-        overflow: hidden;
+    .ov-grid > .q-card { margin-top: 0; }
+    .ov-sub { display: block; margin-top: 2px; font-size: var(--qm-text-xs); color: var(--qm-text-muted); }
+    .ov-alert {
+        display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+        margin: var(--qm-block-gap, 10px) 0 0; padding: 8px 12px;
+        border: 1px solid var(--qm-warning); border-radius: var(--qm-radius-md);
+        color: var(--qm-text-primary); font-size: var(--qm-text-sm);
     }
-
-    .subscription-card .card-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 20px;
-        background: var(--qm-gradient-primary);
-        color: var(--qm-text-on-primary);
-    }
-
-    .subscription-card .header-left {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
-
-    .subscription-card h3 {
-        margin: 0;
-        font-size: 18px;
-        font-weight: 600;
-    }
-
-    .plan-badge {
-        padding: 6px 16px;
-        border-radius: var(--qm-radius-full);
-        font-size: 12px;
-        font-weight: 600;
-        text-transform: uppercase;
-        background: rgba(255, 255, 255, 0.2);
-    }
-
-    .plan-price {
-        padding: 32px 20px;
-        text-align: center;
-        background: var(--qm-bg-elevated);
-    }
-
-    .plan-price .currency {
-        font-size: 20px;
-        color: var(--qm-text-secondary);
-        vertical-align: super;
-    }
-
-    .plan-price .amount {
-        font-size: 48px;
-        font-weight: 700;
-        color: var(--qm-text-primary);
-    }
-
-    .plan-price .period {
-        font-size: 16px;
-        color: var(--qm-text-secondary);
-    }
-
-    .plan-details {
-        padding: 20px;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-    }
-
-    .detail-item {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        color: var(--qm-text-secondary);
-    }
-
-    .card-actions {
-        padding: 20px;
-        border-top: 1px solid var(--qm-border);
-        display: flex;
-    }
-
-    /* QStatTile/QStatRow. Two columns beside the plan card; the variant tints the icon badge only —
-       these are facts about the account, not alarms, so the figures stay in the ordinary text colour. */
-    .billing-stats.stats-grid {
-        grid-template-columns: 1fr 1fr;
-        gap: 16px;
-        margin-bottom: 0;
-    }
-
-    .billing-stats .q-stat__value { color: var(--qm-text-primary); }
-
-    .usage-summary,
-    .recent-invoices,
-    .payment-methods {
-        background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-        padding: 24px;
-        margin-bottom: 24px;
-    }
-
-    .usage-summary h2,
-    .recent-invoices h2,
-    .payment-methods h2 {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        margin-bottom: 24px;
-        font-size: 20px;
-        font-weight: 600;
-    }
-
-    .section-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 24px;
-    }
-
-    .section-header h2 {
-        margin: 0;
-    }
-
-    .usage-grid {
-        display: grid;
-        gap: 20px;
-    }
-
-    .usage-item {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-    }
-
-    .usage-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-
-    .usage-label {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-weight: 500;
-        color: var(--qm-text-primary);
-    }
-
-    .usage-value {
-        font-size: 14px;
-        font-weight: 600;
-        color: var(--qm-text-secondary);
-    }
-
-    .progress-bar {
-        height: 8px;
-        background: var(--qm-bg-elevated);
-        border-radius: var(--qm-radius-full);
-        overflow: hidden;
-    }
-
-    .progress-fill {
-        height: 100%;
-        background: var(--qm-gradient-primary);
-        transition: width 0.3s ease;
-    }
-
-    .payment-cards {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-        gap: 16px;
-    }
-
-    .payment-card {
-        border: 2px solid var(--qm-border);
-        border-radius: var(--qm-radius-lg);
-        padding: 16px;
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        position: relative;
-    }
-
-    .payment-card.default {
-        border-color: var(--qm-primary);
-        background: var(--qm-primary-light);
-    }
-
-    .card-icon {
-        color: var(--qm-text-secondary);
-    }
-
-    .card-details {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-    }
-
-    .card-brand {
-        font-weight: 600;
-        text-transform: uppercase;
-        font-size: 12px;
-        color: var(--qm-text-secondary);
-    }
-
-    .card-number {
-        font-size: 16px;
-        font-weight: 600;
-        color: var(--qm-text-primary);
-    }
-
-    .card-expiry {
-        font-size: 12px;
-        color: var(--qm-text-muted);
-    }
-
-    .default-badge {
-        position: absolute;
-        top: 8px;
-        right: 8px;
-        background: var(--qm-primary);
-        color: var(--qm-text-on-primary);
-        padding: 4px 12px;
-        border-radius: var(--qm-radius-full);
-        font-size: 11px;
-        font-weight: 600;
-    }
-
-    .recent-invoices-table {
-        margin: 0;
-        /* Bootstrap's own .table sets --bs-table-bg/color, which render as a plain
-           white table on dark text regardless of theme unless overridden here —
-           same root cause and fix as Invoices.razor's own table (see Phase 39). */
-        --bs-table-bg: transparent;
-        --bs-table-color: var(--qm-text-primary);
-        color: var(--qm-text-primary);
-        background: transparent;
-    }
-
-    .recent-invoices-table thead th {
-        font-weight: 600;
-        color: var(--qm-text-secondary);
-        font-size: 13px;
-        text-transform: uppercase;
-        border-bottom: 2px solid var(--qm-border);
-        background: transparent;
-    }
-
-    .recent-invoices-table tbody tr,
-    .recent-invoices-table td {
-        background: transparent;
-        color: var(--qm-text-primary);
-        border-color: var(--qm-border);
-    }
-
-    .recent-invoices-table .invoice-number {
-        font-weight: 600;
-    }
-
-    .empty-state {
-        text-align: center;
-        padding: 48px 24px;
-        color: var(--qm-text-muted);
-    }
-
-    .empty-state i {
-        color: var(--qm-text-muted);
-        margin-bottom: 16px;
-    }
-
-    .badge.badge-paid {
-        background: var(--qm-success);
-        color: var(--qm-text-on-primary);
-    }
-
-    .badge.badge-pending {
-        background: var(--qm-warning);
-        color: var(--qm-text-on-primary);
-    }
-
-    .badge.badge-failed {
-        background: var(--qm-danger);
-        color: var(--qm-text-on-primary);
-    }
-
-    .status-active {
-        color: var(--qm-success);
-    }
-
-    .status-cancelled,
-    .status-suspended {
-        color: var(--qm-danger);
-    }
-
-    @@media (max-width: 968px) {
-        .billing-grid,
-        .billing-stats.stats-grid {
-            grid-template-columns: 1fr;
-        }
+    .ov-alert .bi { color: var(--qm-warning); }
+    @@media (max-width: 640px) {
+        .ov-grid { grid-template-columns: 1fr; }
     }
 </style>
 
 @code {
+    /// <summary>True when the Billing hub hosts this section (always, since 2026-09-19).</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private bool isLoading = true;
-    private BillingOverview? billingInfo;
+    private List<ModuleCatalogItem> catalog = new();
+    private List<OrganizationModuleStatusDto> mine = new();
     private List<InvoiceDto> recentInvoices = new();
-    private List<InvoiceDto> unpaidInvoices = new();
-    private List<PaymentMethodDto> paymentMethods = new();
+    private int unpaidCount;
+
     private string? organizationStatus;
     private DateTime? trialEndsAt;
+    private BillingOverview? billingInfo;
 
-    private bool IsTrialExpired => trialEndsAt.HasValue && trialEndsAt.Value <= DateTime.UtcNow;
+    /// <summary>The modules this account holds right now — active, on trial or overdue. A removed
+    /// module is not "held" and costs nothing.</summary>
+    private List<OrganizationModuleStatusDto> Held => mine
+        .Where(m => m.Purchased && m.Status is "Active" or "Trialing" or "PastDue")
+        .OrderBy(m => m.ModuleName)
+        .ToList();
+
+    /// <summary>What one module costs per month: its agreed price when one was captured (in the
+    /// cycle it was agreed in), else the catalog's list price. An annual price is shown as its
+    /// monthly share. Null when the module is not in the catalog.</summary>
+    private decimal? MonthlyPrice(OrganizationModuleStatusDto m)
+    {
+        var item = catalog.FirstOrDefault(c => c.Code == m.ModuleCode);
+        var annual = m.BillingCycle == "Annual";
+        decimal? price = m.AgreedPriceUgx ?? (item == null ? null : annual ? item.AnnualPriceUgx : item.MonthlyPriceUgx);
+        return price is { } p ? Math.Round(annual ? p / 12m : p) : null;
+    }
+
+    private decimal MonthlyTotal => Held.Sum(m => MonthlyPrice(m) ?? 0);
+
+    // The account's state, said once. A trialing account with no subscription row is the normal
+    // state for every new tenant (see OverviewProbeDto).
+    private string CurrentStatus => billingInfo?.Status is { Length: > 0 } s ? s : organizationStatus ?? (Held.Any() ? "Active" : "");
+
     private int TrialDaysRemaining => trialEndsAt.HasValue
         ? Math.Max(0, (int)Math.Ceiling((trialEndsAt.Value - DateTime.UtcNow).TotalDays))
         : 0;
 
-    /// <summary>
-    /// Mirrors the { hasSubscription: false, status, trialEndsAt } shape GET
-    /// api/v1/billing/overview returns when the org has no Subscription row — the normal state
-    /// for every trialing org that hasn't picked a plan yet. HasSubscription is null (absent
-    /// from the JSON) for the normal case, explicitly false only for this one.
-    /// </summary>
-    private record OverviewProbeDto
+    private string PlanValue => CurrentStatus switch
     {
-        public bool? HasSubscription { get; init; }
-        public string? Status { get; init; }
-        public DateTime? TrialEndsAt { get; init; }
-    }
+        "Trialing" => "Trial",
+        "Active" => "Active",
+        "PastDue" => "Payment overdue",
+        "Suspended" => "Suspended",
+        "Cancelled" => "Cancelled",
+        _ => Held.Any() ? "Active" : "No modules"
+    };
 
-    protected override async Task OnInitializedAsync()
+    private string PlanSub => CurrentStatus == "Trialing" && trialEndsAt.HasValue
+        ? (TrialDaysRemaining == 0 ? "Trial ends today" : $"{TrialDaysRemaining} days left · ends {QDateFormat.D(trialEndsAt.Value)}")
+        : Held.Any() ? string.Join(", ", Held.Select(h => h.ModuleName)) : "Add a module to begin";
+
+    private string PlanVariant => CurrentStatus switch
     {
-        var hasPermission = await PermissionService.HasPermissionAsync("billing.view");
-        if (!hasPermission)
-        {
-            Navigation.NavigateTo("/unauthorized");
-            return;
-        }
+        "Active" => "success",
+        "Trialing" => "warning",
+        "PastDue" or "Suspended" or "Cancelled" => "danger",
+        _ => "secondary"
+    };
 
-        await LoadData();
-    }
+    private string PlanIcon => CurrentStatus == "Trialing" ? "hourglass-split" : "star-fill";
+
+    private int DaysUntilRenewal => billingInfo?.NextBillingDate is { } d ? (d - DateTime.UtcNow).Days : 0;
+
+    /// <summary>The renewal said definitively, never as a countdown that can go negative ("-15" was
+    /// once on screen in production). A date that has passed is OVERDUE.</summary>
+    private string RenewalValue => billingInfo?.NextBillingDate == null
+        ? "—"
+        : DaysUntilRenewal switch { < 0 => "Overdue", 0 => "Today", 1 => "Tomorrow", var d => $"{d} days" };
+
+    private string RenewalLabel => billingInfo?.NextBillingDate is { } next
+        ? $"Renews {QDateFormat.D(next)}"
+        : CurrentStatus == "Trialing" ? "After the trial" : "No renewal date";
+
+    private string RenewalVariant => billingInfo?.NextBillingDate == null ? "secondary"
+        : DaysUntilRenewal switch { < 0 => "danger", <= 7 => "warning", _ => "secondary" };
+
+    private static string StatusLabel(string? status) => status switch
+    {
+        "Active" => "Active",
+        "Trialing" => "On trial",
+        "PastDue" => "Payment overdue",
+        "Cancelled" => "Removed",
+        _ => "Not added"
+    };
+
+    private static string StatusVariant(string? status) => status switch
+    {
+        "Active" => "success",
+        "Trialing" => "warning",
+        "PastDue" => "danger",
+        _ => "muted"
+    };
+
+    private static string InvoiceVariant(string status) => status.ToLowerInvariant() switch
+    {
+        "paid" => "success",
+        "pending" => "warning",
+        "overdue" or "failed" => "danger",
+        _ => "muted"
+    };
+
+    /// <summary>The number renewals are charged to — shown here so it can be found, changed on the Payment tab.</summary>
+    private RenewalNumberDto? renewalNumber;
+
+    private static readonly string RenewalNumberLink = BillingLinks.Payment + "#renewal-number";
+
+    protected override async Task OnInitializedAsync() => await LoadData();
 
     private async Task LoadData()
     {
         isLoading = true;
-
         try
         {
-            // Load billing overview. See OverviewProbeDto: this endpoint returns a differently-
-            // shaped { hasSubscription: false, ... } body when the org has no Subscription row
-            // (every trialing org that hasn't picked a plan) — deserializing that straight into
-            // BillingOverview used to silently succeed with all-default/zero values (System.Text.Json
-            // ignores unknown properties and defaults missing ones), rendering a fake "Current
-            // Plan: $0.00/month, Status: (blank)" card instead of an honest trial banner.
+            catalog = await ModuleApi.GetCatalogAsync();
+            try { mine = await ModuleApi.GetMineAsync(); } catch { mine = new(); }
+
+            try { renewalNumber = await PaymentApi.GetRenewalNumberAsync(); } catch { renewalNumber = null; }
+
+            // Returns a differently-shaped { hasSubscription: false, status, trialEndsAt } body when
+            // the account has no Subscription row — every trialing account that has not paid yet.
             var response = await Http.GetAsync("api/v1/billing/overview");
             if (response.IsSuccessStatusCode)
             {
@@ -690,24 +296,20 @@ else
                 }
             }
 
-            // Load recent invoices
-            var invoicesResponse = await Http.GetAsync("api/v1/billing/invoices?limit=5");
+            // The API pages by page/pageSize; there is no "limit" parameter (the old call passed one
+            // and got twenty back).
+            var invoicesResponse = await Http.GetAsync("api/v1/billing/invoices?page=1&pageSize=5");
             if (invoicesResponse.IsSuccessStatusCode)
             {
                 recentInvoices = await invoicesResponse.Content.ReadFromJsonAsync<List<InvoiceDto>>(JsonOptions) ?? new();
-                unpaidInvoices = recentInvoices.Where(i => i.Status == "Pending" || i.Status == "Overdue").ToList();
-            }
-
-            // Load payment methods
-            var paymentResponse = await Http.GetAsync("api/v1/billing/payment-methods");
-            if (paymentResponse.IsSuccessStatusCode)
-            {
-                paymentMethods = await paymentResponse.Content.ReadFromJsonAsync<List<PaymentMethodDto>>(JsonOptions) ?? new();
+                // "Open" is the ledger's word for unpaid (InvoiceStatus). This counted "Pending" and "Overdue",
+                // which no invoice is ever given, so the banner never appeared.
+                unpaidCount = recentInvoices.Count(i => i.Status == "Open");
             }
         }
-        catch (Exception ex)
+        catch
         {
-            Console.WriteLine($"Error loading billing data: {ex.Message}");
+            // A partial overview is still an overview: each figure falls back to its own empty state.
         }
         finally
         {
@@ -715,109 +317,16 @@ else
         }
     }
 
-    private string GetPlanClass(string planName) => planName.ToLower() switch
+    private record OverviewProbeDto
     {
-        "free" => "plan-free",
-        "starter" => "plan-starter",
-        "professional" => "plan-professional",
-        "enterprise" => "plan-enterprise",
-        _ => ""
-    };
-
-    private string GetStatusClass(string status) => status.ToLower() switch
-    {
-        "active" => "status-active",
-        "cancelled" or "suspended" => "status-cancelled",
-        _ => ""
-    };
-
-    private string GetInvoiceStatusVariant(string status) => status.ToLower() switch
-    {
-        "paid" => "success",
-        "pending" or "overdue" => "warning",
-        "failed" => "danger",
-        _ => "secondary"
-    };
-
-    private int GetDaysUntilRenewal()
-    {
-        if (billingInfo?.NextBillingDate == null) return 0;
-        return (billingInfo.NextBillingDate.Value - DateTime.UtcNow).Days;
+        public bool? HasSubscription { get; init; }
+        public string? Status { get; init; }
+        public DateTime? TrialEndsAt { get; init; }
     }
 
-    private double GetUsagePercentage(long used, long max)
-    {
-        if (max == 0) return 0;
-        return Math.Min((double)used / max * 100, 100);
-    }
-
-    private string FormatBytes(long bytes)
-    {
-        string[] sizes = { "B", "KB", "MB", "GB", "TB" };
-        double len = bytes;
-        int order = 0;
-        while (len >= 1024 && order < sizes.Length - 1)
-        {
-            order++;
-            len = len / 1024;
-        }
-        return $"{len:0.##} {sizes[order]}";
-    }
-
-    private string GetCardIcon(string? brand) => brand?.ToLower() switch
-    {
-        "visa" => "credit-card",
-        "mastercard" => "credit-card-2-front",
-        "amex" => "credit-card",
-        _ => "wallet2"
-    };
-
-    private async Task DownloadInvoice(Guid invoiceId)
-    {
-        // This was dead three ways over and its silence is why nobody noticed (found 2026-09-06):
-        //   1. it called api/v1/billing/invoices/{id}/download, which does not exist on
-        //      BillingController and never has — every click was a 404;
-        //   2. on success it read the bytes and dropped them ("// Trigger download via JS" was
-        //      never written), so even a working endpoint would have downloaded nothing;
-        //   3. the failure went to Console.WriteLine, i.e. the server's stdout.
-        //
-        // Rather than invent an endpoint, this now sends the user to the Invoices page, which has
-        // a working download (it opens the invoice's PdfUrl). That page is also where the rest of
-        // invoice management lives, so it is where the button should have pointed anyway. This
-        // page's own InvoiceDto carries no PdfUrl, so it cannot do the download itself without a
-        // wider change.
-        Navigation.NavigateTo($"/billing/invoices?invoice={invoiceId}");
-        await Task.CompletedTask;
-    }
-
-    // DTOs
     private record BillingOverview
     {
-        public string PlanName { get; init; } = "";
-        public string BillingCycle { get; init; } = "";
-        public decimal MonthlyAmount { get; init; }
-        public string Currency { get; init; } = "USD";
         public string Status { get; init; } = "";
         public DateTime? NextBillingDate { get; init; }
-        public int ActiveUsers { get; init; }
-        public int MaxUsers { get; init; }
-        public int ActiveBranches { get; init; }
-        public int MaxBranches { get; init; }
-        public long TokensThisMonth { get; init; }
-        public long MaxTokensPerMonth { get; init; }
-        public long StorageUsedBytes { get; init; }
-        public long MaxStorageBytes { get; init; }
     }
-
-    private record InvoiceDto
-    {
-        public Guid Id { get; init; }
-        public string InvoiceNumber { get; init; } = "";
-        public DateTime InvoiceDate { get; init; }
-        public string Description { get; init; } = "";
-        public decimal Amount { get; init; }
-        public string Currency { get; init; } = "USD";
-        public string Status { get; init; } = "";
-    }
-
 }

@@ -4,6 +4,7 @@
 @using QMgr.Domain.Constants
 @using QMgr.Web.Components.Shared
 @inject IStaffPerformanceApiService StaffApi
+@inject IAuthService AuthService
 @inject IToastService Toast
 @inject NavigationManager Navigation
 @inject IModuleApiService ModuleApi
@@ -14,17 +15,44 @@
 
 @*
     The register (plan §6 item 2): one row per expected person, one tap per person, an optional
-    note, close. It replaces the class monitor's paper register, so it is built for a phone first:
-    44px targets, a sticky footer, nothing wider than 390px. Closing writes one Final record per
-    person; reopening a closed register appends annulments and new rows rather than editing, and
-    the confirm dialog says so before the rows unlock.
+    note, close. Closing writes one Final record per person; reopening a closed register appends
+    annulments and new rows rather than editing, and the confirm dialog says so before the rows
+    unlock.
+
+    REWORKED 2026-09-20 for a real staff meeting rather than a five-person duty. What changed and
+    why, because each of these is a rule rather than a preference:
+
+    * IT IS A DATA PAGE, so it uses the width it has. It capped itself at 760px and centred, which
+      on a 1900px screen left three quarters of the page empty while the rows themselves wrapped.
+      CLAUDE.md's rule: a table or a grid of data takes the width; only a document keeps a reading
+      width.
+    * ONE ROW IS ONE LINE. Name, marks and note sat in three stacked blocks — about 150px per
+      person, so eleven people filled a screen and forty meant scrolling past the footer's count
+      the whole time. They are one grid row on a desktop (~52px) and stack again under 900px,
+      where a thumb needs the height.
+    * BULK IS THE POINT AT SCALE. Nobody taps Present forty times. Select rows (or everyone the
+      filter is showing) and apply one outcome; "Rest present" fills only the unmarked, which is
+      the real shape of taking a register — mark the exceptions, then sweep the remainder.
+    * BIG REGISTERS VIRTUALISE. Above SmallRegister rows the list renders through <Virtualize>, so
+      a branch-wide meeting ships a screenful of DOM down the circuit instead of two hundred rows
+      of segmented control. Below it, plain DOM — the common case pays nothing.
+    * THE CLIENT ENFORCES WHAT THE SERVER ENFORCES. Two refusals in StaffDutiesController.
+      SubmitRegister were reachable only by submitting and being told: nobody may mark themselves
+      (except on a Lesson duty, where the teacher's own mark is a self-report), and a rota slot
+      marked Not completed needs a reason. Both are now visible on the row, and the second blocks
+      the submit with the count and a jump to the first offender rather than losing the whole
+      register to one 400.
 *@
 
 <div class="admin-page reg-page @(editable ? "reg-page--editing" : "")">
-    <div class="page-header">
-        <div class="header-content">
+    <QPageActions>
+        <Title>
             <QButton Text="Back to duties" Icon="arrow-left" Variant="ghost" Size="sm" Class="reg-back" OnClick="@(() => Navigation.NavigateTo("/admin/staff/duties"))" />
-            <h1>@(register?.Duty.Title ?? "Register")</h1>
+            <h1>
+                @(register?.Duty.Title ?? "Register")
+                <QInfo Label="Taking a register"
+                       Text="Each save records the marks straight away and tells the people marked. Close when everyone is marked; until then the register counts as not taken and you will be reminded. Nobody marks their own attendance." />
+            </h1>
             @if (register != null)
             {
                 var d = register.Duty;
@@ -33,8 +61,8 @@
                     @if (!string.IsNullOrEmpty(d.Location)) { <text> · @d.Location</text> }
                 </p>
             }
-        </div>
-        <div class="header-actions">
+        </Title>
+        <Actions>
             @if (register != null)
             {
                 if (register.Duty.RegisterClosedAt.HasValue && !editable)
@@ -58,8 +86,8 @@
                     <QChip Text="Open" Icon="pencil-square" Variant="info" />
                 }
             }
-        </div>
-    </div>
+        </Actions>
+    </QPageActions>
 
     @if (isLoading)
     {
@@ -77,6 +105,7 @@
     }
     else
     {
+        @* A WARNING stays on the page; a hint moved into the QInfo on the title (CLAUDE.md). *@
         @if (!register.Duty.CanIRecord)
         {
             <p class="reg-note reg-note--muted"><QIcon Name="eye" Size="sm" /><span>You can read this register but you are not one of its recorders, so it is read-only.</span></p>
@@ -87,74 +116,87 @@
         }
         else if (register.Duty.RegisterClosedAt.HasValue)
         {
-            <p class="reg-note reg-note--warn"><QIcon Name="exclamation-triangle" Size="sm" /> Every row you close now is written afresh; the earlier rows are annulled with a note, not deleted.</p>
+            <p class="reg-note reg-note--warn"><QIcon Name="exclamation-triangle" Size="sm" /><span>Every row you close now is written afresh; the earlier rows are annulled with a note, not deleted.</span></p>
+        }
+
+        @* The bar is QBulkBar, which was extracted FROM this page (plan Phase 1). The page keeps its
+           own visible rows and its own selection, because only it knows what a row is; the bar renders
+           the shape and holds the filter and search state. *@
+        <QBulkBar Filters="@FilterChips" ActiveFilter="@filter" ActiveFilterChanged="@SetFilter"
+                  Search="@search" SearchChanged="@SetSearch" SearchPlaceholder="Search by name, job title or department"
+                  ShowSelection="@editable" VisibleCount="@VisibleRows.Count" SelectedCount="@selected.Count"
+                  AllSelected="@AllVisibleSelected" AllSelectedChanged="@ToggleSelectAllVisible"
+                  ClearSelection="@(() => selected.Clear())"
+                  Progress="@(new QBulkBar.ProgressOf(MarkedCount, register.Rows.Count, "marked"))"
+                  IdleHint="Tick people to mark several at once, or">
+            <Actions>
+                @foreach (var o in Options)
+                {
+                    <button type="button" class="reg-bulk__btn reg-bulk__btn--@Slug(o)" title="@($"Mark {selected.Count} as {StaffDisplay.OutcomeLabel(o)}")"
+                            @onclick="@(() => ApplyToSelected(o))">
+                        <span class="reg-key reg-key--@Slug(o)">@Key(o)</span>@StaffDisplay.OutcomeLabel(o)
+                    </button>
+                }
+                <QButton Text="Clear marks" Icon="eraser" Variant="ghost" Size="sm" OnClick="@(() => ApplyToSelected(null))" />
+            </Actions>
+            <Idle>
+                <QButton Text="@($"Rest {StaffDisplay.OutcomeLabel(DefaultSweep).ToLowerInvariant()} · {UnmarkedCount}")" Icon="lightning-charge" Variant="secondary" Size="sm"
+                         Disabled="@(UnmarkedCount == 0)" OnClick="@(() => SweepRemaining(DefaultSweep))" />
+            </Idle>
+        </QBulkBar>
+
+        @if (VisibleRows.Count == 0)
+        {
+            <QEmptyState Icon="funnel" Title="Nobody matches" Text="Clear the search or choose a different filter." Class="reg-empty">
+                <Action><QButton Text="Show everyone" Icon="arrow-counterclockwise" Variant="secondary" Size="sm" OnClick="@ClearFilters" /></Action>
+            </QEmptyState>
         }
         else
         {
-            @* Saving records the marks at once; closing only says the register is complete (decided
-               2026-09-17). A register taken on a phone in a corridor must not lose twenty taps to a
-               dropped connection or a closed tab, so nothing waits for the close. *@
-            <p class="reg-note reg-note--muted"><QIcon Name="info-circle" Size="sm" /><span>Each save records the marks straight away and tells the people marked. <strong>Close</strong> when everyone is marked; until then the register counts as not taken and you will be reminded.</span></p>
-        }
-
-        <div class="reg-legend" aria-hidden="true">
-            @foreach (var o in Options)
-            {
-                <span><b class="reg-key reg-key--@o.ToString().ToLowerInvariant()">@Key(o)</b> @StaffDisplay.OutcomeLabel(o)</span>
-            }
-        </div>
-
-        <ul class="reg-rows">
-            @foreach (var row in register.Rows.OrderBy(r => r.FullName))
-            {
-                var mark = marks[row.UserId];
-                <li class="reg-row @(mark.Outcome.HasValue ? "reg-row--marked" : "")">
-                    <div class="reg-row__who">
-                        <QAvatar Name="@row.FullName" Size="sm" />
-                        <div class="reg-row__name">
-                            <strong>@row.FullName</strong>
-                            @if (!string.IsNullOrEmpty(row.JobTitle) || !string.IsNullOrEmpty(row.DepartmentNames))
-                            {
-                                <small>@string.Join(" · ", new[] { row.JobTitle, row.DepartmentNames }.Where(s => !string.IsNullOrEmpty(s)))</small>
-                            }
-                        </div>
-                        @if (mark.Outcome.HasValue)
-                        {
-                            <QChip Text="@StaffDisplay.OutcomeLabel(mark.Outcome.Value)" Size="sm" Variant="@StaffDisplay.OutcomeVariant(mark.Outcome.Value)" Class="reg-row__chip" />
-                        }
-                    </div>
-                    <div class="reg-seg" role="radiogroup" aria-label="@($"Outcome for {row.FullName}")">
-                        @foreach (var o in Options)
-                        {
-                            var on = mark.Outcome == o;
-                            <button type="button" role="radio" aria-checked="@(on ? "true" : "false")" title="@StaffDisplay.OutcomeLabel(o)"
-                                    class="reg-seg__btn reg-seg__btn--@o.ToString().ToLowerInvariant() @(on ? "reg-seg__btn--on" : "")"
-                                    disabled="@(!editable)" @onclick="@(() => Set(row.UserId, o))">
-                                <span class="reg-seg__key">@Key(o)</span>
-                                <span class="reg-seg__word">@StaffDisplay.OutcomeLabel(o)</span>
-                            </button>
-                        }
-                    </div>
-                    @if (editable || !string.IsNullOrWhiteSpace(mark.Note))
+            <div class="reg-list @(Virtualised ? "reg-list--virtual" : "")">
+                @if (Virtualised)
+                {
+                    @* ItemSize matches .reg-row's desktop height. A register this long is taken at a
+                       desk, and an approximate size on a phone costs a slightly uneven scrollbar,
+                       never a wrong row. *@
+                    <Virtualize Items="@VisibleRows" Context="row" ItemSize="56" OverscanCount="6">
+                        @RowTemplate(row)
+                    </Virtualize>
+                }
+                else
+                {
+                    @foreach (var row in VisibleRows)
                     {
-                        <div class="reg-row__note">
-                            <QInput TValue="string" Value="@mark.Note" ValueChanged="@(v => SetNote(row.UserId, v))" Placeholder="Note (optional) — reason, time arrived, cover arranged"
-                                    MaxLength="500" ReadOnly="@(!editable)" IconLeft="chat-left-text" />
-                        </div>
+                        @RowTemplate(row)
                     }
-                </li>
-            }
-        </ul>
+                }
+            </div>
+        }
     }
 </div>
 
 @if (register != null && register.Rows.Any() && editable)
 {
     <div class="reg-footer">
-        <span class="reg-footer__count">@MarkedCount of @register.Rows.Count marked</span>
+        <div class="reg-footer__status">
+            <span class="reg-footer__count">@MarkedCount of @register.Rows.Count marked</span>
+            @if (DirtyCount > 0)
+            {
+                <QChip Text="@($"{DirtyCount} unsaved")" Icon="pencil" Size="sm" Variant="warning" />
+            }
+            @if (MissingReasons.Count > 0)
+            {
+                <button type="button" class="reg-footer__error" @onclick="@ShowFirstMissingReason">
+                    <QIcon Name="exclamation-triangle-fill" Size="sm" />
+                    @MissingReasons.Count @(MissingReasons.Count == 1 ? "person needs" : "people need") a reason
+                </button>
+            }
+        </div>
         <div class="reg-footer__actions">
-            <QButton Text="Save without closing" Icon="save" Variant="secondary" Loading="@savingOpen" Disabled="@(saving || MarkedCount == 0)" OnClick="@(() => SubmitAsync(close: false))" />
-            <QButton Text="@($"Close register · {MarkedCount} of {register.Rows.Count}")" Icon="check2-circle" Variant="primary" Loading="@saving" Disabled="@(savingOpen || MarkedCount == 0)" OnClick="@(() => SubmitAsync(close: true))" />
+            <QButton Text="Save without closing" Icon="save" Variant="secondary" Loading="@savingOpen"
+                     Disabled="@(saving || MarkedCount == 0 || MissingReasons.Count > 0)" OnClick="@(() => SubmitAsync(close: false))" />
+            <QButton Text="@($"Close register · {MarkedCount} of {register.Rows.Count}")" Icon="check2-circle" Variant="primary" Loading="@saving"
+                     Disabled="@(savingOpen || MarkedCount == 0 || MissingReasons.Count > 0)" OnClick="@AttemptCloseAsync" />
         </div>
     </div>
 }
@@ -163,53 +205,80 @@
                Message="The register is closed and its records are final. Reopening lets you correct marks: when you close it again, every row you set is written as a new record and the earlier record for that person is annulled with a note saying so. Nothing is deleted."
                ConfirmText="Reopen and correct" ConfirmButtonClass="btn-warning" OnClose="@ReopenConfirmed" />
 
-<style>
-    .reg-page { max-width: 760px; margin: 0 auto; }
-    .reg-page--editing { padding-bottom: 96px; }
-    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); overflow-wrap: anywhere; }
-    .reg-back { margin-left: -8px; margin-bottom: 4px; }
+<ConfirmDialog @bind-IsVisible="showCloseGap" Title="Close with people unmarked?"
+               Message="@CloseGapMessage" ConfirmText="Close anyway" ConfirmButtonClass="btn-warning" OnClose="@CloseGapConfirmed" />
 
-    .reg-note { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 12px; padding: 10px 12px; border-radius: var(--qm-radius-md); font-size: 13px; }
+<style>
+    /* A data page takes the width it has — no max-width, no centring (CLAUDE.md, 2026-09-18). */
+    .reg-page--editing { padding-bottom: 84px; }
+    .reg-back { margin-left: -8px; margin-bottom: 2px; }
+
+    .reg-note { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 8px; padding: 7px 10px; border-radius: var(--qm-radius-md); font-size: var(--qm-text-base); }
     .reg-note--muted { background: var(--qm-bg-secondary); color: var(--qm-text-secondary); }
     .reg-note--warn { background: rgba(var(--qm-warning-rgb), 0.12); color: var(--qm-text-primary); border: 1px solid var(--qm-warning); }
 
-    .reg-legend { display: flex; gap: 8px 14px; flex-wrap: wrap; font-size: var(--q-control-font-sm); color: var(--qm-text-muted); margin-bottom: 10px; }
-    .reg-legend span { display: inline-flex; align-items: center; gap: 4px; }
-    .reg-key { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; border-radius: var(--qm-radius-sm); font-size: 11px; font-weight: 700; color: var(--qm-text-on-primary); }
+    /* The bar itself is QBulkBar; what stays here is only the outcome-coloured button it renders
+       into the Actions slot, which is register-specific and belongs to this page. */
+    .reg-bulk__btn { display: inline-flex; align-items: center; gap: 5px; height: var(--q-control-h); padding: 0 10px; border: 1px solid var(--qm-border);
+                     border-radius: var(--qm-radius-md); background: var(--qm-bg-card); color: var(--qm-text-primary); font: inherit; font-size: var(--q-control-font); cursor: pointer; }
+    .reg-bulk__btn:hover { border-color: var(--qm-primary); }
 
-    .reg-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-    .reg-row { padding: 10px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-    .reg-row--marked { border-color: rgba(var(--qm-primary-rgb), 0.5); }
-    .reg-row__who { display: flex; align-items: center; gap: 10px; min-width: 0; }
-    .reg-row__name { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-    .reg-row__name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .reg-row__name small { color: var(--qm-text-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .reg-row__chip { flex: 0 0 auto; }
+    /* ---- rows ---- */
+    .reg-list { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    /* Its own scroll region so the filters above and the footer below stay put on a long register. */
+    @@media (min-width: 993px) { .reg-list--virtual { max-height: calc(100vh - 330px); min-height: 320px; overflow-y: auto; padding-right: 4px; } }
 
-    /* The segmented control: every option is at least 44px tall and the row shares the width, so
-       five options fit a 390px screen at ~66px each with the word hidden and the key letter shown. */
-    .reg-seg { display: flex; gap: 4px; width: 100%; }
-    .reg-seg__btn { flex: 1 1 0; min-width: 0; min-height: 44px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+    .reg-row { display: grid; grid-template-columns: auto minmax(160px, 1.4fr) auto minmax(140px, 1fr); align-items: center; gap: 10px;
+               padding: 6px 10px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); min-width: 0; }
+    .reg-row--marked { border-color: rgba(var(--qm-primary-rgb), 0.45); }
+    .reg-row--error { border-color: var(--qm-danger); background: rgba(var(--qm-danger-rgb), 0.05); }
+    .reg-row--self { background: var(--qm-bg-secondary); }
+    .reg-row--picked { box-shadow: inset 3px 0 0 0 var(--qm-primary); }
+    .reg-row__pick { flex: 0 0 auto; margin-bottom: 0; }
+    .reg-row__who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .reg-row__name { display: flex; flex-direction: column; min-width: 0; }
+    .reg-row__name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--qm-text-base); }
+    .reg-row__name small { color: var(--qm-text-muted); font-size: var(--qm-text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .reg-row__note { min-width: 0; }
+    .reg-row__note .q-input-wrapper { margin-bottom: 0; }
+    .reg-row__locked { grid-column: 3 / -1; display: flex; align-items: center; gap: 6px; font-size: var(--qm-text-xs); color: var(--qm-text-muted); }
+
+    /* The segmented control. Compact on a desktop (the size scale), a 44px thumb target on a phone —
+       a register is taken standing in a corridor and that floor is a finger, not a pointer. */
+    .reg-seg { display: flex; gap: 3px; }
+    .reg-seg__btn { min-width: 44px; height: var(--q-control-h); display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 0;
                     border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-secondary); color: var(--qm-text-secondary);
-                    font: inherit; font-size: 12px; cursor: pointer; padding: 4px 2px; }
-    .reg-seg__btn:disabled { cursor: default; opacity: 0.85; }
-    .reg-seg__key { font-weight: 700; font-size: 15px; line-height: 1; }
-    .reg-seg__word { font-size: 11px; line-height: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
-    @@media (max-width: 480px) { .reg-seg__word { display: none; }
-     .reg-seg__key { font-size: 17px; } }
+                    font: inherit; font-size: var(--qm-text-xs); cursor: pointer; padding: 2px 6px; }
+    .reg-seg__btn:disabled { cursor: default; opacity: .5; }
+    .reg-seg__key { font-weight: 700; font-size: var(--qm-text-base); line-height: 1.05; }
+    .reg-seg__word { font-size: var(--qm-text-xs); line-height: 1; display: none; }
+    @@media (min-width: 1200px) { .reg-seg__word { display: block; } .reg-seg__btn { min-width: 64px; height: var(--q-control-h-lg); } }
 
     .reg-seg__btn--on { color: var(--qm-text-on-primary); border-color: transparent; }
-    .reg-seg__btn--present.reg-seg__btn--on, .reg-seg__btn--completed.reg-seg__btn--on, .reg-seg__btn--recovered.reg-seg__btn--on, .reg-key--present, .reg-key--recovered { background: var(--qm-success); }
+    .reg-seg__btn--present.reg-seg__btn--on, .reg-seg__btn--completed.reg-seg__btn--on, .reg-seg__btn--recovered.reg-seg__btn--on,
+    .reg-key--present, .reg-key--completed, .reg-key--recovered { background: var(--qm-success); }
     .reg-seg__btn--late.reg-seg__btn--on, .reg-key--late { background: var(--qm-warning); }
-    .reg-seg__btn--absent.reg-seg__btn--on, .reg-seg__btn--notcompleted.reg-seg__btn--on, .reg-key--absent { background: var(--qm-danger); }
+    .reg-seg__btn--absent.reg-seg__btn--on, .reg-seg__btn--notcompleted.reg-seg__btn--on, .reg-key--absent, .reg-key--notcompleted { background: var(--qm-danger); }
     .reg-seg__btn--excused.reg-seg__btn--on, .reg-key--excused { background: var(--qm-text-muted); }
+    .reg-key { display: inline-flex; width: 16px; height: 16px; align-items: center; justify-content: center; border-radius: var(--qm-radius-sm);
+               font-size: var(--qm-text-xs); font-weight: 700; color: var(--qm-text-on-primary); }
 
-    .reg-row__note { min-width: 0; }
+    /* ---- phone: the row stacks and the targets grow ---- */
+    @@media (max-width: 899px) {
+        .reg-row { grid-template-columns: auto 1fr; gap: 8px; padding: 8px 10px; }
+        .reg-row__who { grid-column: 2; }
+        .reg-seg { grid-column: 1 / -1; gap: 4px; }
+        .reg-seg__btn { flex: 1 1 0; min-width: 0; height: 44px; }
+        .reg-row__note, .reg-row__locked { grid-column: 1 / -1; }
+    }
 
     .reg-footer { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
-                  padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px)); background: var(--qm-bg-card); border-top: 1px solid var(--qm-border); box-shadow: var(--qm-shadow-md); }
-    .reg-footer__count { font-size: 13px; color: var(--qm-text-secondary); font-weight: 600; }
-    .reg-footer__actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+                  padding: 8px 16px calc(8px + env(safe-area-inset-bottom, 0px)); background: var(--qm-bg-card); border-top: 1px solid var(--qm-border); box-shadow: var(--qm-shadow-md); }
+    .reg-footer__status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+    .reg-footer__count { font-size: var(--qm-text-base); color: var(--qm-text-secondary); font-weight: 600; }
+    .reg-footer__error { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--qm-danger); background: rgba(var(--qm-danger-rgb), 0.08);
+                         color: var(--qm-danger); border-radius: var(--qm-radius-md); padding: 3px 8px; font: inherit; font-size: var(--q-control-font-sm); cursor: pointer; }
+    .reg-footer__actions { display: flex; gap: var(--q-row-gap); flex-wrap: wrap; margin-left: auto; }
     @@media (min-width: 993px) { .reg-footer { left: var(--sidebar-width, 0); } }
 
     .loading-container { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border); }
@@ -218,20 +287,34 @@
 @code {
     [Parameter] public Guid Id { get; set; }
 
+    /// <summary>Above this many rows the list virtualises. A staff meeting is the case that needs it; a four-person duty pays nothing.</summary>
+    private const int SmallRegister = 40;
+
     private bool isLoading = true;
     private string? loadError;
     private Guid branchId;
+    private Guid meId;
     private StaffRegisterDto? register;
     private readonly Dictionary<Guid, Mark> marks = new();
+    private readonly HashSet<Guid> selected = new();
+    private string search = string.Empty;
+    private string filter = "all";
     private bool editable;
     private bool saving;
     private bool savingOpen;
     private bool showReopen;
+    private bool showCloseGap;
 
     private sealed class Mark
     {
         public DutyOutcome? Outcome { get; set; }
         public string Note { get; set; } = string.Empty;
+
+        /// <summary>What the server last told us. The difference is what "unsaved" counts.</summary>
+        public DutyOutcome? SavedOutcome { get; set; }
+        public string SavedNote { get; set; } = string.Empty;
+
+        public bool Dirty => Outcome != SavedOutcome || !string.Equals(Note.Trim(), SavedNote.Trim(), StringComparison.Ordinal);
     }
 
     private static readonly DutyOutcome[] BaseOptions = { DutyOutcome.Present, DutyOutcome.Late, DutyOutcome.Absent, DutyOutcome.Excused };
@@ -242,6 +325,9 @@
     private static readonly DutyOutcome[] RotaOptions = { DutyOutcome.Completed, DutyOutcome.NotCompleted, DutyOutcome.Excused };
 
     private DutyOutcome[] Options => register?.Duty.Kind == DutyKind.Rota ? RotaOptions : register?.Duty.ParameterKind == ParameterKind.Attendance ? AttendanceOptions : BaseOptions;
+
+    /// <summary>What "the rest" means: everyone turned up, or every slot was covered.</summary>
+    private DutyOutcome DefaultSweep => register?.Duty.Kind == DutyKind.Rota ? DutyOutcome.Completed : DutyOutcome.Present;
 
     private static string Key(DutyOutcome o) => o switch
     {
@@ -255,14 +341,170 @@
         _ => "?"
     };
 
+    private static string Slug(DutyOutcome o) => o.ToString().ToLowerInvariant();
+
     private int MarkedCount => marks.Values.Count(m => m.Outcome.HasValue);
+    private int UnmarkedCount => register == null ? 0 : register.Rows.Count(r => CanMark(r.UserId) && !marks[r.UserId].Outcome.HasValue);
+    private int DirtyCount => marks.Values.Count(m => m.Dirty);
+    private bool Virtualised => (register?.Rows.Count ?? 0) > SmallRegister;
+
+    // ---- who may be marked -------------------------------------------------------------------
+
+    /// <summary>
+    /// SubmitRegister refuses a person marking themselves unless the duty is a Lesson, where the
+    /// teacher's own mark is a self-report for a supervisor to confirm. Enforced here too, so the
+    /// row says so rather than the whole submit coming back 400 after forty taps.
+    /// </summary>
+    private bool IsSelf(Guid userId) => userId == meId && register?.Duty.Kind != DutyKind.Lesson;
+
+    private bool CanMark(Guid userId) => editable && !IsSelf(userId);
+
+    /// <summary>A rota slot marked Not completed needs a reason — the server's rule, checked before the submit.</summary>
+    private bool NeedsReason(Guid userId)
+        => register?.Duty.Kind == DutyKind.Rota
+           && marks.TryGetValue(userId, out var m)
+           && m.Outcome == DutyOutcome.NotCompleted
+           && string.IsNullOrWhiteSpace(m.Note);
+
+    private List<Guid> MissingReasons => register == null
+        ? new List<Guid>()
+        : register.Rows.Select(r => r.UserId).Where(NeedsReason).ToList();
+
+    // ---- filtering ---------------------------------------------------------------------------
+
+    private List<QBulkBar.Filter> FilterChips
+    {
+        get
+        {
+            var chips = new List<QBulkBar.Filter>();
+            if (register == null) return chips;
+            chips.Add(new("all", "All", register.Rows.Count));
+            chips.Add(new("unmarked", "Unmarked", register.Rows.Count(r => !marks[r.UserId].Outcome.HasValue)));
+            foreach (var o in Options)
+            {
+                var n = register.Rows.Count(r => marks[r.UserId].Outcome == o);
+                if (n > 0) chips.Add(new(Slug(o), StaffDisplay.OutcomeLabel(o), n));
+            }
+            return chips;
+        }
+    }
+
+    private List<RegisterRowDto> VisibleRows
+    {
+        get
+        {
+            if (register == null) return new();
+            IEnumerable<RegisterRowDto> rows = register.Rows.OrderBy(r => r.FullName, StringComparer.OrdinalIgnoreCase);
+
+            if (filter == "unmarked") rows = rows.Where(r => !marks[r.UserId].Outcome.HasValue);
+            else if (filter != "all") rows = rows.Where(r => marks[r.UserId].Outcome is { } o && Slug(o) == filter);
+
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var q = search.Trim();
+                rows = rows.Where(r =>
+                    (r.FullName ?? string.Empty).Contains(q, StringComparison.OrdinalIgnoreCase)
+                    || (r.JobTitle ?? string.Empty).Contains(q, StringComparison.OrdinalIgnoreCase)
+                    || (r.DepartmentNames ?? string.Empty).Contains(q, StringComparison.OrdinalIgnoreCase));
+            }
+
+            return rows.ToList();
+        }
+    }
+
+    private bool AllVisibleSelected => VisibleRows.Count > 0 && VisibleRows.Where(r => CanMark(r.UserId)).All(r => selected.Contains(r.UserId));
+
+    private void SetFilter(string key)
+    {
+        filter = key;
+        PruneSelection();
+    }
+
+    private void SetSearch(string value)
+    {
+        search = value ?? string.Empty;
+        PruneSelection();
+    }
+
+    private void ClearFilters()
+    {
+        filter = "all";
+        search = string.Empty;
+    }
+
+    /// <summary>
+    /// A selection may only ever cover rows the reader can see. Otherwise "apply to 20 selected"
+    /// silently reaches people the filter is hiding — the worst kind of bulk action.
+    /// </summary>
+    private void PruneSelection()
+    {
+        var visible = VisibleRows.Select(r => r.UserId).ToHashSet();
+        selected.RemoveWhere(id => !visible.Contains(id));
+    }
+
+    private void ToggleSelectAllVisible(bool on)
+    {
+        selected.Clear();
+        if (on) foreach (var r in VisibleRows.Where(r => CanMark(r.UserId))) selected.Add(r.UserId);
+    }
+
+    private void TogglePick(Guid userId, bool on)
+    {
+        if (on) selected.Add(userId); else selected.Remove(userId);
+    }
+
+    // ---- marking -----------------------------------------------------------------------------
+
+    private void Set(Guid userId, DutyOutcome outcome)
+    {
+        if (!CanMark(userId)) return;
+        var m = marks[userId];
+        // Tapping the selected option again clears it — the register's undo.
+        m.Outcome = m.Outcome == outcome ? null : outcome;
+    }
+
+    private void SetNote(Guid userId, string? value)
+    {
+        marks[userId].Note = value ?? string.Empty;
+    }
+
+    /// <summary>Applies one outcome (or null, which clears) to the selected rows and drops the selection.</summary>
+    private void ApplyToSelected(DutyOutcome? outcome)
+    {
+        foreach (var id in selected.Where(CanMark).ToList()) marks[id].Outcome = outcome;
+        selected.Clear();
+    }
+
+    /// <summary>
+    /// Fills only the people with no mark yet. Marking the exceptions and then sweeping the
+    /// remainder is how a register is actually taken; a sweep that overwrote deliberate marks
+    /// would be an undo button disguised as a shortcut.
+    /// </summary>
+    private void SweepRemaining(DutyOutcome outcome)
+    {
+        if (register == null) return;
+        foreach (var r in register.Rows.Where(r => CanMark(r.UserId) && !marks[r.UserId].Outcome.HasValue))
+            marks[r.UserId].Outcome = outcome;
+    }
+
+    private void ShowFirstMissingReason()
+    {
+        var first = MissingReasons.FirstOrDefault();
+        if (first == Guid.Empty || register == null) return;
+        // Clear whatever is hiding the offender, so the jump cannot land on nothing.
+        filter = "all";
+        search = register.Rows.FirstOrDefault(r => r.UserId == first)?.FullName ?? string.Empty;
+        PruneSelection();
+    }
+
+    // ---- lifecycle ---------------------------------------------------------------------------
 
     protected override async Task OnInitializedAsync()
     {
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
-            Navigation.NavigateTo("/billing/modules");
+            Navigation.NavigateTo(BillingLinks.Modules);
             return;
         }
         await LoadAsync();
@@ -278,14 +520,20 @@
             if (branchId == Guid.Empty)
                 branchId = (await StaffApi.GetPortalAsync()).BranchId;
 
+            try { meId = (await AuthService.GetCurrentUserAsync())?.Id ?? Guid.Empty; } catch { meId = Guid.Empty; }
+
             register = await StaffApi.GetRegisterAsync(branchId, Id);
             marks.Clear();
+            selected.Clear();
             foreach (var row in register.Rows)
             {
+                var outcome = row.Outcome is DutyOutcome.NotApplicable ? null : row.Outcome;
                 marks[row.UserId] = new Mark
                 {
-                    Outcome = row.Outcome is DutyOutcome.NotApplicable ? null : row.Outcome,
-                    Note = row.Note ?? string.Empty
+                    Outcome = outcome,
+                    Note = row.Note ?? string.Empty,
+                    SavedOutcome = outcome,
+                    SavedNote = row.Note ?? string.Empty
                 };
             }
             editable = register.Duty.CanIRecord && !register.Duty.RegisterClosedAt.HasValue;
@@ -304,27 +552,47 @@
 
     private static DateTime Local(DateTime value) => value.Kind == DateTimeKind.Utc ? value.ToLocalTime() : value;
 
-    private void Set(Guid userId, DutyOutcome outcome)
-    {
-        if (!editable) return;
-        var m = marks[userId];
-        // Tapping the selected option again clears it — the register's undo.
-        m.Outcome = m.Outcome == outcome ? null : outcome;
-    }
-
-    private void SetNote(Guid userId, string? value)
-    {
-        marks[userId].Note = value ?? string.Empty;
-    }
-
     private void ReopenConfirmed(bool confirmed)
     {
         if (confirmed) editable = true;
     }
 
+    // ---- submitting --------------------------------------------------------------------------
+
+    private string CloseGapMessage => register == null
+        ? string.Empty
+        : $"{register.Rows.Count - MarkedCount} of {register.Rows.Count} people have no mark. Closing now records only the {MarkedCount} marked; the rest are left with no record for this duty, and closing cannot be undone without reopening.";
+
+    private Task AttemptCloseAsync()
+    {
+        if (register == null) return Task.CompletedTask;
+        if (MarkedCount < register.Rows.Count)
+        {
+            showCloseGap = true;
+            return Task.CompletedTask;
+        }
+        return SubmitAsync(close: true);
+    }
+
+    private async Task CloseGapConfirmed(bool confirmed)
+    {
+        if (confirmed) await SubmitAsync(close: true);
+    }
+
     private async Task SubmitAsync(bool close)
     {
         if (register == null || MarkedCount == 0) return;
+
+        // The server refuses the whole register over one missing reason, so refuse it here first
+        // and say who — losing forty marks to a 400 is the failure this guards.
+        if (MissingReasons.Count > 0)
+        {
+            Toast.Notify(ToastSeverity.Warning, "A reason is needed",
+                $"{MissingReasons.Count} {(MissingReasons.Count == 1 ? "person is" : "people are")} marked Not completed with no reason. Say why before saving.");
+            ShowFirstMissingReason();
+            return;
+        }
+
         if (close) saving = true; else savingOpen = true;
         try
         {
@@ -332,7 +600,7 @@
             {
                 Close = close,
                 Entries = marks
-                    .Where(kv => kv.Value.Outcome.HasValue)
+                    .Where(kv => kv.Value.Outcome.HasValue && !IsSelf(kv.Key))
                     .Select(kv => new RegisterEntryRequest
                     {
                         UserId = kv.Key,
@@ -389,4 +657,69 @@
         this.branchId = branchId;
         await LoadAsync();
     }
+
+    /// <summary>One row, shared by the plain list and the virtualised one so they cannot drift.</summary>
+    private RenderFragment RowTemplate(RegisterRowDto row) => __builder =>
+    {
+        var mark = marks[row.UserId];
+        var self = IsSelf(row.UserId);
+        var error = NeedsReason(row.UserId);
+        var picked = selected.Contains(row.UserId);
+
+        <div class="reg-row @(mark.Outcome.HasValue ? "reg-row--marked" : "") @(error ? "reg-row--error" : "") @(self ? "reg-row--self" : "") @(picked ? "reg-row--picked" : "")"
+             @key="row.UserId">
+            @if (editable)
+            {
+                @* aria-label, never Label: QCheckbox renders Label as visible text, and "Select Savior
+                   MUZOORA" printed beside every row is the opposite of compacting the page. *@
+                <QCheckbox Value="@picked" ValueChanged="@(v => TogglePick(row.UserId, v))" Disabled="@self"
+                           Class="reg-row__pick" aria-label="@($"Select {row.FullName}")" />
+            }
+            else
+            {
+                <span class="reg-row__pick"></span>
+            }
+
+            <div class="reg-row__who">
+                <QAvatar Name="@row.FullName" Size="sm" />
+                <div class="reg-row__name">
+                    <strong>@row.FullName</strong>
+                    @if (!string.IsNullOrEmpty(row.JobTitle) || !string.IsNullOrEmpty(row.DepartmentNames))
+                    {
+                        <small>@string.Join(" · ", new[] { row.JobTitle, row.DepartmentNames }.Where(s => !string.IsNullOrEmpty(s)))</small>
+                    }
+                </div>
+            </div>
+
+            @if (self)
+            {
+                <div class="reg-row__locked">
+                    <QIcon Name="person-lock" Size="sm" />
+                    <span>You cannot mark yourself — another recorder does.</span>
+                </div>
+            }
+            else
+            {
+                <div class="reg-seg" role="radiogroup" aria-label="@($"Outcome for {row.FullName}")">
+                    @foreach (var o in Options)
+                    {
+                        var on = mark.Outcome == o;
+                        <button type="button" role="radio" aria-checked="@(on ? "true" : "false")" title="@StaffDisplay.OutcomeLabel(o)"
+                                class="reg-seg__btn reg-seg__btn--@Slug(o) @(on ? "reg-seg__btn--on" : "")"
+                                disabled="@(!editable)" @onclick="@(() => Set(row.UserId, o))">
+                            <span class="reg-seg__key">@Key(o)</span>
+                            <span class="reg-seg__word">@StaffDisplay.OutcomeLabel(o)</span>
+                        </button>
+                    }
+                </div>
+
+                <div class="reg-row__note">
+                    <QInput TValue="string" Value="@mark.Note" ValueChanged="@(v => SetNote(row.UserId, v))"
+                            Placeholder="@(error ? "A reason is required" : "Note (optional)")"
+                            MaxLength="500" ReadOnly="@(!editable)" IconLeft="chat-left-text"
+                            HasError="@error" />
+                </div>
+            }
+        </div>
+    };
 }

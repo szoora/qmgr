@@ -24,21 +24,22 @@
 *@
 
 <div class="admin-page tr-page">
-<div class="page-header">
-    @if (!Embedded)
-    {
-        <div class="header-content">
-            <h1>Teaching Reports<QInfo Text="Load against the norm, lessons taught and recovered, duty compliance and the timetable's health." Label="Teaching Reports" /></h1>
-            <p class="subtitle">Load against the norm, lessons taught and recovered, duty compliance and the timetable's health.</p>
-        </div>
-    }
-    <div class="header-actions">
-        <QSelect TValue="string" TItem="StaffPeriods.Option" Value="@period" ValueChanged="@OnPeriodChanged" Items="@periodOptions"
-                 TextSelector="@(p => p.Label)" ValueSelector="@(p => p.Key)" Placeholder="Period" Class="tr-period" />
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1>Teaching Reports<QInfo Text="Load against the norm, lessons taught and recovered, duty compliance and the timetable's health." Label="Teaching Reports" /></h1>
+        <p class="subtitle">Load against the norm, lessons taught and recovered, duty compliance and the timetable's health.</p>
+    </Title>
+    <Actions>
         <QButton Text="Print lessons (Annex 4 and 5)" Icon="printer" Variant="secondary" Disabled="@(report == null)"
                  OnClick="@(() => Navigation.NavigateTo($"/admin/timetable/reports/print?period={Uri.EscapeDataString(period)}"))" />
-    </div>
-</div>
+    </Actions>
+</QPageActions>
+
+@* The period is a FILTER, so it sits in the filter bar — the title row holds actions only. *@
+<QFilterBar>
+    <QSelect TValue="string" TItem="StaffPeriods.Option" Value="@period" ValueChanged="@OnPeriodChanged" Items="@periodOptions"
+             TextSelector="@(p => p.Label)" ValueSelector="@(p => p.Key)" Placeholder="Period" Class="tr-period" />
+</QFilterBar>
 
     <StaffScopeNote Departments="@(report?.ScopedToDepartments)" Noun="figures" />
 
@@ -234,12 +235,12 @@
     .tr-period { min-width: 220px; max-width: 280px; }
     .tr-card { margin-top: 14px; }
     .tr-pad { padding: 14px 16px; }
-    .tr-muted { font-size: 13px; color: var(--qm-text-muted); margin: 0; }
-    .tr-small { font-size: 12.5px; color: var(--qm-text-secondary); }
+    .tr-muted { font-size: var(--qm-text-base); color: var(--qm-text-muted); margin: 0; }
+    .tr-small { font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
     .tr-num { text-align: right; white-space: nowrap; }
     .tr-columns { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 14px; }
     @@media (min-width: 1000px) { .tr-columns { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); } }
-    .tr-issues { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+    .tr-issues { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: var(--qm-text-base); }
     .tr-issues li { display: flex; gap: 8px; align-items: flex-start; }
     @@media (max-width: 640px) { .tr-num { text-align: left; } }
 </style>
@@ -295,7 +296,7 @@
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
-            Navigation.NavigateTo("/billing/modules");
+            Navigation.NavigateTo(BillingLinks.Modules);
             return;
         }
         if (ViewQuery is "load" or "lessons" or "rota" or "health") tab = ViewQuery;

@@ -49,7 +49,7 @@ const rowGap = await t.eval(`(() => { const r = [...document.querySelectorAll('.
 check('a card action row (Duties) is 8px apart too', rowGap === null || rowGap === 8, String(rowGap));
 await t.goto(BASE + '/admin/staff/parameters?tab=activity'); await t.sleep(3000);
 const chip = await t.eval(`(() => { const c = document.querySelector('.q-daterange__preset'); if (!c) return null; const cs = getComputedStyle(c); return [Math.round(c.getBoundingClientRect().height), cs.fontSize]; })()`);
-check('date-range chips are the small control size (28px, 12.5px)', chip && chip[0] === 28 && chip[1] === '12.5px', JSON.stringify(chip));
+check('date-range chips are the small control size (28px, 12px — --qm-text-sm)', chip && chip[0] === 28 && chip[1] === '12px', JSON.stringify(chip));
 await t.goto(BASE + '/admin/users'); await t.sleep(4000);
 const pager = await t.eval(`(() => { const b = document.querySelector('.rz-pager .rz-pager-element'); return b ? Math.round(b.getBoundingClientRect().height) : null; })()`);
 check('the Users pager is the small control size (28px)', pager === null || pager === 28, String(pager));
@@ -58,7 +58,7 @@ await t.viewport(390, 844, true);
 for (const route of ['/admin/timetable', '/admin/staff/duties', '/content/library?tab=documents']) {
   await t.goto(BASE + route); await t.waitFor(`!!document.querySelector('.qm-main h1')`, 15000); await t.sleep(2500);
   const m = await t.eval(`(() => { const hs = [...document.querySelectorAll('.qm-main .q-btn, .qm-main input.q-input, .qm-main .q-select')].filter((e) => e.getBoundingClientRect().height > 0).map((e) => Math.round(e.getBoundingClientRect().height)); const h1 = getComputedStyle(document.querySelector('.qm-main h1')).fontSize; return { min: Math.min(...hs), h1, overflow: document.documentElement.scrollWidth - innerWidth }; })()`);
-  check(`390px ${route}: every control at least 40px, title 18px, no sideways scroll`, m.min >= 40 && m.h1 === '18px' && m.overflow <= 0, JSON.stringify(m));
+  check(`390px ${route}: every control at least 40px, title 17px (--qm-text-lg), no sideways scroll`, m.min >= 40 && m.h1 === '17px' && m.overflow <= 0, JSON.stringify(m));
 }
 check('no console errors', t.consoleErrors.length === 0, t.consoleErrors.slice(0, 3).join(' | '));
 const sum = `\n  Uniform scale: ${pass} passed, ${fail} failed`; console.log(sum); post(sum);

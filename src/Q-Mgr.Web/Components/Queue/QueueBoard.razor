@@ -138,8 +138,8 @@
 
 <style>
     .qb-batch-bar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; margin-bottom: 10px; border: 1px solid var(--qm-primary); border-radius: var(--qm-radius-md); background: var(--qm-primary-light); }
-    .qb-select-all { background: none; border: none; padding: 0; cursor: pointer; font: inherit; font-size: 13px; color: var(--qm-primary); text-decoration: underline; }
-    .qb-batch-count { margin-left: auto; font-size: 13px; font-variant-numeric: tabular-nums; }
+    .qb-select-all { background: none; border: none; padding: 0; cursor: pointer; font: inherit; font-size: var(--qm-text-base); color: var(--qm-primary); text-decoration: underline; }
+    .qb-batch-count { margin-left: auto; font-size: var(--qm-text-base); font-variant-numeric: tabular-nums; }
     .qb-waiting-check { width: 16px; height: 16px; margin-right: 10px; accent-color: var(--qm-primary); cursor: pointer; }
 
     .qb-queue-board {
@@ -168,7 +168,7 @@
 
     .qb-branch-name {
         color: var(--qm-primary);
-        font-size: 16px;
+        font-size: var(--qm-text-md);
     }
 
     .qb-header-right {
@@ -183,7 +183,7 @@
     }
 
     .qb-current-date {
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
     }
 
@@ -204,7 +204,7 @@
     .qb-now-serving-section h2,
     .qb-waiting-section h2 {
         margin: 0 0 20px 0;
-        font-size: 24px;
+        font-size: var(--qm-text-stat);
         color: var(--qm-primary);
         border-bottom: 2px solid var(--qm-primary);
         padding-bottom: 10px;
@@ -240,7 +240,7 @@
     }
 
     .qb-counter-number {
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
         font-weight: 600;
         color: var(--qm-text-secondary);
         margin-bottom: 15px;
@@ -268,12 +268,12 @@
 
     .qb-customer-name {
         color: var(--qm-text-secondary);
-        font-size: 14px;
+        font-size: var(--qm-text-base);
     }
 
     .qb-status-text {
         color: var(--qm-primary);
-        font-size: 14px;
+        font-size: var(--qm-text-base);
     }
 
     .qb-waiting-section {
@@ -312,7 +312,7 @@
     }
 
     .qb-token-number {
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
         font-weight: bold;
         min-width: 80px;
     }
@@ -320,7 +320,7 @@
     .qb-service-type {
         flex: 1;
         color: var(--qm-text-secondary);
-        font-size: 14px;
+        font-size: var(--qm-text-base);
     }
 
     .qb-priority-badge {
@@ -328,7 +328,7 @@
         color: var(--qm-text-dark);
         padding: 2px 8px;
         border-radius: var(--qm-radius-sm);
-        font-size: 11px;
+        font-size: var(--qm-text-xs);
         font-weight: bold;
     }
 
@@ -341,7 +341,7 @@
         text-align: center;
         color: var(--qm-text-muted);
         padding: 40px;
-        font-size: 18px;
+        font-size: var(--qm-text-lg);
     }
 
     .qb-more-waiting {
@@ -371,7 +371,7 @@
     }
 
     .qb-stat-label {
-        font-size: 14px;
+        font-size: var(--qm-text-base);
         color: var(--qm-text-secondary);
     }
 

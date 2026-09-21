@@ -1,0 +1,307 @@
+@page "/admin/staff/duties/{Id:guid}/minutes/print"
+@layout QMgr.Web.Components.Layout.MinimalLayout
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
+@using QMgr.Web.Components.Shared.UI
+@inject IStaffPerformanceApiService StaffApi
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject IOrganizationApiService OrganizationApi
+@inject IAuthService AuthService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject IDocumentShareApiService DocShareApi
+@inject IToastService Toast
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+@*
+    The minutes on A4, and the ARCHIVAL copy of them.
+
+    Printing is the browser's job in this project — no server PDF library (CLAUDE.md) — so the
+    adopted minutes cannot be turned into a file on the server at the moment they are adopted.
+    "Attached automatically on approval" therefore means this: publishing from here renders the
+    sheet in the browser, puts it in the Document Library AND attaches it to the meeting as its
+    minutes document in one act, so nobody has to upload anything or remember to link it. That is
+    what keeps StaffDuty.MinutesMediaContentId meaningful and gives the adopted minutes share
+    links, a retention window and a read log for nothing.
+
+    A DRAFT PRINTS AS A DRAFT. Open-meeting practice is explicit that a draft is circulated marked
+    DRAFT; a sheet that looks identical before and after adoption is how an unadopted document ends
+    up in a file as though it were the record.
+*@
+
+<PageTitle>Minutes Print - Q-Mgr</PageTitle>
+
+<QPrintSheet SheetId="mp-sheet" Title="@DocTitle" Class="mp-sheet"
+             Ready="@(!isLoading && loadError == null && minutes != null)" BackText="Back to the minutes"
+             OnBack="@(() => Navigation.NavigateTo($"/admin/staff/duties/{Id}/minutes"))"
+             CanPublish="@canPublish" Publishing="@isPublishing" OnPublish="@PublishToLibrary" OnPrint="@Print"
+             PublishLabel="@(minutes?.Status == MinutesStatus.Approved ? "Publish to Library" : "Publish draft to Library")"
+             Disabled="@(isLoading || loadError != null)">
+    <ChildContent>
+        @if (minutes != null)
+        {
+            <header class="mp-head">
+                <div class="mp-head__brand">
+                    @if (!string.IsNullOrWhiteSpace(branding?.LogoUrl)) { <img class="mp-logo" src="@branding!.LogoUrl" alt="" /> }
+                    <div>
+                        <div class="mp-org">@OrganizationName</div>
+                        <div class="mp-doc">Minutes@(minutes.Status == MinutesStatus.Approved ? "" : " — DRAFT")</div>
+                    </div>
+                </div>
+                <div class="mp-head__who">
+                    <strong>@minutes.DutyTitle</strong>
+                    <span>@QDateFormat.DD(Local(minutes.StartsAt)) · @QDateFormat.T(Local(minutes.StartsAt))–@QDateFormat.T(Local(minutes.EndsAt))</span>
+                    @if (!string.IsNullOrWhiteSpace(minutes.Location)) { <span>@minutes.Location</span> }
+                </div>
+            </header>
+
+            @if (minutes.Status != MinutesStatus.Approved)
+            {
+                <p class="mp-draft">DRAFT — not yet adopted by the meeting. Not the official record.</p>
+            }
+            else
+            {
+                <p class="mp-adopted">
+                    Adopted @QDateFormat.D(Local(minutes.ApprovedAt!.Value))@(string.IsNullOrEmpty(minutes.ApprovedByName) ? "" : $" · {minutes.ApprovedByName}")@(string.IsNullOrEmpty(minutes.ApprovedAtDutyTitle) ? "" : $" · at \"{minutes.ApprovedAtDutyTitle}\"")
+                </p>
+            }
+
+            @* ---- Attendance, straight from the register ---- *@
+            <section class="mp-block">
+                <h2>Attendance</h2>
+                <p class="mp-line"><strong>Expected:</strong> @minutes.Attendance.Expected · <strong>Present:</strong> @minutes.Attendance.Present@(minutes.Attendance.Late > 0 ? $" (of whom {minutes.Attendance.Late} late)" : "") · <strong>Apologies:</strong> @minutes.Attendance.Apologies · <strong>Absent:</strong> @minutes.Attendance.Absent</p>
+                @if (minutes.Attendance.QuorumRequired is { } need)
+                {
+                    <p class="mp-line"><strong>Quorum:</strong> @(minutes.Attendance.QuorumMet == true ? "met" : "NOT met") — @minutes.Attendance.Present present of @need required.</p>
+                }
+                @if (!minutes.Attendance.RegisterClosed)
+                {
+                    <p class="mp-line mp-line--warn">The register was not closed when this was printed; these figures are provisional.</p>
+                }
+                @NameLine("Present", minutes.Attendance.PresentNames)
+                @NameLine("Apologies", minutes.Attendance.ApologyNames)
+                @NameLine("Absent", minutes.Attendance.AbsentNames)
+            </section>
+
+            @* ---- The template sections ---- *@
+            @foreach (var section in minutes.Template)
+            {
+                var body = minutes.Sections.FirstOrDefault(s => s.Key == section.Key)?.Body;
+                if (string.IsNullOrWhiteSpace(body)) continue;
+                <section class="mp-block">
+                    <h2>@section.Title</h2>
+                    <p class="mp-body">@body</p>
+                </section>
+            }
+
+            @if (minutes.Decisions.Any())
+            {
+                <section class="mp-block">
+                    <h2>Decisions</h2>
+                    <ol class="mp-list">
+                        @foreach (var d in minutes.Decisions)
+                        {
+                            <li>
+                                <span class="mp-body">@d.Text</span>
+                                <small>
+                                    @OutcomeLabel(d.Outcome)@(string.IsNullOrWhiteSpace(d.MovedBy) ? "" : $" · moved by {d.MovedBy}")@(string.IsNullOrWhiteSpace(d.SecondedBy) ? "" : $" · seconded by {d.SecondedBy}")@(d.VotesFor.HasValue || d.VotesAgainst.HasValue ? $" · {d.VotesFor ?? 0} for, {d.VotesAgainst ?? 0} against, {d.Abstentions ?? 0} abstained" : "")
+                                </small>
+                            </li>
+                        }
+                    </ol>
+                </section>
+            }
+
+            @if (minutes.Actions.Any(a => a.Status != MinuteActionStatus.Cancelled))
+            {
+                <section class="mp-block">
+                    <h2>Actions</h2>
+                    <table class="mp-table">
+                        <thead><tr><th>Action</th><th>Who</th><th>By when</th><th>Status</th></tr></thead>
+                        <tbody>
+                            @foreach (var a in minutes.Actions.Where(a => a.Status != MinuteActionStatus.Cancelled))
+                            {
+                                <tr>
+                                    <td>@a.Text</td>
+                                    <td>@(string.IsNullOrEmpty(a.AssignedName) ? "—" : a.AssignedName)</td>
+                                    <td>@(a.DueAt is { } due ? QDateFormat.DD(Local(due)) : "—")</td>
+                                    <td>@(a.Status == MinuteActionStatus.Done ? "Done" : a.IsOverdue ? "Overdue" : "Open")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </section>
+            }
+
+            @if (minutes.Corrections.Any())
+            {
+                <section class="mp-block">
+                    <h2>Corrections since adoption</h2>
+                    @foreach (var c in minutes.Corrections)
+                    {
+                        <p class="mp-body">@c.Text<small> — @c.ByName, @QDateFormat.D(Local(c.At))</small></p>
+                    }
+                </section>
+            }
+
+            <section class="mp-sign">
+                <div><span class="mp-sign__rule"></span>Chair</div>
+                <div><span class="mp-sign__rule"></span>Secretary</div>
+                <div><span class="mp-sign__rule"></span>Date</div>
+            </section>
+
+            <footer class="mp-foot">Printed @QDateFormat.DT(DateTime.Now)@(string.IsNullOrWhiteSpace(generatedBy) ? "" : $" by {generatedBy}"). The copy in Q-Mgr is the current one.</footer>
+        }
+    </ChildContent>
+</QPrintSheet>
+
+@if (isLoading)
+{
+    <div class="mp-state no-print"><QSpinner Size="lg" /><span>Building the minutes...</span></div>
+}
+else if (loadError != null)
+{
+    <div class="mp-state no-print"><QIcon Name="exclamation-triangle" /><span>@loadError</span></div>
+}
+
+<style>
+    .mp-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 80px 20px; color: var(--qm-text-muted); }
+    .mp-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 12px; border-bottom: 2px solid #14110f; padding-bottom: 6px; margin-bottom: 8px; }
+    .mp-head__brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .mp-logo { height: 34px; width: auto; max-width: 120px; object-fit: contain; }
+    .mp-org { font-family: var(--qm-font-display, inherit); font-size: 13pt; font-weight: 700; line-height: 1.15; }
+    .mp-doc { font-size: 9pt; letter-spacing: .06em; text-transform: uppercase; color: #5b524d; }
+    .mp-head__who { display: flex; flex-direction: column; align-items: flex-end; font-size: 9pt; }
+    .mp-head__who strong { font-size: 13pt; font-family: var(--qm-font-display, inherit); }
+
+    .mp-draft { margin: 0 0 8px; padding: 4px 8px; border: 1px solid #14110f; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-size: 9pt; text-align: center; }
+    .mp-adopted { margin: 0 0 8px; font-size: 9pt; color: #5b524d; }
+
+    .mp-block { margin-bottom: 5mm; break-inside: avoid; }
+    .mp-block h2 { font-family: var(--qm-font-display, inherit); font-size: 11pt; font-weight: 700; margin: 0 0 3px; padding-bottom: 2px; border-bottom: 1px solid #8a817c; }
+    .mp-body { margin: 0 0 4px; font-size: 10pt; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .mp-body small { color: #5b524d; font-size: 8.5pt; }
+    .mp-line { margin: 0 0 3px; font-size: 9.5pt; }
+    .mp-line--warn { font-style: italic; }
+    .mp-list { margin: 0; padding-left: 18px; font-size: 10pt; }
+    .mp-list li { margin-bottom: 4px; break-inside: avoid; }
+    .mp-list small { display: block; color: #5b524d; font-size: 8.5pt; }
+    .mp-table { width: 100%; border-collapse: collapse; font-size: 9pt; }
+    .mp-table th, .mp-table td { border: 1px solid #8a817c; padding: 3px 5px; text-align: left; vertical-align: top; }
+    .mp-table thead th { font-weight: 700; border-bottom: 2px solid #14110f; }
+    .mp-table tr { break-inside: avoid; }
+
+    .mp-sign { display: flex; gap: 10mm; margin-top: 12mm; font-size: 9pt; break-inside: avoid; }
+    .mp-sign > div { flex: 1 1 0; }
+    .mp-sign__rule { display: block; border-bottom: 1px solid #14110f; height: 10mm; margin-bottom: 2px; }
+    .mp-foot { margin-top: 6px; font-size: 7.5pt; color: #5b524d; }
+</style>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private Guid branchId, organizationId;
+    private bool isLoading = true, isPublishing, canPublish;
+    private string? loadError, generatedBy;
+    private DutyMinutesDto? minutes;
+    private OrganizationBrandingDto? branding;
+
+    private string OrganizationName => !string.IsNullOrWhiteSpace(branding?.BrandName) ? branding!.BrandName! : BranchState.CurrentBranchName ?? "Minutes";
+    private string DocTitle => minutes == null ? "Minutes" : $"Minutes — {minutes.DutyTitle}{(minutes.Status == MinutesStatus.Approved ? "" : " (draft)")}";
+
+    private static DateTime Local(DateTime value) => value.Kind == DateTimeKind.Utc ? value.ToLocalTime() : value;
+
+    private static string OutcomeLabel(MinutesDecisionOutcome o) => o switch
+    {
+        MinutesDecisionOutcome.Carried => "Carried",
+        MinutesDecisionOutcome.NotCarried => "Not carried",
+        MinutesDecisionOutcome.Deferred => "Deferred",
+        _ => "Agreed"
+    };
+
+    private RenderFragment NameLine(string title, List<string> names) => __builder =>
+    {
+        if (names.Count == 0) return;
+        <p class="mp-line"><strong>@title (@names.Count):</strong> @string.Join(", ", names)</p>
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        try
+        {
+            var user = await AuthService.GetCurrentUserAsync();
+            generatedBy = user?.FullName;
+            organizationId = user?.OrganizationId ?? Guid.Empty;
+            canPublish = await ReportPublishing.CanPublishAsync(PermissionService, ModuleState, ModuleApi);
+            if (organizationId != Guid.Empty)
+            {
+                try { branding = await OrganizationApi.GetOrganizationBrandingAsync(organizationId); } catch { branding = null; }
+            }
+            if (branchId == Guid.Empty) branchId = (await StaffApi.GetPortalAsync()).BranchId;
+            minutes = await StaffApi.GetMinutesAsync(branchId, Id);
+        }
+        catch (Exception ex)
+        {
+            loadError = $"Couldn't build the minutes: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task Print()
+    {
+        if (minutes != null)
+            await StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest { Kind = StaffExportKinds.Minutes, DocumentName = DocTitle, Format = "Print", RowCount = 1 });
+        try { await JS.InvokeVoidAsync("window.print"); } catch { }
+    }
+
+    /// <summary>
+    /// Publishes AND attaches. The attach is what makes this the meeting's archival copy rather
+    /// than one more document in the Library that happens to be about it, and it is the only point
+    /// in the flow where a rendered PDF exists — the render happens in the browser.
+    /// </summary>
+    private async Task PublishToLibrary()
+    {
+        if (isPublishing || organizationId == Guid.Empty || minutes == null) return;
+        isPublishing = true;
+        try
+        {
+            var name = $"Minutes — {minutes.DutyTitle} — {QDateFormat.D(Local(minutes.StartsAt))}{(minutes.Status == MinutesStatus.Approved ? "" : " (draft)")}";
+            await ReportPublishing.PublishAsync(new ReportPublishRequest
+            {
+                SheetElementId = "mp-sheet",
+                OrganizationId = organizationId,
+                FileName = $"minutes-{Local(minutes.StartsAt):yyyy-MM-dd}.pdf",
+                DocumentName = name,
+                Summary = $"{minutes.DutyTitle}, {QDateFormat.D(Local(minutes.StartsAt))}. {(minutes.Status == MinutesStatus.Approved ? "Adopted" : "Draft, not yet adopted")}. Generated {QDateFormat.D(DateTime.UtcNow)} by {generatedBy ?? "Q-Mgr"}.",
+                PublishedFrom = $"Minutes — {BranchState.CurrentBranchName}",
+                SubjectNoun = "minutes",
+                Audit = async doc =>
+                {
+                    await StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest
+                    {
+                        Kind = StaffExportKinds.Minutes, Published = true, MediaContentId = doc.Id, DocumentName = name, Format = "PDF"
+                    });
+                    // Only the adopted copy becomes THE minutes document: a draft in the Library is a
+                    // draft, and attaching it would let an unadopted sheet stand as the record.
+                    if (minutes.Status == MinutesStatus.Approved)
+                    {
+                        try { await StaffApi.AttachMinutesAsync(branchId, Id, new AttachMinutesRequest { MediaContentId = doc.Id }); }
+                        catch (Exception ex) { Toast.Notify(ToastSeverity.Warning, "Published, but not attached", $"The document is in the Library; linking it to the meeting failed: {ex.Message}"); }
+                    }
+                }
+            }, JS, DocShareApi, Toast, Navigation);
+        }
+        finally
+        {
+            isPublishing = false;
+        }
+    }
+}
