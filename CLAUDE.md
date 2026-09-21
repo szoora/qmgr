@@ -3048,6 +3048,126 @@ The morning's work therefore becomes the **fast path** of a hybrid rather than t
 per-domain issuance restored as the branch underneath the coverage check. That build is workstream B
 of the completion plan; its rules are written up where it lands, not here.
 
+## Staff self-service: what a teacher may take, and what they may only ask for (built 2026-09-21)
+
+Asked for as *"creating a provision for staff to make configurations will greatly reduce on the
+administration workload ... classes taught and lesson times on time table ... if the time is already
+allocated on the time table, it should not be available for any other user, and in this case, bigger
+role can make the adjustment"*. The plan is the artifact linked from `docs/TASK_TRACKER.md`.
+
+**THE RULE THAT DECIDES EVERYTHING ELSE. A live `ClassTeacherAssignment` with
+`Role = SubjectTeacher` is not a record of who teaches what** — `StudentScopeService` reads it and
+grants `StudentAccessTier.Teaching` over every child in that class, and a Teaching-tier caller may
+file a welfare record about them. So **declaring a class you teach is a DATA-ACCESS GRANT** and can
+never be self-approved, however aggressive the validation around it. Claiming a free period for a
+class you ALREADY hold grants nothing new, because the access came with the assignment. That one
+asymmetry is the whole tier split:
+
+- **Tier 1 DECLARE** — reaches nobody else. Unavailability, teaching preferences. Instant.
+- **Tier 2 CLAIM** — can collide, cannot widen. Instant, but only into a slot that is provably free,
+  inside an assignment already held, on a **Draft**.
+- **Tier 3 REQUEST** — widens access, or collides. Decided by somebody else, never by the asker.
+
+**ONE QUEUE and one decider: a holder of `timetable.manage`** (user decision, 2026-09-21), which
+among the seeded roles is **Director of Studies and Academic Assistant** — not Head of Department,
+and not Teacher, which holds only `timetable.lessons.flag`. **The direct write paths did NOT move:**
+`POST …/class-teachers` keeps `classes.teachers.manage` and `POST …/timetables/{id}/lessons` keeps
+`timetable.manage`. What changed is who may approve somebody *else's* request.
+
+- **THE ASKER CAN NEVER BE THE DECIDER, and it is checked on the decision path, not at the
+  permission layer.** A Director of Studies holds `timetable.manage` and also teaches, so the
+  permission says yes on their own request and `StaffSelfService.RefuseDecision` is what says no.
+  `CanIDecide` carries the same rule to the client so the button is absent rather than refused.
+  NIST SP 800-53 AC-5; "nobody marks their own register entry" and "a meeting cannot adopt its own
+  minutes" are the same rule already in this codebase.
+- **A swap cannot be decided until the other teacher has agreed.** Automating the corridor
+  negotiation would not replace it, it would take it away from the people having it. And a swap
+  swaps the **slots**, never the teachers: swapping teachers would move a class to somebody not
+  assigned to it, which is a data-access change wearing a timetable change's clothes.
+
+### Nothing new was invented that already existed
+
+- **`TimetableChecker` stays the one home for a clash rule.** Its Hard/Soft split is the timetabling
+  literature's, and the self-service grid, the master's diagnosis and the nightly sweep all read it.
+- **Unavailability and preferences live in `Branch.Settings["Timetable"]`**, beside the
+  unavailability list that was already there — no new table and no new blob key. The checker already
+  loads that blob, so they cost no extra query, and they are written under `BranchSettingsLock`,
+  which is the standing rule for that column's fourth writer.
+- **`UnavailabilityReason` is a SHORT LIST, never free text.** "Hospital appointment, Thursdays"
+  typed into a note is health information about a member of staff, and once it exists it has to be
+  gated, retained and eventually blanked like anything else. A category tells the timetable
+  everything it needs.
+- **The school's dials are in `Organization.Settings["StaffPerformance"]`**, through
+  `IStaffPerformancePolicyService` — the one reader that already takes the organization lock —
+  rather than a fourth writer of `Branch.Settings`. **`Enabled` is false by default**, the same call
+  as `StaffOnboardingPolicyDto.JoinEnabled`.
+
+### The rules that are easy to break
+
+- **A self-service write takes the SAME advisory lock the master takes** (`pg_advisory_xact_lock` on
+  the timetable) and re-reads inside it. That lock is what makes the class and room checks safe at
+  all — they are code checks, not unique indexes — so a fifth write path that skipped it would
+  remove the protection from the other four.
+- **A TEACHER MAY NOT CREATE A CLASH A MASTER MAY.** `AddLesson` refuses only a *teacher* clash and
+  leaves class and room to the publish gate, deliberately: a master builds a draft, holds a clash
+  for a minute and fixes it. So no unique index was added for class or room — it would refuse a save
+  the master is allowed to make. The **claim path** refuses both instead, and offers the request
+  that would resolve each one, so the answer is "ask" rather than "no".
+- **The fingerprint is what makes a "pick a free slot" interface honest.** The grid carries a hash of
+  the lessons it was built from; a claim sends it back, the server re-reads under the lock, and a
+  stale claim is refused **with the fresh grid attached** rather than applied to a slot the teacher
+  never saw. It hashes ids and slots and never names, so a master and a teacher reading the same
+  grid produce the same fingerprint.
+- **POSTGRESQL TREATS NULLS AS DISTINCT IN A UNIQUE INDEX.** The duplicate-request index was first
+  written across the seven payload columns and **never fired for a `ClassAssignment`**, which carries
+  a null `CycleDay` and `PeriodKey` — four simultaneous identical requests made four rows. It is on
+  a computed, never-null **`DedupeKey`** column now. A single column rather than `NULLS NOT DISTINCT`
+  because it needs no minimum PostgreSQL version and the rule can be read instead of inferred.
+- **A teacher sees their own name and nobody else's.** A slot a colleague holds reads "taken" — no
+  name, no subject, no class. Names are gated on `timetable.manage`, the same single code that gates
+  building the timetable. The grid reports the **least revealing true reason** a slot cannot be used:
+  the caller's own declaration before the class being busy, the class before a colleague.
+- **A self-service write replaces only the caller's own lines.** `DeclaredBySelf` is what lets it
+  leave every line the timetable master entered exactly as it was — a teacher clearing their
+  declarations must not quietly undo a constraint the school put on them.
+- **Approving a class assignment is recorded at the Confidential rung**, because that is the act that
+  grants access to a class of children.
+- **An approval the world has moved under becomes `Superseded` with the reason**, never silently left
+  Pending: "what happened to my request" always has an answer.
+
+### My Workspace is a hub now, and the hub IS the lazy loading
+
+`/portal` was 1,213 lines and one scroll of sixteen cards behind a single `GetPortalAsync()`
+returning nine collections. Four tabs — **Today · My teaching · My performance · My file** — and a
+section renders only while its own tab is open, which is the rule the Staff and Administration hubs
+already follow. On Blazor Server every card's render tree is diffed and shipped down a SignalR
+circuit, so the cost was paid on the school's connection whether or not anybody scrolled that far.
+
+- **The greeting, the score ring and the stat tiles stay ABOVE the tabs**: they are the page's
+  summary, not one tab's content.
+- **`/my-day` is deliberately NOT folded in.** "My Day → My School Day because that page is
+  date-scoped and a name without the day in it loses what the page is organised around" is a recorded
+  user decision, and six API-side callers name that route.
+- **The interface is the validation.** A taken period is never offered, a class the caller does not
+  teach cannot be chosen, and a control the server would refuse is not rendered. A form that accepts
+  anything and refuses afterwards is how people learn to stop trying.
+
+### Verifying it
+
+`scripts/e2e/self-service-e2e.mjs` — **section 21, 38 checks**, wired into `class-teacher-e2e.sh`.
+Node, because the whole risk is concurrency: it fires the same claim from five callers at once and
+the same request from four, and checks that exactly one row appears. It **seeds what it needs** — a
+subject-teacher assignment and a draft timetable — and removes both.
+
+**`PUT /api/v1/staff/policy` is NOT branch-scoped**: it resolves the organization from the caller's
+tenant CONTEXT, while every self-service route resolves it from the BRANCH. For a tenant user those
+agree; for a platform SuperAdmin they do not, so the policy saved and read back on while every branch
+route went on seeing it off. Section 21 signs in as a **tenant administrator** for that reason.
+
+**A suite must force the state it asserts.** 21.1 forces self-service off rather than assuming it;
+the first version measured whatever the tenant happened to have, so one run that threw before its
+cleanup left the next run reporting a product bug that was not there.
+
 ## Process note for future sessions
 
 Design/reference decisions like the one above must be written here (or somewhere durable) at the

@@ -78,6 +78,54 @@ running process holds, and that failure reads exactly like a compile error when 
   elapsed `Pending` window (the sweep moved four stale dev tenants `Pending` → `Suspended`).
 
 ---
+## ▶ (2026-09-21, afternoon) — staff self-service configuration, built in full
+
+Asked for as *"creating a provision for staff to make configurations will greatly reduce on the
+administration workload"*, with aggressive validation, duplicate detection, visibility restrictions
+and lazy loading on My Workspace. Plan artifact: **https://claude.ai/artifact/LuuTicPsCfcy6g9P3yAYEY**
+(revision 3). Rules in CLAUDE.md, "Staff self-service: what a teacher may take, and what they may
+only ask for".
+
+**Four design questions were answered from the codebase rather than assumed**, at the user's
+instruction, and one of them reshaped the feature: a `SubjectTeacher` assignment grants
+`StudentAccessTier.Teaching` over a class of children, so declaring a class you teach is a
+data-access grant and can never be self-approved. Claiming a free period inside a class you already
+hold grants nothing new. That asymmetry is the tier split.
+
+- **Tier 1 declarations** — unavailability and teaching preferences, in the settings blob that was
+  already there, under the lock that column already has. No new table, no new key.
+- **Tier 2 claims** — a grid of genuinely free periods, a fingerprint so a stale claim is refused
+  with the fresh grid attached, and the same advisory lock the timetable master takes.
+- **Tier 3 requests** — ONE queue, decided by a holder of `timetable.manage` (user decision), and
+  the asker can never be the decider.
+- **My Workspace is a hub**: Today · My teaching · My performance · My file. A section renders only
+  while its tab is open, which IS the lazy loading. `/my-day` deliberately not folded in.
+- **The school's dials** are on the Staff policy page, **off by default**.
+
+### What the build corrected in the plan, by reading rather than assuming
+
+- **No unique index for class or room double-booking.** The plan called for both. `AddLesson`
+  refuses only a TEACHER clash and leaves class and room to the publish gate, so a draft is
+  deliberately allowed to hold one mid-edit while a master fixes it — an index would refuse a save
+  the master is allowed to make. The CLAIM path refuses both instead.
+- **PostgreSQL treats NULLs as DISTINCT in a unique index**, so the duplicate-request index never
+  fired for a class assignment and four simultaneous identical requests made four rows. Found by
+  the e2e firing them at once; fixed with a never-null `DedupeKey` column.
+
+### Verified
+
+`scripts/e2e/self-service-e2e.mjs` — **section 21, 38/38, twice in a row**, wired into
+`class-teacher-e2e.sh` in the same commit. It seeds a subject-teacher assignment and a draft
+timetable, exercises the grid and the claims, and removes both. Build clean; 7/7 static guards.
+
+Two migrations, both additive and applied to dev: `20260921105315_AddStaffSelfServiceRequests`,
+`20260921113603_AddSelfServiceRequestDedupeKey`.
+
+**Not yet exercised in a browser.** The API and the suite are proven; the hub and the section were
+built and compile, and the browser suites were deferred to the end of the session by instruction.
+`scripts/e2e/browser/all.mjs` is the door for that.
+
+---
 ## ▶ (2026-09-21) — the four traps, three UI reports, and a certificate decision taken twice
 
 **The machine shut down abruptly at 11:47 mid-command.** Nothing was lost: every edit was on disk,

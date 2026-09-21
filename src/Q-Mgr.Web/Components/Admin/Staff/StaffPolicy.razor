@@ -173,6 +173,28 @@
                 }
             </QCard>
 
+            @* ---- What staff may configure for themselves ------------------------------------
+                 OFF BY DEFAULT, the same call as staff sign-up: a school holding safeguarding
+                 records turns a capability on deliberately rather than discovering it is on. *@
+            <QCard Title="Staff self-service" Icon="person-gear" Class="pol-card">
+                <QCheckbox @bind-Value="@policy.SelfService.Enabled" Label="Let staff configure their own teaching" />
+                @if (policy.SelfService.Enabled)
+                {
+                    <QCheckbox @bind-Value="@policy.SelfService.AllowDeclarations" Label="They may declare when they cannot be timetabled" />
+                    <QCheckbox @bind-Value="@policy.SelfService.AllowDirectClaims" Label="They may place their own lessons in free periods" />
+                    <QCheckbox @bind-Value="@policy.SelfService.ClaimsCappedByPlannedLoad" Label="Only up to the periods a week their class is planned for" />
+                    <QInput TValue="int" @bind-Value="@policy.SelfService.MaxUnavailabilityLinesPerTeacher" Type="number" Min="0" Max="200"
+                            Label="Most unavailability lines per person" HelperText="0 uses the default of 40." />
+                }
+                <small class="pol-help">
+                    Asking is always allowed and is never switched off — it is the safe path, and closing it only sends people back to email.
+                    <strong>Teaching a class is never self-service, whatever is ticked here:</strong> it grants access to the children in that
+                    class, so it always goes to somebody holding the timetable permission, and nobody can approve their own.
+                    With "place their own lessons" off, staff can still see which periods are free and ask for one — which removes most of the
+                    asking-around without letting anybody write the timetable.
+                </small>
+            </QCard>
+
             <QCard Title="Data protection" Icon="shield-lock" Class="pol-card">
                 <QInput TValue="int" @bind-Value="@policy.ActivityAttributionRetentionDays" Type="number" Min="30" Max="3650" Label="Activity attribution retention (days)"
                         HelperText="After this many days an activity event keeps its row but loses the address and browser that made it. 365 is the proposed default." />
