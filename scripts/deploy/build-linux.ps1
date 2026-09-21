@@ -70,12 +70,17 @@ param(
     # sites-enabled so an upgrade can never delete a tenant's block, and so the helper's write
     # permission is confined to a directory holding nothing else.
     [string]$TenantDomainConfPath = '/etc/nginx/qmgr-tenants',
-    # Webroot for the ACME http-01 challenge. Q-Mgr never runs certbot itself (see the helper
-    # below — the certificate on this box is shared with the other applications and is maintained
-    # outside this application), but the tenant's port-80 block still serves this path so whoever
-    # DOES maintain that certificate can extend it to a tenant domain over http-01 without editing
-    # anything here.
+    # Webroot for the ACME http-01 challenge, and Q-Mgr's OWN one — never the directory whatever
+    # else on this box renews its certificates from. The helper issues into it for a tenant domain
+    # the shared certificate cannot cover, and the tenant's port-80 block keeps serving it
+    # afterwards so renewals need nothing edited here.
     [string]$AcmeWebroot     = '/var/www/qmgr-acme',
+    # Where Let's Encrypt sends expiry warnings for a tenant domain Q-Mgr issued. It is an
+    # operator's address, not the tenant's: the tenant cannot act on it, and a school reading
+    # "your certificate expires in 10 days" about a box they do not administer is alarming and
+    # useless. Empty means certbot's --register-unsafely-without-email, which Let's Encrypt allows
+    # and which loses the warnings, so the build says so rather than doing it quietly.
+    [string]$CertEmail       = '',
 
     [string]$PgHost          = 'localhost',
     [string]$PgPort          = '5432',
@@ -537,12 +542,24 @@ Write-Success 'nginx config generated (qmgr.nginx.conf)'
 # ability to rewrite the web server's configuration is a far larger grant than handing it one
 # argument-validated command, which is what this is.
 #
-# IT NEVER ISSUES A CERTIFICATE (user decision, 2026-09-21: "we already have the certificate
-# configured, and nicely running for other projects"). This box carries one certificate, shared
-# with the other applications on it, and keeping it valid is done outside Q-Mgr. So the helper's
-# whole job is to point a verified tenant domain at that certificate and reload — and to REFUSE
-# when the certificate does not actually cover the domain, which is the one thing that would
-# otherwise take a tenant live behind a browser warning. The refusal names the fix.
+# THE CERTIFICATE IS A HYBRID, and the order matters (two user decisions, both 2026-09-21).
+#
+# "we already have the certificate configured, and nicely running for other projects" — so the
+# certificate this box already carries is the FAST PATH. A tenant on a subdomain of the platform's
+# own base domain is covered by its wildcard and goes live with nothing issued, nothing to renew
+# and nothing that can be rate-limited.
+#
+# "external domains like dashboard.maryhillug.net should be supported also. this is the reason for
+# whitelabelling" — and that certificate can never cover somebody else's domain, so such a domain
+# is issued one of its own here, over http-01. THIS IS NOT A NEW DEPENDENCY ON THIS BOX: it already
+# runs an ACME client and already carries per-subdomain Let's Encrypt certificates for other
+# applications beside Q-Mgr (admissions.maryhillug.net, read off the live host on 2026-09-21).
+# If it did not, the helper REFUSES rather than installing anything.
+#
+# Note there is no wildcard server_name anywhere and there should not be: every tenant domain,
+# subdomain or not, gets its own server block in this directory when it is activated, and the site
+# file includes them. A wildcard on a box shared with ERP, CashBook and the rest would quietly
+# catch hostnames that belong to somebody else.
 #
 # It validates the domain itself rather than trusting the caller: this is the privilege boundary,
 # so the check has to be on this side of it.
@@ -555,6 +572,7 @@ set -euo pipefail
 CONF_DIR='$TenantDomainConfPath'
 ACME_ROOT='$AcmeWebroot'
 CERT_FILE='/etc/ssl/certs/$HostSuffix.crt'
+CERT_EMAIL='$CertEmail'
 CERT_KEY='/etc/ssl/private/$HostSuffix.key'
 WEB_PORT='$WebPort'
 API_PORT='$ApiPort'
@@ -591,43 +609,96 @@ case "`$VERB" in
   enable)
     mkdir -p "`$CONF_DIR" "`$ACME_ROOT"
 
-    # 1) THE CERTIFICATE MUST ALREADY COVER THIS DOMAIN. Nothing here issues one, so this is the
-    #    only thing standing between a verified domain and a padlock warning on every visit. A
-    #    subdomain of the platform's own base domain is covered by the wildcard and passes
-    #    immediately; somebody's own domain passes only once it has been added to this certificate,
-    #    which is done wherever this box's certificate is maintained. Refusing is the honest answer
-    #    — the alternative is a tenant told their domain is live and a browser telling their staff
-    #    it is not safe.
-    if [ ! -r "`$CERT_FILE" ]; then
-        echo "refused: the shared certificate `$CERT_FILE is not readable" >&2
-        exit 4
-    fi
-    if ! openssl x509 -noout -checkend 0 -in "`$CERT_FILE" >/dev/null 2>&1; then
-        echo "refused: the shared certificate `$CERT_FILE has expired" >&2
-        exit 4
-    fi
-
-    # Every name the certificate answers for: the SANs, plus the common name for an older
-    # certificate that carries no SAN extension at all.
-    CERT_NAMES=`$( { openssl x509 -noout -ext subjectAltName -in "`$CERT_FILE" 2>/dev/null || true; \
-                     openssl x509 -noout -subject -in "`$CERT_FILE" 2>/dev/null || true; } \
-                   | tr ',' '\n' \
-                   | sed -n -e 's/.*DNS:[[:space:]]*\([A-Za-z0-9.*-]*\).*/\1/p' \
-                            -e 's/.*CN[[:space:]]*=[[:space:]]*\([A-Za-z0-9.*-]*\).*/\1/p' )
-
+    # 1) WHICH CERTIFICATE? This is a HYBRID and the order is the point.
+    #
+    #    The shared certificate on this box is the FAST PATH: a tenant on a subdomain of the
+    #    platform's own base domain is covered by its wildcard and goes live with no issuance at
+    #    all, nothing to renew and nothing that can rate-limit. That is the common case.
+    #
+    #    A tenant's OWN domain can never be covered by it — the certificate answers for the
+    #    platform's names and nobody else's — so that domain gets a certificate of its own, issued
+    #    here over http-01. This is not a new dependency on this box: it already runs an ACME
+    #    client and already carries per-subdomain Let's Encrypt certificates for other applications
+    #    beside Q-Mgr. If it did not, this REFUSES rather than installing anything.
+    #
+    #    Taking a tenant live behind a name mismatch is the one outcome neither branch may produce,
+    #    so every failure below names the step and stops.
+    # The shared certificate is only a CANDIDATE. If it is missing or expired that is no longer
+    # fatal: a domain it cannot cover was always going to be issued one of its own.
     covered=0
-    for name in `$CERT_NAMES; do
-        if [ "`$name" = "`$DOMAIN" ]; then covered=1; break; fi
-        # A wildcard matches exactly one label, so a.b.example.com is NOT covered by *.example.com.
-        if [ "`${name#\*.}" != "`$name" ] && [ "`${DOMAIN#*.}" = "`${name#\*.}" ]; then covered=1; break; fi
-    done
-    if [ "`$covered" != "1" ]; then
-        echo "refused: the certificate on this server does not cover `$DOMAIN." >&2
-        echo "It answers for: `$(echo `$CERT_NAMES | tr '\n' ' ')" >&2
-        echo "Add `$DOMAIN to `$CERT_FILE where this server's certificate is maintained, then try again." >&2
-        echo "(The tenant's port-80 block below serves /.well-known/acme-challenge/ from `$ACME_ROOT," >&2
-        echo " so an http-01 renewal can pick the domain up without editing anything here.)" >&2
-        exit 5
+    CERT_NAMES=''
+    if [ -r "`$CERT_FILE" ] && openssl x509 -noout -checkend 0 -in "`$CERT_FILE" >/dev/null 2>&1; then
+        # Every name it answers for: the SANs, plus the common name for an older certificate that
+        # carries no SAN extension at all.
+        CERT_NAMES=`$( { openssl x509 -noout -ext subjectAltName -in "`$CERT_FILE" 2>/dev/null || true; \
+                         openssl x509 -noout -subject -in "`$CERT_FILE" 2>/dev/null || true; } \
+                       | tr ',' '\n' \
+                       | sed -n -e 's/.*DNS:[[:space:]]*\([A-Za-z0-9.*-]*\).*/\1/p' \
+                                -e 's/.*CN[[:space:]]*=[[:space:]]*\([A-Za-z0-9.*-]*\).*/\1/p' )
+        for name in `$CERT_NAMES; do
+            if [ "`$name" = "`$DOMAIN" ]; then covered=1; break; fi
+            # A wildcard matches exactly ONE label, so a.b.example.com is NOT covered by *.example.com.
+            if [ "`${name#\*.}" != "`$name" ] && [ "`${DOMAIN#*.}" = "`${name#\*.}" ]; then covered=1; break; fi
+        done
+    fi
+
+    if [ "`$covered" = "1" ]; then
+        # THE FAST PATH. Nothing is issued, nothing renews, nothing can be rate-limited.
+        CERT_USE="`$CERT_FILE"
+        KEY_USE="`$CERT_KEY"
+        echo "using the shared certificate: it already answers for `$DOMAIN"
+    else
+        LE_DIR="/etc/letsencrypt/live/`$DOMAIN"
+        if [ -r "`$LE_DIR/fullchain.pem" ] && openssl x509 -noout -checkend 0 -in "`$LE_DIR/fullchain.pem" >/dev/null 2>&1; then
+            echo "reusing the certificate already issued for `$DOMAIN"
+        else
+            if ! command -v certbot >/dev/null 2>&1; then
+                echo "refused: `$DOMAIN is not covered by `$CERT_FILE and certbot is not installed." >&2
+                echo "It answers for: `$(echo `$CERT_NAMES | tr '\n' ' ')" >&2
+                echo "Q-Mgr never installs anything on this box. Install an ACME client, or add" >&2
+                echo "`$DOMAIN to that certificate, then run this again." >&2
+                exit 5
+            fi
+
+            # THE CHICKEN AND THE EGG. http-01 asks for a file over PORT 80 AT THIS HOSTNAME, and
+            # the server block that would serve it is the one we are here to write. So write the
+            # port-80 half FIRST, reload, issue, and only then write the whole thing. Without this
+            # the challenge falls through to whatever the default server happens to be and a FIRST
+            # issuance can never succeed — while renewals would, because by then the block exists.
+            # That is the shape of bug that passes every test and fails on the first real customer.
+            cat > "`$CONF" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name `$DOMAIN;
+    location /.well-known/acme-challenge/ { root `$ACME_ROOT; }
+    location / { return 503; }
+}
+EOF
+            reload
+
+            # --cert-name and Q-Mgr's OWN webroot keep this clear of whatever else on this box
+            # renews its certificates. --keep-until-expiring makes a repeat run a no-op instead of
+            # a request against Let's Encrypt's five-duplicates-a-week limit; the caller's own
+            # back-off is what keeps a FAILING domain from spending the box's budget, and it is a
+            # hard requirement rather than politeness.
+            EMAIL_ARG='--register-unsafely-without-email'
+            if [ -n "`$CERT_EMAIL" ]; then EMAIL_ARG="-m `$CERT_EMAIL"; fi
+            if ! certbot certonly --webroot -w "`$ACME_ROOT" -d "`$DOMAIN" \
+                    --cert-name "`$DOMAIN" --keep-until-expiring \
+                    --non-interactive --agree-tos `$EMAIL_ARG; then
+                # Leave nothing behind. A stranded port-80 block answers 503 for a domain that is
+                # not live, which reads worse than the domain simply not resolving yet.
+                rm -f "`$CONF"
+                reload
+                echo "refused: could not issue a certificate for `$DOMAIN." >&2
+                echo "Check that `$DOMAIN points at this server and that port 80 reaches it." >&2
+                echo "certbot's own reason is in /var/log/letsencrypt/letsencrypt.log." >&2
+                exit 6
+            fi
+        fi
+        CERT_USE="`$LE_DIR/fullchain.pem"
+        KEY_USE="`$LE_DIR/privkey.pem"
     fi
 
     # 2) The real block. Same proxy rules as the platform host — the tenant domain serves the very
@@ -648,8 +719,8 @@ server {
     listen [::]:443 ssl http2;
     server_name `$DOMAIN;
 
-    ssl_certificate     `$CERT_FILE;
-    ssl_certificate_key `$CERT_KEY;
+    ssl_certificate     `$CERT_USE;
+    ssl_certificate_key `$KEY_USE;
     ssl_protocols TLSv1.2 TLSv1.3;
 
     client_max_body_size 50m;

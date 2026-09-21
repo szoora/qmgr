@@ -16,19 +16,45 @@ public record CustomDomainStatusDto
     /// <summary>The host being verified, while <see cref="State"/> is Pending or Verified.</summary>
     public string? PendingDomain { get; init; }
 
-    /// <summary>The DNS record the tenant has to create. Null once there is nothing left to prove.</summary>
+    /// <summary>The DNS record that PROVES the tenant owns the name. Null once nothing is left to prove.</summary>
     public string? VerificationRecordName { get; init; }
     public string? VerificationRecordValue { get; init; }
+
+    /// <summary>
+    /// The DNS record that makes the name POINT HERE — and it is a separate thing from the TXT
+    /// record above, which is the trap this field exists to close. Until 2026-09-21 the panel
+    /// asked for the TXT and nothing else, so a tenant could prove they owned a hostname that went
+    /// on resolving to their old web host, and the first anybody heard of it was a certificate
+    /// that could not be issued for a domain nobody could reach.
+    /// </summary>
+    public string? RoutingRecordName { get; init; }
+    public string? RoutingRecordValue { get; init; }
+
+    /// <summary>
+    /// Whether the domain currently resolves to the same address as the platform's own host.
+    /// Null means the check could not be made (no answer, or the platform host itself would not
+    /// resolve), which is NOT the same as false and must not be shown as a problem.
+    ///
+    /// IT WARNS, IT NEVER REFUSES. DNS propagates for up to a day, a split-horizon or CDN answer
+    /// can be legitimately different, and the real gate is the certificate step, which fails with
+    /// its own reason. Refusing on a stale lookup would block a tenant who had done everything
+    /// right twenty minutes ago.
+    /// </summary>
+    public bool? PointsHere { get; init; }
+
+    /// <summary>What the routing check saw, in a sentence, when <see cref="PointsHere"/> is false.</summary>
+    public string? RoutingHint { get; init; }
 
     public DateTime? VerifiedAt { get; init; }
     /// <summary>
     /// When the domain was put on this server's certificate and started being served.
     ///
-    /// THERE IS NO RENEWAL DATE HERE ON PURPOSE. Q-Mgr issues no certificate: the deployment host
-    /// carries one, shared with the other applications on it and maintained outside this
-    /// application, so a renewal date shown here would be both a guess and an implied promise that
-    /// this application is watching it. The server log carries the certificate's real expiry at
-    /// the moment a domain is brought live.
+    /// THERE IS NO RENEWAL DATE HERE ON PURPOSE, and it stayed absent when per-domain issuance
+    /// came back. A subdomain tenant is served by the host's own shared certificate, which is
+    /// maintained outside this application entirely; a tenant on their own domain is served by one
+    /// this application asked for but does not renew — certbot's own timer does, on the box. In
+    /// both cases a date here would be a guess and an implied promise that Q-Mgr is watching it.
+    /// The server log carries the certificate's real expiry at the moment a domain is brought live.
     /// </summary>
     public DateTime? ServingSince { get; init; }
 
@@ -52,7 +78,7 @@ public enum CustomDomainState
     None = 0,
     /// <summary>Claimed, TXT record not yet found.</summary>
     Pending = 1,
-    /// <summary>TXT matched; the certificate has not been issued, so nothing routes yet.</summary>
+    /// <summary>TXT matched; no server block has been written, so nothing routes yet.</summary>
     Verified = 2,
     /// <summary>Certificate issued and nginx is serving it. This is the only state that routes.</summary>
     Live = 3

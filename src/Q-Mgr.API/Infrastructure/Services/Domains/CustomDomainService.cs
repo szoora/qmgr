@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
+using QMgr.API.Application.Services;
 using QMgr.Domain.Entities.Platform;
 using QMgr.Infrastructure.Data;
 using QMgr.Middleware;
@@ -202,10 +203,28 @@ public sealed class CustomDomainService : ICustomDomainService
             _logger.LogInformation("Domain {Domain} verified for organization {OrganizationId}", host, organizationId);
         }
 
-        // STEP 2 — routing, and only once ownership is proved. Nothing is issued here: the domain
-        // is pointed at the certificate this server already carries, and the helper REFUSES when
-        // that certificate does not cover it. Unverified never reaches this — an unproved claim
-        // must not be served, whatever certificate would answer for it.
+        // STEP 2 — DOES THE NAME ACTUALLY POINT HERE? Proving ownership and pointing the name at
+        // this server are two different records at the registrar, and until 2026-09-21 the panel
+        // asked for only the first — so a domain could be "Verified" while still resolving to the
+        // tenant's old web host.
+        //
+        // It is checked BEFORE the certificate step rather than warned about afterwards, and that
+        // is about the ACME budget, not tidiness: for a domain the shared certificate cannot cover,
+        // http-01 fetches a file over port 80 AT THIS HOSTNAME, so a domain pointing elsewhere is a
+        // guaranteed failed validation, and Let's Encrypt allows five of those per hostname per
+        // hour for the WHOLE BOX. Spending one to discover what a lookup already knew would take
+        // the budget from every other tenant.
+        //
+        // A failure here is the same soft shape as a missing TXT record: it names the step, counts
+        // an attempt, and the human retries once DNS is right.
+        var (pointsHere, routingHint) = await CheckRoutingAsync(host, cancellationToken);
+        if (pointsHere == false)
+            return await SaveFailureAsync(org, routingHint!, cancellationToken);
+
+        // STEP 3 — serve it. A domain the shared certificate covers is served off that certificate
+        // with nothing issued; anything else is issued one of its own. The helper decides, and it
+        // REFUSES rather than take a tenant live behind a name mismatch. Unverified never reaches
+        // this — an unproved claim must not be served, whatever certificate would answer for it.
         var routed = await _routing.ActivateAsync(host, cancellationToken);
         if (!routed.Ok)
             return await SaveFailureAsync(org, routed.Error ?? "The domain could not be brought live.", cancellationToken);
@@ -297,7 +316,66 @@ public sealed class CustomDomainService : ICustomDomainService
 
     private static CustomDomainResult Fail(CustomDomainStatusDto status, string error) => new(false, error, status with { LastError = error });
 
-    private static CustomDomainStatusDto StatusOf(QMgr.Domain.Entities.Organization.Organization org)
+    private static string? NullIfEmpty(string s) => string.IsNullOrWhiteSpace(s) ? null : s;
+
+    /// <summary>
+    /// Does <paramref name="host"/> resolve to the same address this server answers on?
+    ///
+    /// NULL MEANS "COULD NOT TELL" AND IS NOT A FAILURE — no answer, a resolver that timed out, or
+    /// a platform host that does not itself resolve. Only a confident mismatch returns false, and
+    /// the caller treats null as "carry on": a tenant whose DNS is right must never be blocked by
+    /// our own lookup being unable to run.
+    ///
+    /// .NET resolves A records perfectly well; it is only TXT it has no API for, which is the
+    /// entire reason IDnsTxtLookup is hand-written. So this needs no new parsing and no package.
+    /// A CNAME needs no special handling either: a resolver follows it, so the address that comes
+    /// back for a correctly-pointed tenant domain is this server's.
+    /// </summary>
+    private async Task<(bool? PointsHere, string? Hint)> CheckRoutingAsync(string host, CancellationToken ct)
+    {
+        // The stub exists so the verification flow can be exercised with no zone to publish in.
+        // Where TXT is answered from memory, a real A lookup for the same invented hostname would
+        // fail and contradict it.
+        if (_configuration.GetValue("Dns:Stub", false)) return (null, null);
+
+        var platformHost = PlatformHost();
+        if (string.IsNullOrEmpty(platformHost)) return (null, null);
+
+        try
+        {
+            var theirs = await System.Net.Dns.GetHostAddressesAsync(host, ct);
+            var ours = await System.Net.Dns.GetHostAddressesAsync(platformHost, ct);
+            if (theirs.Length == 0 || ours.Length == 0) return (null, null);
+
+            var oursSet = ours.Select(a => a.ToString()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (theirs.Any(a => oursSet.Contains(a.ToString()))) return (true, null);
+
+            return (false,
+                $"{host} does not point at this server yet — it currently resolves to {theirs[0]}. " +
+                $"Create a CNAME from {host} to {platformHost}, then check again. DNS changes can take up to an hour to appear.");
+        }
+        catch (Exception ex)
+        {
+            // A name that does not resolve at all is the ordinary "they have not made the record
+            // yet" case, and it is worth saying so plainly rather than going quiet.
+            _logger.LogDebug(ex, "Routing lookup could not be completed for {Domain}", host);
+            return (null, null);
+        }
+    }
+
+    /// <summary>
+    /// The host a tenant points their own domain AT. It is whatever this install actually answers
+    /// on — the same resolution every link a person follows uses, never the request host of an
+    /// internal call, which in production is the loopback.
+    /// </summary>
+    private string PlatformHost()
+    {
+        var configured = PublicWebBase.FromDeployment(_configuration)
+                         ?? PublicWebBase.Clean(_configuration["SaaS:BaseUrl"]);
+        return Uri.TryCreate(configured, UriKind.Absolute, out var uri) ? uri.Host : string.Empty;
+    }
+
+    private CustomDomainStatusDto StatusOf(QMgr.Domain.Entities.Organization.Organization org)
     {
         // A CLAIM IN PROGRESS WINS OVER THE LIVE DOMAIN, and that is not cosmetic. RequestAsync
         // deliberately leaves the old domain serving while a new one is being set up, so a tenant
@@ -319,6 +397,14 @@ public sealed class CustomDomainService : ICustomDomainService
             PendingDomain = org.CustomDomainPending,
             VerificationRecordName = showRecord && org.CustomDomainPending != null ? $"{VerificationPrefix}.{org.CustomDomainPending}" : null,
             VerificationRecordValue = showRecord ? org.CustomDomainVerificationToken : null,
+
+            // THE SECOND RECORD, and the one that was missing entirely until 2026-09-21. Proving
+            // ownership and pointing the name here are different acts at the registrar, and asking
+            // for only the first produced a "Verified" domain that still resolved to the tenant's
+            // old web host. A CNAME rather than an A record on purpose: this box's address is not
+            // the tenant's to depend on, and it has already moved once.
+            RoutingRecordName = showRecord ? org.CustomDomainPending : null,
+            RoutingRecordValue = showRecord ? NullIfEmpty(PlatformHost()) : null,
             VerifiedAt = org.CustomDomainVerifiedAt,
             ServingSince = org.CustomDomainCertificateAt,
             Attempts = org.CustomDomainAttempts,

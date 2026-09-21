@@ -370,14 +370,19 @@
                 </div>
 
                 @* ---- Custom domain ------------------------------------------------------
-                   Platform-only by decision: bringing a domain live touches the web server, so
-                   a tenant does not self-serve this. Nothing here issues a certificate — this
-                   server carries one, shared with the other applications on it, and a domain it
-                   does not cover is REFUSED rather than served behind a browser warning. Every
-                   failure below names the STEP — "we could not find the DNS record" sends
-                   somebody to their registrar, "the certificate does not cover this domain"
-                   sends them to whoever maintains it, and a single "failed" would send them to
-                   the wrong one. *@
+                   Platform-only by decision: bringing a domain live touches the web server, so a
+                   tenant does not self-serve this.
+
+                   THE CERTIFICATE IS A HYBRID. A subdomain of the platform's own host is covered
+                   by the certificate this server already carries and goes live with nothing
+                   issued; a tenant's OWN domain — which that certificate can never cover — is
+                   issued one of its own over http-01. Neither branch may take a tenant live
+                   behind a name mismatch, so the helper refuses instead.
+
+                   Every failure below names the STEP. "We could not find the TXT record" sends
+                   somebody to their registrar; "it does not point at this server yet" sends them
+                   to a different record at the same registrar; "the certificate could not be
+                   issued" sends them to us. A single "failed" would send them to the wrong one. *@
                 <div class="detail-section">
                     <h4>Custom Domain</h4>
                     @{ var domain = tenantDetails.CustomDomainStatus ?? new CustomDomainStatusDto(); }
@@ -420,19 +425,44 @@
                                retyped from a screenshot is the single most common way this step
                                fails, so it is selectable text and a copy button, never an image. *@
                             <p class="section-hint">
-                                Ask the tenant to add this record, then Check now.
+                                Ask the tenant to add <strong>both</strong> records, then Check now.
                                 <QInfo Label="the TXT record"
                                        Text="It goes at their DNS provider, exactly as shown — name and value. DNS changes can take up to an hour to appear, so a first check often finds nothing; that is normal. Once it matches we issue the certificate and only then does anything route to the domain." />
                             </p>
+                            @* TWO RECORDS, NOT ONE. The CNAME makes the name point here; the TXT
+                               proves they own it. Until 2026-09-21 this panel asked only for the
+                               TXT, so a domain could reach "Verified" while still resolving to the
+                               tenant's old web host — and the first anybody heard of it was a
+                               certificate that could not be issued for a domain nobody could
+                               reach. Both are selectable text with a copy button, never an image:
+                               a DNS record retyped off a screenshot is the commonest way this step
+                               fails. *@
+                            @if (!string.IsNullOrEmpty(domain.RoutingRecordValue))
+                            {
+                                <div class="tenant-row">
+                                    <label>1. CNAME name:</label>
+                                    <div class="storage-quota-editor">
+                                        <code class="dns-value">@domain.RoutingRecordName</code>
+                                        <QButton Icon="clipboard" Variant="ghost" Size="sm" OnClick="@(() => CopyAsync(domain.RoutingRecordName))" />
+                                    </div>
+                                </div>
+                                <div class="tenant-row">
+                                    <label>1. CNAME value:</label>
+                                    <div class="storage-quota-editor">
+                                        <code class="dns-value">@domain.RoutingRecordValue</code>
+                                        <QButton Icon="clipboard" Variant="ghost" Size="sm" OnClick="@(() => CopyAsync(domain.RoutingRecordValue))" />
+                                    </div>
+                                </div>
+                            }
                             <div class="tenant-row">
-                                <label>TXT name:</label>
+                                <label>2. TXT name:</label>
                                 <div class="storage-quota-editor">
                                     <code class="dns-value">@domain.VerificationRecordName</code>
                                     <QButton Icon="clipboard" Variant="ghost" Size="sm" OnClick="@(() => CopyAsync(domain.VerificationRecordName))" />
                                 </div>
                             </div>
                             <div class="tenant-row">
-                                <label>TXT value:</label>
+                                <label>2. TXT value:</label>
                                 <div class="storage-quota-editor">
                                     <code class="dns-value">@domain.VerificationRecordValue</code>
                                     <QButton Icon="clipboard" Variant="ghost" Size="sm" OnClick="@(() => CopyAsync(domain.VerificationRecordValue))" />
@@ -440,7 +470,7 @@
                             </div>
                             @if (domain.State == CustomDomainState.Verified)
                             {
-                                <p class="section-hint">Ownership is proved. The domain is not being served yet — press Check now to put it on this server's certificate.</p>
+                                <p class="section-hint">Ownership is proved. The domain is not being served yet — press Check now to bring it live.</p>
                             }
                         }
 
@@ -450,9 +480,11 @@
                         }
                         @if (domain.ServingSince.HasValue)
                         {
-                            @* No renewal date: this server’s certificate is shared with the other
-                               applications on it and is maintained outside Q-Mgr, so a date here would
-                               be a guess and an implied promise to watch it. *@
+                            @* No renewal date, in either branch. The shared certificate is
+                               maintained outside Q-Mgr entirely, and a certificate issued for a
+                               tenant domain is renewed by the box's own timer, not by this
+                               application — so a date here would be a guess and an implied promise
+                               to watch it. The server log carries the real expiry. *@
                             <div class="tenant-row"><label>Served since:</label><span>@QDateFormat.D(domain.ServingSince.Value)</span></div>
                         }
                         @if (!string.IsNullOrWhiteSpace(domain.LastError))

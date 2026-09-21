@@ -107,15 +107,19 @@ public class Organization : BaseAuditableEntity
     public DateTime? CustomDomainVerifiedAt { get; set; }
 
     /// <summary>
-    /// When certbot last issued a certificate for the host. Null until it succeeded, and it is
-    /// the routing gate: the nginx server block is only written once this is set.
+    /// When the host was last brought live — the column predates the hybrid and keeps its name,
+    /// which is a stored wire format, not a description. It is the routing gate: nothing serves the
+    /// domain until this is set. What actually happened is one of two things, and the server log
+    /// says which: the shared certificate already covered the domain, or one was issued for it.
     /// </summary>
     public DateTime? CustomDomainCertificateAt { get; set; }
 
     /// <summary>
     /// Failed verification attempts since the claim was made. BACK-OFF IS A HARD REQUIREMENT, not
-    /// politeness: a failing domain retried in a loop spends the box's weekly ACME budget and
-    /// blocks issuance for every other tenant. The daily sweep gives up at
+    /// politeness: Let's Encrypt allows five failed validations per hostname per hour and fifty
+    /// certificates per registered domain per week, FOR THE WHOLE BOX — so a failing domain
+    /// retried in a loop spends an allowance every other tenant on this server shares. The daily
+    /// sweep gives up at
     /// <c>CustomDomainService.MaxAttempts</c> (a week's worth) and waits for a human to retry.
     /// </summary>
     public int CustomDomainAttempts { get; set; }

@@ -6,12 +6,17 @@ namespace QMgr.Infrastructure.Services.Domains;
 /// Start serving a verified tenant domain, and stop. Behind an interface so the verification flow
 /// can run with no host to touch.
 ///
-/// IT DOES NOT ISSUE CERTIFICATES, and the name says so (user decision, 2026-09-21: "we already
-/// have the certificate configured, and nicely running for other projects"). The deployment host
-/// carries one certificate, shared with the other applications on it and maintained outside this
-/// application; a tenant domain is brought live by pointing it at that certificate. What this
-/// still owes the caller is a REFUSAL when the certificate does not cover the domain — a domain
-/// marked live behind a browser warning is worse than one that is not live yet.
+/// THE NAME IS "ACTIVATOR" RATHER THAN "ISSUER" BECAUSE ISSUING IS THE EXCEPTION, NOT THE JOB.
+/// The deployment host carries a certificate shared with the other applications on it, maintained
+/// outside this application (user decision, 2026-09-21: "we already have the certificate
+/// configured, and nicely running for other projects"), and a tenant on a subdomain of the
+/// platform's own host is brought live by pointing at it — nothing issued, nothing to renew.
+///
+/// A tenant's OWN domain can never be covered by that certificate, and those must work too (the
+/// same day: "external domains like dashboard.maryhillug.net should be supported also. this is the
+/// reason for whitelabelling"), so the helper issues one for it over http-01. Whichever branch
+/// runs, what this owes the caller is a REFUSAL rather than a domain marked live behind a browser
+/// warning: that is worse than a domain that is not live yet.
 /// </summary>
 public interface ITenantDomainActivator
 {
@@ -22,10 +27,10 @@ public interface ITenantDomainActivator
 }
 
 /// <param name="CertificateExpiresAt">
-/// When the certificate now serving this domain expires. It belongs to the whole server, not to
-/// the tenant, so it is logged rather than stored against the organization — a per-tenant copy
-/// would go stale the moment the certificate was renewed and would then be a wrong date shown
-/// confidently.
+/// When the certificate now serving this domain expires — the shared one, or the domain's own.
+/// Logged, never stored against the organization: neither is renewed by this application, so a
+/// per-tenant copy would go stale the moment something else renewed it and would then be a wrong
+/// date shown confidently.
 /// </param>
 public sealed record DomainActivationResult(bool Ok, string? Error, DateTime? ActivatedAt, DateTime? CertificateExpiresAt = null);
 
@@ -64,6 +69,10 @@ public sealed class NginxTenantDomainActivator : ITenantDomainActivator
     /// served without touching anything, so the verification flow above it can be exercised end to
     /// end on a machine with no nginx — the same call as the payments gateway stub. On any other
     /// environment the key is ignored and a missing helper is a failure.
+    ///
+    /// The key is still called SkipCertificate although the helper now does more than choose one:
+    /// it is read by the e2e suites and by whatever a running install already has configured, so
+    /// it is a wire format. What it skips is the whole activation step, certificate included.
     /// </summary>
     private bool SkipInDevelopment =>
         _environment.IsDevelopment() && _configuration.GetValue("CustomDomains:SkipCertificate", false);

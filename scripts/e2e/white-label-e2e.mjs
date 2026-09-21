@@ -154,6 +154,20 @@ ok("19.1h: the TXT record to create is named in full",
   claimed.json?.verificationRecordName === `_qmgr-verify.${DOMAIN}` && (claimed.json?.verificationRecordValue ?? "").length > 20,
   `${claimed.json?.verificationRecordName} = ${claimed.json?.verificationRecordValue}`);
 
+// THE SECOND RECORD. A domain whose owner is proved but which still resolves to their old web
+// host is not a working domain, and until 2026-09-21 the panel asked only for the TXT — so there
+// was nothing anywhere telling the tenant to point the name here, and nothing here asserting it.
+ok("19.1h2: the CNAME record to create is named in full, beside the TXT",
+  (claimed.json?.routingRecordName ?? "") === DOMAIN && (claimed.json?.routingRecordValue ?? "").length > 0,
+  `${claimed.json?.routingRecordName} -> ${claimed.json?.routingRecordValue}`);
+
+// A HOSTNAME, never a scheme, a path or a bare address. In development this reads "localhost",
+// which is correct for a machine that answers on it; in production it is whatever the install
+// actually answers on, which is the same resolution every link a person follows uses.
+ok("19.1h3: and it is a bare host — no scheme, no path, not an IP address",
+  /^[a-z0-9.-]+$/i.test(claimed.json?.routingRecordValue ?? "") && !/^[0-9.]+$/.test(claimed.json?.routingRecordValue ?? ""),
+  `${claimed.json?.routingRecordValue}`);
+
 const stolen = await request(DOMAIN, OTHER.id);
 ok("19.1i: a second tenant cannot claim the same host", stolen.status === 400, `status ${stolen.status}`);
 ok("19.1j: and is told it is already claimed", /already claimed/i.test(stolen.json?.title ?? ""), stolen.json?.title);
