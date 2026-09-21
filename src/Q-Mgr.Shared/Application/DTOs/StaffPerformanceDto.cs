@@ -606,6 +606,17 @@ public record StaffPerformancePolicyDto
     public bool SubjectTeachersMayLogConcerns { get; set; } = true;
     /// <summary>A student's learning-support need is shown to the teachers who teach them (plan §5.3). Off by default.</summary>
     public bool ShareLearningNeedsWithTeachingStaff { get; set; }
+
+    /// <summary>
+    /// What a member of staff may configure for themselves. It lives HERE rather than in
+    /// Branch.Settings because this blob already has exactly one reader and one writer, both taking
+    /// the organization lock — and Branch.Settings already has three writers and a standing warning
+    /// about a fourth.
+    ///
+    /// Its own default has Enabled false, so a school that has never heard of this feature is not
+    /// quietly running it.
+    /// </summary>
+    public SelfServicePolicyDto SelfService { get; set; } = new();
 }
 
 public record ClosedPeriodDto

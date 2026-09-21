@@ -164,6 +164,27 @@ public static class TimetableCycle
             u.Note = string.IsNullOrWhiteSpace(u.Note) ? null : u.Note.Trim();
         }
         if (s.Unavailability.Count > 2000) return "Too many unavailability lines.";
+
+        // Preferences are SOFT and never refuse a placement, but they still have to be well formed:
+        // the checker reads them on every diagnosis, and a preference naming a cycle day the cycle
+        // does not have would raise an issue nobody could ever clear.
+        foreach (var p in s.Preferences)
+        {
+            if (p.UserId == Guid.Empty) return "A teaching preference has no teacher.";
+            if (p.MaxConsecutivePeriods is < 1 or > 12) return "Maximum consecutive periods must be between 1 and 12.";
+            if (p.PreferredLightCycleDay is { } d && (d < 1 || d > cycleDays))
+                return $"A teaching preference names cycle day {d}; the cycle has {cycleDays}.";
+            p.PreferredRooms = p.PreferredRooms
+                .Select(r => r?.Trim() ?? string.Empty)
+                .Where(r => r.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(10)
+                .ToList();
+        }
+        if (s.Preferences.Count > 500) return "Too many teaching preferences.";
+        if (s.Preferences.GroupBy(p => p.UserId).Any(g => g.Count() > 1))
+            return "A teacher has more than one set of teaching preferences.";
+
         return null;
     }
 }

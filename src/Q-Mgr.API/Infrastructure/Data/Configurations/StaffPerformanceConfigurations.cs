@@ -363,3 +363,44 @@ public class TimetableLessonConfiguration : IEntityTypeConfiguration<TimetableLe
         b.HasOne(l => l.Subject).WithMany().HasForeignKey(l => l.SubjectId).OnDelete(DeleteBehavior.Restrict);
     }
 }
+
+/// <summary>
+/// The self-service request queue. The indexes are the point: one for the decider's queue, one for
+/// "my requests", and a PARTIAL UNIQUE that is the duplicate detection itself — the same person
+/// cannot have two open requests for the same slot or the same class. Doing that in the database
+/// rather than in a handler is what makes it hold when two tabs submit at once.
+/// </summary>
+public class StaffConfigRequestConfiguration : IEntityTypeConfiguration<StaffConfigRequest>
+{
+    public void Configure(EntityTypeBuilder<StaffConfigRequest> b)
+    {
+        b.ToTable("StaffConfigRequests");
+        b.HasKey(r => r.Id);
+        b.Property(r => r.Reason).HasMaxLength(500);
+        b.Property(r => r.DecisionReason).HasMaxLength(500);
+        b.Property(r => r.PeriodKey).HasMaxLength(20);
+        b.Property(r => r.ClassName).HasMaxLength(100);
+        b.Property(r => r.ClassNameNormalized).HasMaxLength(100);
+        b.Property(r => r.Room).HasMaxLength(60);
+
+        // The decider's queue: everything still open in a branch, newest first.
+        b.HasIndex(r => new { r.BranchId, r.State }).HasDatabaseName("idx_staff_config_requests_branch_state");
+
+        // "My requests" on the portal, and the ladder's own sweep.
+        b.HasIndex(r => new { r.RequestedByUserId, r.State }).HasDatabaseName("idx_staff_config_requests_mine");
+
+        // The colleague's half of a swap: "somebody is waiting on me".
+        b.HasIndex(r => new { r.CounterpartUserId, r.State })
+            .HasFilter("\"CounterpartUserId\" IS NOT NULL")
+            .HasDatabaseName("idx_staff_config_requests_counterpart");
+
+        // DUPLICATE DETECTION, IN THE DATABASE. One open request per person per thing. A teacher who
+        // presses twice, or has the page open in two tabs, gets one row and one clear refusal rather
+        // than two rows a decider has to reconcile. State 0 is Pending; a decided request is history
+        // and must never block a later request for the same slot.
+        b.HasIndex(r => new { r.BranchId, r.RequestedByUserId, r.Kind, r.CycleDay, r.PeriodKey, r.ClassNameNormalized, r.SubjectId })
+            .IsUnique()
+            .HasFilter("\"State\" = 0")
+            .HasDatabaseName("ux_staff_config_requests_open");
+    }
+}

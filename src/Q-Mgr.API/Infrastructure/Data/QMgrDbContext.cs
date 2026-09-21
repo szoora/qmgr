@@ -86,6 +86,7 @@ public class QMgrDbContext : DbContext
     public DbSet<QMgr.Domain.Entities.Staff.StaffDutyReportNote> StaffDutyReportNotes => Set<QMgr.Domain.Entities.Staff.StaffDutyReportNote>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffDutyReportAttachment> StaffDutyReportAttachments => Set<QMgr.Domain.Entities.Staff.StaffDutyReportAttachment>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffMinuteAction> StaffMinuteActions => Set<QMgr.Domain.Entities.Staff.StaffMinuteAction>();
+    public DbSet<QMgr.Domain.Entities.Staff.StaffConfigRequest> StaffConfigRequests => Set<QMgr.Domain.Entities.Staff.StaffConfigRequest>();
     public DbSet<QMgr.Domain.Entities.Staff.Timetable> Timetables => Set<QMgr.Domain.Entities.Staff.Timetable>();
     public DbSet<QMgr.Domain.Entities.Staff.TimetableLesson> TimetableLessons => Set<QMgr.Domain.Entities.Staff.TimetableLesson>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffPerformanceRecord> StaffPerformanceRecords => Set<QMgr.Domain.Entities.Staff.StaffPerformanceRecord>();

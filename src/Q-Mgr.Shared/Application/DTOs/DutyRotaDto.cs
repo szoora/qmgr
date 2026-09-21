@@ -544,6 +544,24 @@ public record TeacherUnavailabilityDto
     public int CycleDay { get; set; } = 1;
     [MaxLength(20)] public string? PeriodKey { get; set; }
     [MaxLength(200)] public string? Note { get; set; }
+
+    /// <summary>
+    /// Why, from a SHORT LIST rather than free text. "Hospital appointment, Thursdays" typed into the
+    /// note above is health information about a member of staff, and once it exists it has to be
+    /// gated, retained and eventually blanked like any other. A category tells the timetable
+    /// everything it needs and tells a casual reader nothing it does not.
+    /// </summary>
+    public UnavailabilityReason Reason { get; set; } = UnavailabilityReason.Unspecified;
+
+    /// <summary>
+    /// True when the teacher declared it themselves rather than the timetable master recording it.
+    /// It is what lets a self-service write replace ONLY the caller's own lines while leaving every
+    /// line the master entered exactly as it was.
+    /// </summary>
+    public bool DeclaredBySelf { get; set; }
+
+    /// <summary>Stamped by the server. A teacher cannot backdate their own declaration.</summary>
+    public DateTime? DeclaredAt { get; set; }
 }
 
 /// <summary>
@@ -557,6 +575,13 @@ public record TimetableSettingsDto
     public int DefaultPeriodMinutes { get; set; } = 40;
     public List<BellDayTypeDto> DayTypes { get; set; } = new();
     public List<TeacherUnavailabilityDto> Unavailability { get; set; } = new();
+
+    /// <summary>
+    /// Per-teacher soft preferences, beside the unavailability above and in the same blob for the
+    /// same reason: TimetableChecker already loads this to do its work, so they cost no extra query
+    /// and they are written under the one lock this column has.
+    /// </summary>
+    public List<StaffTeachingPreferenceDto> Preferences { get; set; } = new();
     /// <summary>False when nothing is stored yet and these are the defaults on offer.</summary>
     public bool IsSaved { get; set; }
 }
