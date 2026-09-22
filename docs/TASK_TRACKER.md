@@ -5,11 +5,31 @@ Living list of work requested across sessions. Update status inline as work prog
 Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
 ---
-## ▶▶ HANDOVER — read this first (rewritten 2026-09-21 15:20, replacing the 2026-09-20 21:35 block)
+## ▶▶ HANDOVER — read this first (rewritten 2026-09-21 15:20; 2026-09-22 note prepended)
+
+### 2026-09-22 — the mobile app is PLANNED, not started
+
+**`docs/plans/MOBILE_APP_INTEGRATION.md`** + artifact
+**https://claude.ai/artifact/77sEBi9hTZZnsFakKXCaUH**. Rebranding the CashBook MAUI shell
+(`D:\QMGR\Mobile\CashBook`) for Q-Mgr: a server-side adapter in one new folder, plus a rename of the
+app. **Seven decisions are taken** (`ug.qmgr`, out of store, `cashbook.ug` root plus white-label
+domains, all three platforms, workspace keyed per host AND school) and **no code is written.** The
+progress table is in the 2026-09-22 section below — update it as stages land, not at the end.
+
+The three findings most expensive to rediscover: **the qz shim does not decode base64 and Q-Mgr sends
+base64** (it would print `G1Ah…` with nothing erroring); **the ERP owns `server_name *.cashbook.ug`**,
+so an unprovisioned Q-Mgr subdomain silently reaches the ERP rather than erroring; and **Q-Mgr's
+refresh token is one plaintext column per user**, so a phone signing in would evict the browser.
+
+Also committed 2026-09-22: **the localisation stack now reaches the screen** (`0a96e0f`) — it had been
+built and wired with no component injecting `IStringLocalizer`, and the `ResourcesPath` option
+underneath it made every lookup miss in every language, invisibly, because the resource keys are the
+English text.
 
 ### The tree is clean, pushed, and healthy
 
-**Everything is committed through `75b1d0c` and `origin/master` has it.** The previous handover
+**Everything is committed and `origin/master` has it** (through `75b1d0c` on 2026-09-21, plus the two
+2026-09-22 commits above). The previous handover
 opened with *"nothing has been committed since `803ece4` … 221 modified files … a `git checkout` of
 any file could destroy a lot"* — **all of that is finished and none of it is true any more.** It was
 left standing for a day after the commit landed, which is the stale-note trap this project keeps
@@ -131,6 +151,111 @@ package that actually contains this day's code. The three stale ones are gone.
 wholesale, and skipping the publish then never recreates `api/` and `web/`, so step 6 fails on a
 missing path and any tarballs that were sitting there are already deleted. Pass **both** switches,
 or just run the full build — it takes under two minutes with a warm obj/.
+
+---
+## ▶ (2026-09-22) — MOBILE APP INTEGRATION: planned, decisions taken, NO CODE WRITTEN YET
+
+**Plan: `docs/plans/MOBILE_APP_INTEGRATION.md`. Artifact:
+https://claude.ai/artifact/77sEBi9hTZZnsFakKXCaUH (revision 2).**
+
+The CashBook MAUI shell (`D:\QMGR\Mobile\CashBook`, a working copy of `szoora/CashBookPro.git`) is
+to be rebranded for Q-Mgr. It is a native host for a product's existing web UI that adds what a
+browser cannot do: ESC/POS thermal printing over Wi-Fi and Bluetooth, a session that survives a
+restart without storing a password, multi-workspace switching, FCM push, and out-of-store
+self-update. ~7,900 lines of C# plus a 207-line JS bridge. **None of it should be rewritten.**
+
+**The shaping decision: adapt the SERVER, fork the APP for branding only.** Q-Mgr grows one folder,
+`Controllers/v1/MobileShell/`, exposing the shell's exact wire and delegating to services that
+already exist. That keeps `tests/auth_e2e.py` — 37 checks the ERP passes 37/37 — usable as the
+conformance test on day one. Evolution already proved the shape against a different architecture:
+one folder, six added lines, zero deletions.
+
+### Progress — update this table as work lands, not at the end
+
+| Stage | What | Status |
+|---|---|---|
+| A | Copy, rename to `QMgr.Mobile`, `brands/qmgr.json`, split the icon layers, store text | `[ ]` |
+| B1 | `tenant/info` + login adapter | `[ ]` |
+| B2 | `UserDeviceSession`, refresh with rotation, logout, device list | `[ ]` |
+| B3 | `web-handoff` + `/mobile-session` | `[ ]` |
+| B4 | `app/update`, `app/releases`, `/getapp`, **the login-page link** | `[ ]` |
+| B5 | `branding/product-logo`, attribution flag | `[ ]` |
+| C1 | base64 in the qz shim, workspace key per host+school, PWA suppression | `[ ]` |
+| C2 | Push: platform FCM, `app/checkin`, inbox on real notifications | `[ ]` |
+| C3 | Kiosk lock task, native QR, biometric unlock | `[ ]` |
+| D1 | Windows artefact path in `release-info.ps1` / `build-app-host.ps1` | `[ ]` |
+| D2 | Apple Developer Program, macOS build, iOS submission | `[ ]` |
+
+**Android and Windows can ship from B4; iOS cannot ship before C2 and C3** — nobody reviews an APK
+and Apple reviews everything, so submitting before push and printing exist is submitting the thing
+guideline 4.2 rejects.
+
+### Decisions taken 2026-09-22 (user)
+
+| # | Question | Answer |
+|---|---|---|
+| 1 | Android `applicationId` | **`ug.qmgr`** |
+| 2 | Play listing or out of store | **Out of store for now** |
+| 3 | Is the app's build pipeline at risk | **No — it works and has shipped** |
+| 4 | Bare workspace code expands against | **`cashbook.ug`**, white-label domains alongside |
+| 5 | Q-Mgr artwork | **It already exists** (see below) |
+| 6 | Platforms | **All three — iOS, Android, Windows** |
+| 7 | Workspace identity | **Per host AND school** |
+
+### Two corrections to my own first draft, both caught by the user
+
+- **I asserted the build pipeline was at risk without checking.** An earlier draft made "preserve the
+  CashBook work" a blocking first step off a dirty `git status`. Checked:
+  `deploy/app-host/releases/cashbook/cashbook-1.3-3506724.apk` is a real 13.65 MB signed artefact
+  with its sidecar, `docs/releases/` holds seven more entries, and
+  `https://apps.cashbook.ug/cashbook/releases.json` **answers live**. The whole chain works.
+  Not a blocker and not a phase. Copy the folder rather than rename it.
+- **I said no Q-Mgr mark existed. It does** — `src/Q-Mgr.Web/wwwroot/images/icon-512.svg`,
+  `icon-512-light.svg`, `icon-adaptive.svg`, `logo.svg`, `favicon.svg`. The queue loop resolving into
+  a forward arrow, already `#8c2f52`, already vector, **eight lines of SVG primitives** — so
+  `build-brand-assets.py`'s glyph-extraction pipeline is bypassed entirely for Q-Mgr. SACC's parent
+  mark for the About screen is at `D:\SACC_SOFTWARE\ART WORK\Logo` and `\Icon`; teal `#2e6b62`.
+
+### The findings that will cost time if forgotten
+
+- **THE QZ SHIM DOES NOT DECODE BASE64, AND Q-MGR SENDS BASE64.** `print-service.js` calls
+  `qz.print(config, [{ type:'raw', format:'base64', data }])`; `bridge.js` handles `p.data` only as a
+  string and concatenates it, so the base64 **text** reaches the printer as if it were ESC/POS.
+  Nothing errors — it prints `G1Ah…`. The fix belongs in the shim, because real QZ Tray supports
+  `base64`/`hex`/`plain`, and it must **reject an unknown format loudly**, which is the shim's own
+  stated principle. That Q-Mgr already calls `qz.*` at all is the strongest argument for this app.
+- **THE ERP OWNS `*.cashbook.ug`.** Probed 2026-09-22: `qmgr.cashbook.ug/api-health` → **200
+  Healthy**; `lpos.cashbook.ug` → **302** (an ERP tenant); `notarealtenant9z.cashbook.ug` → **does
+  not resolve**, so there is no wildcard DNS. `erp.conf` carries
+  `server_name erp.cashbook.ug *.cashbook.ug;`. An exact `server_name` beats a leading wildcard so a
+  provisioned Q-Mgr block wins, and the wildcard certificate already covers it — making a Q-Mgr
+  subdomain the **fast path** of the 2026-09-21 tenant-domain activator, nothing issued. **But
+  without a block a school's typed code silently reaches the ERP** — not an error, the wrong product.
+  **The `cashbook.ug` subdomain namespace is now shared between two products with nothing in code to
+  enforce it. Somebody has to keep one list.**
+- **Q-Mgr's refresh token is ONE plaintext column per user**, so a phone signing in would evict the
+  browser and vice versa, and there is nothing to revoke one lost handset with. RFC 9700 §4.14
+  requires rotation for public clients. `UserDeviceSession` is the one place a new table is right
+  (the independent-lifecycle clause); `User.RefreshToken` **stays** for the browser.
+- **The web handoff is not a cookie here.** Q-Mgr's session is `localStorage`, so `web-session`
+  becomes a Web-side `/mobile-session?code=` page that redeems server-to-server and hands the result
+  to the existing `AuthService` path. Every failure must redirect, never return JSON, and the page
+  must not pass through `AuthorizeRouteView`.
+- **iOS cannot be out of store at all.** App Store, TestFlight and ABM Custom Apps all go through
+  Apple review; private distribution is not an exemption. Bluetooth thermal printing is impossible on
+  iOS (BLE or MFi only).
+- **Per-tenant Firebase columns are unusable** — one app, one `google-services.json`, one sender. Push
+  credentials go at the platform level, `PlatformEmailDefaults`-style, with the secret in the
+  **systemd unit** (`install.sh` preserves the API's `appsettings.Production.json`; that trap has now
+  been paid for three times).
+- **Mobile traffic cannot be rate-limited by IP.** Forty handsets on a school's Wi-Fi are one public
+  address, so the whole school shares one bucket. The web half was fixed by relaying the viewer's
+  address; here the address really is shared, so the key must be the user or device id.
+- **`logo.svg` is still the OLD BLUE `#0058cc`** while every other Q-Mgr mark is `#8c2f52`. A bug in
+  the web repo, one line, worth fixing on its own.
+- **Back up the Q-Mgr keystore off this machine.** Out of store there is no Play App Signing, so it
+  is the only key that can ever sign an update for an installed device; Android refuses an update
+  signed by a different key and the only remedy erases the device.
 
 ---
 ## ▶ (2026-09-21, night) — the domain helper, and bulk actions on the staff directory
