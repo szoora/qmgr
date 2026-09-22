@@ -50,10 +50,28 @@ builder.Services.AddDataProtection()
 // DO NOT add Application/Infrastructure layers here as it causes conflicts
 // with the API project (duplicate Mediator handlers, database connection conflicts)
 
-// Localization for the customer-facing screens (kiosk, display, queue board, join, ticket status,
-// feedback). Resource keys are the English text, so anything untranslated renders as readable
-// English instead of a key name. See QMgr.Web.Resources.SharedResources.
-builder.Services.AddLocalization(options => options.ResourcesPath = "Resources");
+// Localization for the customer-facing screens (kiosk, display, join, ticket status, feedback).
+// Resource keys are the English text, so anything untranslated renders as readable English instead
+// of a key name. See QMgr.Web.Resources.SharedResources.
+//
+// NO ResourcesPath, AND THAT IS THE WHOLE FIX. It read `options.ResourcesPath = "Resources"` from
+// the day this was written, and every lookup in every language silently returned English.
+// ResourceManagerStringLocalizerFactory builds the resource prefix as
+//     <root namespace> + "." + <ResourcesPath> + "." + <type name with the root namespace trimmed>
+// and the root namespace it uses is the ASSEMBLY name, "Q-Mgr.Web" - which is not a prefix of
+// "QMgr.Web.Resources.SharedResources" (the hyphen), so nothing is trimmed and it looked for
+// "Q-Mgr.Web.Resources.QMgr.Web.Resources.SharedResources". The satellite assemblies really do
+// carry "QMgr.Web.Resources.SharedResources.lg.resources", so the name simply never matched.
+//
+// With no ResourcesPath the prefix is the type's own FullName, which is exactly that name: the
+// marker class already lives in the Resources folder, so the path is in the namespace and adding
+// it again is what broke it. Do not put it back to "tidy" the call.
+//
+// NOTHING ANYWHERE WOULD HAVE TOLD YOU. IStringLocalizer never throws on a missing resource - it
+// returns the key, which here IS the English text, so a completely broken lookup and a correct
+// English render are byte-identical. scripts/e2e/browser/localization.mjs is the only thing that
+// can tell them apart, because it asserts a Luganda string actually appears.
+builder.Services.AddLocalization();
 
 // Add Blazor services
 builder.Services.AddRazorComponents()

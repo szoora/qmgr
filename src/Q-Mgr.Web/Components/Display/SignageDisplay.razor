@@ -6,6 +6,7 @@
 @using QMgr.Web.Components.Shared
 @using QMgr.Web.Services
 @inject IOrganizationApiService OrganizationApi
+@inject IStringLocalizer<SharedResources> L
 @inject IBranchStateService BranchState
 @inject AuthenticationStateProvider AuthStateProvider
 
@@ -21,7 +22,7 @@ else if (branchState == BranchResolveState.NoBranch)
 {
     <div class="branch-state">
         <QIcon Name="geo-alt" />
-        <h1>No branch selected</h1>
+        <h1>@L["No branch selected"]</h1>
         <p>
             Open this screen from <strong>Customer Links</strong> in the admin, or add the
             branch ID to the URL: <code>/display/signage/{branchId}</code>

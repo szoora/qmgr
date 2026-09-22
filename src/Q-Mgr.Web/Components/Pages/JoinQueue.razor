@@ -4,6 +4,7 @@
 @using QMgr.Application.DTOs
 @attribute [AllowAnonymous]
 @inject IQueueApiService QueueApi
+@inject IStringLocalizer<SharedResources> L
 @inject IOrganizationApiService OrganizationApi
 @inject NavigationManager Navigation
 @inject IJSRuntime JSRuntime
@@ -32,6 +33,7 @@
                 }
             </div>
         </div>
+        <LanguageSelector />
     </header>
 
     <main class="join-main">
@@ -79,7 +81,7 @@
                         <dd>#@ticket.Position</dd>
                     </div>
                     <div>
-                        <dt>Estimated wait</dt>
+                        <dt>@L["Estimated wait"]</dt>
                         <dd>@ticket.EstimatedWaitMinutes min</dd>
                     </div>
                 </dl>
@@ -105,7 +107,7 @@
         }
         else
         {
-            <h1 class="join-title">Join the queue</h1>
+            <h1 class="join-title">@L["Join the queue"]</h1>
             <p class="join-subtitle">Pick the service you need. You'll get a number and can wait wherever you like.</p>
 
             @if (serviceTypes.Count == 0)
@@ -147,7 +149,7 @@
                     <QInput TValue="string"
                             @bind-Value="customerName"
                             Label="Name"
-                            Placeholder="Your name"
+                            Placeholder="@(L["Your name"])"
                             MaxLength="120"
                             autocomplete="name" />
                     <QInput TValue="string"

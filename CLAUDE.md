@@ -1024,26 +1024,64 @@ reader learned how much of a file landed on people already on file only from the
   guardian the child already has. It seeds one and removes it. **A row that is not actually identical
   cannot test "identical changes nothing".**
 
-### The localisation stack is BUILT and reaches no screen (found 2026-09-22, not fixed)
+### The localisation stack reaches the screen now, and the bug under it was invisible (2026-09-22)
 
-Found while sweeping for dead code, and it is the opposite of dead: `AddLocalization`,
-`UseRequestLocalization`, the `/set-culture` cookie endpoint, `SupportedCultures` (English, Swahili,
-Luganda), `LanguageSelector.razor` and **three `.resx` files carrying 28 translated strings each** all
-exist and are correct. **Not one component injects `IStringLocalizer`, and nothing renders the
-picker**, so no screen is ever in any language but English.
+Recorded that morning as built-and-unwired: `AddLocalization`, `UseRequestLocalization`, the
+`/culture/set` cookie endpoint, `SupportedCultures` (English, Swahili, Luganda),
+`LanguageSelector.razor` and three `.resx` files carrying 28 translated strings each — and **not one
+component injected `IStringLocalizer`**. Wiring it up found a SECOND fault underneath, and that one
+is the more useful lesson.
 
-It is the same shape as `QAvatar.PhotoUrl` earlier the same day — a complete part with nothing passing
-through it — and it is NOT something to delete: 56 translated strings is real work. Finishing it means
-putting the picker on the public screens (kiosk, display, feedback, join queue, ticket status, which is
-what the component's own comment says it is for) and moving those screens' text onto the localizer.
-**That is a feature, not a cleanup, so it is stated rather than done.**
+**`AddLocalization(options => options.ResourcesPath = "Resources")` made every lookup miss, in every
+language.** `ResourceManagerStringLocalizerFactory` builds the prefix as
+`<root namespace>.<ResourcesPath>.<type name with the root namespace trimmed>`, and the root
+namespace it uses is the **assembly** name, `Q-Mgr.Web` — which is not a prefix of
+`QMgr.Web.Resources.SharedResources` (the hyphen), so nothing is trimmed and it looked for
+`Q-Mgr.Web.Resources.QMgr.Web.Resources.SharedResources`. The satellites really do carry
+`QMgr.Web.Resources.SharedResources.lg.resources`. **The marker class already lives in the
+`Resources` folder, so the path is in its namespace and adding it again is what broke it.** The call
+is now a bare `AddLocalization()`; do not put the option back to tidy it.
 
-Everything else swept clean: **no unused stylesheet, no unused script, no component nothing renders
-(besides that picker), and no DI registration nothing injects** in either Program.cs. The four dead
-stylesheets and Mapster were already gone. A scan that lists "types nothing outside their own file
-names" is the wrong measurement here and was discarded — EF configurations are found by assembly scan,
-controllers by routing, and a `[FromBody]` record is used only inside its own file.
+- **NOTHING ANYWHERE WOULD HAVE TOLD YOU, and this is the rule to keep.** `IStringLocalizer` never
+  throws on a missing resource — it returns the KEY, and the keys here **are** the English text. So a
+  completely broken lookup and a correct English render are byte-identical: a clean build, a code
+  read, and any English-only assertion all pass either way. **The only thing that can tell them apart
+  is asserting that a non-English string appears**, which is what
+  `scripts/e2e/browser/localization.mjs` does (15 checks, in `all.mjs`).
+- **Injected on the customer-facing screens only** — kiosk, customer display, signage, join-the-queue,
+  ticket status and feedback. The staff application stays English, which is what `SharedResources`'
+  own header says; `QueueBoard` is inside the app shell and carries staff controls, so it is staff.
+- **`@L[GetWelcomeMessage()]` is the pattern for a string a switch already chose.** The industry
+  variants ("Welcome to Our Healthcare Facility") have no translation, and passing them through the
+  localizer means they degrade to themselves today and need only a resx entry — never a code change —
+  to be translated later.
+- **A KIOSK CARRIED A FAKE PICKER, and it was removed.** Two buttons reading **EN** and **AR** sat in
+  the footer with **no handler of any kind**, offering a language this product has never had one
+  resource for. The real `LanguageSelector` is in the header now, and on join, ticket status and
+  feedback. The same class as `QAvatar.PhotoUrl` and `MainLayout`'s inert notification rows: a control
+  that looks like a feature and does nothing.
+- **The caps on the display moved to CSS.** `NOW SERVING` / `WAITING` were typed in the markup, so
+  `text-transform: uppercase` on `.section-header .label` keeps the English screen byte-identical and
+  uppercases a translation the same way.
+- **A wall display has no one to press the picker**, so it follows whatever cookie that browser
+  carries and there is no per-organization display language. Adding one is a column and a decision,
+  not a tidy-up — ask first, as with `Organization.DisplayTheme`.
 
+**What is still English, stated rather than implied**: only the 28 strings in the resource files are
+translated, so these screens are part English (the kiosk's "Customer Information", the feedback
+survey's own questions, ticket status's outcome sentences). **No translation was invented** — the
+existing Luganda and Swahili came from somewhere that could vouch for them, and guessing a school's
+language is not a thing to do from here. Adding one is now a resx entry and nothing else.
+**Two paths could not be exercised on the dev tenant**: the kiosk's service-card strings and the
+feedback page, both behind Core Queue, which this tenant does not hold. The suite SKIPS them and says
+so rather than passing vacuously.
+
+**The dead-code sweep that found this (2026-09-22) turned up nothing else.** No unused stylesheet, no
+unused script, no component nothing renders, and no DI registration nothing injects in either
+`Program.cs` — the four dead stylesheets and Mapster were already gone. A scan listing "types nothing
+outside their own file names" is the wrong measurement here and was discarded: EF configurations are
+found by assembly scan, controllers by routing, and a `[FromBody]` record is used only inside its own
+file.
 
 ## Text inputs must use `@bind`, never `value="…"` plus `@oninput` (found in production 2026-09-11)
 

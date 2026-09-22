@@ -6,6 +6,7 @@
 @attribute [AllowAnonymous]
 @implements IDisposable
 @inject IQueueApiService QueueApi
+@inject IStringLocalizer<SharedResources> L
 @inject IOrganizationApiService OrganizationApi
 @inject ISignalRService SignalR
 @inject NavigationManager Navigation
@@ -33,6 +34,7 @@
                 }
             </div>
         </div>
+        <LanguageSelector />
     </header>
 
     <main class="ts-main">
@@ -79,7 +81,7 @@
             </div>
 
             <p class="ts-footnote">
-                Don't have a ticket yet? <a href="/join/@BranchId">Join the queue</a>.
+                Don't have a ticket yet? <a href="/join/@BranchId">@L["Join the queue"]</a>.
             </p>
         }
         else
@@ -110,7 +112,7 @@
                         </div>
                         <div class="ts-metric">
                             <span class="ts-metric-value">@status.EstimatedWaitMinutes</span>
-                            <span class="ts-metric-label">Minutes (est.)</span>
+                            <span class="ts-metric-label">@L["Minutes"] (est.)</span>
                         </div>
                     </div>
                     <p class="ts-note">
@@ -672,7 +674,7 @@
     {
         "Called" or "Serving" => string.IsNullOrWhiteSpace(status?.CounterNumber)
             ? "Please make your way to the counters."
-            : $"Please go to counter {status!.CounterNumber}.",
+            : $"{L["Please go to counter"]} {status!.CounterNumber}.",
         "Completed" => "Thank you for visiting. This ticket is now closed.",
         "Cancelled" => "This ticket is no longer in the queue. Please ask a member of staff if you still need to be seen.",
         "NoShow" => "This ticket was called but not answered. Please ask a member of staff for a new one.",

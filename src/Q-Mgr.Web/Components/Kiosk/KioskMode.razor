@@ -10,6 +10,7 @@
 @using QMgr.Domain.Enums
 @using System.Text.Json
 @inject IQueueApiService QueueApi
+@inject IStringLocalizer<SharedResources> L
 @inject IBranchStateService BranchState
 @inject IOrganizationApiService OrganizationApi
 @inject AuthenticationStateProvider AuthStateProvider
@@ -43,7 +44,7 @@
         {
             <div class="branch-state" role="alert">
                 <QIcon Name="geo-alt" aria-hidden="true" />
-                <h1>No branch selected</h1>
+                <h1>@L["No branch selected"]</h1>
                 <p>
                     Open this screen from <strong>Customer Links</strong> in the admin, or add the
                     branch ID to the URL: <code>/kiosk/branch/{branchId}</code>
@@ -87,10 +88,11 @@ else
                 <span class="datetime">@QDateFormat.Long(currentDateTime)</span>
                 <span class="time">@QDateFormat.TS(currentDateTime)</span>
             </div>
+            <LanguageSelector />
         </div>
         <div class="welcome-section">
-            <h1>@GetWelcomeMessage()</h1>
-            <p>@GetInstructionMessage()</p>
+            <h1>@L[GetWelcomeMessage()]</h1>
+            <p>@L[GetInstructionMessage()]</p>
         </div>
     </header>
 
@@ -125,16 +127,16 @@ else
                     <span class="service-stats" aria-hidden="true">
                         <span class="stat">
                             <span class="stat-value">@serviceType.WaitingCount</span>
-                            <span class="stat-label">Waiting</span>
+                            <span class="stat-label">@L["Waiting"]</span>
                         </span>
                         <span class="stat-divider"></span>
                         <span class="stat">
                             <span class="stat-value">~@serviceType.EstimatedWaitMinutes</span>
-                            <span class="stat-label">Minutes</span>
+                            <span class="stat-label">@L["Minutes"]</span>
                         </span>
                     </span>
                     <span class="service-action" aria-hidden="true">
-                        <span>Tap to Get Ticket</span>
+                        <span>@L["Tap to Get Ticket"]</span>
                         <QIcon Name="hand-index-fill" />
                     </span>
                 </button>
@@ -155,10 +157,9 @@ else
     <footer class="kiosk-footer">
         <div class="footer-content">
             <span>Need assistance? Please ask our staff for help.</span>
-            <div class="language-selector" role="group" aria-label="Kiosk language">
-                <button type="button" class="lang-btn active" aria-pressed="true" aria-label="Show this kiosk in English">EN</button>
-                <button type="button" class="lang-btn" aria-pressed="false" aria-label="Show this kiosk in Arabic">AR</button>
-            </div>
+            @* The real picker is in the header. What stood here was two buttons reading EN and AR
+               with no handler of any kind, offering a language this product has never had a single
+               resource for - a control that looked like a feature and did nothing when pressed. *@
         </div>
     </footer>
 </div>
@@ -195,7 +196,7 @@ else
                 </div>
                 <div class="info-row">
                     <span class="info-label">Position</span>
-                    <span class="info-value">#@generatedTicket?.Position in queue</span>
+                    <span class="info-value">#@generatedTicket?.Position @L["in queue"]</span>
                 </div>
                 <div class="info-row">
                     <span class="info-label">Estimated Wait</span>
@@ -292,7 +293,7 @@ else
                     <div class="feedback-icon">
                         <QIcon Name="emoji-smile-fill" aria-hidden="true" />
                     </div>
-                    <h2 id="kiosk-feedback-title">How was your experience?</h2>
+                    <h2 id="kiosk-feedback-title">@L["How was your experience?"]</h2>
                     <p>Your feedback helps us improve our services</p>
                 </div>
 
@@ -394,7 +395,7 @@ else
 
             <div class="form-group">
                 <label for="kiosk-customer-name">Name</label>
-                <input id="kiosk-customer-name" type="text" autocomplete="name" maxlength="120" @bind="customerName" placeholder="Your name" />
+                <input id="kiosk-customer-name" type="text" autocomplete="name" maxlength="120" @bind="customerName" placeholder="@(L["Your name"])" />
             </div>
 
             <div class="form-group">
@@ -404,7 +405,7 @@ else
 
             <div class="form-actions">
                 <button type="button" class="form-btn secondary" aria-label="Skip entering your details and get a ticket" @onclick="SkipCustomerInfo">Skip</button>
-                <button type="button" class="form-btn primary" aria-label="Continue and get a ticket" @onclick="SubmitCustomerInfo">Continue</button>
+                <button type="button" class="form-btn primary" aria-label="Continue and get a ticket" @onclick="SubmitCustomerInfo">@L["Continue"]</button>
             </div>
         </div>
     </div>
@@ -908,28 +909,6 @@ else
         align-items: center;
         color: rgba(255, 255, 255, 0.75);
         font-size: 17px;
-    }
-
-    .language-selector {
-        display: flex;
-        gap: 10px;
-    }
-
-    .lang-btn {
-        padding: 10px 20px;
-        border: 2px solid rgba(255, 255, 255, 0.2);
-        background: rgba(255, 255, 255, 0.05);
-        color: white;
-        border-radius: var(--qm-radius-lg);
-        cursor: pointer;
-        font-weight: 600;
-        transition: all 0.3s ease;
-    }
-
-    .lang-btn:hover, .lang-btn.active {
-        background: var(--kiosk-accent);
-        color: #0f0f1a;
-        border-color: var(--kiosk-accent);
     }
 
     /* Ticket Modal */
@@ -1830,7 +1809,7 @@ else
          these are already a working, industry-scoped design system, and many
          uses pair them as a *background* with the theme-independent literal
          color #0f0f1a as text on top (.ticket-btn.primary, .logo-icon .q-icon,
-         .lang-btn.active, etc.) - that pairing's contrast doesn't depend on
+         .service-action, etc.) - that pairing's contrast doesn't depend on
          the page theme, so re-tuning the accent per theme would break it.
          The accents are bright/saturated enough to keep working as text
          color on the light backgrounds below too.
@@ -2007,12 +1986,6 @@ else
 
     [data-theme="light"] .footer-content {
         color: rgba(0, 0, 0, 0.7);
-    }
-
-    [data-theme="light"] .lang-btn {
-        border: 2px solid rgba(0, 0, 0, 0.15);
-        background: rgba(0, 0, 0, 0.04);
-        color: #1e293b;
     }
 
     /* Ticket Modal */

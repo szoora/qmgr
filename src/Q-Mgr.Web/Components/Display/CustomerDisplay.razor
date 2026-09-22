@@ -8,6 +8,7 @@
 @using QMgr.Web.Components.Shared
 @using QMgr.Web.Services
 @inject IQueueApiService QueueApi
+@inject IStringLocalizer<SharedResources> L
 @inject ISignalRService SignalR
 @inject IOrganizationApiService OrganizationApi
 @inject IBranchStateService BranchState
@@ -24,7 +25,7 @@ else if (branchState == BranchResolveState.NoBranch)
 {
     <div class="branch-state">
         <QIcon Name="geo-alt" />
-        <h1>No branch selected</h1>
+        <h1>@L["No branch selected"]</h1>
         <p>
             Open this screen from <strong>Customer Links</strong> in the admin, or add the
             branch ID to the URL: <code>/display/{branchId}</code>
@@ -71,7 +72,7 @@ else
             <!-- Now Serving Section -->
             <div class="now-serving-section">
                 <div class="section-header">
-                    <span class="label">NOW SERVING</span>
+                    <span class="label">@L["Now Serving"]</span>
                     <span class="live-indicator">
                         <span class="live-dot"></span>
                         LIVE
@@ -87,7 +88,7 @@ else
                                 <div class="token-number">@item.TokenDisplay</div>
                                 <div class="counter-info">
                                     <QIcon Name="arrow-right" />
-                                    <span>Counter @item.CounterNumber</span>
+                                    <span>@L["Counter"] @item.CounterNumber</span>
                                 </div>
                             </div>
                         }
@@ -99,7 +100,7 @@ else
                         <div class="no-serving-icon">
                             <QIcon Name="hourglass" />
                         </div>
-                        <span>Waiting for customers...</span>
+                        <span>@L["Waiting for customers..."]</span>
                     </div>
                 }
             </div>
@@ -116,8 +117,8 @@ else
         <!-- Waiting Section -->
         <div class="waiting-section">
             <div class="section-header">
-                <span class="label">WAITING</span>
-                <span class="count">@waitingTokens.Count in queue</span>
+                <span class="label">@L["Waiting"]</span>
+                <span class="count">@waitingTokens.Count @L["in queue"]</span>
             </div>
 
             <div class="waiting-list">
@@ -303,6 +304,7 @@ else
     }
 
     .section-header .label {
+        text-transform: uppercase;
         font-size: 24px;
         font-weight: 600;
         letter-spacing: 4px;
