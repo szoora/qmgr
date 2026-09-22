@@ -14,7 +14,7 @@
 
 @if (!Embedded)
 {
-    <PageTitle>Staff Performance Policy - Q-Mgr</PageTitle>
+    <QPageTitle Text="Staff Performance Policy" />
 }
 
 <div class="admin-page">
@@ -39,8 +39,8 @@
     else
     {
         <div class="pol-grid">
-            <QCard Title="Periods" Icon="calendar-range" Class="pol-card pol-card--wide">
-                <p class="form-hint">Leave this empty to use the derived Ugandan terms: <strong>T1 Jan–Apr, T2 May–Aug, T3 Sep–Dec</strong>, with an annual roll-up per year. Define rows here only when your calendar differs. Keys are stored on appraisals, so change a key only before its period is opened.</p>
+            <QCard Title="Periods" Icon="calendar-range" Class="pol-card pol-card--wide"
+                   Hint="Leave this empty to use the derived Ugandan terms — T1 Jan–Apr, T2 May–Aug, T3 Sep–Dec, with an annual roll-up per year. Define rows here only when your calendar differs. Keys are stored on appraisals, so change a key only before its period is opened.">
                 @if (policy.Periods.Any())
                 {
                     <div class="table-wrap">
@@ -65,8 +65,8 @@
                 <QButton Text="Add period" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@AddPeriod" Class="pol-add" />
             </QCard>
 
-            <QCard Title="Bands" Icon="bar-chart-steps" Class="pol-card">
-                <p class="form-hint">Five bands, MoES's scale. The <strong>count is fixed</strong> so a stored rating means the same thing across periods; the names and thresholds are yours. Thresholds are the minimum composite (0–100) for the band.</p>
+            <QCard Title="Bands" Icon="bar-chart-steps" Class="pol-card"
+                   Hint="Five bands, MoES's scale. The count is fixed so a stored rating means the same thing across periods; the names and thresholds are yours. Thresholds are the minimum composite (0–100) for the band.">
                 <div class="table-wrap">
                     <table class="data-table q-stack pol-table">
                         <thead><tr><th class="pol-num">Rating</th><th>Name</th><th class="pol-num">Min score</th></tr></thead>
@@ -88,22 +88,22 @@
 
             <QCard Title="Weights and points" Icon="sliders" Class="pol-card">
                 <QInput TValue="int" @bind-Value="@policy.MaxParameterWeightPercent" Type="number" Min="10" Max="50" Label="Weight cap (%)"
-                        HelperText="No single parameter may carry more than this share of the composite. Between 10 and 50: the MET study found composites where no measure exceeds about half the weight were the most stable, so 50 is a ceiling you may tighten but not lift."
+                        Hint="No single parameter may carry more than this share of the composite. Between 10 and 50: the MET study found composites where no measure exceeds about half the weight were the most stable, so 50 is a ceiling you may tighten but not lift."
                         HasError="@weightCapError" ErrorMessage="Between 10% and 50%." />
                 <QInput TValue="int" @bind-Value="@policy.RecognitionMonthlyBudget" Type="number" Min="0" Max="100" Label="Recognition budget per person per month"
-                        HelperText="How many recognitions a member of staff may give a month. Self-recognition is always refused." />
-                <QCheckbox @bind-Value="@policy.SystemAwardsEnabled" Label="Credit system activity automatically" />
-                <small class="pol-help">Off by default. When on, finalising a welfare record, completing a queue ticket, hosting a visitor or receiving a 4- or 5-star customer rating credits the matching automatic parameter — low points, capped per period, and labelled <em>Automatic</em> on the timeline so nobody mistakes it for a colleague's judgement. Switching it on adds any of those parameters that are missing. Nothing is credited into a closed period.</small>
+                        Hint="How many recognitions a member of staff may give a month. Self-recognition is always refused." />
+                <QCheckbox @bind-Value="@policy.SystemAwardsEnabled" Label="Credit system activity automatically"
+                           Hint="Off by default. When on, finalising a welfare record, completing a queue ticket, hosting a visitor or receiving a 4- or 5-star customer rating credits the matching automatic parameter — low points, capped per period, and labelled Automatic on the timeline so nobody mistakes it for a colleague's judgement. Switching it on adds any of those parameters that are missing. Nothing is credited into a closed period." />
             </QCard>
 
             <QCard Title="Leaderboard" Icon="trophy" Class="pol-card">
                 <QSelect TValue="LeaderboardMode" TItem="LeaderboardMode" @bind-Value="@policy.LeaderboardMode" Items="@Modes"
-                         TextSelector="@(m => LeaderboardText(m))" ValueSelector="@(m => m)" Label="Who sees rankings" />
+                         TextSelector="@(m => LeaderboardText(m))" ValueSelector="@(m => m)" Label="Who sees rankings"
+                         Hint="Private is the default for a reason: public ranking of individuals is the pattern the research says undermines the intrinsic motivation this module is meant to support. Department averages only include departments of three or more, so no average is one person's score. Under every setting the reports page keeps its department comparison for holders of the reports permission." />
                 @if (policy.LeaderboardMode == LeaderboardMode.Public)
                 {
                     <QInput TValue="int" @bind-Value="@policy.LeaderboardTopN" Type="number" Min="3" Max="50" Label="Top N shown" />
                 }
-                <small class="pol-help">Private is the default for a reason: public ranking of individuals is the pattern the research says undermines the intrinsic motivation this module is meant to support. Department averages only include departments of three or more, so no average is one person's score. Under every setting the reports page keeps its department comparison for holders of the reports permission.</small>
             </QCard>
 
             <QCard Title="Timing" Icon="clock" Class="pol-card">
@@ -123,7 +123,8 @@
 
             <StaffMinutesSettings Policy="@policy" DefaultTemplate="@MinutesTemplateDefaults.Sections" />
 
-            <QCard Title="Teaching and lessons" Icon="grid-3x3-gap" Class="pol-card">
+            <QCard Title="Teaching and lessons" Icon="grid-3x3-gap" Class="pol-card"
+                   Hint="The MoES band is 20–24 lessons a week, 18 for a teacher on both levels. The timetable reports a teacher outside these as a soft clash; they never block publishing.">
                 @{ policy.TeachingLoadNorms ??= new TeachingLoadNormsDto(); }
                 <div class="form-row">
                     <QInput TValue="int" @bind-Value="@policy.TeachingLoadNorms.MinLessonsPerWeek" Type="number" Min="0" Max="80" Label="Lessons a week, at least" />
@@ -134,7 +135,6 @@
                     <QInput TValue="int" @bind-Value="@policy.TeachingLoadNorms.MaxPeriodsPerDay" Type="number" Min="1" Max="16" Label="Periods a day, at most" />
                     <QInput TValue="int" @bind-Value="@policy.TeachingLoadNorms.MaxConsecutivePeriods" Type="number" Min="1" Max="16" Label="In a row, at most" />
                 </div>
-                <small class="pol-help">The MoES band is 20–24 lessons a week, 18 for a teacher on both levels. The timetable reports a teacher outside these as a soft clash; they never block publishing.</small>
                 <div class="form-row">
                     <QInput TValue="string" @bind-Value="@policy.MyDayLocalTime" Type="time" Label="My School Day digest at" HelperText="Branch-local: one message a morning per person." />
                     <QInput TValue="int" @bind-Value="@policy.LessonReminderMinutes" Type="number" Min="0" Max="120" Label="Lesson reminder (minutes before)" />
@@ -176,7 +176,8 @@
             @* ---- What staff may configure for themselves ------------------------------------
                  OFF BY DEFAULT, the same call as staff sign-up: a school holding safeguarding
                  records turns a capability on deliberately rather than discovering it is on. *@
-            <QCard Title="Staff self-service" Icon="person-gear" Class="pol-card">
+            <QCard Title="Staff self-service" Icon="person-gear" Class="pol-card"
+                   Hint="Asking is always allowed and is never switched off — it is the safe path, and closing it only sends people back to email. With &quot;place their own lessons&quot; off, staff can still see which periods are free and ask for one, which removes most of the asking-around without letting anybody write the timetable.">
                 <QCheckbox @bind-Value="@policy.SelfService.Enabled" Label="Let staff configure their own teaching" />
                 @if (policy.SelfService.Enabled)
                 {
@@ -187,19 +188,16 @@
                             Label="Most unavailability lines per person" HelperText="0 uses the default of 40." />
                 }
                 <small class="pol-help">
-                    Asking is always allowed and is never switched off — it is the safe path, and closing it only sends people back to email.
                     <strong>Teaching a class is never self-service, whatever is ticked here:</strong> it grants access to the children in that
                     class, so it always goes to somebody holding the timetable permission, and nobody can approve their own.
-                    With "place their own lessons" off, staff can still see which periods are free and ask for one — which removes most of the
-                    asking-around without letting anybody write the timetable.
                 </small>
             </QCard>
 
             <QCard Title="Data protection" Icon="shield-lock" Class="pol-card">
                 <QInput TValue="int" @bind-Value="@policy.ActivityAttributionRetentionDays" Type="number" Min="30" Max="3650" Label="Activity attribution retention (days)"
-                        HelperText="After this many days an activity event keeps its row but loses the address and browser that made it. 365 is the proposed default." />
+                        Hint="After this many days an activity event keeps its row but loses the address and browser that made it. 365 is the proposed default." />
                 <QInput TValue="string" @bind-Value="@policy.DataProtectionOfficerContact" Label="Data protection officer contact" MaxLength="200" Placeholder="Name and email or phone"
-                        HelperText="Shown on a member of staff's own file export so they know who to ask about what is held on them." />
+                        Hint="Shown on a member of staff's own file export so they know who to ask about what is held on them." />
             </QCard>
         </div>
     }

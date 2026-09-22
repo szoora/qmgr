@@ -11,7 +11,7 @@
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
 
-<PageTitle>Performance Parameters - Q-Mgr</PageTitle>
+<QPageTitle Text="Performance Parameters" />
 
 <div class="admin-page">
     <div class="page-header">
@@ -195,14 +195,14 @@
             <div class="form-group">
                 <QSelect TValue="Guid?" TItem="PerformanceParameterDto" @bind-Value="@form.OffsetsParameterId" Items="@OffsetTargets"
                          TextSelector="@(p => p.Name)" ValueSelector="@(p => (Guid?)p.Id)" Label="Offsets" Placeholder="Nothing" AllowClear="true"
-                         HelperText="A record here counts as a recovered occasion on that parameter (Lesson Recovery → Lesson Attendance)." />
+                         Hint="A record here counts as a recovered occasion on that parameter (Lesson Recovery → Lesson Attendance)." />
             </div>
         }
 
         <div class="form-group">
             <QInput TValue="string" @bind-Value="@form.Purpose" Type="textarea" Rows="2" Label="Purpose" Required="true" MaxLength="300"
                     Placeholder="e.g. cover planning and appraisal evidence"
-                    HelperText="Shown on every record as “Why this is kept: …”. Write it as a sentence. A member of staff reading their own file should be able to see why this is kept about them." HasError="@purposeError" ErrorMessage="Say what this is collected for." />
+                    Hint="Shown on every record as “Why this is kept: …”. Write it as a sentence. A member of staff reading their own file should be able to see why this is kept about them." HasError="@purposeError" ErrorMessage="Say what this is collected for." />
         </div>
 
         <div class="form-row">

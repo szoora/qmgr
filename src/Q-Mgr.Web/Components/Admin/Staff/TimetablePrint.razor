@@ -29,7 +29,7 @@
     picker writes the key back into the URL, which is what makes a narrowed sheet shareable and publishable.
 *@
 
-<PageTitle>Timetable Print - Q-Mgr</PageTitle>
+<QPageTitle Text="Timetable Print" />
 
 <QPrintSheet SheetId="ttp-sheet" Title="@DocTitle" Class="ttp-sheet" Landscape="true"
              Ready="@(!isLoading && loadError == null)" BackText="Back to the timetable" OnBack="@(() => Navigation.NavigateTo($"/admin/timetable?t={Id}"))"

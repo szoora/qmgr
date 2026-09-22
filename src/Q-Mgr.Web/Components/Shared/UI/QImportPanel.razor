@@ -180,6 +180,15 @@
     @* ---------- 3. The preview and its tally ---------- *@
     @if (stage == Stage.Review && preview is not null && preview.Rows.Count > 0)
     {
+        @* The page's OWN answer to something it found in the rows, above the row list — the roster
+           puts its missing-classes panel here. It sits at the check step because that is where the
+           reader is deciding whether to commit, and a fact they can act on belongs beside that
+           decision rather than repeated down every row. *@
+        @if (Review is not null)
+        {
+            <div class="q-import__review">@Review(preview.Rows.Where(r => r.Row is not null).Select(r => r.Row!).ToList())</div>
+        }
+
         @* ALREADY HERE. Asked before anything is sent, not reported afterwards: a person importing a
              whole staff list needs to say whether this file is the new truth for people already on
              file, or whether it is only adding the ones who are missing. *@
@@ -187,10 +196,33 @@
         {
             <div class="q-import__banner q-import__banner--info">
                 <strong><QIcon Name="people" /> @existing.Count of these @Noun@(existing.Count == 1 ? " is" : "s are") already here</strong>
-                @if (existing.Sample.Count > 0)
+
+                @* WHAT WOULD MOVE. "23 already here" reads as 23 decisions when 20 of them would
+                     change nothing at all, so say which is which — the fields, never the values. *@
+                @if (existing.Changed > 0)
+                {
+                    <p class="q-import__map-sub qi-changed">
+                        <strong>@existing.Changed</strong> of them @(existing.Changed == 1 ? "has" : "have") something different in this file@(existing.Unchanged > 0 ? $"; the other {existing.Unchanged} would not change at all" : "").
+                    </p>
+                    @if (existing.ChangeSamples.Count > 0)
+                    {
+                        <ul class="qi-changes">
+                            @foreach (var c in existing.ChangeSamples)
+                            {
+                                <li><strong>@c.Who</strong> — @string.Join(", ", c.Fields)</li>
+                            }
+                            @if (existing.Changed > existing.ChangeSamples.Count)
+                            {
+                                <li class="qi-changes__more">and @(existing.Changed - existing.ChangeSamples.Count) more</li>
+                            }
+                        </ul>
+                    }
+                }
+                else if (existing.Sample.Count > 0)
                 {
                     <p class="q-import__map-sub">@string.Join(" · ", existing.Sample)@(existing.Count > existing.Sample.Count ? " and others" : "")</p>
                 }
+
                 <label class="q-import__radio">
                     <input type="radio" name="q-import-existing" checked="@updateExisting" @onchange="@(() => updateExisting = true)" />
                     <span><strong>Update them</strong> with what is in this file. Their role, permissions and password are never changed by an import.</span>
@@ -198,6 +230,30 @@
                 <label class="q-import__radio">
                     <input type="radio" name="q-import-existing" checked="@(!updateExisting)" @onchange="@(() => updateExisting = false)" />
                     <span><strong>Leave them as they are</strong> — add only the @(Noun)s who are missing.</span>
+                </label>
+            </div>
+        }
+
+        @* MIGHT BE THE SAME PERSON TWICE. A likeness is a question, never a refusal — two children on
+             one roll really do share a name — so this asks for a confirmation and holds the import
+             until it is given, rather than dropping rows on a guess. *@
+        @if (existing is not null && existing.PossibleDuplicates.Count > 0)
+        {
+            <div class="q-import__banner q-import__banner--warn qi-dupes">
+                <strong><QIcon Name="exclamation-triangle" /> @existing.PossibleDuplicates.Count @(existing.PossibleDuplicates.Count == 1 ? "name looks" : "names look") like the same @Noun twice</strong>
+                <ul class="qi-changes">
+                    @foreach (var d in existing.PossibleDuplicates.Take(8))
+                    {
+                        <li><strong>@d.Name</strong> — @d.Detail</li>
+                    }
+                    @if (existing.PossibleDuplicates.Count > 8)
+                    {
+                        <li class="qi-changes__more">and @(existing.PossibleDuplicates.Count - 8) more</li>
+                    }
+                </ul>
+                <label class="q-import__radio qi-confirm">
+                    <input type="checkbox" checked="@duplicatesConfirmed" @onchange="@(e => duplicatesConfirmed = (bool)(e.Value ?? false))" />
+                    <span>I have checked these — they are different @(Noun)s, or the same one and I mean to update them.</span>
                 </label>
             </div>
         }
@@ -291,8 +347,12 @@
             <QButton Text="Back to the columns" Icon="arrow-left" Variant="ghost" OnClick="@(() => stage = Stage.Map)" Disabled="@starting" />
             <QButton Text="Choose a different file" Icon="arrow-counterclockwise" Variant="ghost" OnClick="Reset" Disabled="@starting" />
             <QButton Text="@ImportButtonText" Icon="cloud-upload" Variant="primary"
-                     OnClick="Start" Loading="@starting" Disabled="@(!preview.CanImport || starting)" />
+                     OnClick="Start" Loading="@starting" Disabled="@(!preview.CanImport || starting || NeedsDuplicateAnswer)" />
         </div>
+        @if (NeedsDuplicateAnswer)
+        {
+            <p class="q-import__note qi-blocked">Confirm the names above before importing.</p>
+        }
         @if (preview.Rejected > 0)
         {
             <p class="q-import__note">Rows with a problem are left out of the import. Fix them in the file and import it again — the ones that succeeded are not re-created.</p>
@@ -419,6 +479,13 @@
                         background: var(--qm-bg-secondary); font-size: var(--qm-text-base); }
     .q-import__banner--error { border-left: 3px solid var(--qm-danger); }
     .q-import__banner--info { border-left: 3px solid var(--qm-primary); }
+    .q-import__banner--warn { border-left: 3px solid var(--qm-warning); }
+    .qi-changed { color: var(--qm-text-primary); }
+    .qi-changes { margin: 2px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px;
+                  font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
+    .qi-changes__more { list-style: none; margin-left: -18px; font-style: italic; }
+    .qi-confirm { margin-top: 4px; }
+    .qi-blocked { color: var(--qm-warning); }
     .q-import__problems { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px;
                           font-size: var(--qm-text-sm); }
     .q-import__radio { display: flex; align-items: flex-start; gap: 8px; font-size: var(--qm-text-sm); }
@@ -511,6 +578,14 @@
     /// <summary>Extra controls shown beside the file picker (delivery mode, "update existing", …).</summary>
     [Parameter] public RenderFragment? Options { get; set; }
 
+    /// <summary>
+    /// Rendered at the CHECK step, above the rows, with the parsed rows handed to it. For anything
+    /// the page can say about the file as a whole and the reader can act on before committing —
+    /// the roster lists the classes this branch has not got and offers to add or map each one.
+    /// A per-row warning cannot do that job: the same sentence on 1,584 rows is noise.
+    /// </summary>
+    [Parameter] public RenderFragment<List<TRow>>? Review { get; set; }
+
     /// <summary>How a parsed row is described in the preview. Falls back to the first few cells.</summary>
     [Parameter] public RenderFragment<TRow>? RowSummary { get; set; }
 
@@ -559,6 +634,15 @@
     private List<string> mappingProblems = new();
     private int dataRowCount;
     private ImportExisting? existing;
+
+    /// <summary>
+    /// The reader has looked at the names that might be one person twice. It gates the import rather
+    /// than the file: dropping a row on a likeness would be the system deciding two children are one,
+    /// which it cannot know — the sign-up guard follows the same rule (near-proof refuses, a likeness asks).
+    /// </summary>
+    private bool duplicatesConfirmed;
+
+    private bool NeedsDuplicateAnswer => existing is not null && existing.PossibleDuplicates.Count > 0 && !duplicatesConfirmed;
     private bool updateExisting = true, checkingExisting;
 
     /// <summary>An option in one of the mapping step's pickers: a file column, or a row of the sheet.</summary>
@@ -646,6 +730,7 @@
         RefreshMappingOptions();
         preview = null;
         existing = null;
+        duplicatesConfirmed = false;
         stage = Stage.Map;
     }
 
@@ -792,6 +877,7 @@
         if (preview is null || preview.FileProblems.Count > 0) { stage = Stage.Map; return; }
 
         existing = null;
+        duplicatesConfirmed = false;
         if (CheckExistingAsync is not null && preview.Importable > 0)
         {
             checkingExisting = true;
@@ -989,7 +1075,7 @@
         reconcileTimer = null;
         job = null; preview = null; entries = new();
         showEntries = false; FileName = null; liveSince = null; completedRaised = false;
-        stage = Stage.Pick; grid = null; lastCsv = null; existing = null; updateExisting = true;
+        stage = Stage.Pick; grid = null; lastCsv = null; existing = null; updateExisting = true; duplicatesConfirmed = false;
         sheetNames = new(); sheetName = null; mappingProblems = new(); mapping = new();
     }
 

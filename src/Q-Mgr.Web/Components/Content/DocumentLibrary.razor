@@ -27,7 +27,7 @@
 
 @if (!Embedded)
 {
-    <PageTitle>Document Library - Q-Mgr</PageTitle>
+    <QPageTitle Text="Document Library" />
 }
 
 <div class="doclib">
@@ -169,7 +169,7 @@
             </label>
             <QInput TValue="string" @bind-Value="uploadName" Label="Name" Placeholder="Staff meeting minutes — 12 Sep 2026" />
             <QInput TValue="string" @bind-Value="uploadSummary" Label="Summary (shown on the share page)" Type="textarea" Rows="2" MaxLength="1000" />
-            <QInput TValue="string" @bind-Value="uploadSource" Label="Generated from (optional)" Placeholder="e.g. Governors' meeting, 12 Sep 2026" HelperText="A published document is a snapshot. Say what it came from, so a reader in September knows it is March's figures." />
+            <QInput TValue="string" @bind-Value="uploadSource" Label="Generated from (optional)" Placeholder="e.g. Governors' meeting, 12 Sep 2026" Hint="A published document is a snapshot. Say what it came from, so a reader in September knows it is March's figures." />
             @if (canPublish)
             {
                 <QCheckbox @bind-Value="uploadShareable" Label="Shareable — allow secure links to be created for this document" />
@@ -417,7 +417,7 @@
                 {
                     <QInput TValue="string" @bind-Value="classifyReason" Label="Why is it being lowered?"
                             Type="textarea" Rows="2" MaxLength="1000"
-                            HelperText="At least ten characters. Kept with the document, because lowering a classification is how a restriction would be escaped." />
+                            Hint="At least ten characters. Kept with the document, because lowering a classification is how a restriction would be escaped." />
                 }
                 @if (classifyDoc.ClassificationSetAt.HasValue && !string.IsNullOrWhiteSpace(classifyDoc.ClassificationReason))
                 {
@@ -440,7 +440,7 @@
     <ChildContent>
         <div class="doclib-form">
             <QInput TValue="int" @bind-Value="policyEdit.MaxLinkDays" Label="Maximum link lifetime (days; 0 = no cap)" Type="number" Min="0" Max="3650" HelperText="Enforced for every link anyone in the organization creates." />
-            <QInput TValue="int" @bind-Value="policyEdit.AttributionRetentionDays" Label="Keep viewer identity in the activity log for (days)" Type="number" Min="1" Max="3650" HelperText="After this, email, address and browser are blanked from events; the events stay. 180 follows CNIL's guidance for active logs." />
+            <QInput TValue="int" @bind-Value="policyEdit.AttributionRetentionDays" Label="Keep viewer identity in the activity log for (days)" Type="number" Min="1" Max="3650" Hint="After this, email, address and browser are blanked from events; the events stay. 180 follows CNIL's guidance for active logs." />
             <QCheckbox @bind-Value="policyEdit.RequireEmailByDefault" Label="New links require email verification by default" />
             <QCheckbox @bind-Value="policyEdit.AllowDownloadByDefault" Label="New links allow download by default" />
             <QCheckbox @bind-Value="policyEdit.NotifyOnFirstOpenByDefault" Label="Creators are told on first open by default" />

@@ -23,7 +23,7 @@
     head's print covers their departments and says so. The print and a Library publication are logged.
 *@
 
-<PageTitle>Lessons Report - Q-Mgr</PageTitle>
+<QPageTitle Text="Lessons Report" />
 
 <QPrintSheet SheetId="trp-sheet" Title="@DocTitle" Class="trp-sheet" Landscape="true"
              Ready="@(!isLoading && loadError == null)" BackText="Back to the teaching reports" OnBack="@(() => Navigation.NavigateTo("/admin/timetable?tab=reports&view=lessons"))"

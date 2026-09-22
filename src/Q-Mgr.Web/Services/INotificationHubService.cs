@@ -98,6 +98,12 @@ public interface INotificationApiService
     /// </summary>
     Task MarkAllAsReadAsync();
 
+    /// <summary>Marks one read and says whether it worked. Prefer this over the void one.</summary>
+    Task<bool> TryMarkAsReadAsync(Guid notificationId);
+
+    /// <summary>Marks all read and returns the remaining unread count; null when the call failed.</summary>
+    Task<int?> MarkAllAsReadRemainingAsync();
+
     /// <summary>
     /// The notification centre's page: <c>GET api/v1/notifications?eventKey=&amp;offset=&amp;limit=</c>.
     /// A null <paramref name="eventKey"/> is every notification. Returns the page and whether a

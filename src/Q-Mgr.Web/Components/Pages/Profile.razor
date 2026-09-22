@@ -3,10 +3,12 @@
 @inject HttpClient Http
 @inject NavigationManager NavigationManager
 @inject IToastService NotificationService
-@inject JsonSerializerOptions JsonOptions
+@inject JsonSerializerOptions JsonOptions
+@using Microsoft.AspNetCore.Components.Forms
+@inject IStaffOnboardingApiService Onboarding
 @using System.Text.Json
 
-<PageTitle>My Profile - Q-Mgr</PageTitle>
+<QPageTitle Text="My Profile" />
 
 <div class="profile-page">
     <div class="page-header">
@@ -36,8 +38,15 @@
             <!-- Profile Card -->
             <div class="profile-card">
                 <div class="profile-header">
+                    @* The person's photograph, not hand-built initials: QAvatar already falls back
+                       to them when there is none, or when the signed link has expired. This is also
+                       the only place a photo can be CHANGED once onboarding is finished. *@
                     <div class="avatar-large">
-                        <span>@GetInitials(profile.FullName ?? profile.Username)</span>
+                        <QAvatar Name="@(profile.FullName ?? profile.Username)" PhotoUrl="@profile.PhotoUrl" Size="lg" Class="avatar-large__img" />
+                        <label class="avatar-large__change" title="@(string.IsNullOrEmpty(profile.PhotoUrl) ? "Add a photo" : "Change your photo")">
+                            <QIcon Name="camera-fill" Size="14" />
+                            <InputFile OnChange="@UploadPhotoAsync" accept="image/*" disabled="@photoBusy" />
+                        </label>
                     </div>
                     <div class="profile-info">
                         <h2>@(profile.FullName ?? profile.Username)</h2>
@@ -262,17 +271,47 @@
     }
 
     .avatar-large {
+        position: relative;
         width: 80px;
         height: 80px;
+        flex-shrink: 0;
+    }
+
+    .avatar-large .avatar-large__img {
+        width: 100%;
+        height: 100%;
         border-radius: 50%;
-        background: var(--qm-gradient-primary);
+        font-size: var(--qm-text-stat);
+    }
+
+    /* A label, not a button: it wraps the file input, so a click anywhere on it opens the picker.
+       The input itself is off-screen rather than display:none, which keyboards cannot reach. */
+    .avatar-large__change {
+        position: absolute;
+        right: -2px;
+        bottom: -2px;
+        width: 26px;
+        height: 26px;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: var(--qm-text-stat);
-        font-weight: 700;
-        color: var(--qm-text-on-primary);
-        flex-shrink: 0;
+        border-radius: 50%;
+        background: var(--qm-bg-card);
+        color: var(--qm-text-secondary);
+        border: 1px solid var(--qm-border);
+        box-shadow: 0 1px 4px rgba(0, 0, 0, .12);
+        cursor: pointer;
+    }
+
+    .avatar-large__change:hover { color: var(--qm-primary); border-color: var(--qm-primary); }
+
+    .avatar-large__change :deep(input[type="file"]),
+    .avatar-large__change input[type="file"] {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        opacity: 0;
+        pointer-events: none;
     }
 
     .profile-info {
@@ -799,6 +838,40 @@
         public string ConfirmPassword { get; set; } = "";
     }
 
+    private bool photoBusy;
+
+    /// <summary>
+    /// The same endpoint the onboarding checklist posts to, and for the same reason it refreshes the
+    /// stored user afterwards: the header avatar reads that copy, and a photo's link is signed per
+    /// fetch, so nothing else would carry it until the next sign-in.
+    /// </summary>
+    private async Task UploadPhotoAsync(InputFileChangeEventArgs e)
+    {
+        if (e.File.Size > 5 * 1024 * 1024)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "That photo is too large", "Choose one under 5 MB.");
+            return;
+        }
+
+        photoBusy = true;
+        try
+        {
+            await using var stream = e.File.OpenReadStream(5 * 1024 * 1024);
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer);
+            buffer.Position = 0;
+            var url = await Onboarding.UploadPhotoAsync(buffer, e.File.Name, e.File.ContentType);
+            if (profile != null) profile = profile with { PhotoUrl = url };
+            NotificationService.Notify(ToastSeverity.Success, "Photo updated");
+            await AuthService.RefreshCurrentUserAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not add the photo", ex.Message);
+        }
+        finally { photoBusy = false; }
+    }
+
     private record ProfileDto
     {
         public Guid Id { get; init; }
@@ -807,6 +880,7 @@
         public string? FirstName { get; init; }
         public string? LastName { get; init; }
         public string FullName { get; init; } = "";
+        public string? PhotoUrl { get; init; }
         public string? Phone { get; init; }
         public string? EmployeeNumber { get; init; }
         public string Role { get; init; } = "";

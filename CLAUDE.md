@@ -1,6 +1,6 @@
 # Q-Mgr Web
 
-Multi-tenant front-office SaaS — queues, visitors, signage, student welfare, secure documents (the customer-facing descriptor is "Front-Office Platform", decided 2026-09-15; the queue is one module, not the product). ASP.NET Core API (`src/Q-Mgr.API`) + Blazor Server web app
+Multi-tenant front-office SaaS — queues, visitors, signage, student welfare, secure documents (the customer-facing descriptor is "Front-Office" — "Platform" was dropped as redundant on 2026-09-22; the descriptor itself was decided 2026-09-15; the queue is one module, not the product). ASP.NET Core API (`src/Q-Mgr.API`) + Blazor Server web app
 (`src/Q-Mgr.Web`), Postgres via EF Core, CQRS via the `Mediator` source-generator library (not
 MediatR). **Git was adopted 2026-08-25**, and **there is a GitHub remote:
 `origin` → `https://github.com/szoora/qmgr.git`** — this line said "local-only, no remote" until
@@ -985,6 +985,65 @@ the rules that are easy to break:
 - **`OnFileChosen` is how the page learns the file name** for `SourceFileName` on the job. The roster
   passed a field nothing ever assigned once its own file picker moved into the panel — CS0649 on
   every build — so every roster import since has recorded a null name in the Import History.
+
+### A re-import is the normal case, and the reader is told what would MOVE (2026-09-22)
+
+Asked for as *"importing the file again for both staff and student should detect any student account
+or staff code (unique on this project) and suggest updation, in case the data is different"*, and
+*"identify possible student duplication, alert the user for confirmation that actually the students
+are different"*. A school re-imports its own sheet every term, so this IS the common path — and the
+reader learned how much of a file landed on people already on file only from the summary
+**afterwards**, and never learned WHAT it had changed about them. The roster had no precheck at all.
+
+- **`POST branches/{b}/students/import-jobs/precheck` is new; the staff one was widened.** Both take
+  the ROWS now, not a list of keys: what would change, and which names look like one person twice,
+  cannot be worked out from keys. Read-only, side-effect free, gated exactly as the import is.
+- **The answer names the FIELDS, never the stored values.** The diff is made on the SERVER for that
+  reason — a reader deciding whether to overwrite does not need every colleague's national ID read
+  back to their browser to be told so. Asserted by e2e 24.5 and 24.10.
+- **`StaffImportChanges.Compute` returns a list of `(Label, Apply)` and IS the one home.** The
+  precheck reads the labels; `RosterImportProcessorJob` runs the same list and applies it. A change is
+  an action rather than something applied in place, so the precheck cannot write by accident however
+  the entity reached it. **A preview that says "nothing will change" and an import that then changes
+  three fields is the worst answer an import can give** — the same rule `ImportRules` already carries.
+- **A value the file LEFT BLANK is never a change** (`ImportMatching.Differs`). A sheet exported from
+  a system that does not hold national IDs must not blank the school's.
+- **`ImportMatching.NameKey` SORTS the words**, so "Aine Grace" and "GRACE, AINE" are one key. A
+  school's two exports routinely disagree on name order, and the duplicate that hides behind a flipped
+  name is the one nobody spots by eye.
+- **A likeness ASKS; it never refuses.** Two children on one roll genuinely share a name, so
+  `QImportPanel` holds the Import button behind a confirmation rather than dropping a row on a guess —
+  the sign-up guard's rule one level down. Raised both for two rows of the file and for a row whose
+  name matches somebody already on file under a different number.
+- **The name lists are read in memory, capped**, because the key folds case, punctuation and word
+  order and SQL cannot do that here without an extension this project does not take.
+- **Verified by section 24 (`import-precheck-e2e.mjs`, 12 checks) and
+  `scripts/e2e/browser/import-reimport.mjs` (17 checks), both 0 failed.** Note the browser suite's
+  first run reported THREE product bugs that were the fixture: a guardian phone is required on every
+  row and a guardian the roll does not hold is a real change, so the "unchanged" row has to carry a
+  guardian the child already has. It seeds one and removes it. **A row that is not actually identical
+  cannot test "identical changes nothing".**
+
+### The localisation stack is BUILT and reaches no screen (found 2026-09-22, not fixed)
+
+Found while sweeping for dead code, and it is the opposite of dead: `AddLocalization`,
+`UseRequestLocalization`, the `/set-culture` cookie endpoint, `SupportedCultures` (English, Swahili,
+Luganda), `LanguageSelector.razor` and **three `.resx` files carrying 28 translated strings each** all
+exist and are correct. **Not one component injects `IStringLocalizer`, and nothing renders the
+picker**, so no screen is ever in any language but English.
+
+It is the same shape as `QAvatar.PhotoUrl` earlier the same day — a complete part with nothing passing
+through it — and it is NOT something to delete: 56 translated strings is real work. Finishing it means
+putting the picker on the public screens (kiosk, display, feedback, join queue, ticket status, which is
+what the component's own comment says it is for) and moving those screens' text onto the localizer.
+**That is a feature, not a cleanup, so it is stated rather than done.**
+
+Everything else swept clean: **no unused stylesheet, no unused script, no component nothing renders
+(besides that picker), and no DI registration nothing injects** in either Program.cs. The four dead
+stylesheets and Mapster were already gone. A scan that lists "types nothing outside their own file
+names" is the wrong measurement here and was discarded — EF configurations are found by assembly scan,
+controllers by routing, and a `[FromBody]` record is used only inside its own file.
+
 
 ## Text inputs must use `@bind`, never `value="…"` plus `@oninput` (found in production 2026-09-11)
 
@@ -3159,6 +3218,274 @@ dev tenant, because a successful run ends with the tenant gone. It resets its ow
 first through a **Development-only** endpoint (404 elsewhere), because three sign-ups an hour is
 right in production and unworkable for a suite that must create a tenant to destroy one.
 
+## A component parameter nothing passes is a feature nobody has (2026-09-22)
+
+Reported as *"i added a photo, but can not view it anywhere, not even in profile on top right and
+Good morning savior … even on the staff list"*, and every word of it was true. The upload worked,
+the bytes were stored, `UploadAuthorizer` classified them as `UploadOwnerKind.StaffPhoto` and gated
+them correctly, `ProfileController` signed the link it answered with — and then the photograph
+appeared on exactly nothing, for weeks, because **no DTO that any avatar reads carried the column.**
+
+**`QAvatar` had taken a `PhotoUrl` parameter since the day it was written and not one of its
+sixteen call sites passed one.** That is the shape to remember: a component whose API is complete,
+a storage path that is complete, a gate that is complete, and a field missing from the middle. A
+build cannot see it, a code read of any one file cannot see it, and the API suite would have passed
+asserting the endpoint.
+
+- **`User.PhotoUrl` now reaches eight DTOs**, each signing at its own mapper: `UserInfo` (the header,
+  built at four places in `AuthController`), `UserDto` (the users list), `StaffMemberDto` (the
+  directory, the portal greeting, the staff file, the structure tree), `StaffProfileDto` (the profile
+  dialog), `RegisterRowDto` (a register is read to recognise who is in the room) and
+  `StaffAppraisalDto.SubjectPhotoUrl`.
+- **A signing call cannot live in an EF projection.** `UsersController`'s list and by-id queries
+  `Select` into `UserDto` server-side, so they carry the RAW column and sign after materialisation
+  (`d with { PhotoUrl = UploadLinks.Sign(d.PhotoUrl) }`). Putting `Sign` in the `Select` compiles and
+  throws at run time.
+- **`UserInfo` is the one that is PERSISTED**, in localStorage at sign-in, and a signed link dies in
+  an hour — so two things had to be true. `IAuthService.CurrentUserChanged` is raised when
+  `RefreshCurrentUserAsync` replaces the stored copy, and `MainLayout` listens and re-reads; the photo
+  upload paths call it, or the picture shows on the page that uploaded it and nowhere else until the
+  next sign-in. And **`QAvatar` now renders the initials ALWAYS, with the photograph layered over
+  them and `onerror="this.remove()"`** — an expired token, or a deleted file, falls back to initials
+  instead of the browser's broken-image glyph. A new avatar surface needs nothing for this to hold.
+- **The Profile page was the only place with no way to CHANGE a photo** once the onboarding checklist
+  was finished. It has one now, beside the avatar.
+- **`scripts/e2e/browser/profile-photo.mjs` (19 checks, in `all.mjs`)** uploads a real PNG and then
+  opens every surface. It asserts **`naturalWidth > 0`, not the presence of an `<img>`**: a wrong or
+  expired token renders an `<img>` all the same, so counting elements would pass against a 404.
+  **It also has to NARROW each list to its own row first** — the dev tenant has 143 people and the
+  lists show 25 and 10, so without that the probe reads twenty-five colleagues who have no photograph
+  and reports a bug that is not there. Measuring the wrong rows is this suite's real trap.
+
+## An explanation of a FIELD is `Hint`, and it renders beside the label (2026-09-22)
+
+*"grow the size of this modal, and also use the more info feature, instead of cluttering the form
+with repetitive information."* Add-a-member-of-staff carried four `<p class="form-hint">` blocks —
+one of them four lines long — inside a 560px dialog, which made it 830px tall and scrolling.
+
+- **`QInput`, `QSelect` and `QMultiSelect` take `Hint`**, which renders a `QInfo` in a
+  `.q-field__label-row` beside the label. That is the one home for explaining a control; a page
+  writing its own `<p class="form-hint">` under a field is the standing prose this app already swept
+  once. **A warning is still not a hint** — if the sentence changes what somebody DOES, it stays on
+  the page, which is the rule `QInfo`'s own header states.
+- **The info button is a SIBLING of the `<label>`, never a child.** A click anywhere inside a
+  `<label>` is re-dispatched to its first control, so a nested button toggles straight back shut.
+  This is the same rule already recorded as "never put a `QSelect` inside a `<label>`" and it cost
+  nothing to obey only because that note existed.
+- The dialog is `Size="lg"` (800px), which also lets `.form-row`'s `auto-fit minmax(240px, 1fr)`
+  settle into three columns rather than two: **473px tall against 830px, with nothing removed.**
+
+## An onboarding checklist is a STRIP, not a card (2026-09-22)
+
+*"Finish setting up your account is taking too much vertical space. what is the industry standard
+for appearance of such feature?"* It is a slim one-row bar, and Stripe's onboarding bar, Linear's,
+Slack's and Intercom's all do the same three things:
+
+1. **one row carrying a progress meter and how many steps are left**;
+2. **the NEXT incomplete step's own control inline**, so the common case needs no expanding at all —
+   this is the half that actually saves the space, because the reader is never shown the three steps
+   they have already done;
+3. **the full list one click away**, with open-or-shut remembered per browser in `localStorage`
+   (wrapped, because a private window throws, and shut is the right default).
+
+Measured on the portal: **80px collapsed against ~230px, 204px opened.** The collapsed row and the
+open list render the SAME control through one `ActionFor(step)` rather than two copies that drift.
+
+**It is deliberately NOT dismissible**, unlike most of the products above: two of the four steps are
+how the school reaches somebody and how children's information is protected. The answer to "it takes
+too much room" is one row, not a dismiss button.
+
+## A student code and a staff number are KEYS, not labels (2026-09-22)
+
+*"student code and staff number should be unique for each company and mandatory. implement
+aggressive validations both in ui and backend of the student and staff codes."*
+
+Both already carried a per-organization partial unique index, which is the half that looks finished
+and is not. **Both indexes were EXACT-MATCH**, so `MH/S/001` and `mh/s/001` were two different
+people; neither field was required anywhere; and each write path did its own `Trim()` and its own
+duplicate query — **`UsersController.CreateUser` and `UpdateUser` did neither**, writing whatever
+they were given and leaving Postgres to throw, which reaches a browser as a 500 with no field named.
+
+- **`Q-Mgr.Shared/Domain/Identity/PersonCode.cs` is the ONE home**, beside `PersonName` and
+  `RegistrationIdentity` for the same reason. `Normalize` (trim, collapse internal whitespace, empty
+  → null), `Key` (that, upper-cased — what is COMPARED), and `Validate` returning the sentence a
+  form, an import row and a problem detail all show verbatim. The API, the two import processors and
+  the three forms call it, so the preview, the page and the server cannot disagree about what a code
+  is.
+- **UNIQUENESS FOLDS CASE, and the database enforces it through a FUNCTIONAL index on
+  `upper(column)`** — raw SQL in `20260921215214_PersonCodesAreMandatoryAndCaseInsensitive`, because
+  EF cannot model one and `citext` is a Postgres extension this project does not take. **No second
+  normalised column was added**: `upper()` is plain SQL and the index serves the lookups. What the
+  school TYPED is what is stored and shown; only the comparison is folded. **`PersonCode.Key` must
+  stay byte-for-byte in step with that `upper()`**, or a duplicate the API accepts is refused by
+  Postgres as a 500 instead.
+- **MANDATORY IS ENFORCED ON THE WRITE PATH, NOT WITH `NOT NULL`, and that is deliberate.** 138 of
+  143 users on the development tenant carry no staff number: a `NOT NULL` constraint could only be
+  satisfied by inventing one each, and **a fabricated staff number in a MoES return is worse than a
+  blank one**. So every endpoint and every form requires one and the rows that predate the rule keep
+  their null until somebody supplies the real number.
+- **The migration RESOLVES CASE-COLLISIONS BEFORE BUILDING THE INDEX.** Rows that were legal under
+  the old exact-match index can collide under the new one, and a unique index that fails to build
+  takes the whole deploy down on a customer's server. The later row (by `CreatedAt`, then `Id`) is
+  **suffixed ` (2)`, never deleted or merged**: two people wearing one number is the school's data
+  problem to settle, and a suffixed code is visibly wrong in every list and every export, which is
+  how somebody comes to fix it. The `Down` restores only the indexes — the normalisation and the
+  suffixes are not recoverable and inventing them back would be worse.
+- **The IMPORTS refuse a row without one, and that is the point rather than a tightening.** Both
+  importers UPSERT on these codes, so a row without one could only ever create a new record — which
+  is how a second run of the same sheet doubles a roll or a staff list. Both columns are
+  `Required` in the wizard now, with the reason on the field.
+- **`UsersController` is the one place required is CONDITIONAL**: a platform-only role
+  (`RoleCodes.PlatformOnly`) has no staff number, so the role decides. `UpdateUser` validates a
+  number it is GIVEN and leaves one it is not — that endpoint also carries a bulk role change and a
+  branch move, neither of which is about the number — but it can never blank an existing one.
+- Verified by **`scripts/e2e/person-codes-e2e.mjs` (section 23, 28 checks, wired into
+  `class-teacher-e2e.sh`)**, which **races five simultaneous posts of one code in mixed case and
+  asserts exactly one student appears** — the only way to prove an index holds is to race it — and in
+  a browser: both forms refuse before submitting, name the field, and mark it with the asterisk.
+
+## The bell's rows were inert, and 96 of 100 notifications point somewhere (2026-09-22)
+
+*"is that notification intended to open the details when user clicks on it? currently, it does not
+respond? no signs that has been read."* Both halves were true and the cause was structural:
+**the panel's rows in `MainLayout` were plain `<div>`s with no handler at all.** `MainLayout` even
+carried a `MarkAsRead(NotificationItem)` that nothing anywhere called. So from the bell a
+notification could not be opened, could not be marked read, and never lost its unread styling —
+while the identical list on `/notifications` was a `<button>` doing all three. Measured on the dev
+tenant: **96 of the last 100 notifications carry an `ActionUrl`**, so almost every notification this
+product sends was unreachable from the place people actually look.
+
+- **A row that does something is a `<button>`.** It un-inherits the element's own font, colour,
+  background and border in `layout.css`, and carries the unread dot and the chevron `/notifications`
+  already had — the two rows now read the same because they now DO the same.
+- **The count is the SERVER's, not arithmetic.** `MarkAllAsRead` answers with the caller's remaining
+  unread count and `NotificationService` pushes `NotifyUnreadCountAsync` after every mark — so the
+  client never assumes zero (`MarkAllAsReadRemainingAsync`; **null means the call failed**, and the
+  badge is then left alone rather than cleared on a request that never landed).
+- **`OpenNotification` does not decrement when it navigates.** The API's own count push is already
+  on its way, and subtracting locally as well double-counts. It decrements only for the row that
+  stays put, which is the interim before that push lands.
+- **`INotificationHubService.MarkAsReadAsync` swallows every failure and returns void** — the
+  `IQueueApiService` rule, in the notification client. `TryMarkAsReadAsync` reports success, and the
+  row stays visibly unread when the server refused rather than lying and reverting on the next load.
+- **A push must be deduped on its own id.** `HandleNewNotification` inserted unconditionally and did
+  `notificationCount++` regardless, so a reconnect replay or two overlapping handlers counted one
+  notification twice and the badge drifted upward for the life of the circuit. It now ignores an id
+  already in the list and only counts an arrival that is actually unread.
+
+**Still open, and stated rather than fixed: an organization-wide notification (`Notification.UserId
+== null`) has ONE read flag for everybody.** `MarkAsReadAsync` lets any caller in the tenant set it
+and `MarkAllAsReadAsync` includes `n.UserId == null`, so one person reading it marks it read for the
+whole school. Nothing in the codebase creates one today — every sender names a user — so it is
+latent, but a per-person read state needs its own table and is not a change to make in passing.
+
+## A phone gets a navigation BAR, chosen from the person's own permissions (built 2026-09-22)
+
+Under 768px all **47 destinations** sat behind the hamburger, and hiding the main navigation
+**cuts discoverability almost in half** ([NN/g](https://www.nngroup.com/articles/hamburger-menus/)).
+Four role-chosen slots plus Notifications and More: inside Material 3's three-to-five, and it keeps
+Apple's warning about over-using a More tab intact — More is overflow, never a daily task.
+
+- **`Components/Shared/MobileNav.cs` is the ONE home**, beside `HubTabs` and for the same reason.
+  It is a pure decision: `SlotsFor(hasPermission, hasModule)` and `MoreFor(...)`. `QMobileNav.razor`
+  only draws what it returns, and `mobile-nav.mjs` reads the same list.
+- **Built from PERMISSIONS, never the role code.** A Director of Studies also teaches; a manager
+  also covers the front desk. `MainLayout` reads the WHOLE permission set once
+  (`GetPermissionsAsync`) and hands `MobileNav` a synchronous predicate — one awaited call per
+  candidate would be a dozen round trips and would stop `MobileNav` being pure.
+- **Module gates first**, exactly as the sidebar does, so a bank never sees a welfare slot.
+- **A slot whose permission or module is absent is NOT RENDERED.** Three plus More is a legitimate
+  bar; a greyed slot that refuses on press is not. `mobile-nav.mjs` signs in as a teacher and opens
+  every slot it was offered, asserting none lands on `/unauthorized` or the Billing hub.
+- **THE BAND IS RESERVED, NOT OVERLAID.** `--qm-mobilenav-total` = 56px + `env(safe-area-inset-bottom)`,
+  applied as `.qm-main`'s bottom padding under 768px. **Nothing in this app reserved a bottom safe
+  area before**; six pages placed real controls in the bottom 64px, and a bar laid over them would
+  have covered every one. The date picker (fixed `bottom: 12px` under 480px) and the bottom sheet
+  were lifted clear in the same change.
+- **Labels are always on** — Material 3 permits label-on-active-only and NN/g's finding argues
+  against it. **Slots are 48px**, clearing WCAG 2.5.5 (44px AAA) and the project's 40px phone floor.
+- **More is a SHEET, not a route**: no back-stack entry, and it shuts on any navigation — a sheet
+  left open over a page the reader did not choose reads as the app having frozen.
+- **The bar is hidden by a MEDIA QUERY, never a C# width check.** The server cannot know the
+  viewport.
+
+### The mobile readiness pass, and the correction that mattered
+
+`scripts/e2e/browser/mobile-readiness.mjs` — 14 pages at a real 390×844, now **56 passed, 0 failed**.
+
+Its first run reported **27 failures including overlaps on every page, and they were not real.** It
+compared bounding boxes. The collapsed sidebar is 1px wide with `overflow: hidden`, so its nav links
+keep 260px boxes that cross every page and are clipped out of the hit test entirely;
+`document.elementFromPoint` showed taps landing on page content. Two rules came out of it:
+
+- **An overlap must be HIT-TESTABLE to count** (`elementFromPoint` at the element's centre).
+- **A FIXED overlay crossing flowed content is scrolling, not an overlap** — and the test is the
+  fixed ANCESTOR, not the element: a slot inside the fixed bar is itself `position: relative`, so
+  testing the element alone reported the bar against every page it scrolled over.
+
+**A measurement that flags the wrong thing is worse than no measurement, because work gets done to
+satisfy it.** Four real findings it did surface and that are now fixed: `QInfo`'s button at 20px
+(on ten of fourteen pages), the roster's two raw checkboxes at 13 and 16px, the roster name link at
+21px, and — introduced the same day — `.row-actions` collapsing to **3px** on a phone, because
+`.data-table .row-actions { width: 1% }` is two classes deep and beats `table.q-stack`'s
+`width: 100%`.
+
+## `QCopyright` is the one home for the copyright line (2026-09-22)
+
+Asked as *"do we have a shared component for branding … such that we have SSoT? perhaps in future
+privileged user can have custom branding of the copyright message"*. There was one for the
+ATTRIBUTION line (`PoweredBy`) and none for the copyright: **eight copies, and five of them typed
+the year in** — Docs, a docs article, Privacy, Support and Terms all read
+"© 2026 SACC Software Limited" and would have gone on saying 2026 for ever. The shell had two
+branches of its own and `EmailTemplates` a ninth.
+
+- **`PoweredBy` and `QCopyright` answer different questions.** Whether to show "Powered by SACC
+  Software" is a paid entitlement and can be hidden; who the copyright belongs to is never hidden —
+  a document has to carry one.
+- **The year is `DateTime.Now`, never typed.**
+- **`Text` is the extension point for a privileged tenant's own wording.** Deliberately a parameter
+  rather than a stored column: there is nothing to store until somebody may set it, and when they
+  can, it is read once here and every surface follows.
+- **The descriptor is "Front Office", two words** (user decision 2026-09-22): the hyphen went, and
+  "Platform" went earlier the same day as redundant.
+## "S1A" and "S1 A" are one class, and a missing class is said ONCE (2026-09-22)
+
+The first real school roll this product imported: 1,711 students, and
+*"S1A is not one of this branch's classes"* on **1,584 of the rows**. The sentence was true, it was
+on every row, and there was nothing the reader could do with it.
+
+Two faults, and the first is the one that matters.
+
+- **`Q-Mgr.Shared/Domain/Identity/ClassName.cs` is the ONE home for comparing a class name.**
+  There were three copies of the rule — `ClassTeachersController.NormalizeClassName`,
+  `TimetableCycle.Normalize` and the scope service — and every one was `Trim().ToLower()`, so a
+  space was exactly the failure CLAUDE.md already warns about for the class-teacher scope: *a
+  student invisible to their own class teacher because of a stray space is a safeguarding failure,
+  not a cosmetic one.* `Key()` keeps letters and digits only, upper-cased, so `S1 A`, `S1-A`,
+  `S1/A` and `s1a` are one key. `Display()` is what is STORED — the school's own spelling, only
+  tidied. **Never store a Key; never compare a Display.**
+- **A class written differently is adopted silently.** `BuildRosterRow` folds the typed value to the
+  configured spelling, so the roll lands in the class the school already has rather than beside it.
+- **A class the branch has NOT got is collected, not warned per row.** `QImportPanel` gained a
+  `Review` slot — rendered at the check step, above the rows, with the parsed rows handed to it —
+  and the roster puts a panel there: each missing class once, with how many students are in it, an
+  **Add** button, and a picker of the nearest existing names. "Nearest" is a shared prefix of two
+  characters, so `S1A` offers `S1` and not the school's other forty forms.
+- **ADD is not the only answer, which is why MAP is offered beside it.** A roll that says `S1A` when
+  the list says `Senior 1 A` is not a new class; adding it would leave the school with two classes
+  for one form, and every register, timetable and class-teacher assignment then has to pick one.
+- **The mapping is applied on the way OUT**, in `StartRosterImport`, with `with` on an init-only
+  record — the rows the preview showed are the rows that were checked, and backing out costs
+  nothing.
+- **Adding a class RE-READS the vocabularies first.** `UpdateVocabularies` writes the blob OVER the
+  stored value, so sending only the new class would delete every house, dormitory and room. That is
+  the standing trap on that endpoint.
+- **There is no per-row warning left.** Repeating it was the original report.
+
+Verified by **`scripts/e2e/browser/import-classes.mjs` (14 checks, in `all.mjs`)**. It **builds its
+CSV from what the branch actually has** — it finds a configured class shaped like `S2A`, writes it
+back as `s2 a` and `S2-A`, and asserts neither appears as missing — so it cannot pass vacuously
+against a tenant whose list differs, and it says so and skips when there is nothing to fold against.
 ## A `var()` fallback hides a wrong token name (2026-09-21)
 
 `var(--qm-bg-subtle, #f4f4f5)` looks like a themed panel and is not one: `--qm-bg-subtle` has never

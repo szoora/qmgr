@@ -23,7 +23,7 @@
     reader — a pack is never a side door to a child's file — and unwritten reports are listed, not invented.
 *@
 
-<PageTitle>Duty Report Pack - Q-Mgr</PageTitle>
+<QPageTitle Text="Duty Report Pack" />
 
 <QPrintSheet SheetId="drp-sheet" Title="@($"Duty reports — {RangeText}")" Class="drp-sheet"
              Ready="@(!isLoading && loadError == null)" BackText="Back to duty reports" OnBack="@(() => Navigation.NavigateTo("/admin/staff/duties?tab=reports"))"

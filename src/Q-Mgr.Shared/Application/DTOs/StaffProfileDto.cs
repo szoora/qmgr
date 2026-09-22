@@ -33,6 +33,9 @@ public record StaffProfileDto
     public string RoleName { get; init; } = string.Empty;
     public bool IsActive { get; init; }
 
+    /// <summary>The person's photograph, already signed. Null when they have not added one.</summary>
+    public string? PhotoUrl { get; init; }
+
     // ---- Contact: the person's own, editable from their portal ----------------------------
     public string? Phone { get; init; }
     public string? AlternatePhone { get; init; }

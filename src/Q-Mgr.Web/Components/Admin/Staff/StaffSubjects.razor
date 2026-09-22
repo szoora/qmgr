@@ -13,7 +13,7 @@
 
 @if (!Embedded)
 {
-    <PageTitle>Subjects - Q-Mgr</PageTitle>
+    <QPageTitle Text="Subjects" />
 }
 
 @* The subject catalogue (duty rota plan §5.2). Organization-wide: a subject is the same subject in every
@@ -89,7 +89,7 @@
         <div class="sj-form">
             <QInput TValue="string" Label="Name" @bind-Value="@form.Name" Required="true" MaxLength="100" Placeholder="e.g. Mathematics" />
             <QInput TValue="string" Label="Code" @bind-Value="@form.Code" Required="true" MaxLength="20" Placeholder="e.g. MATH"
-                    HelperText="Short and permanent. Cannot contain : ; or , — the staff import's Teaches column uses them as separators." />
+                    Hint="Short and permanent. Cannot contain : ; or , — the staff import's Teaches column uses them as separators." />
             <QSelect TValue="Guid?" TItem="DepartmentDto" Label="Department" @bind-Value="@form.DepartmentId" Items="@departments.Where(d => d.IsActive).ToList()"
                      TextSelector="@(d => d.Name)" ValueSelector="@(d => (Guid?)d.Id)" AllowClear="true" Placeholder="No department"
                      HelperText="A head of department sees the teaching load of their department's subjects." />

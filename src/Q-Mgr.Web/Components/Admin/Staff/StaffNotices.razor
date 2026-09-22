@@ -18,7 +18,7 @@
 
 @if (!Embedded)
 {
-    <PageTitle>Staff Notices - Q-Mgr</PageTitle>
+    <QPageTitle Text="Staff Notices" />
 }
 
 @*
@@ -144,7 +144,7 @@
         <div class="form-group">
             <QInput TValue="string" @bind-Value="@form.BodyHtml" Type="textarea" Rows="8" Label="Body" Required="true"
                     Placeholder="The notice itself. Plain text is fine; simple HTML (paragraphs, bold, lists, links) is allowed."
-                    HelperText="Plain HTML is accepted — <p>, <strong>, <ul>, <a> and the like. Scripts, styles and event attributes are stripped by the server before anything is shown."
+                    Hint="Plain HTML is accepted — <p>, <strong>, <ul>, <a> and the like. Scripts, styles and event attributes are stripped by the server before anything is shown."
                     HasError="@formErrors.Contains("body")" ErrorMessage="Write the notice" />
         </div>
 

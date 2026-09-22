@@ -23,17 +23,22 @@
 *@
 @if (settings?.Enabled == true && settings.Messages.Count > 0)
 {
+    @* The colours come from the TENANT PALETTE unless the school chose one. DisplayLayout and
+       KioskLayout already stamp the whole --qm-primary-* family onto their wrapper through
+       BrandPalette, so reading the token here is all it takes for the ticker to follow a rebrand
+       — and --qm-text-on-primary is derived from the brand's own luminance, so a school that
+       picks a pale colour still gets readable text. *@
     <div class="qm-display-banner"
-         style="background:@settings.BackgroundColor; order:@(settings.Position == DisplayBannerPosition.Top ? -1 : 999);">
+         style="background:@Background; order:@(settings.Position == DisplayBannerPosition.Top ? -1 : 999);">
         <div class="qm-display-banner__wrapper">
             <div class="qm-display-banner__content qm-display-banner--@DirectionClass"
-                 style="animation-duration:@(settings.SpeedSeconds)s; color:@settings.TextColor;">
+                 style="animation-duration:@(settings.SpeedSeconds)s; color:@Foreground;">
                 @for (var loop = 0; loop < 2; loop++)
                 {
                     @foreach (var message in settings.Messages)
                     {
                         <span class="qm-display-banner__item">@message</span>
-                        <span class="qm-display-banner__separator" style="color:@settings.TextColor;">|</span>
+                        <span class="qm-display-banner__separator" style="color:@Foreground;">|</span>
                     }
                 }
             </div>
@@ -92,6 +97,27 @@
     private DisplayBannerSettingsDto? settings;
 
     private string DirectionClass => settings?.Direction == DisplayBannerDirection.LeftToRight ? "ltr" : "rtl";
+
+    /// <summary>
+    /// The ticker's ground. A stored hex is the school's own choice and wins; otherwise the tenant
+    /// palette, which DisplayLayout and KioskLayout have already stamped onto their wrapper through
+    /// BrandPalette — so the ticker follows a rebrand with nothing else to set.
+    /// </summary>
+    private string Background => string.IsNullOrWhiteSpace(settings?.BackgroundColor)
+        ? "var(--qm-primary)"
+        : settings!.BackgroundColor!;
+
+    /// <summary>
+    /// Text on that ground. On the brand colour it is --qm-text-on-primary, which BrandPalette
+    /// derives from the brand's own luminance, so a school that picks something pale still gets
+    /// readable text. On a ground the school typed themselves we cannot derive anything, so white
+    /// stays the default they already had.
+    /// </summary>
+    private string Foreground => !string.IsNullOrWhiteSpace(settings?.TextColor)
+        ? settings!.TextColor!
+        : string.IsNullOrWhiteSpace(settings?.BackgroundColor)
+            ? "var(--qm-text-on-primary)"
+            : "#ffffff";
 
     protected override async Task OnInitializedAsync()
     {

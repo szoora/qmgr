@@ -1024,5 +1024,33 @@ else
   printf '  \033[33mSKIP\033[0m  node is not installed; section 22 did not run\n'
 fi
 
+hdr "23. STUDENT CODES AND STAFF NUMBERS (Node)"
+# Required, unique per organisation and CASE-FOLDED. Node because the last line of defence is a
+# functional unique index, and the only way to prove an index holds is to race it.
+if command -v node > /dev/null 2>&1; then
+  PC_OUT=$(API="$API" BRANCH="$BRANCH" SA_USER="$SA_USER" SA_PASS="$SA_PASS" node "$(dirname "$0")/person-codes-e2e.mjs" 2>&1)
+  echo "$PC_OUT" | sed 's/^/  /'
+  PC_PASS=$(echo "$PC_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  PC_FAIL=$(echo "$PC_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$PC_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 23 did not report a summary\n'
+  else PASS=$((PASS+PC_PASS)); FAIL=$((FAIL+PC_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 23 did not run\n'
+fi
+
+hdr "24. RE-IMPORTING A SHEET (Node)"
+# What a re-import would CHANGE, and who might be one person twice. Both halves — staff and roll —
+# because they are one question with two endpoints, and the browser panel above them is shared.
+if command -v node > /dev/null 2>&1; then
+  IP_OUT=$(API="$API" BRANCH="$BRANCH" SA_USER="$SA_USER" SA_PASS="$SA_PASS" node "$(dirname "$0")/import-precheck-e2e.mjs" 2>&1)
+  echo "$IP_OUT" | sed 's/^/  /'
+  IP_PASS=$(echo "$IP_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  IP_FAIL=$(echo "$IP_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$IP_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 24 did not report a summary\n'
+  else PASS=$((PASS+IP_PASS)); FAIL=$((FAIL+IP_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 24 did not run\n'
+fi
+
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 exit "$FAIL"

@@ -74,6 +74,9 @@ public record StaffMemberDto
     public string RoleCode { get; init; } = string.Empty;
     public string RoleName { get; init; } = string.Empty;
     public string? RoleColor { get; init; }
+
+    /// <summary>The person's photograph, already signed. Null when they have not added one.</summary>
+    public string? PhotoUrl { get; init; }
     public string? JobTitle { get; init; }
     public string? EmployeeNumber { get; init; }
     public Guid? BranchId { get; init; }
@@ -382,6 +385,8 @@ public record RegisterRowDto
 {
     public Guid UserId { get; init; }
     public string FullName { get; init; } = string.Empty;
+    /// <summary>Already signed. A register is read to recognise who is in the room.</summary>
+    public string? PhotoUrl { get; init; }
     public string? JobTitle { get; init; }
     public string? DepartmentNames { get; init; }
     public DutyOutcome? Outcome { get; init; }
@@ -782,6 +787,8 @@ public record StaffAppraisalDto
     public Guid BranchId { get; init; }
     public Guid SubjectUserId { get; init; }
     public string SubjectName { get; init; } = string.Empty;
+    /// <summary>The subject's photograph, already signed.</summary>
+    public string? SubjectPhotoUrl { get; init; }
     public string? SubjectDepartmentNames { get; init; }
     public string PeriodKey { get; init; } = string.Empty;
     public DateOnly PeriodStart { get; init; }
@@ -1065,11 +1072,28 @@ public record StaffImportPrecheckRequest
     public List<string> Emails { get; set; } = new();
 
     /// <summary>
+    /// The rows themselves, when the caller has them. With these the answer can say WHAT this file
+    /// would change about each person it lands on, and which names look like the same person entered
+    /// twice — neither of which can be worked out from a list of keys. The comparison is made on the
+    /// server by the same rule the import itself applies, so the preview and the import cannot
+    /// disagree, and the answer names the FIELDS only: a colleague's stored details are never read
+    /// back to the browser. A caller that sends only the keys still gets the plain "already here" count.
+    /// </summary>
+    public List<StaffImportRow> Rows { get; set; } = new();
+
+    /// <summary>
     /// The school's own staff numbers, for the people in the file who have no email address — which
     /// on a Ugandan school roll is most of them. Without this half, "is this person already here?"
     /// has no answer at all for them.
     /// </summary>
     public List<string> EmployeeNumbers { get; set; } = new();
+
+    /// <summary>
+    /// Which way round a combined name is written in this file — the same value the import will be
+    /// sent. The server never guesses it, and a name read the wrong way round lands a row on the
+    /// wrong person, so a preview using a different order would answer about somebody else.
+    /// </summary>
+    public NameOrder NameOrder { get; set; } = NameOrder.GivenFirst;
 }
 
 /// <summary>One person the import would land on rather than create.</summary>
@@ -1084,6 +1108,13 @@ public record StaffImportExistingDto
     public bool IsActive { get; init; }
     /// <summary>A join request nobody has approved. Importing over one would quietly approve it.</summary>
     public bool PendingApproval { get; init; }
+
+    /// <summary>
+    /// What this file would overwrite, in the reader's words ("phone", "job title", "start date").
+    /// Empty means they are already here and nothing in the file is different — worth saying, because
+    /// "23 already here" reads as 23 decisions when 20 of them would change nothing at all.
+    /// </summary>
+    public List<string> Changes { get; init; } = new();
 }
 
 /// <summary>
@@ -1094,4 +1125,10 @@ public record StaffImportExistingDto
 public record StaffImportPrecheckDto
 {
     public List<StaffImportExistingDto> Existing { get; init; } = new();
+
+    /// <summary>How many of <see cref="Existing"/> this file would actually change something about.</summary>
+    public int ChangedCount => Existing.Count(e => e.Changes.Count > 0);
+
+    /// <summary>Names that look like one person entered twice. A question for the reader, never a refusal.</summary>
+    public List<ImportPossibleDuplicateDto> PossibleDuplicates { get; init; } = new();
 }

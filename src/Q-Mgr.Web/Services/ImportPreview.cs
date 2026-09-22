@@ -1,4 +1,5 @@
 using System.Globalization;
+using QMgr.Application.DTOs;
 using QMgr.Application.Import;
 using QMgr.Domain.Identity;
 
@@ -525,11 +526,37 @@ public sealed class ImportOptions
     public bool UpdateExisting { get; set; } = true;
 }
 
-/// <summary>How many of the rows about to be imported are already on file, and a few of their names.</summary>
-public sealed record ImportExisting(int Count, IReadOnlyList<string> Sample)
+/// <summary>
+/// WHAT A RE-IMPORT WOULD DO — how many of these rows land on somebody already on file, how many of
+/// THOSE would actually change anything, and which names look like one person entered twice.
+///
+/// <para>Asked before the file is sent, never reported afterwards. A school re-imports its own sheet
+/// every term, so "23 of these 184 are already here" is the normal case; what the reader needs to
+/// decide is whether this file is the new truth for them, and the honest way to put that is to say
+/// what would move. Twenty already here and three of them different is a small decision; twenty
+/// already here and twenty different is a large one, and the old answer could not tell them apart.</para>
+/// </summary>
+public sealed record ImportExisting(
+    int Count,
+    IReadOnlyList<string> Sample,
+    int Changed = 0,
+    IReadOnlyList<ImportChange>? Changes = null,
+    IReadOnlyList<ImportPossibleDuplicateDto>? Duplicates = null)
 {
     public static readonly ImportExisting None = new(0, Array.Empty<string>());
+
+    /// <summary>A few of the people this file would actually change, and what it would change about them.</summary>
+    public IReadOnlyList<ImportChange> ChangeSamples => Changes ?? Array.Empty<ImportChange>();
+
+    /// <summary>Names that may be one person twice. A question for the reader, never a refusal.</summary>
+    public IReadOnlyList<ImportPossibleDuplicateDto> PossibleDuplicates => Duplicates ?? Array.Empty<ImportPossibleDuplicateDto>();
+
+    /// <summary>Already here and nothing in the file is different — no decision to make about them.</summary>
+    public int Unchanged => Math.Max(0, Count - Changed);
 }
+
+/// <summary>One person a re-import would change, and the fields it would move. Never their stored values.</summary>
+public sealed record ImportChange(string Who, IReadOnlyList<string> Fields);
 
 /// <summary>
 /// One row of a downloadable import template: the example values, positionally aligned to the

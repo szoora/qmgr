@@ -1,0 +1,117 @@
+@namespace QMgr.Web.Components.Shared
+@using QMgr.Web.Components.Shared
+@implements IDisposable
+@inject NavigationManager Navigation
+
+@*
+    THE PHONE'S NAVIGATION BAR. Four role-chosen destinations, Notifications, and More.
+
+    Rendered by MainLayout and hidden above 768px by CSS alone — not by a C# width check, because
+    the server cannot know the viewport and a media query is the only honest answer. The band it
+    occupies is RESERVED by .qm-main's bottom padding, so it covers nothing.
+
+    MobileNav decides which slots; this only draws them. A component that re-derived the list would
+    be the second copy of a gate, which is the failure this project keeps rediscovering.
+*@
+
+<nav class="qm-mobilenav" aria-label="Main">
+    @foreach (var slot in Slots)
+    {
+        var active = slot.Key != "more" && MobileNav.IsActive(slot, CurrentPath);
+
+        @if (slot.Key == "more")
+        {
+            <button type="button"
+                    class="qm-mobilenav__slot @(sheetOpen ? "qm-mobilenav__slot--active" : "")"
+                    aria-expanded="@(sheetOpen ? "true" : "false")"
+                    aria-label="More"
+                    @onclick="ToggleSheet">
+                <i class="bi bi-@slot.Icon qm-mobilenav__icon" aria-hidden="true"></i>
+                <span class="qm-mobilenav__label">@slot.Label</span>
+            </button>
+        }
+        else
+        {
+            @* A real <a href>, so a long press offers "open in new tab" and the browser's own
+               back behaviour works. Blazor intercepts it as a soft navigation. *@
+            <a class="qm-mobilenav__slot @(active ? "qm-mobilenav__slot--active" : "")"
+               href="@slot.Href"
+               aria-current="@(active ? "page" : null)"
+               @onclick="CloseSheet">
+                <i class="bi bi-@slot.Icon qm-mobilenav__icon" aria-hidden="true"></i>
+                @if (slot.Key == "notifications" && UnreadCount > 0)
+                {
+                    <span class="qm-mobilenav__badge" aria-hidden="true">@(UnreadCount > 99 ? "99+" : UnreadCount.ToString())</span>
+                }
+                <span class="qm-mobilenav__label">@slot.Label</span>
+            </a>
+        }
+    }
+</nav>
+
+@if (sheetOpen)
+{
+    @* A sheet, not a route: it carries no back-stack entry, so dismissing it is not a navigation
+       and the reader lands back where they were. *@
+    <div class="qm-moresheet__backdrop" @onclick="CloseSheet"></div>
+    <div class="qm-moresheet" role="dialog" aria-modal="true" aria-label="More">
+        <div class="qm-moresheet__grip" aria-hidden="true"></div>
+
+        @foreach (var group in MoreGroups)
+        {
+            <p class="qm-moresheet__group">@group.Title</p>
+            @foreach (var item in group.Items)
+            {
+                var itemActive = MobileNav.IsActive(item, CurrentPath);
+                <a class="qm-moresheet__item @(itemActive ? "qm-moresheet__item--active" : "")"
+                   href="@item.Href"
+                   aria-current="@(itemActive ? "page" : null)"
+                   @onclick="CloseSheet">
+                    <i class="bi bi-@item.Icon" aria-hidden="true"></i>
+                    <span>@item.Label</span>
+                </a>
+            }
+        }
+
+        @* The shell's own controls. On a phone the header has no room for them, so this is where
+           they live — the bell is already a slot, so it is not repeated. *@
+        @if (ShellActions != null)
+        {
+            <p class="qm-moresheet__group">This device</p>
+            @ShellActions
+        }
+    </div>
+}
+
+@code {
+    /// <summary>What MobileNav.SlotsFor returned. The layout resolves it once per circuit.</summary>
+    [Parameter, EditorRequired] public IReadOnlyList<MobileNav.Slot> Slots { get; set; } = Array.Empty<MobileNav.Slot>();
+
+    /// <summary>Everything not on the bar, grouped.</summary>
+    [Parameter] public IReadOnlyList<MobileNav.Group> MoreGroups { get; set; } = Array.Empty<MobileNav.Group>();
+
+    /// <summary>The unread badge, from the same count the header bell shows.</summary>
+    [Parameter] public int UnreadCount { get; set; }
+
+    /// <summary>Theme, branch, profile, sign-out — whatever the shell wants at the foot of the sheet.</summary>
+    [Parameter] public RenderFragment? ShellActions { get; set; }
+
+    private bool sheetOpen;
+    private string CurrentPath => Navigation.ToBaseRelativePath(Navigation.Uri);
+
+    protected override void OnInitialized() => Navigation.LocationChanged += OnLocationChanged;
+
+    /// <summary>
+    /// The sheet shuts on ANY navigation, not only on a press inside it: a link in the page beneath,
+    /// a notification, a redirect. A sheet left open over a page the reader did not choose reads as
+    /// the app having frozen.
+    /// </summary>
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+        => _ = InvokeAsync(() => { sheetOpen = false; StateHasChanged(); });
+
+    private void ToggleSheet() => sheetOpen = !sheetOpen;
+
+    private void CloseSheet() => sheetOpen = false;
+
+    public void Dispose() => Navigation.LocationChanged -= OnLocationChanged;
+}

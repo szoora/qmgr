@@ -16,7 +16,7 @@
     </div>
     <div class="form-row">
         <QInput TValue="string" @bind-Value="@Defaults.DueLocalTime" Type="time" Label="Reports due at" HelperText="Branch-local, on the last day of each report period." />
-        <QInput TValue="int" @bind-Value="@Defaults.MaxRotaSlotsPerTerm" Type="number" Min="0" Max="200" Label="Fairness limit (slots a term)" HelperText="The rota warns when one person would be on duty more often than this. 0 turns the warning off." />
+        <QInput TValue="int" @bind-Value="@Defaults.MaxRotaSlotsPerTerm" Type="number" Min="0" Max="200" Label="Fairness limit (slots a term)" Hint="The rota warns when one person would be on duty more often than this. 0 turns the warning off." />
     </div>
     <QCheckbox @bind-Value="@Defaults.OnDutyMayReadSupervisorReport" Label="The teacher on duty may read the administrator on duty's report about them" />
     <small class="pol-help">Off by default: the supervisor's report is for the heads who review it.</small>

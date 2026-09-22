@@ -26,6 +26,13 @@ public interface IAuthService
     event Action? SessionExpired;
 
     /// <summary>
+    /// Raised when the stored copy of the signed-in person has been REPLACED — today, after they
+    /// add a profile photograph. <c>MainLayout</c> listens and re-reads, so the header avatar
+    /// follows without a reload. Not raised on sign-out; that is <see cref="SessionExpired"/>.
+    /// </summary>
+    event Action? CurrentUserChanged;
+
+    /// <summary>
     /// Re-fetches the signed-in user (incl. role and permissions) from GET api/v1/auth/me and
     /// replaces the stored copy. Returns null when not signed in or the call fails.
     /// </summary>
@@ -62,6 +69,7 @@ public class AuthService : IAuthService
     private const string UserInfoKey = "user_info";
 
     public event Action? SessionExpired;
+    public event Action? CurrentUserChanged;
 
     public AuthService(
         IHttpClientFactory httpClientFactory,
@@ -266,9 +274,10 @@ public class AuthService : IAuthService
 
             var user = await response.Content.ReadFromJsonAsync<UserInfo>(_jsonOptions);
             if (user == null) return null;
-
+
             await _localStorage.SetItemAsync(UserInfoKey, user);
             _tokenStorage.UserInfo = user;
+            CurrentUserChanged?.Invoke();
             return user;
         }
         catch (Exception ex)

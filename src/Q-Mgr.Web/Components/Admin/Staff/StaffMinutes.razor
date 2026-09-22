@@ -11,7 +11,7 @@
 @inject IModuleStateService ModuleState
 @inherits BranchAwareComponentBase
 
-<PageTitle>Minutes - Q-Mgr</PageTitle>
+<QPageTitle Text="Minutes" />
 
 @*
     MINUTES OF A MEETING (2026-09-20). The standards are set out at the top of
@@ -309,7 +309,7 @@
         <QSelect TValue="Guid?" TItem="MeetingOption" Label="Adopted at" Value="@approveAtDutyId" ValueChanged="@(v => approveAtDutyId = v)"
                  Items="@adoptingMeetings" ValueSelector="@(m => m.Id)" TextSelector="@(m => m.Label)"
                  Placeholder="Not recorded"
-                 HelperText="The meeting that adopted them — normally the next one. Leave it blank if they were adopted by circulation." />
+                 Hint="The meeting that adopted them — normally the next one. Leave it blank if they were adopted by circulation." />
     </ChildContent>
     <FooterContent>
         <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showApprove = false)" />

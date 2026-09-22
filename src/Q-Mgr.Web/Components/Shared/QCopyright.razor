@@ -1,0 +1,86 @@
+@namespace QMgr.Web.Components.Shared
+@using QMgr.Web.Services
+
+@*
+    THE COPYRIGHT LINE, AND THE ONE HOME FOR IT.
+
+    Before this there were eight copies of the same sentence and they did not agree. Five pages —
+    Docs, a docs article, Privacy, Support and Terms — carried the literal
+    "© 2026 SACC Software Limited. All rights reserved." with the YEAR TYPED IN, so every one of
+    them would have read 2026 for ever. The shell's footer had two branches of its own, and
+    EmailTemplates a ninth. A white-labelled tenant met our name on whichever of them nobody had
+    remembered to check.
+
+    PoweredBy is the sibling of this and answers a different question: whether to show
+    "Powered by SACC Software" at all, which is a paid entitlement. This one answers who the
+    copyright BELONGS to, which is a different decision and is never hidden — a document has to
+    carry one.
+
+    THE FUTURE HOOK IS ALREADY HERE. `Text` overrides the whole line, so when a privileged tenant
+    is allowed to set their own wording it arrives through that one parameter and every surface
+    picks it up at once. Nothing else needs to change, and no second copy has to be found.
+*@
+
+<p class="q-copyright @Class">@Line</p>
+
+@code {
+    /// <summary>
+    /// Which host the browser arrived on. On a public page nobody is signed in, so the host is the
+    /// only thing that can say whose name belongs at the foot — the same split PoweredBy makes.
+    /// </summary>
+    [CascadingParameter] public TenantHostContext Host { get; set; } = TenantHostContext.Platform;
+
+    /// <summary>
+    /// The name to credit, when the caller already knows it — the signed-in shell passes the
+    /// ORGANISATION's name, because most tenants sign in on the platform address and should not
+    /// need a domain of their own to see themselves here.
+    /// </summary>
+    [Parameter] public string? Owner { get; set; }
+
+    /// <summary>
+    /// True when this deployment's attribution has been bought out, so the line credits the tenant
+    /// rather than us. Null falls back to the host's own answer.
+    /// </summary>
+    [Parameter] public bool? Attributed { get; set; }
+
+    /// <summary>
+    /// A short descriptor after the name — "Front Office" in the shell. Left out on a legal page,
+    /// where the line is a copyright notice rather than a product signature.
+    /// </summary>
+    [Parameter] public string? Suffix { get; set; }
+
+    /// <summary>Adds "All rights reserved." — the legal pages want it; the app shell does not.</summary>
+    [Parameter] public bool RightsReserved { get; set; }
+
+    /// <summary>
+    /// THE EXTENSION POINT. A complete replacement for the line. Nothing sets it today; when a
+    /// privileged tenant may write their own footer, it is read once, here, and every surface that
+    /// renders this component follows. Deliberately a parameter rather than a new stored column:
+    /// there is nothing to store until somebody may set it.
+    /// </summary>
+    [Parameter] public string? Text { get; set; }
+
+    [Parameter] public string? Class { get; set; }
+
+    /// <summary>
+    /// The year is DateTime.Now, never typed. Five pages hard-coded 2026 and would have gone on
+    /// saying it — the single most certain bug in a copyright line.
+    /// </summary>
+    private string Line
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(Text)) return Text!;
+
+            var removed = Attributed ?? Host.AttributionRemoved;
+            var who = removed && !string.IsNullOrWhiteSpace(Owner)
+                ? Owner!
+                : "SACC Software Limited";
+
+            var line = $"© {DateTime.Now.Year} {who}";
+            if (!string.IsNullOrWhiteSpace(Suffix)) line += $" · {Suffix}";
+            if (RightsReserved) line += ". All rights reserved.";
+            return line;
+        }
+    }
+}

@@ -2,81 +2,124 @@
 @using Microsoft.AspNetCore.Components.Forms
 @inject IStaffOnboardingApiService Onboarding
 @inject IToastService Toast
+@inject IAuthService Auth
+@inject IJSRuntime JS
 
 @*
     The first-sign-in checklist (duty rota plan §12.3): confirm your phone, choose how you are notified,
-    add a photo, and confirm the school's acceptable-use and data-protection notice. Every tick is read from
-    the account itself by the API — nothing here marks an item done by hand — and the card disappears when
-    the last one is done.
+    add a photo, and confirm the school's acceptable-use and data-protection notice. Every tick is read
+    from the account itself by the API — nothing here marks an item done by hand — and it disappears
+    when the last one is done.
+
+    IT IS A STRIP, NOT A CARD, and that is the industry pattern rather than a preference. Stripe's
+    onboarding bar, Linear's, Slack's and Intercom's all do the same three things: one row carrying a
+    progress meter and how many steps are left; the NEXT step's control inline, so the common case
+    needs no expanding at all; and the full list one click away, with open-or-shut remembered per
+    browser. This was a 230px card listing four steps with their explanations whether they were done
+    or not — a screen of furniture, on a page whose job is the reader's day, for something most
+    people read once.
+
+    NOT dismissible. Two of the four are how the school reaches somebody and how children's
+    information is protected, so it stays until it is finished — but it costs one row, not a card.
 *@
 
-<QCard Title="Finish setting up your account" Icon="list-check" Class="ob-checklist">
-    <p class="obc-lede">@Remaining left. These help the school reach you and keep children's information safe.</p>
-    <ol class="obc-list">
-        <li class="@(Checklist.PhoneConfirmed ? "obc-done" : "")">
-            <QIcon Name="@(Checklist.PhoneConfirmed ? "check-circle-fill" : "circle")" />
-            <div class="obc-item">
-                <strong>Confirm your phone number</strong>
-                @if (!Checklist.PhoneConfirmed)
-                {
-                    <span class="obc-sub">We send a code to the number on your profile. <a href="/profile">Change the number</a> first if it is wrong.</span>
-                    @if (!codeSent)
-                    {
-                        <QButton Text="Send me a code" Icon="phone" Variant="secondary" Size="sm" OnClick="@SendCodeAsync" Loading="@busy" Disabled="@busy" />
-                    }
-                    else
-                    {
-                        <div class="obc-inline">
-                            <input class="form-control obc-code" inputmode="numeric" maxlength="6" aria-label="Code from the SMS" @bind="code" @bind:event="oninput" />
-                            <QButton Text="Confirm" Variant="primary" Size="sm" OnClick="@VerifyAsync" Loading="@busy" Disabled="@(busy || string.IsNullOrWhiteSpace(code))" />
-                        </div>
-                    }
-                }
-            </div>
-        </li>
-        <li class="@(Checklist.NotificationPreferencesReviewed ? "obc-done" : "")">
-            <QIcon Name="@(Checklist.NotificationPreferencesReviewed ? "check-circle-fill" : "circle")" />
-            <div class="obc-item">
-                <strong>Choose how you are notified</strong>
-                @if (!Checklist.NotificationPreferencesReviewed)
-                {
-                    <span class="obc-sub">Email, SMS or in the app only, for each kind of message. Save once, even if you keep the defaults.</span>
-                    <a class="obc-link" href="/profile/notifications">Open notification settings</a>
-                }
-            </div>
-        </li>
-        <li class="@(Checklist.ProfilePhotoAdded ? "obc-done" : "")">
-            <QIcon Name="@(Checklist.ProfilePhotoAdded ? "check-circle-fill" : "circle")" />
-            <div class="obc-item">
-                <strong>Add a profile photo</strong>
-                @if (!Checklist.ProfilePhotoAdded)
-                {
-                    <span class="obc-sub">So colleagues on a duty rota know who to look for. Only staff of your school can see it.</span>
-                    <InputFile OnChange="@UploadPhotoAsync" accept="image/*" disabled="@busy" />
-                }
-            </div>
-        </li>
-        @if (Checklist.AcceptableUseNoticeId is { } noticeId)
-        {
-            <li class="@(Checklist.AcceptableUseAcknowledged ? "obc-done" : "")">
-                <QIcon Name="@(Checklist.AcceptableUseAcknowledged ? "check-circle-fill" : "circle")" />
-                <div class="obc-item">
-                    <strong>Read and confirm the acceptable-use notice</strong>
-                    @if (!Checklist.AcceptableUseAcknowledged)
-                    {
-                        <span class="obc-sub">How the system may be used, and how children's information is protected.</span>
-                        <a class="obc-link" href="@($"/portal/notices/{noticeId}")">Read the notice</a>
-                    }
-                </div>
-            </li>
-        }
-    </ol>
-</QCard>
+<div class="ob-strip @(open ? "ob-strip--open" : "")">
+    <button type="button" class="ob-strip__bar" @onclick="ToggleAsync" aria-expanded="@(open ? "true" : "false")">
+        <span class="ob-strip__meter" aria-hidden="true">
+            <span class="ob-strip__fill" style="width: @(Percent)%"></span>
+        </span>
+        <span class="ob-strip__text">
+            <strong>Finish setting up your account</strong>
+            <span class="ob-strip__count">@Done of @Total done</span>
+        </span>
+        <QIcon Name="@(open ? "chevron-up" : "chevron-down")" Size="14" Class="ob-strip__chev" />
+    </button>
+
+    @if (!open && Next is { } next)
+    {
+        @* The step that is actually next, with its control — so the usual case is a click on this
+           row rather than opening a list of four to find the one that is not done. *@
+        <div class="ob-strip__next">
+            <span class="ob-strip__nextlabel">@next.Title</span>
+            @ActionFor(next)
+        </div>
+    }
+
+    @if (open)
+    {
+        <ol class="obc-list">
+            @foreach (var item in Items)
+            {
+                <li class="@(item.Done ? "obc-done" : "")">
+                    <QIcon Name="@(item.Done ? "check-circle-fill" : "circle")" />
+                    <div class="obc-item">
+                        <strong>@item.Title</strong>
+                        @if (!item.Done)
+                        {
+                            <span class="obc-sub">@item.Sub</span>
+                            @ActionFor(item)
+                        }
+                    </div>
+                </li>
+            }
+        </ol>
+    }
+</div>
 
 <style>
-    .ob-checklist { margin-top: 14px; }
-    .obc-lede { font-size: var(--qm-text-base); color: var(--qm-text-secondary); margin: 0 0 8px; }
-    .obc-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+    .ob-strip {
+        margin-top: 14px;
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        background: var(--qm-bg-card);
+        overflow: hidden;
+    }
+
+    /* The whole row is the control, and it is a real button: reachable by keyboard and announcing
+       its own expanded state, which a div carrying a click handler is not. */
+    .ob-strip__bar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 8px 12px;
+        background: none;
+        border: 0;
+        font: inherit;
+        font-size: var(--qm-text-base);
+        color: var(--qm-text-primary);
+        text-align: left;
+        cursor: pointer;
+    }
+
+    .ob-strip__bar:hover { background: var(--qm-bg-card-hover); }
+
+    .ob-strip__meter {
+        flex: 0 0 56px;
+        height: 4px;
+        border-radius: 999px;
+        background: rgba(var(--qm-primary-rgb), .18);
+        overflow: hidden;
+    }
+
+    .ob-strip__fill { display: block; height: 100%; background: var(--qm-primary); }
+
+    .ob-strip__text { flex: 1; display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+    .ob-strip__text strong { font-weight: 600; white-space: nowrap; }
+    .ob-strip__count { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
+    .ob-strip__chev { color: var(--qm-text-muted); flex: 0 0 auto; }
+
+    .ob-strip__next {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        padding: 0 12px 10px 78px;
+    }
+
+    .ob-strip__nextlabel { font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
+
+    .obc-list { list-style: none; margin: 0; padding: 2px 12px 12px; display: grid; gap: 10px; }
     .obc-list li { display: flex; gap: 10px; align-items: flex-start; }
     .obc-list li > .bi, .obc-list li > i { margin-top: 2px; color: var(--qm-text-muted); }
     .obc-done { opacity: 0.7; }
@@ -86,23 +129,111 @@
     .obc-link { font-size: var(--qm-text-base); }
     .obc-inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .obc-code { width: 9em; letter-spacing: 4px; }
+
+    @@media (max-width: 640px) {
+        .ob-strip__next { padding-left: 12px; }
+        .ob-strip__text { flex-wrap: wrap; }
+        .ob-strip__text strong { white-space: normal; }
+    }
 </style>
 
 @code {
     [Parameter, EditorRequired] public OnboardingChecklistDto Checklist { get; set; } = new();
     [Parameter] public EventCallback OnChanged { get; set; }
 
-    private bool busy, codeSent;
+    private const string OpenKey = "qmgr-onboarding-open";
+
+    private bool busy, codeSent, open, stateRead;
     private string? code;
 
-    private string Remaining
+    /// <summary>
+    /// One step. The collapsed row and the open list render the SAME control through
+    /// <see cref="ActionFor"/> rather than two copies of it that can drift apart.
+    /// </summary>
+    private sealed record Step(string Key, string Title, string Sub, bool Done);
+
+    private List<Step> Items
     {
         get
         {
-            var left = (Checklist.PhoneConfirmed ? 0 : 1) + (Checklist.NotificationPreferencesReviewed ? 0 : 1) + (Checklist.ProfilePhotoAdded ? 0 : 1)
-                       + (Checklist.AcceptableUseNoticeId != null && !Checklist.AcceptableUseAcknowledged ? 1 : 0);
-            return left == 1 ? "One step" : $"{left} steps";
+            var list = new List<Step>
+            {
+                new("phone", "Confirm your phone number",
+                    "We send a code to the number on your profile. Change it on your profile first if it is wrong.",
+                    Checklist.PhoneConfirmed),
+                new("notify", "Choose how you are notified",
+                    "Email, SMS or in the app only, for each kind of message. Save once, even if you keep the defaults.",
+                    Checklist.NotificationPreferencesReviewed),
+                new("photo", "Add a profile photo",
+                    "So colleagues on a duty rota know who to look for. Only staff of your school can see it.",
+                    Checklist.ProfilePhotoAdded)
+            };
+
+            if (Checklist.AcceptableUseNoticeId is not null)
+            {
+                list.Add(new("notice", "Read and confirm the acceptable-use notice",
+                    "How the system may be used, and how children's information is protected.",
+                    Checklist.AcceptableUseAcknowledged));
+            }
+
+            return list;
         }
+    }
+
+    private int Total => Items.Count;
+    private int Done => Items.Count(i => i.Done);
+    private int Percent => Total == 0 ? 100 : (int)Math.Round(Done * 100.0 / Total);
+    private Step? Next => Items.FirstOrDefault(i => !i.Done);
+
+    private RenderFragment ActionFor(Step step) => step.Key switch
+    {
+        "phone" => PhoneAction,
+        "notify" => NotifyAction,
+        "photo" => PhotoAction,
+        _ => NoticeAction
+    };
+
+    private RenderFragment PhoneAction => !codeSent
+        ? @<QButton Text="Send me a code" Icon="phone" Variant="secondary" Size="sm" OnClick="@SendCodeAsync" Loading="@busy" Disabled="@busy" />
+        : @<div class="obc-inline">
+               <input class="form-control obc-code" inputmode="numeric" maxlength="6" aria-label="Code from the SMS" @bind="code" @bind:event="oninput" />
+               <QButton Text="Confirm" Variant="primary" Size="sm" OnClick="@VerifyAsync" Loading="@busy" Disabled="@(busy || string.IsNullOrWhiteSpace(code))" />
+           </div>;
+
+    private RenderFragment NotifyAction => @<a class="obc-link" href="/profile/notifications">Open notification settings</a>;
+
+    private RenderFragment PhotoAction => @<InputFile OnChange="@UploadPhotoAsync" accept="image/*" disabled="@busy" />;
+
+    private RenderFragment NoticeAction => @<a class="obc-link" href="@NoticeHref">Read the notice</a>;
+
+    private string NoticeHref => $"/portal/notices/{Checklist.AcceptableUseNoticeId}";
+
+    /// <summary>
+    /// Open or shut is a per-viewer convenience, so it lives in this browser's localStorage and
+    /// nowhere the server can read. A private window or blocked site data throws on the read, which
+    /// is why it is wrapped: the strip has to render either way, and shut is the right default.
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || stateRead) return;
+        stateRead = true;
+        try
+        {
+            var saved = await JS.InvokeAsync<string?>("localStorage.getItem", OpenKey);
+            if (saved == "1")
+            {
+                open = true;
+                StateHasChanged();
+            }
+        }
+        catch { /* a private window, or site data blocked */ }
+    }
+
+    private async Task ToggleAsync()
+    {
+        open = !open;
+        try { await JS.InvokeVoidAsync("localStorage.setItem", OpenKey, open ? "1" : "0"); }
+        catch { }
     }
 
     private async Task SendCodeAsync()
@@ -150,6 +281,11 @@
             buffer.Position = 0;
             await Onboarding.UploadPhotoAsync(buffer, e.File.Name, e.File.ContentType);
             Toast.Notify(ToastSeverity.Success, "Photo added");
+            // The header avatar reads the STORED copy of the signed-in person, written at sign-in,
+            // and a photo's link is signed per fetch — so without this the picture appears on this
+            // page and nowhere else until the next sign-in. Re-reading raises CurrentUserChanged,
+            // which is what the shell listens to.
+            await Auth.RefreshCurrentUserAsync();
             await OnChanged.InvokeAsync();
         }
         catch (InvalidOperationException ex) { Toast.Notify(ToastSeverity.Error, "Could not add the photo", ex.Message); }

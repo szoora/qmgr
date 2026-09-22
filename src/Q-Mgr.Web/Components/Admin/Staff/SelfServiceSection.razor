@@ -1,6 +1,9 @@
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
 @inject ISelfServiceApiService SelfService
+@inject NavigationManager Navigation
+@inject IPermissionService PermissionService
 @inject IToastService Toast
 
 @*
@@ -20,8 +23,26 @@
 }
 else if (context == null || !context.Policy.Enabled)
 {
-    @* Nothing at all when the school has not switched this on. An absent section reads as "not part
-       of how this school works"; a disabled one reads as something broken. *@
+    @* Nothing at all for a TEACHER when the school has not switched this on: an absent section reads
+       as "not part of how this school works", where a disabled one reads as something broken.
+
+       An ADMINISTRATOR sees one line, because they are the person who can switch it on and the
+       alternative is hunting for a feature they were told exists — which is exactly what happened
+       the first night this shipped. Reported as "where is the UI for self assignment of classes?",
+       and the answer was that it was three clicks away in Setup with nothing anywhere pointing at
+       it. A capability nobody can find is not a capability. *@
+    @if (canManagePolicy)
+    {
+        <QCard Title="Staff self-service" Icon="sliders2" Class="portal-card">
+            <QEmptyState Icon="toggle-off" Title="Switched off"
+                         Text="Teachers can declare what they teach and claim free periods themselves, once the school turns it on. Anything that widens access to children still goes to you to approve.">
+                <Action>
+                    <QButton Text="Open Setup" Icon="arrow-right" Variant="secondary"
+                             OnClick="@(() => Navigation.NavigateTo("/admin/staff/parameters?tab=policy"))" />
+                </Action>
+            </QEmptyState>
+        </QCard>
+    }
 }
 else
 {
@@ -253,6 +274,9 @@ else
     private Guid meId;
 
     private bool loading = true;
+
+    /// <summary>Whether this reader is the person who could switch the feature on.</summary>
+    private bool canManagePolicy;
     private bool saving;
     private bool askOpen;
     private string askClass = string.Empty;
@@ -291,7 +315,11 @@ else
         (UnavailabilityReason.Personal, "Personal"),
     };
 
-    protected override async Task OnInitializedAsync() => await LoadAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        canManagePolicy = await PermissionService.HasPermissionAsync(Permissions.StaffParametersManage);
+        await LoadAsync();
+    }
 
     private async Task LoadAsync()
     {

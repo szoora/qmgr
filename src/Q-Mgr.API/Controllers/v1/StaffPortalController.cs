@@ -186,6 +186,7 @@ public class StaffPortalController : StaffPerformanceControllerBase
             Username = me.Username,
             RoleName = me.Role?.Name ?? string.Empty,
             IsActive = me.IsActive,
+            PhotoUrl = UploadLinks.Sign(me.PhotoUrl),
 
             Phone = me.Phone,
             AlternatePhone = me.AlternatePhone,

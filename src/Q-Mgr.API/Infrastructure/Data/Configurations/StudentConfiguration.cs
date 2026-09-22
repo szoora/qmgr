@@ -20,6 +20,9 @@ public class StudentConfiguration : IEntityTypeConfiguration<Student>
         // A roster import upserts by StudentCode, so it needs to be a real key: unique per
         // organization when present, excluding soft-deactivated rows so a re-issued admission
         // number (a genuinely re-enrolled student) doesn't permanently collide with a stale one.
+        //
+        // As with the staff number, THE REAL INDEX FOLDS CASE and is created in raw SQL by
+        // 20260922_PersonCodesAreMandatoryAndCaseInsensitive — see UserConfiguration for why.
         builder.HasIndex(s => new { s.OrganizationId, s.StudentCode })
             .IsUnique()
             .HasFilter("\"StudentCode\" IS NOT NULL AND \"IsActive\" = true")

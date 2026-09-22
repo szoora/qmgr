@@ -12,7 +12,7 @@
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
 
-<PageTitle>Appraisal - Q-Mgr</PageTitle>
+<QPageTitle Text="Appraisal" />
 
 <div class="admin-page">
     @if (isLoading && a == null)
@@ -30,7 +30,7 @@
     {
         <div class="page-header">
             <div class="ad-head">
-                <QAvatar Name="@a.SubjectName" Size="lg" />
+                <QAvatar Name="@a.SubjectName" PhotoUrl="@a.SubjectPhotoUrl" Size="lg" />
                 <div class="ad-head__text">
                     <h1>@a.SubjectName</h1>
                     <p class="subtitle">

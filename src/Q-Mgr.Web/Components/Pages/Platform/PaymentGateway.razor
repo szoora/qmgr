@@ -102,7 +102,7 @@ else if (settings != null)
             </HeaderActions>
             <ChildContent>
                 <QInput TValue="string" Value="@settings.CallbackUrl" Label="Callback address" ReadOnly="true" IconLeft="link-45deg"
-                        HelperText="Worked out from this server's own address — nothing to type. Register webhook sends it to the gateway." />
+                        Hint="Worked out from this server's own address — nothing to type. Register webhook sends it to the gateway." />
                 <dl class="pg-facts">
                     <dt>Status</dt>
                     <dd>@(WebhookRegistered ? $"Registered ({settings.WebhookId})" : "Not registered")</dd>

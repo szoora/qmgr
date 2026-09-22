@@ -38,6 +38,14 @@ public interface IStudentApiService
     /// <summary>Starts a background bulk-import job and returns immediately — poll or listen for RosterImportProgress over SignalR for live status.</summary>
     Task<RosterImportJobDto> StartImportAsync(Guid branchId, StartRosterImportRequest request);
 
+    /// <summary>
+    /// Who in this file is already on the roll, what it would change about them, and which names look
+    /// like one child entered twice. Read-only, asked before anything is sent. It THROWS like every
+    /// other write in this service; the caller treats a failure as "we could not check" and carries on,
+    /// because a preview that cannot be built must never block an import the server would accept.
+    /// </summary>
+    Task<RosterImportPrecheckDto> PrecheckImportAsync(Guid branchId, RosterImportPrecheckRequest request);
+
     /// <summary>Same job pipeline as StartImportAsync, but for historical welfare-ledger rows (Kind = Welfare) — same progress event, same entries log.</summary>
     Task<RosterImportJobDto> StartWelfareImportAsync(Guid branchId, StartWelfareImportRequest request);
 
@@ -298,6 +306,13 @@ public class StudentApiService : IStudentApiService
         var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/students/import-jobs", request, _jsonOptions);
         if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
         return (await response.Content.ReadFromJsonAsync<RosterImportJobDto>(_jsonOptions))!;
+    }
+
+    public async Task<RosterImportPrecheckDto> PrecheckImportAsync(Guid branchId, RosterImportPrecheckRequest request)
+    {
+        var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/students/import-jobs/precheck", request, _jsonOptions);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return (await response.Content.ReadFromJsonAsync<RosterImportPrecheckDto>(_jsonOptions))!;
     }
 
     public async Task<RosterImportJobDto> StartWelfareImportAsync(Guid branchId, StartWelfareImportRequest request)

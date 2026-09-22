@@ -121,7 +121,7 @@
             <QSelect TValue="string" TItem="SpotifyPlaylistDto" Value="@editModel.SpotifyPlaylistId" ValueChanged="@OnSpotifyPlaylistSelected"
                 Items="@availableSpotifyPlaylists" ValueSelector="@(p => p.Id)" TextSelector="@(p => p.Name)"
                 AllowClear="true" Label="Background Music (optional)" Placeholder="No background music"
-                HelperText="Sourced from the platform's connected Spotify account (Administration → Spotify Integration)." />
+                Hint="Sourced from the platform's connected Spotify account (Administration → Spotify Integration)." />
         </div>
     </ChildContent>
     <FooterContent>

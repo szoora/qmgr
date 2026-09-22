@@ -1,11 +1,22 @@
 @using QMgr.Web.Services
 @inject IConnectionMonitorService ConnectionMonitor
+@inject IBrandContext Brand
 @implements IDisposable
+
+@* A white-labelled tenant sees THEIR mark here, not ours. This overlay covers the whole screen at
+   the moment the product is least reassuring, so it is the worst place to hand somebody another
+   company's name. The logo and the name come from IBrandContext, which the shell has already
+   resolved for this session, and every colour is a --qm-* token so the palette follows too. *@
 
 @if (ShowOverlay)
 {
     <div class="connection-overlay @(IsReconnecting ? "reconnecting" : "disconnected")">
         <div class="overlay-content">
+            @if (!string.IsNullOrWhiteSpace(Brand.FaviconUrl))
+            {
+                <img class="overlay-brand" src="@Brand.FaviconUrl" alt="@Brand.AppName" />
+            }
+
             <div class="overlay-icon">
                 @if (IsReconnecting)
                 {
@@ -38,14 +49,9 @@
                     </button>
                 </div>
 
-                <div class="troubleshooting">
-                    <p class="troubleshooting-title">Troubleshooting tips:</p>
-                    <ul>
-                        <li>Check your internet connection</li>
-                        <li>The server may be temporarily unavailable</li>
-                        <li>Try refreshing the page</li>
-                    </ul>
-                </div>
+                @* The three generic tips that were here told a reader nothing they had not already
+                   thought of. One line, naming the only thing that is actually theirs to check. *@
+                <p class="troubleshooting">Your work is kept. Check your connection and try again.</p>
             }
             else
             {
@@ -67,7 +73,10 @@
         left: 0;
         right: 0;
         bottom: 0;
-        background: rgba(0, 0, 0, 0.85);
+        /* The scrim reads as the product, not as a black sheet: the brand at a low alpha over a
+           near-opaque dark ground, so a rebranded tenant is still recognisably theirs. */
+        background: rgba(var(--qm-primary-rgb), 0.16);
+        backdrop-filter: blur(3px);
         backdrop-filter: blur(8px);
         display: flex;
         align-items: center;
@@ -80,6 +89,15 @@
         from { opacity: 0; }
         to { opacity: 1; }
     }
+    .overlay-brand {
+        display: block;
+        width: 40px;
+        height: 40px;
+        margin: 0 auto 14px;
+        object-fit: contain;
+        border-radius: var(--qm-radius-md);
+    }
+
 
     .overlay-content {
         background: var(--qm-bg-card);
@@ -216,7 +234,7 @@
 
     /* Light mode */
     [data-theme="light"] .connection-overlay {
-        background: rgba(255, 255, 255, 0.9);
+        background: rgba(var(--qm-primary-rgb), 0.10);
     }
 
     [data-theme="light"] .overlay-content {
@@ -238,7 +256,7 @@
     private string Title => IsReconnecting ? "Reconnecting..." : "Connection Lost";
 
     private string Message => IsReconnecting
-        ? "Please wait while we try to reconnect to the server."
+        ? "Reconnecting."
         : ConnectionMonitor.StatusMessage;
 
     protected override void OnInitialized()

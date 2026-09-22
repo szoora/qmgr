@@ -15,7 +15,7 @@
 @inject IJSRuntime JS
 @inject JsonSerializerOptions JsonOptions
 
-<PageTitle>My Workspace - Q-Mgr</PageTitle>
+<QPageTitle Text="My Workspace" />
 
 @*
     The staff member's own landing page (plan §10). Mobile-first: one column under 760px, two
@@ -42,7 +42,7 @@
 
         <div class="page-header portal-header">
             <div class="header-content portal-greeting">
-                <QAvatar Name="@portal.Me.FullName" Size="lg" />
+                <QAvatar Name="@portal.Me.FullName" PhotoUrl="@portal.Me.PhotoUrl" Size="lg" />
                 <div>
                     <h1>@Greeting, @FirstName</h1>
                     <p class="subtitle">

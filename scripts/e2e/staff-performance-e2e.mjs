@@ -131,6 +131,10 @@ for (const p of PEOPLE) {
     const r = await post(AD, "/api/v1/users", {
       username: p.username, email: `${p.username}@qmgr.local`, password: NEW_PW,
       firstName: p.first, lastName: p.last, roleId: roleId(p.role), assignedBranchId: BRANCH,
+      // A staff number is REQUIRED since 2026-09-22 and is unique per organisation, so it is
+      // derived from the username rather than counted — a fixture that reuses a number across runs
+      // would be refused on the second one.
+      employeeNumber: `E2E-${p.username.split(".").pop()}`,
     });
     if (r.status >= 300) { bad(`create ${p.username}`, "201", `${r.status} ${r.text}`); continue; }
     userList = await allUsers();
@@ -557,7 +561,7 @@ hdr("14.7 NOTICES — audience, sanitising, scheduling, acknowledgements under c
 
 // ---------------------------------------------------------------------------------------------------
 hdr("14.8 APPRAISALS — the workflow, concurrency, the frozen score, the appeal");
-const fresh = await post(AD, "/api/v1/users", { username: `e2e.sp.appr.${RUN}`, email: `e2e.sp.appr.${RUN}@qmgr.local`, password: NEW_PW, firstName: "Ann", lastName: `Appraisee ${RUN}`, roleId: roleId("teacher"), assignedBranchId: BRANCH });
+const fresh = await post(AD, "/api/v1/users", { username: `e2e.sp.appr.${RUN}`, email: `e2e.sp.appr.${RUN}@qmgr.local`, password: NEW_PW, firstName: "Ann", lastName: `Appraisee ${RUN}`, roleId: roleId("teacher"), assignedBranchId: BRANCH, employeeNumber: `E2E-APPR-${RUN}` });
 eq("a fresh teacher is created for this run's appraisal", fresh.status < 300, true);
 userList = await allUsers();
 const T = { id: usersArray().find((x) => x.username === `e2e.sp.appr.${RUN}`)?.id };
@@ -694,16 +698,19 @@ hdr("14.10 IMPORT, CUSTOM ROLE SCOPE, SIGN-OUT");
   const imp = await post(AD, `${B}/staff/import-jobs`, {
     sendInvites: false,
     rows: [
-      { firstName: "Irene", lastName: `Import${RUN}`, email, roleCode: "teacher", departmentCodes: ["E2EMATH"], lineManagerEmail: "e2e.sp.hod.math@qmgr.local" },
-      { firstName: "Dup", lastName: "Row", email: "e2e.sp.math1@qmgr.local", roleCode: "teacher" },
-      { firstName: "Bad", lastName: "Role", email: `e2e.sp.badrole.${RUN}@qmgr.local`, roleCode: "admin" },
+      { firstName: "Irene", lastName: `Import${RUN}`, email, employeeNumber: `E2E-IMP-${RUN}`, roleCode: "teacher", departmentCodes: ["E2EMATH"], lineManagerEmail: "e2e.sp.hod.math@qmgr.local" },
+      { firstName: "Dup", lastName: "Row", email: "e2e.sp.math1@qmgr.local", employeeNumber: `E2E-DUP-${RUN}`, roleCode: "teacher" },
+      { firstName: "Bad", lastName: "Role", email: `e2e.sp.badrole.${RUN}@qmgr.local`, employeeNumber: `E2E-BAD-${RUN}`, roleCode: "admin" },
     ],
   });
   eq("IMPORT: the Tenant Admin starts a three-row import (202)", imp.status, 202);
   // Since Phase 0A the start answers { job, temporaryPasswords } (the slips are shown once, with the job).
   let job = imp.json?.job ?? imp.json;
   const jobId = job?.id;
-  for (let i = 0; i < 40 && job && !["Completed", "CompletedWithErrors", "Failed"].includes(job.status); i++) {
+  // 120s, not 40. Hangfire picks a freshly enqueued job up on its own polling interval, and after an
+  // API restart that has been measured at 49 seconds — the job then reports exactly the right counts.
+  // A window that is marginally too short reports a product bug that is not there.
+  for (let i = 0; i < 120 && job && !["Completed", "CompletedWithErrors", "Failed"].includes(job.status); i++) {
     await new Promise((r) => setTimeout(r, 1000));
     job = (await get(AD, `${B}/staff/import-jobs/${jobId}`)).json;
   }

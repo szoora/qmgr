@@ -1,3 +1,4 @@
+@inject IBrandContext Brand
 @inject IOrganizationApiService OrganizationApi
 @inject IToastService NotificationService
 @inject IAuthService AuthService
@@ -11,7 +12,7 @@
 
 @if (!Embedded)
 {
-    <PageTitle>Branding Settings - Q-Mgr</PageTitle>
+    <QPageTitle Text="Branding Settings" />
 }
 
 <div class="admin-page">
@@ -71,10 +72,25 @@
                         <input class="form-check-input" type="checkbox" role="switch" @bind="settings.WhitelabelEnabled" disabled="@(!settings.WhiteLabelEntitled)" />
                     </div>
                     <div class="toggle-info">
-                        <span class="toggle-label">White-labeling @(settings.WhitelabelEnabled ? "enabled" : "disabled")</span>
-                        <small>When off, kiosk and display screens use the standard Q-Mgr look regardless of the settings below</small>
+                        <span class="toggle-label">White-labeling @(settings.WhitelabelEnabled ? "on" : "off")</span>
+                        <small>When off, every screen uses the standard Q-Mgr look whatever is set below.</small>
                     </div>
                 </div>
+
+                @* A WARNING, not a hint, so it stays on the page: it changes what the reader does.
+                   Without it somebody picks a palette, is told "Saved", and sees nothing change —
+                   anywhere, ever — because the switch above is off. The colours really were saved;
+                   they are simply not worn. That was the report. *@
+                @if (settings.WhiteLabelEntitled && !settings.WhitelabelEnabled)
+                {
+                    <div class="wl-off" role="alert">
+                        <QIcon Name="exclamation-triangle-fill" />
+                        <span>
+                            Everything below is saved, but <strong>none of it is shown</strong> while this is off —
+                            not your logo, not your colours, not your name. Switch it on to see them.
+                        </span>
+                    </div>
+                }
             </QCard>
 
             <QCard Icon="image-fill" Title="Logo &amp; Favicon" Subtitle="Shown wherever your organisation is named — the app, your kiosk and display screens, and the emails you send">
@@ -181,7 +197,7 @@
                             <QInput @bind-Value="@settings.FaviconUrl" Placeholder="https://your-domain.com/favicon.png" Disabled="@(!settings.WhiteLabelEntitled)" />
                         </div>
                     </div>
-                    <small>Saved with the Save Settings button, like the rest of this page. An uploaded file replaces whatever is here.</small>
+                    <p class="form-hint">Saved with the Save Settings button, like the rest of this page. An uploaded file replaces whatever is here.</p>
                 </details>
             </QCard>
 
@@ -287,20 +303,41 @@
                     </div>
                 </div>
 
+                @* THE DEFAULT IS THE TENANT'S OWN BRAND, stored as null rather than a hex — so it
+                   follows a rebrand, which a stored copy never would. These were hard-coded to
+                   Q-Mgr's wine, so every school's ticker was wine whatever else they had branded.
+                   Same shape as a welfare category's colour. *@
                 <div class="form-grid color-grid" style="margin-top:20px;">
                     <div class="form-group">
-                        <label>Background Color</label>
+                        <label>Background</label>
                         <div class="color-input-row">
-                            <input type="color" value="@banner.BackgroundColor" @onchange="@(e => banner.BackgroundColor = (string?)e.Value ?? banner.BackgroundColor)" />
-                            <QInput @bind-Value="banner.BackgroundColor" Placeholder="#8c2f52" />
+                            <QCheckbox Value="@(string.IsNullOrWhiteSpace(banner.BackgroundColor))"
+                                       ValueChanged="@(on => banner.BackgroundColor = on ? null : (settings.PrimaryColor ?? "#8c2f52"))"
+                                       Label="Use our brand colour" />
                         </div>
+                        @if (!string.IsNullOrWhiteSpace(banner.BackgroundColor))
+                        {
+                            <div class="color-input-row">
+                                <input type="color" value="@banner.BackgroundColor" @onchange="@(e => banner.BackgroundColor = (string?)e.Value ?? banner.BackgroundColor)" />
+                                <QInput @bind-Value="banner.BackgroundColor" Placeholder="#8c2f52" />
+                            </div>
+                        }
                     </div>
                     <div class="form-group">
-                        <label>Text Color</label>
+                        <label>Text</label>
                         <div class="color-input-row">
-                            <input type="color" value="@banner.TextColor" @onchange="@(e => banner.TextColor = (string?)e.Value ?? banner.TextColor)" />
-                            <QInput @bind-Value="banner.TextColor" Placeholder="#ffffff" />
+                            <QCheckbox Value="@(string.IsNullOrWhiteSpace(banner.TextColor))"
+                                       ValueChanged="@(on => banner.TextColor = on ? null : "#ffffff")"
+                                       Label="Choose it for me"
+                                       Hint="Worked out from the background so it stays readable — including on a pale brand colour, where white would not be." />
                         </div>
+                        @if (!string.IsNullOrWhiteSpace(banner.TextColor))
+                        {
+                            <div class="color-input-row">
+                                <input type="color" value="@banner.TextColor" @onchange="@(e => banner.TextColor = (string?)e.Value ?? banner.TextColor)" />
+                                <QInput @bind-Value="banner.TextColor" Placeholder="#ffffff" />
+                            </div>
+                        }
                     </div>
                 </div>
 
@@ -595,6 +632,21 @@
         opacity: 0.5;
     }
 
+    .wl-off {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        margin-top: 12px;
+        padding: 10px 12px;
+        border: 1px solid var(--qm-warning);
+        border-radius: var(--qm-radius-md);
+        background: rgba(var(--qm-primary-rgb), .05);
+        font-size: var(--qm-text-sm);
+        color: var(--qm-text-secondary);
+    }
+
+    .wl-off .bi, .wl-off i { color: var(--qm-warning); }
+
     .toggle-group {
         display: flex;
         align-items: flex-start;
@@ -836,6 +888,10 @@
             {
                 var updated = await response.Content.ReadFromJsonAsync<OrganizationBrandingDto>(JsonOptions);
                 if (updated != null) settings = updated;
+                // THE SHELL RESTAMPS ITSELF. Without this the new palette, logo and name only
+                // appeared after a reload, because MainLayout reads the branding once per circuit
+                // — which is right for a page load and wrong for the one page that edits it.
+                Brand.NotifyBrandingSaved();
                 NotificationService.Notify(ToastSeverity.Success, "Saved", "Branding settings updated successfully");
                 return;
             }

@@ -6,13 +6,22 @@
 <div class="q-select-wrapper @(HasError ? "q-select-wrapper--error" : "") @(Disabled ? "q-select-wrapper--disabled" : "") @Class">
     @if (!string.IsNullOrEmpty(Label))
     {
-        <label class="q-select__label" for="@selectId">
-            @Label
-            @if (Required)
+        @* The info button sits BESIDE the label, never inside it: a click anywhere in a <label> is
+           re-dispatched to its first control, so a nested button toggles straight back shut. Same
+           rule as "never put a QSelect inside a <label>". *@
+        <span class="q-field__label-row">
+            <label class="q-select__label" for="@selectId">
+                @Label
+                @if (Required)
+                {
+                    <span class="q-select__required">*</span>
+                }
+            </label>
+            @if (!string.IsNullOrWhiteSpace(Hint))
             {
-                <span class="q-select__required">*</span>
+                <QInfo Text="@Hint" Label="@Label" />
             }
-        </label>
+        </span>
     }
 
     <div class="q-select__container @(isOpen ? "q-select__container--open" : "") @(HasFocus ? "q-select__container--focused" : "")">
@@ -170,6 +179,14 @@
     /// Label text
     /// </summary>
     [Parameter] public string? Label { get; set; }
+
+    /// <summary>
+    /// The one sentence that explains this field, shown in a QInfo beside the label rather than as
+    /// standing prose under the control. A warning is NOT a hint: if the text changes what somebody
+    /// DOES, leave it on the page where it cannot be missed.
+    /// </summary>
+    [Parameter] public string? Hint { get; set; }
+
 
     /// <summary>
     /// Placeholder text

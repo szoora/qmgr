@@ -7,13 +7,15 @@
 *@
 
 <span class="q-avatar q-avatar--@SizeClass @Class" title="@(Title ?? Name)" style="@Style" @attributes="AdditionalAttributes">
+    @* The initials are ALWAYS rendered and the photograph sits on top of them. A profile photo is a
+       gated upload, so its link carries a token that dies after an hour — on a page left open longer
+       than that the image 404s, and an <img> that fails shows the browser's broken-image glyph. This
+       way it simply removes itself and the initials underneath are what remains. Same reasoning for a
+       file an administrator deleted. *@
+    <span class="q-avatar__initials" aria-hidden="true">@Initials</span>
     @if (!string.IsNullOrEmpty(PhotoUrl))
     {
-        <img class="q-avatar__img" src="@PhotoUrl" alt="" />
-    }
-    else
-    {
-        <span class="q-avatar__initials" aria-hidden="true">@Initials</span>
+        <img class="q-avatar__img" src="@PhotoUrl" alt="" onerror="this.remove()" />
     }
 </span>
 
@@ -46,7 +48,7 @@
         _ => "md"
     };
 
-    private string? Style => string.IsNullOrEmpty(PhotoUrl) ? $"background: {ColorFor(Name)}" : null;
+    private string Style => $"background: {ColorFor(Name)}";
 
     private string Initials
     {

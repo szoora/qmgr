@@ -19,15 +19,17 @@
     sent and asking them to edit it is a way of losing them.
 *@
 
-<PageTitle>Join with a code - Q-Mgr</PageTitle>
+<QPageTitle Text="Join with a code" />
 
 <div class="login-container">
     <AmbientBackground />
     <div class="login-card">
+        @* The school's own mark, the same one the sign-in page shows — this page used to open with a
+           generic link icon on a tenant's own domain, which reads as somebody else's site one click
+           after their crest. QBrandMark is the one home for it. *@
         <div class="login-header">
-            <div class="logo-wrapper"><div class="logo-circle"><QIcon Name="link-45deg" Size="32" /></div></div>
-            <h1>Join your organisation</h1>
-            <p>Enter the link or code your administrator gave you.</p>
+            <QBrandMark Heading="Join your organisation" FallbackIcon="link-45deg"
+                        Tagline="Enter the link or code your administrator gave you." />
         </div>
 
         <form @onsubmit="Go" @onsubmit:preventDefault="true">

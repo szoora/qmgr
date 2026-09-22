@@ -347,6 +347,47 @@ public class NotificationApiService : INotificationApiService
         }
     }
 
+    /// <summary>
+    /// Marks one as read and SAYS WHETHER IT WORKED. <see cref="MarkAsReadAsync"/> swallows every
+    /// failure and returns void, so a caller could only show the row as read and hope — and a
+    /// refused call then reappeared as unread on the next load with nothing having said so. This is
+    /// the same rule as IQueueApiService's ten silent methods: branch on the return.
+    /// </summary>
+    public async Task<bool> TryMarkAsReadAsync(Guid notificationId)
+    {
+        try
+        {
+            var response = await _httpClient.PostAsync($"api/v1/notifications/{notificationId}/read", null);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to mark notification as read: {NotificationId}", notificationId);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Marks everything read and returns the caller's REMAINING unread count, which the API answers
+    /// with. Null means the call failed, so the badge is left where it was rather than zeroed on a
+    /// request that never landed.
+    /// </summary>
+    public async Task<int?> MarkAllAsReadRemainingAsync()
+    {
+        try
+        {
+            var response = await _httpClient.PostAsync("api/v1/notifications/read-all", null);
+            if (!response.IsSuccessStatusCode) return null;
+            var body = await response.Content.ReadAsStringAsync();
+            return int.TryParse(body, out var remaining) ? remaining : 0;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to mark all notifications as read");
+            return null;
+        }
+    }
+
     public async Task<NotificationPageResult> GetNotificationsAsync(string? eventKey, int offset, int limit, bool unreadOnly = false)
     {
         limit = Math.Clamp(limit, 1, 199);

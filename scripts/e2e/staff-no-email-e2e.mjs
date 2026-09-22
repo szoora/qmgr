@@ -131,7 +131,7 @@ try {
   const invited = await api(`/branches/${BRANCH}/staff/import-jobs`, {
     method: 'POST',
     body: JSON.stringify({
-      rows: [{ firstName: 'Invite', lastName: `Nowhere${run}`, email: '', roleCode: 'teacher' }],
+      rows: [{ firstName: "Invite", lastName: `Nowhere${run}`, email: "", employeeNumber: `E2E-INV-${run}`, roleCode: "teacher" }],
       deliveryMode: 'Invitation', sendInvites: true,
     }),
   });

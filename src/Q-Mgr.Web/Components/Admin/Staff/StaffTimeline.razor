@@ -14,7 +14,7 @@
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
 
-<PageTitle>@(timeline?.Subject.FullName ?? "Staff") — Timeline - Q-Mgr</PageTitle>
+<QPageTitle Text="@TabTitle" />
 
 <div class="admin-page">
     @if (isLoading && timeline == null)
@@ -37,7 +37,7 @@
 
         <div class="page-header">
             <div class="st-head">
-                <QAvatar Name="@s.FullName" Size="lg" />
+                <QAvatar Name="@s.FullName" PhotoUrl="@s.PhotoUrl" Size="lg" />
                 <div class="st-head__text">
                     <h1>@s.FullName</h1>
                     <p class="subtitle">
@@ -340,6 +340,9 @@
 </style>
 
 @code {
+    /// <summary>The tab's own half of the title; QPageTitle adds whatever this deployment is called.</summary>
+    private string TabTitle => $"{timeline?.Subject.FullName ?? "Staff"} — Timeline";
+
     [Parameter] public Guid UserId { get; set; }
 
     private static readonly IReadOnlyList<QTab> Tabs = new[] { new QTab("records", "Timeline", "journal-text"), new QTab("activity", "Activity table", "table") };

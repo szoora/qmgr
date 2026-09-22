@@ -1,3 +1,4 @@
+@using QMgr.Domain.Identity
 @using QMgr.Application.DTOs
 @using QMgr.Web.Services
 @inject IStaffPerformanceApiService StaffApi
@@ -20,7 +21,7 @@
     exactly those.
 *@
 
-<QModal @bind-Visible="Visible" Title="@(created is null ? "Add a member of staff" : "Staff member added")" Size="md">
+<QModal @bind-Visible="Visible" Title="@(created is null ? "Add a member of staff" : "Staff member added")" Size="lg">
     <ChildContent>
         @if (created is not null)
         {
@@ -52,29 +53,24 @@
                 </div>
                 <div class="form-group form-group--wide">
                     <QInput TValue="string" Label="Email (optional)" Type="email" @bind-Value="form.Email"
-                            Placeholder="name@school.ac.ug" />
-                    <p class="form-hint">
-                        Leave it empty if they have none — they will sign in with the username shown after you save,
-                        using the temporary password on their slip. An address is only needed to email them.
-                    </p>
+                            Placeholder="name@school.ac.ug"
+                            Hint="Leave it empty if they have none. They will sign in with the username shown after you save, using the temporary password on their slip. An address is only needed to email them." />
                 </div>
                 <div class="form-group">
                     <QInput TValue="string" Label="Phone" @bind-Value="form.Phone" Placeholder="0770 000 000" />
                 </div>
                 <div class="form-group">
-                    <QInput TValue="string" Label="Staff number" @bind-Value="form.EmployeeNumber" Placeholder="700001" />
-                    <p class="form-hint">The school's own number. It is how somebody with no email address is
-                        recognised when the staff list is imported again.</p>
+                    <QInput TValue="string" Label="Staff number" @bind-Value="form.EmployeeNumber" Required="true" Placeholder="700001"
+                            Hint="The school's own number for this person, and it cannot be left out. It has to be unique here, and for anybody with no email address it is the ONLY way they are recognised when the staff list is imported again. Letters, numbers and - / . _ only; upper and lower case count as the same number."
+                            HasError="@(numberProblem != null)" ErrorMessage="@numberProblem" />
                 </div>
                 <div class="form-group">
                     <QInput TValue="string" Label="Job title" @bind-Value="form.JobTitle" Placeholder="Teacher of Maths" />
                 </div>
                 <div class="form-group">
                     <QSelect TValue="Guid" TItem="RoleListDto" Label="Role" @bind-Value="form.RoleId" Items="@roles"
-                             TextSelector="@(r => r.Name)" ValueSelector="@(r => r.Id)" Placeholder="Choose a role" Required="true" />
-                    <p class="form-hint">
-                        What they may do in Q-Mgr. Only roles you may hand out are listed.
-                    </p>
+                             TextSelector="@(r => r.Name)" ValueSelector="@(r => r.Id)" Placeholder="Choose a role" Required="true"
+                             Hint="What they may do in Q-Mgr. Only roles you may hand out are listed." />
                 </div>
                 <div class="form-group">
                     <QMultiSelect TValue="Guid" TItem="DepartmentDto" Label="Department" SelectedValues="@form.DepartmentIds"
@@ -85,8 +81,8 @@
                 <div class="form-group">
                     <QSelect TValue="Guid?" TItem="StaffMemberDto" Label="Line manager" @bind-Value="form.LineManagerUserId"
                              Items="@directory" TextSelector="@(m => m.FullName)" ValueSelector="@(m => (Guid?)m.UserId)"
-                             Placeholder="Nobody yet" AllowClear="true" />
-                    <p class="form-hint">Who appraises them, and who is told about their records.</p>
+                             Placeholder="Nobody yet" AllowClear="true"
+                             Hint="Who appraises them, and who is told about their records." />
                 </div>
             </div>
         }
@@ -181,6 +177,15 @@
             return;
         }
 
+        // The SAME rule the API enforces, from the one home — so the field is marked in red before
+        // the request rather than the request coming back 400 with nothing pointing at the field.
+        numberProblem = PersonCode.ValidateStaffNumber(form.EmployeeNumber);
+        if (numberProblem != null)
+        {
+            Toast.Notify(ToastSeverity.Warning, numberProblem, "It is how this person is recognised when the staff list is imported again.");
+            return;
+        }
+
         isSaving = true;
         try
         {
@@ -198,9 +203,12 @@
         }
     }
 
+    private string? numberProblem;
+
     private void Reset()
     {
         created = null;
+        numberProblem = null;
         form = new CreateStaffMemberRequest();
     }
 

@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using QMgr.Domain.Entities.Welfare;
+using QMgr.Domain.Identity;
 using System.Text.Json;
 using Hangfire;
 using Microsoft.AspNetCore.Authorization;
@@ -8,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using QMgr.API.Authorization;
 using QMgr.Filters;
 using QMgr.Application.DTOs;
+using QMgr.Application.Import;
 using QMgr.Application.Interfaces;
 using QMgr.Application.Tenant;
 using QMgr.Domain.Constants;
@@ -349,9 +351,19 @@ public class StudentsController : ControllerBase
             return BadRequest(new ProblemDetails { Title = profileError, Status = StatusCodes.Status400BadRequest });
 
         var organizationId = await ResolveOrganizationIdAsync(branchId);
-        var code = string.IsNullOrWhiteSpace(request.StudentCode) ? null : request.StudentCode.Trim();
 
-        if (code != null && await _context.Students.AnyAsync(s => s.OrganizationId == organizationId && s.StudentCode == code && s.IsActive))
+        // The admission number is REQUIRED and unique within the organisation, ignoring case.
+        // PersonCode is the one home for both halves; the comparison folds case exactly as the
+        // database's own index does, so a duplicate is a 409 naming the field rather than a 500
+        // out of Postgres.
+        var codeError = PersonCode.ValidateStudentCode(request.StudentCode);
+        if (codeError != null)
+            return BadRequest(new ProblemDetails { Title = codeError, Status = StatusCodes.Status400BadRequest });
+
+        var code = PersonCode.Normalize(request.StudentCode);
+        var codeKey = PersonCode.Key(request.StudentCode);
+        if (await _context.Students.AnyAsync(s => s.OrganizationId == organizationId && s.StudentCode != null
+                                                  && s.StudentCode.ToUpper() == codeKey && s.IsActive))
             return Conflict(new ProblemDetails { Title = $"A student with code '{code}' already exists", Status = StatusCodes.Status409Conflict });
 
         var student = new Student
@@ -391,9 +403,14 @@ public class StudentsController : ControllerBase
             .FirstOrDefaultAsync(s => s.Id == studentId && s.BranchId == branchId);
         if (student == null) return NotFound();
 
-        var newCode = string.IsNullOrWhiteSpace(request.StudentCode) ? null : request.StudentCode.Trim();
-        if (newCode != null && newCode != student.StudentCode &&
-            await _context.Students.AnyAsync(s => s.OrganizationId == student.OrganizationId && s.StudentCode == newCode && s.IsActive && s.Id != studentId))
+        var codeError2 = PersonCode.ValidateStudentCode(request.StudentCode);
+        if (codeError2 != null)
+            return BadRequest(new ProblemDetails { Title = codeError2, Status = StatusCodes.Status400BadRequest });
+
+        var newCode = PersonCode.Normalize(request.StudentCode);
+        var newKey = PersonCode.Key(request.StudentCode);
+        if (await _context.Students.AnyAsync(s => s.OrganizationId == student.OrganizationId && s.StudentCode != null
+                                                  && s.StudentCode.ToUpper() == newKey && s.IsActive && s.Id != studentId))
         {
             return Conflict(new ProblemDetails { Title = $"A student with code '{newCode}' already exists", Status = StatusCodes.Status409Conflict });
         }
@@ -1014,6 +1031,173 @@ public class StudentsController : ControllerBase
         BackgroundJob.Enqueue<RosterImportProcessorJob>(j => j.ProcessAsync(job.Id));
 
         return AcceptedAtAction(nameof(GetImportJob), new { branchId, jobId = job.Id }, MapToDto(job));
+    }
+
+
+    /// <summary>
+    /// "Which of these children are already on the roll, and what would this file change?"
+    ///
+    /// <para>A school re-imports its own sheet every term, so a re-import IS the normal case, not the
+    /// exception — and until this existed the reader learned how much of it landed on children already
+    /// on the roll only from the summary afterwards. The staff side has had this since the wizard was
+    /// built (StaffImportController.Precheck); this is the other half, in the same shape.</para>
+    ///
+    /// <para>Read-only, side-effect free and branch-scoped, so it is safe to call on every file a
+    /// reader opens. It answers the FIELDS that would change, never the stored values, and the
+    /// comparison is the one the import itself makes — a preview that says "nothing will change" and
+    /// an import that then changes three fields is the worst answer an import can give.</para>
+    /// </summary>
+    [HttpPost("branches/{branchId:guid}/students/import-jobs/precheck")]
+    [RequirePermission(Permissions.StudentsManage)]
+    [ProducesResponseType(typeof(RosterImportPrecheckDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> PrecheckImport(Guid branchId, [FromBody] RosterImportPrecheckRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var rows = request.Rows ?? new List<RosterImportRow>();
+        if (rows.Count == 0) return Ok(new RosterImportPrecheckDto());
+
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+
+        // The admission number is the key the import upserts on, and the lookup FOLDS CASE exactly as
+        // the unique index does — matching exactly would report "MH/001" and "mh/001" as two children
+        // and then be refused by Postgres on save.
+        var codes = rows.Select(r => PersonCode.Key(r.StudentCode))
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Select(c => c!)
+            .Distinct()
+            .Take(10000)
+            .ToList();
+
+        var onRoll = codes.Count == 0
+            ? new List<Student>()
+            : await _context.Students.AsNoTracking()
+                .Where(s => s.OrganizationId == organizationId && s.IsActive
+                            && s.StudentCode != null && codes.Contains(s.StudentCode.ToUpper()))
+                .Include(s => s.Guardians!).ThenInclude(g => g.VisitorProfile)
+                .ToListAsync();
+
+        var byCode = onRoll.Where(s => s.StudentCode != null)
+            .GroupBy(s => PersonCode.Key(s.StudentCode)!)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+
+        var changesFor = new Dictionary<Guid, List<string>>();
+        var matchedIds = new HashSet<Guid>();
+
+        foreach (var row in rows)
+        {
+            var key = PersonCode.Key(row.StudentCode);
+            if (key == null || !byCode.TryGetValue(key, out var student)) continue;
+            matchedIds.Add(student.Id);
+
+            var labels = new List<string>();
+            ImportMatching.Note(labels, "name", row.StudentFullName, student.FullName);
+            ImportMatching.Note(labels, "class", row.ClassName, student.ClassName);
+
+            // A guardian the roll does not hold. Matched the way check-in matches — by phone or
+            // address, never by name — because a guardian whose number changed is the same guardian
+            // and a namesake is not.
+            var phone = VisitorMatching.NormalizePhone(row.GuardianPhone);
+            var email = VisitorMatching.NormalizeEmail(row.GuardianEmail);
+            if (phone != null || email != null)
+            {
+                var known = (student.Guardians ?? new List<StudentGuardian>())
+                    .Select(g => g.VisitorProfile)
+                    .Where(p => p != null)
+                    .Any(p => (phone != null && p!.NormalizedPhone == phone)
+                              || (email != null && p!.NormalizedEmail == email));
+                if (!known) labels.Add("a guardian this roll does not have");
+            }
+
+            if (changesFor.TryGetValue(student.Id, out var already))
+                changesFor[student.Id] = already.Union(labels, StringComparer.Ordinal).ToList();
+            else
+                changesFor[student.Id] = labels;
+        }
+
+        var existing = onRoll.Select(s => new RosterImportExistingDto
+        {
+            StudentCode = s.StudentCode ?? string.Empty,
+            FullName = s.FullName,
+            ClassName = s.ClassName,
+            Changes = changesFor.TryGetValue(s.Id, out var c) ? c : new List<string>()
+        }).ToList();
+
+        return Ok(new RosterImportPrecheckDto
+        {
+            Existing = existing,
+            PossibleDuplicates = await PossibleStudentDuplicatesAsync(organizationId, branchId, rows, matchedIds)
+        });
+    }
+
+    /// <summary>
+    /// TWO ROWS THAT MIGHT BE ONE CHILD — raised, never refused.
+    ///
+    /// <para>Two children on one roll genuinely do share a name, so this can only ever be a question
+    /// the reader answers. What it catches is the pair nobody spots by eye: the same name written the
+    /// other way round under a second admission number, which is how one child becomes two records
+    /// and then two sets of welfare history.</para>
+    /// </summary>
+    private async Task<List<ImportPossibleDuplicateDto>> PossibleStudentDuplicatesAsync(
+        Guid organizationId, Guid branchId, List<RosterImportRow> rows, HashSet<Guid> matchedIds)
+    {
+        const int MaxReported = 25;
+        var found = new List<ImportPossibleDuplicateDto>();
+
+        var byName = new Dictionary<string, (string Name, HashSet<string> Codes)>(StringComparer.Ordinal);
+        foreach (var row in rows)
+        {
+            var key = ImportMatching.NameKey(row.StudentFullName);
+            if (key == null) continue;
+            var code = PersonCode.Normalize(row.StudentCode) ?? "(no admission number)";
+
+            if (!byName.TryGetValue(key, out var seen))
+                byName[key] = (row.StudentFullName.Trim(), new HashSet<string>(StringComparer.Ordinal) { code });
+            else
+                seen.Codes.Add(code);
+        }
+
+        foreach (var pair in byName)
+        {
+            var entry = pair.Value;
+            if (entry.Codes.Count < 2) continue;
+            found.Add(new ImportPossibleDuplicateDto
+            {
+                Name = entry.Name,
+                Detail = $"on {entry.Codes.Count} rows of this file under different admission numbers — {string.Join(", ", entry.Codes.Take(3))}",
+                WithinFile = true
+            });
+            if (found.Count >= MaxReported) return found;
+        }
+
+        // Against the roll. Read in memory because the name key folds case, punctuation and WORD ORDER,
+        // none of which SQL can do here without an extension this project does not take.
+        var roll = await _context.Students.AsNoTracking()
+            .Where(s => s.OrganizationId == organizationId && s.BranchId == branchId && s.IsActive)
+            .Select(s => new { s.Id, s.FullName, s.StudentCode, s.ClassName })
+            .Take(10000)
+            .ToListAsync();
+
+        foreach (var student in roll)
+        {
+            if (matchedIds.Contains(student.Id)) continue;   // the import lands on them; not a duplicate
+
+            var key = ImportMatching.NameKey(student.FullName);
+            if (key == null || !byName.TryGetValue(key, out var inFile)) continue;
+
+            var label = string.IsNullOrWhiteSpace(student.StudentCode) ? "no admission number" : student.StudentCode!;
+            var where = string.IsNullOrWhiteSpace(student.ClassName) ? "" : $" in {student.ClassName}";
+            found.Add(new ImportPossibleDuplicateDto
+            {
+                Name = inFile.Name,
+                Detail = $"already on the roll as {label}{where}, which is not the admission number this file gives — this may be the same child twice",
+                WithinFile = false
+            });
+            if (found.Count >= MaxReported) break;
+        }
+
+        return found;
     }
 
     /// <summary>Import history. <paramref name="kind"/> narrows to roster uploads or welfare-history backfills (both live in the same job table — see RosterImportKind); omitted = every kind.</summary>

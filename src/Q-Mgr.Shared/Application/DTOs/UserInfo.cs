@@ -16,6 +16,13 @@ public record UserInfo
     public List<string> Permissions { get; init; } = new();
 
     /// <summary>
+    /// The person's own photograph, already signed. A stored-upload link, so the token in it dies
+    /// after an hour — QAvatar falls back to their initials when the image will not load, and the
+    /// header re-reads this whenever AuthService raises CurrentUserChanged.
+    /// </summary>
+    public string? PhotoUrl { get; init; }
+
+    /// <summary>
     /// The person signed in with a temporary password: the token they hold can only change it. The
     /// Web sends them to Set your password and loads nothing else (plan §12.3).
     /// </summary>

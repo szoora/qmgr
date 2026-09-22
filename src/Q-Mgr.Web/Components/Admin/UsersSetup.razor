@@ -15,7 +15,7 @@
 
 @if (!Embedded)
 {
-    <PageTitle>Users & Roles - Q-Mgr</PageTitle>
+    <QPageTitle Text="Users & Roles" />
 }
 
 <div class="admin-page">
@@ -61,73 +61,108 @@
         }
         else
         {
-            @* Staff arrive and leave in cohorts at term boundaries, which is the whole reason
-               this is a batch rather than a row action. Radzen's grid already does multi-select,
-               so the selection needs no new affordance. *@
-            @if (selectedUsers?.Any() == true && canEditUsers)
-            {
-                <div class="batch-bar">
-                    <span class="batch-bar-count"><QIcon Name="check2-square" /> <strong>@selectedUsers.Count.ToString("N0")</strong> selected</span>
+            @* QBulkBar, the same bar the Staff Directory and the register use — one home for
+               "filter, search, select all shown, apply to the ticked" rather than a hand-rolled
+               strip per page. Staff arrive and leave in cohorts at term boundaries, which is why
+               this is a batch rather than a row action.
+
+               A SELECTION MAY ONLY EVER COVER ROWS THE READER CAN SEE: PruneSelection runs on every
+               filter and search change, and on a page move. That is the rule the component cannot
+               enforce itself, because only this page knows what a row is. *@
+            <QBulkBar Filters="@StatusFilters" ActiveFilter="@statusFilter" ActiveFilterChanged="@OnStatusFilterChanged"
+                      SearchPlaceholder="Search name, username, email or branch"
+                      Search="@search" SearchChanged="@OnSearchChanged"
+                      ShowSelection="@canEditUsers"
+                      VisibleCount="@VisibleUsers.Count" SelectedCount="@selectedUserIds.Count"
+                      AllSelected="@AllVisibleSelected" AllSelectedChanged="@ToggleSelectAllVisible"
+                      ClearSelection="@(() => selectedUserIds.Clear())"
+                      IdleHint="Tick people to enable, disable or re-role several at once">
+                <Actions>
                     <QButton Text="Enable" Icon="person-check" Size="sm" Variant="secondary" OnClick="@(() => RunUserActive(true))" />
                     <QButton Text="Disable" Icon="person-slash" Size="sm" Variant="secondary" OnClick="@(() => RunUserActive(false))"
                              Title="They can no longer sign in. Their records and history stay." />
-                    <div class="dropdown">
-                        <QButton Text="Change role" Icon="shield" Size="sm" Variant="secondary" data-bs-toggle="dropdown" aria-expanded="false" />
-                        <ul class="dropdown-menu batch-menu">
-                            @foreach (var r in roles)
-                            {
-                                <li><button type="button" class="dropdown-item" @onclick="@(() => RunUserRole(r.Id))">@r.Name</button></li>
-                            }
-                        </ul>
-                    </div>
-                    <button type="button" class="batch-clear" @onclick="@(() => selectedUsers = null)">Clear selection</button>
-                </div>
-            }
+                    <QSelect TValue="Guid?" TItem="RoleInfo" Value="@bulkRoleId" ValueChanged="@RunUserRole"
+                             Items="@roles" TextSelector="@(r => r.Name)" ValueSelector="@(r => (Guid?)r.Id)"
+                             Placeholder="Change role" Class="us-bulk-role" />
+                </Actions>
+            </QBulkBar>
 
-            <div class="data-table-container">
-                <RadzenDataGrid Data="@users" TItem="UserInfo" AllowFiltering="true" AllowSorting="true" AllowPaging="true" PageSize="10"
-                                SelectionMode="Radzen.DataGridSelectionMode.Multiple" @bind-Value="@selectedUsers">
-                    <Columns>
-                        <RadzenDataGridColumn TItem="UserInfo" Property="FullName" Title="Name">
-                            <Template Context="user">
-                                <div class="user-cell">
-                                    <QAvatar Name="@user.FullName" Title="@user.FullName" />
-                                    <div class="user-info">
-                                        <span class="user-name">@user.FullName</span>
-                                        <span class="user-email">@(string.IsNullOrWhiteSpace(user.Email) ? "No email address" : user.Email)</span>
-                                    </div>
-                                </div>
-                            </Template>
-                        </RadzenDataGridColumn>
-                        <RadzenDataGridColumn TItem="UserInfo" Property="Username" Title="Username" Width="150px" />
-                        <RadzenDataGridColumn TItem="UserInfo" Property="Role" Title="Role" Width="120px">
-                            <Template Context="user">
-                                <QBadge Variant="@GetRoleVariant(user.Role)" Text="@user.Role" Size="sm" />
-                            </Template>
-                        </RadzenDataGridColumn>
-                        <RadzenDataGridColumn TItem="UserInfo" Property="Branch" Title="Branch" Width="150px" />
-                        <RadzenDataGridColumn TItem="UserInfo" Property="IsActive" Title="Status" Width="100px">
-                            <Template Context="user">
-                                <QBadge Variant="@(user.IsActive ? "success" : "secondary")"
-                                        Text="@(user.IsActive ? "Active" : "Inactive")" Size="sm" />
-                            </Template>
-                        </RadzenDataGridColumn>
-                        <RadzenDataGridColumn TItem="UserInfo" Title="Actions" Width="100px" Sortable="false" Filterable="false">
-                            <Template Context="user">
+            @* A TABLE, not a Radzen grid. The grid brought its own filter row, its own pager and its
+               own 14px type, so this page looked like a different product from every other list in
+               the app — headers truncated to "User…", "R." and "Actio…" at ordinary widths. It also
+               owned the selection, which is what made QBulkBar impossible here. The page owns both
+               now, which is the arrangement every swept list page uses. *@
+            <div class="table-wrap">
+                <table class="data-table q-stack us-table">
+                    <thead>
+                        <tr>
+                            @if (canEditUsers) { <th class="us-tick"></th> }
+                            <th>Name</th>
+                            <th>Username</th>
+                            <th>Role</th>
+                            <th>Branch</th>
+                            <th>Status</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var user in PagedUsers)
+                        {
+                            <tr class="@(user.IsActive ? "" : "row-muted") @(selectedUserIds.Contains(user.Id) ? "us-row--picked" : "")">
                                 @if (canEditUsers)
                                 {
-                                    <QButton Icon="pencil-fill" Variant="ghost" Size="sm" OnClick="@(() => EditUser(user))" />
+                                    <td class="us-tick">
+                                        @* No label: the name is in the next cell and repeating it
+                                           would read out twice. The title carries it for a reader. *@
+                                        <span title="@($"Select {user.FullName}")">
+                                            <QCheckbox Value="@selectedUserIds.Contains(user.Id)"
+                                                       ValueChanged="@(v => Pick(user.Id, v))" />
+                                        </span>
+                                    </td>
                                 }
-                                @if (canDeleteUsers)
-                                {
-                                    <QButton Icon="trash-fill" Variant="ghost" Size="sm" OnClick="@(() => DeleteUser(user))" />
-                                }
-                            </Template>
-                        </RadzenDataGridColumn>
-                    </Columns>
-                </RadzenDataGrid>
+                                <td>
+                                    <div class="user-cell">
+                                        <QAvatar Name="@user.FullName" PhotoUrl="@user.PhotoUrl" Title="@user.FullName" />
+                                        <div class="user-info">
+                                            <span class="user-name">@user.FullName</span>
+                                            <span class="cell-sub">@(string.IsNullOrWhiteSpace(user.Email) ? "No email address" : user.Email)</span>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>@user.Username</td>
+                                <td><QBadge Variant="@GetRoleVariant(user.Role)" Text="@user.Role" Size="sm" /></td>
+                                <td>@(string.IsNullOrWhiteSpace(user.Branch) ? "—" : user.Branch)</td>
+                                <td>
+                                    <QBadge Variant="@(user.IsActive ? "success" : "secondary")"
+                                            Text="@(user.IsActive ? "Active" : "Inactive")" Size="sm" />
+                                </td>
+                                <td class="row-actions">
+                                    @if (canEditUsers)
+                                    {
+                                        <QButton Icon="pencil-fill" Variant="ghost" Size="sm" OnClick="@(() => EditUser(user))" Title="Edit" />
+                                    }
+                                    @if (canDeleteUsers)
+                                    {
+                                        <QButton Icon="trash-fill" Variant="ghost" Size="sm" OnClick="@(() => DeleteUser(user))" Title="Delete" />
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
             </div>
+
+            @if (!VisibleUsers.Any())
+            {
+                <QEmptyState Icon="people" Title="No people match" Text="Clear the search or the status filter." />
+            }
+
+            @* 143 people on the development tenant alone, so this pages rather than rendering the
+               roll. Moving page PRUNES the selection for the same reason a filter does. *@
+            <QPager Count="@VisibleUsers.Count" PageSize="@UserPageSize" PageIndex="@userPage"
+                    PageIndexChanged="@OnUserPageChanged" ItemLabel="people" />
         }
+
     }
     else
     {
@@ -270,7 +305,7 @@
             <div class="form-group">
                 <QSelect TValue="Guid?" TItem="OrgOption" Value="@formData.OrganizationId" ValueChanged="@OnOrganizationSelected" Items="@orgOptions"
                          ValueSelector="@(o => (Guid?)o.Id)" TextSelector="@(o => o.Name)" Label="Organization *"
-                         HelperText="Platform Admin accounts have no branches of their own - pick the organization this user belongs to." />
+                         Hint="Platform Admin accounts have no branches of their own - pick the organization this user belongs to." />
             </div>
         }
         <div class="form-row">
@@ -521,14 +556,12 @@
 
 <style>
 
-    .batch-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--qm-primary-light); border: 1px solid var(--qm-primary); border-radius: var(--qm-radius-md); padding: 10px 14px; margin-bottom: 14px; }
-    .batch-bar-count { display: flex; align-items: center; gap: 7px; font-size: var(--qm-text-base); }
-    .batch-bar-count strong { font-variant-numeric: tabular-nums; }
-    .batch-bar .dropdown { display: inline-flex; }
-    .batch-menu { min-width: 190px; padding: 6px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); box-shadow: var(--qm-shadow-md); }
-    .batch-menu .dropdown-item { display: block; width: 100%; padding: 8px 10px; border: none; background: none; border-radius: var(--qm-radius-sm); font-size: var(--qm-text-base); text-align: left; color: var(--qm-text-primary); cursor: pointer; }
-    .batch-menu .dropdown-item:hover { background: var(--qm-primary-light); }
-    .batch-clear { margin-left: auto; background: none; border: none; padding: 2px 6px; cursor: pointer; font: inherit; font-size: var(--qm-text-base); color: var(--qm-text-muted); text-decoration: underline; }
+    /* The hand-rolled batch strip these eight rules styled is gone: the Users tab runs QBulkBar,
+       which is the one home for a bulk bar in this project. */
+    .us-tick { width: 34px; }
+    .us-row--picked td { background: rgba(var(--qm-primary-rgb), .06); }
+    .us-table th { white-space: nowrap; }
+    .us-bulk-role { flex: 0 1 190px; min-width: 150px; }
     .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .loading-container {
         display: flex;
@@ -935,34 +968,122 @@
     private Task<ExportRows<UserInfo>> ProvideExportRowsAsync() =>
         Task.FromResult(new ExportRows<UserInfo>(users, false));
 
-    private IList<UserInfo>? selectedUsers;
+    // ---- The Users tab's own list state: filter, search, selection, page --------------------------
+    // The page owns all four because QBulkBar is a state holder and a renderer — only this page
+    // knows what a row is. Same arrangement as the Staff Directory and the register.
+
     private QBatchDialog? batchDialog;
+    private readonly HashSet<Guid> selectedUserIds = new();
+    private string statusFilter = "all";
+    private string search = string.Empty;
+    private Guid? bulkRoleId;
+    private int userPage;
+    private const int UserPageSize = 25;
+
+    private IReadOnlyList<QBulkBar.Filter> StatusFilters => new List<QBulkBar.Filter>
+    {
+        new("all", "Everyone", users.Count),
+        new("active", "Active", users.Count(u => u.IsActive)),
+        new("inactive", "Inactive", users.Count(u => !u.IsActive)),
+    };
+
+    /// <summary>Everyone the reader can currently SEE — what select-all covers and nothing else.</summary>
+    private List<UserInfo> VisibleUsers
+    {
+        get
+        {
+            IEnumerable<UserInfo> q = users;
+
+            q = statusFilter switch
+            {
+                "active" => q.Where(u => u.IsActive),
+                "inactive" => q.Where(u => !u.IsActive),
+                _ => q,
+            };
+
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var term = search.Trim();
+                q = q.Where(u =>
+                    (u.FullName ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    (u.Username ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    (u.Email ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    (u.Branch ?? "").Contains(term, StringComparison.OrdinalIgnoreCase));
+            }
+
+            return q.OrderBy(u => u.FullName, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+    }
+
+    private List<UserInfo> PagedUsers => VisibleUsers.Skip(userPage * UserPageSize).Take(UserPageSize).ToList();
+
+    private bool AllVisibleSelected => VisibleUsers.Count > 0 && VisibleUsers.All(u => selectedUserIds.Contains(u.Id));
+
+    private void Pick(Guid userId, bool on)
+    {
+        if (on) selectedUserIds.Add(userId); else selectedUserIds.Remove(userId);
+    }
+
+    private void ToggleSelectAllVisible(bool all)
+    {
+        if (all) foreach (var u in VisibleUsers) selectedUserIds.Add(u.Id);
+        else foreach (var u in VisibleUsers) selectedUserIds.Remove(u.Id);
+    }
+
+    /// <summary>
+    /// A SELECTION MAY ONLY EVER COVER ROWS THE READER CAN SEE. Without this, "disable 20 selected"
+    /// silently reaches people the filter is hiding — the rule QBulkBar cannot enforce itself.
+    /// </summary>
+    private void PruneSelection()
+    {
+        var visible = VisibleUsers.Select(u => u.Id).ToHashSet();
+        selectedUserIds.RemoveWhere(id => !visible.Contains(id));
+    }
+
+    private void OnStatusFilterChanged(string key)
+    {
+        statusFilter = key;
+        userPage = 0;
+        PruneSelection();
+    }
+
+    private void OnSearchChanged(string term)
+    {
+        search = term;
+        userPage = 0;
+        PruneSelection();
+    }
+
+    private void OnUserPageChanged(int page) => userPage = page;
 
     private async Task RunUserActive(bool enable)
     {
-        if (batchDialog == null || selectedUsers == null) return;
+        if (batchDialog == null || selectedUserIds.Count == 0) return;
         await batchDialog.ShowAsync(new BatchRequest
         {
             Operation = BatchOperation.SetUserActive,
-            Ids = selectedUsers.Select(u => u.Id).ToList(),
+            Ids = selectedUserIds.ToList(),
             Value = enable ? "true" : "false"
         });
     }
 
-    private async Task RunUserRole(Guid roleId)
+    private async Task RunUserRole(Guid? roleId)
     {
-        if (batchDialog == null || selectedUsers == null) return;
+        if (batchDialog == null || selectedUserIds.Count == 0 || roleId is not { } id) return;
+        // The picker is a verb, not a stored setting: it fires the batch and goes back to its
+        // placeholder, so it never reads as "these people are Teacher" once the run is queued.
+        bulkRoleId = null;
         await batchDialog.ShowAsync(new BatchRequest
         {
             Operation = BatchOperation.SetUserRole,
-            Ids = selectedUsers.Select(u => u.Id).ToList(),
-            TargetUserId = roleId
+            Ids = selectedUserIds.ToList(),
+            TargetUserId = id
         });
     }
 
     private async Task OnBatchQueued(BatchAcceptedDto accepted)
     {
-        selectedUsers = null;
+        selectedUserIds.Clear();
         NotificationService.Notify(ToastSeverity.Info, "Running", accepted.Summary, 6000);
         await Task.Delay(1500);
         await LoadData();
@@ -1048,6 +1169,7 @@
                     FullName = u.FullName,
                     Username = u.Username,
                     Email = u.Email,
+                    PhotoUrl = u.PhotoUrl,
                     Role = u.RoleName,
                     RoleId = u.RoleId,
                     Branch = u.AssignedBranchName,
@@ -2042,6 +2164,7 @@
         public string RoleCode { get; init; } = "";
         public string RoleName { get; init; } = "";
         public string? RoleColor { get; init; }
+        public string? PhotoUrl { get; init; }
         public Guid? AssignedBranchId { get; init; }
         public string? AssignedBranchName { get; init; }
         public bool IsActive { get; init; }
@@ -2121,6 +2244,7 @@
         public string? FullName { get; set; }
         public string? Username { get; set; }
         public string? Email { get; set; }
+        public string? PhotoUrl { get; set; }
         public string? Role { get; set; }
         public Guid RoleId { get; set; }
         public string? Branch { get; set; }

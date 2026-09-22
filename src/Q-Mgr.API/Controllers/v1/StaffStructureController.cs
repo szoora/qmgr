@@ -15,6 +15,7 @@ using QMgr.Domain.Entities.Staff;
 using QMgr.Domain.Enums;
 using QMgr.Filters;
 using QMgr.Infrastructure.Data;
+using QMgr.Infrastructure.Services.Storage;
 using QMgr.Infrastructure.Services;
 
 namespace QMgr.API.Controllers.v1;
@@ -366,11 +367,19 @@ public class StaffStructureController : StaffPerformanceControllerBase
             return BadRequestProblem("Somebody already uses that email address",
                 "Two accounts in one organization cannot share an email address. Search the directory for them instead.");
 
-        // The staff number is an IDENTITY for anybody with no address, so a repeat is refused here in
-        // words rather than left to surface as a unique-index violation nobody can read.
-        var employeeNumber = string.IsNullOrWhiteSpace(request.EmployeeNumber) ? null : request.EmployeeNumber.Trim();
-        if (employeeNumber != null &&
-            await Db.Users.AnyAsync(u => u.OrganizationId == organizationId && u.EmployeeNumber == employeeNumber))
+        // The staff number is an IDENTITY — for anybody with no email address it is the ONLY one —
+        // so it is required, and a repeat is refused here in words rather than left to surface as a
+        // unique-index violation nobody can read. PersonCode is the one home for the shape and for
+        // the case-folding, which matches the database index exactly.
+        var numberError = PersonCode.ValidateStaffNumber(request.EmployeeNumber);
+        if (numberError != null)
+            return BadRequestProblem(numberError,
+                "It is the school's own number for this person, and it is how somebody with no email address is recognised when the staff list is imported again.");
+
+        var employeeNumber = PersonCode.Normalize(request.EmployeeNumber);
+        var numberKey = PersonCode.Key(request.EmployeeNumber);
+        if (await Db.Users.AnyAsync(u => u.OrganizationId == organizationId && u.EmployeeNumber != null
+                                         && u.EmployeeNumber.ToUpper() == numberKey))
             return BadRequestProblem("Somebody already has that staff number",
                 "A staff number identifies one person in this organization — it is how anybody with no email address is recognised.");
 
@@ -524,15 +533,18 @@ public class StaffStructureController : StaffPerformanceControllerBase
         if (request.DateOfBirth is { } dob && dob > DateOnly.FromDateTime(DateTime.UtcNow.Date))
             return BadRequestProblem("The date of birth is in the future");
 
-        // An employee number is the school's own key for this person and must not repeat.
-        var employeeNumber = Trim(request.EmployeeNumber, 40);
-        if (!string.IsNullOrEmpty(employeeNumber))
-        {
-            var taken = await Db.Users.AnyAsync(u => u.OrganizationId == organizationId && u.Id != userId
-                                                     && u.EmployeeNumber == employeeNumber);
-            if (taken) return BadRequestProblem("That employee number is already in use",
-                "Two members of staff cannot share an employee number — it is how the school's own file identifies them.");
-        }
+        // The staff number is the school's own key for this person: required, and never repeated.
+        var numberError = PersonCode.ValidateStaffNumber(request.EmployeeNumber);
+        if (numberError != null)
+            return BadRequestProblem(numberError,
+                "It is how the school's own file identifies this person, and how they are recognised when the staff list is imported again.");
+
+        var employeeNumber = PersonCode.Normalize(request.EmployeeNumber);
+        var numberKey = PersonCode.Key(request.EmployeeNumber);
+        if (await Db.Users.AnyAsync(u => u.OrganizationId == organizationId && u.Id != userId
+                                         && u.EmployeeNumber != null && u.EmployeeNumber.ToUpper() == numberKey))
+            return BadRequestProblem("That staff number is already in use",
+                "Two members of staff cannot share a staff number — it is how the school's own file identifies them.");
 
         var before = Snapshot(user);
 
@@ -591,6 +603,7 @@ public class StaffStructureController : StaffPerformanceControllerBase
             Username = user.Username,
             RoleName = user.Role?.Name ?? string.Empty,
             IsActive = user.IsActive,
+            PhotoUrl = UploadLinks.Sign(user.PhotoUrl),
 
             Phone = user.Phone,
             AlternatePhone = user.AlternatePhone,

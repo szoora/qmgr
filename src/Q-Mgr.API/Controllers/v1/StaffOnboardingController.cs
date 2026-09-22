@@ -316,8 +316,9 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
         }
         if (!string.IsNullOrWhiteSpace(employeeNumber))
         {
-            var emp = employeeNumber.Trim();
-            var match = await others.Where(u => u.EmployeeNumber == emp).Select(u => new { u.Id, u.FirstName, u.LastName }).FirstOrDefaultAsync();
+            var emp = PersonCode.Normalize(employeeNumber)!;
+            var empKey = PersonCode.Key(employeeNumber);
+            var match = await others.Where(u => u.EmployeeNumber != null && u.EmployeeNumber.ToUpper() == empKey).Select(u => new { u.Id, u.FirstName, u.LastName }).FirstOrDefaultAsync();
             if (match != null) signals.Add(new("EmployeeNumber", $"Employee number {emp} belongs to {($"{match.FirstName} {match.LastName}").Trim()}.", match.Id));
         }
         if (!string.IsNullOrWhiteSpace(firstName) && !string.IsNullOrWhiteSpace(lastName))

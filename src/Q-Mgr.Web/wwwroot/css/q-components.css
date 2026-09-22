@@ -263,8 +263,11 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 20px;
-    height: 20px;
+    /* 24px, not 20: WCAG 2.2 SC 2.5.8 (Level AA) is a 24x24 floor, and this button sits on
+       most page titles — it was the ONLY thing failing the mobile readiness pass, on ten of
+       fourteen pages. The glyph is unchanged; only the hit area grew. */
+    width: 24px;
+    height: 24px;
     padding: 0;
     border: none;
     border-radius: var(--qm-radius-sm, 3px);
@@ -541,6 +544,18 @@
     flex-direction: column;
     gap: 0.375rem;
 }
+
+/* The label and its QInfo on one line. The button is a SIBLING of the <label>, never a child:
+   a click inside a label is re-dispatched to its first control. */
+.q-field__label-row {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    min-width: 0;
+}
+
+/* A checkbox row is the control plus its info button; the label itself keeps its own gap. */
+.q-checkbox-row { gap: 4px; }
 
 .q-input__label {
     font-size: var(--qm-text-base);
@@ -2625,6 +2640,7 @@
    Avatar — initials on a colour from the name, or a photograph
    ========================================================================== */
 .q-avatar {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -2643,7 +2659,9 @@
 .q-avatar--md { width: 40px; height: 40px; font-size: var(--qm-text-base); }
 .q-avatar--lg { width: 56px; height: 56px; font-size: var(--qm-text-xl); }
 
-.q-avatar__img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Over the initials, not beside them: the initials are the fallback an expired signed link
+   drops back to when onerror removes this element. */
+.q-avatar__img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 
 /* ==========================================================================
    Stacked tables (2026-09-16) — a `table.q-stack` becomes a list of cards on a
@@ -2714,6 +2732,18 @@
     }
 
     table.q-stack > tbody > tr > td:last-child:not(:first-child) { padding-bottom: 0 !important; }
+
+    /* .data-table .row-actions is `width: 1%` so the column hugs its buttons on a desktop. That
+       rule is two classes deep and beats the stacked `width: 100%` above, so on a phone the cell
+       collapsed to about 3px and its buttons with it — found by the mobile readiness pass, at 3px
+       against a 24px floor. Stacked, the actions are a full-width row of their own. */
+    table.q-stack > tbody > tr > td.row-actions {
+        width: 100% !important;
+        justify-content: flex-start;
+        flex-wrap: wrap;
+        gap: 6px;
+        text-align: left;
+    }
 
     /* The card list sits on the page; the table's own card and scroller are not needed. */
     .table-wrap:has(> table.q-stack),

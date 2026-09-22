@@ -25,21 +25,10 @@
         @if (currentStep == LoginStep.Email)
         {
             <!-- Step 1: Email Input -->
+            @* The mark every identity page now shares. It used to live only here, which is why the
+               join page opened with a generic icon on a school's own domain. *@
             <div class="login-header">
-                <div class="logo-wrapper">
-                    <div class="logo-circle">
-                        @if (Host.IsTenantHost && !string.IsNullOrWhiteSpace(Host.Branding.LogoUrl))
-                        {
-                            <img src="@Host.Branding.LogoUrl" alt="@Host.AppName" class="brand-logo-img" />
-                        }
-                        else
-                        {
-                            <QIcon Name="people-fill" Size="32" />
-                        }
-                    </div>
-                </div>
-                <h1>@(Host.IsTenantHost ? Host.AppName : "Welcome")</h1>
-                <p>Sign in to your @Host.AppName account</p>
+                <QBrandMark Heading="@SignInHeading" Tagline="@SignInTagline" />
             </div>
 
             @if (!string.IsNullOrEmpty(errorMessage))
@@ -243,6 +232,11 @@
 
 
 @code {
+    /// <summary>The school's name on their own domain; a greeting on the platform's.</summary>
+    private string SignInHeading => Host.IsTenantHost ? Host.AppName : "Welcome";
+
+    private string SignInTagline => $"Sign in to your {Host.AppName} account";
+
     /// <summary>Which host this browser arrived on (see TenantHostContext). Platform by default.</summary>
     [CascadingParameter] public TenantHostContext Host { get; set; } = TenantHostContext.Platform;
 

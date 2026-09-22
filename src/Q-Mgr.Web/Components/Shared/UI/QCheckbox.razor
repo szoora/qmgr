@@ -1,5 +1,8 @@
 @namespace QMgr.Web.Components.Shared.UI
 
+@* A click anywhere inside a <label> is re-dispatched to its control, so a QInfo button nested in
+   this one would toggle the box. It is a SIBLING, in a row beside it — the same rule as QInput. *@
+<span class="q-field__label-row q-checkbox-row">
 <label class="q-checkbox @(Disabled ? "q-checkbox--disabled" : "") @(Value ? "q-checkbox--checked" : "") @Class">
     <input type="checkbox"
            class="q-checkbox__input"
@@ -31,8 +34,19 @@
         </span>
     }
 </label>
+@if (!string.IsNullOrWhiteSpace(Hint))
+{
+    <QInfo Text="@Hint" Label="@Label" />
+}
+</span>
 
 @code {
+    /// <summary>
+    /// The sentence explaining what switching this on DOES, in a QInfo beside it rather than as a
+    /// paragraph underneath. A warning still belongs on the page.
+    /// </summary>
+    [Parameter] public string? Hint { get; set; }
+
     /// <summary>
     /// Whether the checkbox is checked
     /// </summary>

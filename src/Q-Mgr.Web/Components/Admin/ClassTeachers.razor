@@ -14,7 +14,7 @@
 @using QMgr.Domain.Constants
 @using QMgr.Web.Services
 
-<PageTitle>Class Teachers - Q-Mgr</PageTitle>
+<QPageTitle Text="Class Teachers" />
 
 <div class="admin-page">
     <div class="page-header">
@@ -345,7 +345,7 @@
     {
         <p class="ct-end-lead"><strong>@pt.FullName</strong> — @pt.SubjectName in <strong>@pt.ClassName</strong>.</p>
         <QInput TValue="int?" Label="Periods a week" Type="number" Min="0" Max="60" @bind-Value="periodsValue"
-                HelperText="Leave blank if not planned yet. To change the teacher, subject or class, end this assignment and assign again, so the history stays true." />
+                Hint="Leave blank if not planned yet. To change the teacher, subject or class, end this assignment and assign again, so the history stays true." />
     }
     </ChildContent>
     <FooterContent>

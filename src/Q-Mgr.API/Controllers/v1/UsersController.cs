@@ -9,8 +9,10 @@ using QMgr.Application.Tenant;
 using QMgr.Application.Interfaces;
 using QMgr.Domain.Constants;
 using QMgr.Domain.Entities.Identity;
+using QMgr.Domain.Identity;
 using QMgr.Filters;
 using QMgr.Infrastructure.Data;
+using QMgr.Infrastructure.Services.Storage;
 
 namespace QMgr.API.Controllers.v1;
 
@@ -117,6 +119,7 @@ public class UsersController : ControllerBase
                 RoleCode = u.Role.Code,
                 RoleName = u.Role.Name,
                 RoleColor = u.Role.Color,
+                PhotoUrl = u.PhotoUrl,
                 AssignedBranchId = u.AssignedBranchId,
                 AssignedBranchName = u.AssignedBranch != null ? u.AssignedBranch.Name : null,
                 AssignedCounterId = u.AssignedCounterId,
@@ -126,6 +129,10 @@ public class UsersController : ControllerBase
                 CreatedAt = u.CreatedAt
             })
             .ToListAsync();
+
+        // Signed AFTER materialisation: UploadLinks.Sign cannot translate to SQL, so the
+        // projection above carries the raw column and the token is minted here.
+        users = users.Select(d => d with { PhotoUrl = UploadLinks.Sign(d.PhotoUrl) }).ToList();
 
         return Ok(users);
     }
@@ -178,6 +185,7 @@ public class UsersController : ControllerBase
                 RoleCode = u.Role.Code,
                 RoleName = u.Role.Name,
                 RoleColor = u.Role.Color,
+                PhotoUrl = u.PhotoUrl,
                 AssignedBranchId = u.AssignedBranchId,
                 AssignedBranchName = u.AssignedBranch != null ? u.AssignedBranch.Name : null,
                 AssignedCounterId = u.AssignedCounterId,
@@ -196,7 +204,7 @@ public class UsersController : ControllerBase
                 Status = StatusCodes.Status404NotFound
             });
 
-        return Ok(user);
+        return Ok(user with { PhotoUrl = UploadLinks.Sign(user.PhotoUrl) });
     }
 
     /// <summary>
@@ -345,6 +353,33 @@ public class UsersController : ControllerBase
                 Status = StatusCodes.Status400BadRequest
             });
 
+        // THE STAFF NUMBER IS REQUIRED and unique within the organisation, ignoring case. Until now
+        // this endpoint wrote whatever it was given and left the unique index to throw, which the
+        // browser sees as a 500 with no field named — and a platform administrator creating a
+        // platform user is the one person who has no such number, so the role decides.
+        var numberRequired = !RoleCodes.PlatformOnly.Contains(role!.Code);
+        if (numberRequired || !string.IsNullOrWhiteSpace(request.EmployeeNumber))
+        {
+            var numberError = PersonCode.ValidateStaffNumber(request.EmployeeNumber);
+            if (numberError != null)
+                return BadRequest(new ProblemDetails
+                {
+                    Title = numberError,
+                    Detail = "It is the school's own number for this person, and it is how somebody with no email address is recognised when the staff list is imported again.",
+                    Status = StatusCodes.Status400BadRequest
+                });
+
+            var numberKey = PersonCode.Key(request.EmployeeNumber);
+            if (await _dbContext.Users.AnyAsync(u => u.OrganizationId == organizationId && u.EmployeeNumber != null
+                                                     && u.EmployeeNumber.ToUpper() == numberKey))
+                return Conflict(new ProblemDetails
+                {
+                    Title = "Somebody already has that staff number",
+                    Detail = "A staff number identifies one person in this organization — it is how anybody with no email address is recognised.",
+                    Status = StatusCodes.Status409Conflict
+                });
+        }
+
         // Validate branch exists within organization if specified
         if (request.AssignedBranchId.HasValue)
         {
@@ -387,7 +422,7 @@ public class UsersController : ControllerBase
             FirstName = request.FirstName,
             LastName = request.LastName,
             Phone = request.Phone,
-            EmployeeNumber = request.EmployeeNumber,
+            EmployeeNumber = PersonCode.Normalize(request.EmployeeNumber),
             RoleId = role.Id,
             AssignedBranchId = request.AssignedBranchId,
             AssignedCounterId = request.AssignedCounterId,
@@ -414,6 +449,7 @@ public class UsersController : ControllerBase
             RoleCode = role.Code,
             RoleName = role.Name,
             RoleColor = role.Color,
+            PhotoUrl = UploadLinks.Sign(user.PhotoUrl),
             AssignedBranchId = user.AssignedBranchId,
             AssignedCounterId = user.AssignedCounterId,
             IsActive = user.IsActive,
@@ -543,11 +579,32 @@ public class UsersController : ControllerBase
                 });
         }
 
+        // A staff number this request CARRIES is validated and must not repeat; one it omits is left
+        // alone, because this endpoint is also how a bulk role change and a branch move are applied
+        // and neither is about the number. What it may never do is blank out a number somebody has:
+        // that is the identity of anybody here with no email address.
+        if (request.EmployeeNumber != null)
+        {
+            var numberError = PersonCode.ValidateStaffNumber(request.EmployeeNumber);
+            if (numberError != null)
+                return BadRequest(new ProblemDetails { Title = numberError, Status = StatusCodes.Status400BadRequest });
+
+            var numberKey = PersonCode.Key(request.EmployeeNumber);
+            if (await _dbContext.Users.AnyAsync(u => u.OrganizationId == user.OrganizationId && u.Id != user.Id
+                                                     && u.EmployeeNumber != null && u.EmployeeNumber.ToUpper() == numberKey))
+                return Conflict(new ProblemDetails
+                {
+                    Title = "Somebody already has that staff number",
+                    Detail = "A staff number identifies one person in this organization.",
+                    Status = StatusCodes.Status409Conflict
+                });
+        }
+
         // Update fields
         user.FirstName = request.FirstName ?? user.FirstName;
         user.LastName = request.LastName ?? user.LastName;
         user.Phone = request.Phone ?? user.Phone;
-        user.EmployeeNumber = request.EmployeeNumber ?? user.EmployeeNumber;
+        user.EmployeeNumber = PersonCode.Normalize(request.EmployeeNumber) ?? user.EmployeeNumber;
         user.AssignedBranchId = request.AssignedBranchId;
         user.AssignedCounterId = request.AssignedCounterId;
         user.UpdatedAt = DateTime.UtcNow;
@@ -612,6 +669,7 @@ public class UsersController : ControllerBase
             RoleCode = user.Role.Code,
             RoleName = user.Role.Name,
             RoleColor = user.Role.Color,
+            PhotoUrl = UploadLinks.Sign(user.PhotoUrl),
             AssignedBranchId = user.AssignedBranchId,
             AssignedBranchName = user.AssignedBranch?.Name,
             AssignedCounterId = user.AssignedCounterId,
@@ -692,6 +750,7 @@ public class UsersController : ControllerBase
             RoleCode = user.Role.Code,
             RoleName = user.Role.Name,
             RoleColor = user.Role.Color,
+            PhotoUrl = UploadLinks.Sign(user.PhotoUrl),
             AssignedBranchId = user.AssignedBranchId,
             AssignedBranchName = user.AssignedBranch?.Name,
             AssignedCounterId = user.AssignedCounterId,
@@ -880,6 +939,9 @@ public record UserDto
     public string RoleCode { get; init; } = string.Empty;
     public string RoleName { get; init; } = string.Empty;
     public string? RoleColor { get; init; }
+
+    /// <summary>The person's photograph, already signed. Null when they have not added one.</summary>
+    public string? PhotoUrl { get; init; }
     public Guid? AssignedBranchId { get; init; }
     public string? AssignedBranchName { get; init; }
     public Guid? AssignedCounterId { get; init; }

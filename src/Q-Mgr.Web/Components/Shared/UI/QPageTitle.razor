@@ -1,0 +1,30 @@
+@namespace QMgr.Web.Components.Shared.UI
+@using QMgr.Web.Services
+@inject IBrandContext Brand
+@implements IDisposable
+
+@*
+    THE ONE PLACE A PAGE'S TAB TITLE IS BUILT.
+
+    Every page used to write its own title with our product name spelled into it — 113 of them,
+    all ending "- Q-Mgr" — which meant a
+    white-labelled school saw our name in their browser tab on every page of their own deployment —
+    the most visible place the branding could leak after the logo. The suffix now comes from
+    IBrandContext, which is the organisation's name inside the shell and the host's name on a
+    tenant's own domain.
+
+    A page writes: <QPageTitle Text="Staff Directory" />
+*@
+
+<PageTitle>@Text - @Brand.AppName</PageTitle>
+
+@code {
+    /// <summary>The page's own half of the title — no product name, that is this component's job.</summary>
+    [Parameter, EditorRequired] public string Text { get; set; } = string.Empty;
+
+    protected override void OnInitialized() => Brand.Changed += OnBrandChanged;
+
+    private void OnBrandChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Brand.Changed -= OnBrandChanged;
+}

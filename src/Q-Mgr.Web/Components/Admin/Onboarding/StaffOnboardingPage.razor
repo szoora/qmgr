@@ -26,7 +26,7 @@
 
 @if (!Embedded)
 {
-    <PageTitle>Staff Onboarding - Q-Mgr</PageTitle>
+    <QPageTitle Text="Staff Onboarding" />
 }
 
 <div class="admin-page">
@@ -130,7 +130,7 @@
 
                 <QCard Title="Who may apply" Icon="shield-check">
                     <QInput TValue="string" Label="Allowed email domains (optional)" @bind-Value="@domainsText"
-                            HelperText="Comma-separated, e.g. myschool.ac.ug. Empty means any address — approval still decides." />
+                            Hint="Comma-separated, e.g. myschool.ac.ug. Empty means any address — approval still decides." />
                     @if (branches.Count > 1)
                     {
                         <QSelect TValue="Guid?" TItem="BranchChoice" Label="Branch when the applicant does not choose" @bind-Value="@form.DefaultBranchId" AllowClear="true"

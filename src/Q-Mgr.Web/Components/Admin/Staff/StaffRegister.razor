@@ -11,7 +11,7 @@
 @inject IModuleStateService ModuleState
 @inherits BranchAwareComponentBase
 
-<PageTitle>Register - Q-Mgr</PageTitle>
+<QPageTitle Text="Register" />
 
 @*
     The register (plan §6 item 2): one row per expected person, one tap per person, an optional
@@ -681,7 +681,7 @@
             }
 
             <div class="reg-row__who">
-                <QAvatar Name="@row.FullName" Size="sm" />
+                <QAvatar Name="@row.FullName" PhotoUrl="@row.PhotoUrl" Size="sm" />
                 <div class="reg-row__name">
                     <strong>@row.FullName</strong>
                     @if (!string.IsNullOrEmpty(row.JobTitle) || !string.IsNullOrEmpty(row.DepartmentNames))

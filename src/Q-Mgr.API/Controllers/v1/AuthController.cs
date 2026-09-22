@@ -11,6 +11,7 @@ using QMgr.Application.Tenant;
 using QMgr.Domain.Entities.Platform;
 using QMgr.Domain.Interfaces;
 using QMgr.Infrastructure.Data;
+using QMgr.Infrastructure.Services.Storage;
 using QMgr.Infrastructure.Email;
 
 namespace QMgr.API.Controllers.v1;
@@ -227,6 +228,7 @@ public class AuthController : ControllerBase
                     OrganizationId = user.OrganizationId,
                     OrganizationName = user.Organization?.Name,
                     BranchId = user.AssignedBranchId,
+                    PhotoUrl = UploadLinks.Sign(user.PhotoUrl),
                     Permissions = new List<string>(),
                     MustChangePassword = true
                 }
@@ -276,6 +278,7 @@ public class AuthController : ControllerBase
                 OrganizationId = user.OrganizationId,
                 OrganizationName = user.Organization?.Name,
                 BranchId = user.AssignedBranchId,
+                    PhotoUrl = UploadLinks.Sign(user.PhotoUrl),
                 Permissions = permissions
             }
         });
@@ -401,6 +404,7 @@ public class AuthController : ControllerBase
                 OrganizationId = user.OrganizationId,
                 OrganizationName = user.Organization?.Name,
                 BranchId = user.AssignedBranchId,
+                    PhotoUrl = UploadLinks.Sign(user.PhotoUrl),
                 Permissions = permissions
             }
         });
@@ -451,6 +455,7 @@ public class AuthController : ControllerBase
             OrganizationId = user.OrganizationId,
             OrganizationName = user.Organization?.Name,
             BranchId = user.AssignedBranchId,
+                    PhotoUrl = UploadLinks.Sign(user.PhotoUrl),
             Permissions = permissions
         });
     }

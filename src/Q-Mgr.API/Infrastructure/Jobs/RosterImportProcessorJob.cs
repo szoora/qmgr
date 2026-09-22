@@ -234,7 +234,7 @@ public class RosterImportProcessorJob
         {
             RosterImportJobId = job.Id,
             RowNumber = rowNumber,
-            StudentCode = string.IsNullOrWhiteSpace(row.StudentCode) ? null : row.StudentCode.Trim(),
+            StudentCode = PersonCode.Normalize(row.StudentCode),
             StudentName = row.StudentFullName?.Trim(),
             GuardianName = row.GuardianFullName?.Trim()
         };
@@ -256,6 +256,20 @@ public class RosterImportProcessorJob
             return;
         }
 
+        // THE ADMISSION NUMBER IS THE KEY THIS IMPORT UPSERTS ON, so a row without one could only
+        // ever create a new student — which is how a re-import silently doubled a roll. It is
+        // required and its shape is checked by the same PersonCode rule the form and the API use,
+        // so a sheet cannot put through a code that a person could not type.
+        var codeProblem = PersonCode.ValidateStudentCode(row.StudentCode);
+        if (codeProblem != null)
+        {
+            entry.Outcome = RosterImportRowOutcome.Failed;
+            entry.Message = codeProblem;
+            job.FailedCount++;
+            _context.RosterImportJobEntries.Add(entry);
+            return;
+        }
+
         // --- Intra-file duplicate detection ---
         var pairKey = $"{entry.StudentCode ?? entry.StudentName}|{normPhone ?? normEmail}";
         if (!seenPairs.Add(pairKey))
@@ -270,11 +284,15 @@ public class RosterImportProcessorJob
         var wasNew = false;
 
         // --- Find-or-create Student (upsert by StudentCode when given) ---
+        // The lookup FOLDS CASE, exactly as the unique index does. Matching exactly would let
+        // "MH/001" and "mh/001" through as two students and then be refused by Postgres on save.
         Student? student = null;
-        if (entry.StudentCode != null)
+        var entryKey = PersonCode.Key(entry.StudentCode);
+        if (entryKey != null)
         {
             student = await _context.Students.FirstOrDefaultAsync(s =>
-                s.OrganizationId == job.OrganizationId && s.StudentCode == entry.StudentCode && s.IsActive);
+                s.OrganizationId == job.OrganizationId && s.StudentCode != null
+                && s.StudentCode.ToUpper() == entryKey && s.IsActive);
         }
 
         if (student == null)
@@ -387,7 +405,7 @@ public class RosterImportProcessorJob
     /// </summary>
     private async Task ProcessWelfareRowAsync(RosterImportJob job, WelfareImportRow row, int rowNumber, HashSet<string> seenKeys)
     {
-        var studentCode = string.IsNullOrWhiteSpace(row.StudentCode) ? null : row.StudentCode.Trim();
+        var studentCode = PersonCode.Normalize(row.StudentCode);
         var categoryName = string.IsNullOrWhiteSpace(row.Category) ? null : row.Category.Trim();
         var entry = new RosterImportJobEntry
         {
@@ -452,8 +470,12 @@ public class RosterImportProcessorJob
         }
 
         // --- Student: matched by code within the organization, never created here ---
+        // Folded, like every other lookup on this column: a backfill whose sheet shells the code in
+        // a different case must still find the child it is about.
+        var studentKey = PersonCode.Key(studentCode);
         var student = await _context.Students.FirstOrDefaultAsync(s =>
-            s.OrganizationId == job.OrganizationId && s.StudentCode == studentCode && s.IsActive);
+            s.OrganizationId == job.OrganizationId && s.StudentCode != null
+            && s.StudentCode.ToUpper() == studentKey && s.IsActive);
         if (student == null) { Fail($"No active student with code '{studentCode}' — import the roster first."); return; }
         entry.StudentName = student.FullName;
         entry.StudentId = student.Id;
@@ -804,12 +826,13 @@ public class RosterImportProcessorJob
                 // A line manager is named by their email address, or — since most school staff have
                 // none — by their staff number, which is unique within the organization.
                 var normalized = RegistrationIdentity.NormalizeEmail(managerEmail);
-                var byNumber = (managerEmail ?? string.Empty).Trim();
+                // Folded, like every other lookup on this column.
+                var byNumber = PersonCode.Key(managerEmail) ?? string.Empty;
                 if (normalized == null && byNumber.Length == 0) continue;
                 var managerId = await _context.Users.IgnoreQueryFilters().AsNoTracking()
                     .Where(u => u.OrganizationId == job.OrganizationId && u.IsActive && u.Id != userId
                                 && ((normalized != null && u.NormalizedEmail == normalized)
-                                    || (byNumber.Length > 0 && u.EmployeeNumber == byNumber)))
+                                    || (byNumber.Length > 0 && u.EmployeeNumber != null && u.EmployeeNumber.ToUpper() == byNumber)))
                     .Select(u => (Guid?)u.Id)
                     .FirstOrDefaultAsync();
                 if (managerId == null)
@@ -882,37 +905,12 @@ public class RosterImportProcessorJob
             return;
         }
 
-        var changed = new List<string>();
-        void Set(string field, string? value, Action<string> apply, string? current)
-        {
-            if (string.IsNullOrWhiteSpace(value)) return;
-            var v = value.Trim();
-            if (string.Equals(v, current, StringComparison.Ordinal)) return;
-            apply(v);
-            changed.Add(field);
-        }
-
-        Set("first name", firstName, v => user.FirstName = v, user.FirstName);
-        Set("surname", lastName, v => user.LastName = v, user.LastName);
-        Set("phone", row.Phone, v => user.Phone = v, user.Phone);
-        Set("employee number", row.EmployeeNumber, v => user.EmployeeNumber = v, user.EmployeeNumber);
-        Set("job title", row.JobTitle, v => user.JobTitle = v, user.JobTitle);
-        Set("qualification", row.Qualification, v => user.Qualification = v, user.Qualification);
-        Set("registration number", row.TeachingRegistrationNumber, v => user.TeachingRegistrationNumber = v, user.TeachingRegistrationNumber);
-        Set("national ID", row.NationalId, v => user.NationalId = v, user.NationalId);
-        Set("emergency contact", row.EmergencyContactName, v => user.EmergencyContactName = v, user.EmergencyContactName);
-        Set("emergency phone", row.EmergencyContactPhone, v => user.EmergencyContactPhone = v, user.EmergencyContactPhone);
-
-        if (StaffFieldParsing.Date(row.StartDate) is { } start && user.EmploymentStartDate != start)
-        { user.EmploymentStartDate = start; changed.Add("start date"); }
-        if (StaffFieldParsing.Date(row.EndDate) is { } end && user.EmploymentEndDate != end)
-        { user.EmploymentEndDate = end; changed.Add("end date"); }
-        if (StaffFieldParsing.Date(row.DateOfBirth) is { } dob && user.DateOfBirth != dob)
-        { user.DateOfBirth = dob; changed.Add("date of birth"); }
-        if (StaffFieldParsing.EmploymentType(row.EmploymentType) is { } terms && user.EmploymentType != terms)
-        { user.EmploymentType = terms; changed.Add("employment terms"); }
-        if (StaffFieldParsing.Sex(row.Sex) is { } sex && user.Sex != sex)
-        { user.Sex = sex; changed.Add("sex"); }
+        // ONE list, computed by StaffImportChanges and applied here. The precheck reads the same
+        // list to tell the reader what this file would change BEFORE it is sent, so the preview and
+        // the import cannot disagree about a single field.
+        var pending = StaffImportChanges.Compute(row, firstName, lastName, user);
+        foreach (var change in pending) change.Apply(user);
+        var changed = pending.Select(c => c.Label).ToList();
 
         user.UpdatedAt = DateTime.UtcNow;
         entry.Outcome = RosterImportRowOutcome.Updated;
@@ -926,27 +924,17 @@ public class RosterImportProcessorJob
     private async Task ProcessStaffRowAsync(RosterImportJob job, StaffImportRow row, int rowNumber, StaffImportDeliveryMode? delivery, string? temporaryPassword, StaffImportContext ctx, List<(Guid, string?)> created, NameOrder nameOrder = NameOrder.GivenFirst, bool updateExisting = false)
     {
         var sendInvites = delivery == StaffImportDeliveryMode.Invitation;
-        var firstName = (row.FirstName ?? "").Trim();
-        var lastName = (row.LastName ?? "").Trim();
 
-        // A row may arrive with ONE combined name instead of two — that is how most school exports are
-        // written ("Staff Name: Abaho Jude"), and the browser has usually split it already. This is the
-        // same split, by the same shared rule, for a caller that did not: an integration posting rows
-        // straight at the API, or an older client. The server never invents the order; it uses the one
-        // the batch carries. See docs/plans/BULK_IMPORT_SYSTEM.md §4.1.
-        if ((firstName.Length == 0 || lastName.Length == 0) && !string.IsNullOrWhiteSpace(row.FullName))
-        {
-            var parts = PersonName.Split(row.FullName, nameOrder);
-            if (firstName.Length == 0) firstName = parts.GivenName;
-            if (lastName.Length == 0) lastName = parts.FamilyName;
-        }
+        // One home for reading a name off a row, shared with the precheck that says in advance whose
+        // record this file lands on. See StaffImportChanges.NamesOf and BULK_IMPORT_SYSTEM.md §4.1.
+        var (firstName, lastName) = StaffImportChanges.NamesOf(row, nameOrder);
         var email = (row.Email ?? "").Trim();
         var entry = new RosterImportJobEntry
         {
             RosterImportJobId = job.Id,
             RowNumber = rowNumber,
             StudentName = $"{firstName} {lastName}".Trim(),
-            StudentCode = string.IsNullOrWhiteSpace(row.EmployeeNumber) ? null : row.EmployeeNumber.Trim(),
+            StudentCode = PersonCode.Normalize(row.EmployeeNumber),
             GuardianName = string.IsNullOrWhiteSpace(email) ? null : email
         };
 
@@ -961,6 +949,13 @@ public class RosterImportProcessorJob
         var missing = new List<string>();
         if (firstName.Length == 0 && lastName.Length == 0) missing.Add("name");
         if (missing.Count > 0) { Fail($"Missing required field(s): {string.Join(", ", missing)}."); return; }
+
+        // THE STAFF NUMBER IS REQUIRED, and it is the one field this import can recognise somebody
+        // by when they have no email address — which most staff on a school roll do not. A row
+        // without one could only ever create a new account, so a second import of the same sheet
+        // would double the staff list. Same PersonCode rule as the form and the API.
+        var numberProblem = PersonCode.ValidateStaffNumber(row.EmployeeNumber);
+        if (numberProblem != null) { Fail(numberProblem); return; }
 
         // AN EMAIL ADDRESS IS OPTIONAL — most staff on a school roll have none. It is required only
         // for an INVITATION, which has nowhere to go without one; a slip or an SMS needs no address
@@ -1005,15 +1000,17 @@ public class RosterImportProcessorJob
         // WHO IS THIS PERSON ALREADY: the address where there is one, otherwise the school's own
         // staff number, which carries a per-organization unique index for exactly this reason. A row
         // with neither cannot be recognised at all and is always treated as somebody new.
-        var employeeNumber = string.IsNullOrWhiteSpace(row.EmployeeNumber) ? null : row.EmployeeNumber.Trim();
+        var employeeNumber = PersonCode.Normalize(row.EmployeeNumber);
+        var employeeKey = PersonCode.Key(row.EmployeeNumber);
         var existing = normalizedEmail != null
             ? await _context.Users.IgnoreQueryFilters().AsNoTracking()
                 .Where(u => u.NormalizedEmail == normalizedEmail)
                 .Select(u => new { u.Id, u.OrganizationId })
                 .FirstOrDefaultAsync()
-            : employeeNumber == null ? null
+            : employeeKey == null ? null
             : await _context.Users.IgnoreQueryFilters().AsNoTracking()
-                .Where(u => u.OrganizationId == job.OrganizationId && u.EmployeeNumber == employeeNumber)
+                .Where(u => u.OrganizationId == job.OrganizationId && u.EmployeeNumber != null
+                            && u.EmployeeNumber.ToUpper() == employeeKey)
                 .Select(u => new { u.Id, u.OrganizationId })
                 .FirstOrDefaultAsync();
         if (existing != null)

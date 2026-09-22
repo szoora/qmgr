@@ -112,6 +112,9 @@ builder.Services.AddScoped<IModuleStateService, ModuleStateService>();
 builder.Services.AddScoped<IConnectionMonitorService, ConnectionMonitorService>();
 builder.Services.AddScoped<INotificationClientService, NotificationClientService>();
 builder.Services.AddScoped<INotificationApiService, NotificationApiService>();
+// What this deployment is called, for the tab's title and icon — the one thing a component
+// cannot reach on its own. Scoped: it belongs to the circuit, like the session it describes.
+builder.Services.AddScoped<IBrandContext, BrandContext>();
 builder.Services.AddScoped<IToastService, ToastService>();
 
 // Add HTTP client for API calls

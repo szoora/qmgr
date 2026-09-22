@@ -17,7 +17,13 @@
                     <i class="@GetIconClass() q-card__icon"></i>
                 }
                 <div class="q-card__header-text">
-                    <h3 class="q-card__title">@Title</h3>
+                    <h3 class="q-card__title">
+                        @Title
+                        @if (!string.IsNullOrWhiteSpace(Hint))
+                        {
+                            <QInfo Text="@Hint" Label="@Title" />
+                        }
+                    </h3>
                     @if (!string.IsNullOrEmpty(Subtitle))
                     {
                         <p class="q-card__subtitle">@Subtitle</p>
@@ -55,6 +61,14 @@
     /// Card subtitle
     /// </summary>
     [Parameter] public string? Subtitle { get; set; }
+
+    /// <summary>
+    /// The paragraph that used to sit at the top of the card explaining what it is for. It goes in a
+    /// QInfo beside the title instead: a settings card is read once and operated many times, and the
+    /// reasoning behind a default is exactly the standing prose QInfo exists to take off the page.
+    /// A WARNING is not a hint and stays in the body.
+    /// </summary>
+    [Parameter] public string? Hint { get; set; }
 
     /// <summary>
     /// Bootstrap icon name for the header

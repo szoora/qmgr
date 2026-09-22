@@ -12,7 +12,7 @@
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
 
-<PageTitle>Staff Directory - Q-Mgr</PageTitle>
+<QPageTitle Text="Staff Directory" />
 
 <div class="admin-page">
     <div class="page-header">
@@ -144,7 +144,7 @@
                                 }
                                 <td>
                                     <div class="sd-person">
-                                        <QAvatar Name="@m.FullName" Size="sm" />
+                                        <QAvatar Name="@m.FullName" PhotoUrl="@m.PhotoUrl" Size="sm" />
                                         <div class="sd-person__text">
                                             <a href="/admin/staff/@m.UserId/timeline" class="sd-person__name">@m.FullName</a>
                                             <span class="sd-person__sub">@(string.IsNullOrWhiteSpace(m.JobTitle) ? m.Email : m.JobTitle)</span>

@@ -10,7 +10,7 @@
 @inject IModuleStateService ModuleState
 @inherits BranchAwareComponentBase
 
-<PageTitle>Duty report - Q-Mgr</PageTitle>
+<QPageTitle Text="Duty report" />
 
 @*
     One duty report (plan §4.3). The author writes it against the tenant's template, links incidents as welfare
@@ -96,7 +96,7 @@
                             </div>
                         }
                         <QInput TValue="string" @bind-Value="@form.Summary" Type="textarea" Rows="3" Label="Summary" MaxLength="8000"
-                                HelperText="Anything else the administration should know. Do not describe children here — link a record below." />
+                                Hint="Anything else the administration should know. Do not describe children here — link a record below." />
 
                         <div class="dr-links">
                             <h4>Linked welfare and discipline records</h4>

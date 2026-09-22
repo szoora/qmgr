@@ -55,9 +55,16 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
             .HasDatabaseName("IX_users_OrganizationId");
 
         // A staff member with no email address is identified by the school's own staff number, so
-        // that number has to BE a key rather than a label. Partial, because most of the platform's
-        // users (a bank's counter staff, a tenant administrator) carry no employee number at all and
-        // any number of those nulls must be able to coexist.
+        // that number has to BE a key rather than a label. Partial, because rows predating the
+        // requirement carry no number at all and any number of those nulls must coexist — and
+        // because a platform user belongs to no organisation and never has one.
+        //
+        // THE REAL INDEX IS ON upper("EmployeeNumber") AND IS CREATED IN RAW SQL by
+        // 20260922_PersonCodesAreMandatoryAndCaseInsensitive: uniqueness has to be case-insensitive
+        // or "MH/S/001" and "mh/s/001" are two members of staff, and EF cannot model a functional
+        // index. citext would be the obvious answer and is ruled out — no Postgres extensions. This
+        // declaration is kept so the model still knows a unique constraint exists on the pair; the
+        // migration drops what EF creates and puts the upper() one in its place.
         builder.HasIndex(u => new { u.OrganizationId, u.EmployeeNumber })
             .IsUnique()
             .HasFilter("\"EmployeeNumber\" IS NOT NULL")

@@ -1,8 +1,11 @@
-// Minimal CDP driver for a local headless Chrome on :9333 (CLAUDE.md "When the connected Chrome is on another machine").
+// Minimal CDP driver for a local Chrome over the DevTools protocol (CLAUDE.md "When the connected
+// Chrome is on another machine"). Port 9333 by default; set CDP_PORT to drive a HEADED Chrome
+// instead — same suites, same assertions, visible on screen, which is how a run is demonstrated.
 import fs from 'node:fs';
 
 export async function openTab() {
-  const res = await fetch('http://127.0.0.1:9333/json/new?about:blank', { method: 'PUT' });
+  const port = process.env.CDP_PORT ?? '9333';
+  const res = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' });
   const { webSocketDebuggerUrl } = await res.json();
   const ws = new WebSocket(webSocketDebuggerUrl);
   await new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });

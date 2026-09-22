@@ -638,7 +638,7 @@ hdr("15.6 LESSONS — materialised from the timetable, My Day, Taught / Not taug
     const made = [];
     const newTeacher = async (tag, first) => {
       const username = `e2e.ls.${tag}.${RUN}`;
-      const r = await post(AD, "/api/v1/users", { username, email: `${username}@qmgr.local`, password: NEW_PW, firstName: first, lastName: `Lessons ${RUN}`, roleId: roles.find((x) => x.code === "teacher")?.id, assignedBranchId: BRANCH });
+      const r = await post(AD, "/api/v1/users", { username, email: `${username}@qmgr.local`, password: NEW_PW, firstName: first, lastName: `Lessons ${RUN}`, roleId: roles.find((x) => x.code === "teacher")?.id, assignedBranchId: BRANCH, employeeNumber: `E2E-${tag}-${RUN}` });
       if (!r.json?.id) return { id: null, token: null, name: first };
       made.push({ id: r.json.id, first, username });
       await put(AD, `${B}/staff/structure/members/${r.json.id}`, { departmentIds: MATHD ? [MATHD.id] : [], lineManagerUserId: null });

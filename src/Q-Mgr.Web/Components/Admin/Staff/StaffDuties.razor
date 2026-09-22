@@ -12,7 +12,7 @@
 @inject IPermissionService PermissionService
 @inject IAuthService AuthService
 
-<PageTitle>Duties & Registers - Q-Mgr</PageTitle>
+<QPageTitle Text="Duties & Registers" />
 
 @*
     The duty roster by week (plan §10). Everyone with the module may open it: the API narrows the
@@ -170,7 +170,7 @@
             <QSelect TValue="Guid?" TItem="PerformanceParameterDto" @bind-Value="@formParameterId" Items="@dutyParameters"
                      TextSelector="@(p => $"{p.Name} ({StaffDisplay.KindLabel(p.Kind)})")" ValueSelector="@(p => (Guid?)p.Id)"
                      Label="Parameter" Required="true" Placeholder="What kind of duty is this?"
-                     HelperText="Only Attendance and Duty parameters can carry a register. Closing it writes one record per person on this parameter."
+                     Hint="Only Attendance and Duty parameters can carry a register. Closing it writes one record per person on this parameter."
                      HasError="@formErrors.Contains("parameter")" ErrorMessage="Choose a parameter" />
         </div>
         <div class="form-group">
@@ -217,7 +217,7 @@
             <QMultiSelect TValue="Guid" TItem="StaffMemberDto" SelectedValues="@formRecorders" SelectedValuesChanged="@(v => formRecorders = v.ToList())"
                           Items="@staff" ValueSelector="@(s => s.UserId)" TextSelector="@StaffLabel" Label="Recorders"
                           Placeholder="@(staffUnavailable ? "The staff list is not available to you" : "Who takes the register?")" Disabled="@staffUnavailable"
-                          HelperText="A recorder can open this duty's register on their phone. Anyone with the duties permission can too." />
+                          Hint="A recorder can open this duty's register on their phone. Anyone with the duties permission can too." />
         </div>
     </ChildContent>
     <FooterContent>

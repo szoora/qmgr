@@ -17,6 +17,7 @@
 @inject IModuleStateService ModuleState
 @inject IClassTeacherApiService ClassTeacherApi
 @inject IStaffPerformanceApiService StaffApi
+@using QMgr.Domain.Identity
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Domain.Constants
@@ -24,7 +25,7 @@
 @using QMgr.Web.Components.Shared.UI
 @using QMgr.Web.Services
 
-<PageTitle>Students - Q-Mgr</PageTitle>
+<QPageTitle Text="Students" />
 
 <div class="admin-page">
     <div class="page-header">
@@ -489,7 +490,10 @@
                                 ErrorMessage="@fieldErrors.GetValueOrDefault(nameof(studentModel.FullName))" />
                     </div>
                     <QInput TValue="string" @bind-Value="studentModel.StudentCode" Label="Student / admission code"
-                            Placeholder="S001" MaxLength="100" HelperText="Roll number. Bulk import matches on this." />
+                            Required="true" Placeholder="S001" MaxLength="100"
+                            Hint="The school's own admission number for this child. It has to be unique here and it cannot be left out: every bulk import matches on it, so a student without one is created again from scratch each time the roll is re-imported. Letters, numbers and - / . _ only; upper and lower case count as the same code."
+                            HasError="@fieldErrors.ContainsKey(nameof(studentModel.StudentCode))"
+                            ErrorMessage="@fieldErrors.GetValueOrDefault(nameof(studentModel.StudentCode))" />
                     @* A picker once the branch has any classes configured, a text box while it has
                        none — a school that has not set its list up yet must still be able to
                        record a student. Same fallback on House and Dormitory below. *@
@@ -897,12 +901,14 @@
                       TemplateRows="@RosterTemplateRows"
                       TemplateFileStem="roster-import-template"
                       MappingKey="roster"
+                      CheckExistingAsync="@CheckRosterExisting"
                       StartAsync="@StartRosterImport"
                       LoadJobAsync="@LoadRosterJob"
                       LoadEntriesAsync="@LoadRosterEntries"
                       OnFileChosen="@(n => importFileName = n)"
                       OnCompleted="@OnRosterImportCompleted"
-                      RowSummary="@RosterRowSummary" />
+                      RowSummary="@RosterRowSummary"
+                      Review="@MissingClassesPanel" />
     </ChildContent>
     <FooterContent>
         <QButton Text="Close" Variant="ghost" OnClick="@CloseImportModal" />
@@ -1392,6 +1398,7 @@
     .batch-done .q-icon { color: var(--qm-success); }
     .roster-search-input { flex: 1; min-width: 240px; padding: 10px 14px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); color: var(--qm-text-primary); }
     .roster-toggle { display: flex; align-items: center; gap: 6px; font-size: var(--qm-text-base); color: var(--qm-text-muted); cursor: pointer; }
+    .roster-toggle input[type="checkbox"] { width: 24px; height: 24px; cursor: pointer; }
 
     /* One grid for the whole table, with every row contributing its cells to it.
        Each row used to be its own grid sharing only a template string, and two of that template's
@@ -1436,7 +1443,9 @@
     .roster-row:last-child > * { border-bottom: none; }
 
     .roster-select { display: flex; align-items: center; }
-    .roster-select input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+    /* 24px, not 16: WCAG 2.2 SC 2.5.8 is a 24x24 floor and these are the two raw checkboxes left
+       on this page. The box still DRAWS at 16px — the extra is hit area, via the outline offset. */
+    .roster-select input[type="checkbox"] { width: 24px; height: 24px; cursor: pointer; }
     .roster-header > * { font-size: var(--qm-text-sm); text-transform: uppercase; letter-spacing: .04em; color: var(--qm-text-muted); background: var(--qm-bg-secondary); font-weight: 600; }
     .roster-row.inactive > * { opacity: 0.5; }
     /* Flex-wrap, not inline-flex: a student can carry a restriction warning plus several flag
@@ -1445,7 +1454,74 @@
     .roster-name { font-weight: 600; color: var(--qm-text-primary); display: flex; flex-wrap: wrap; align-items: center; gap: 5px; row-gap: 4px; }
     .roster-name > .roster-chip { margin-left: 0; }
     .roster-name-text { white-space: nowrap; }
-    .roster-name-link { color: inherit; text-decoration: none; }
+    /* 24px of hit area, not 21: WCAG 2.2 SC 2.5.8. The student name is the row-opening control on
+       a phone, so it is a target rather than an inline link in a sentence. */
+    /* The missing-classes panel at the check step. A warning the reader can ACT on, so it is a
+       panel with controls rather than a tinted note — the rule QInfo's header states in reverse. */
+    .mc-panel {
+        margin: 0 0 16px;
+        padding: 14px 16px;
+        border: 1px solid var(--qm-warning);
+        border-radius: var(--qm-radius-lg);
+        background: rgba(var(--qm-primary-rgb), .04);
+    }
+
+    .mc-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: var(--qm-text-md);
+    }
+
+    .mc-head .bi, .mc-head i { color: var(--qm-warning); }
+
+    .mc-lede {
+        margin: 6px 0 12px;
+        font-size: var(--qm-text-sm);
+        color: var(--qm-text-secondary);
+    }
+
+    .mc-table th { white-space: nowrap; }
+    .mc-name { font-weight: 600; }
+
+    .mc-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .mc-pick { flex: 0 1 220px; min-width: 170px; }
+
+    .mc-mapped {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin: 12px 0 0;
+        font-size: var(--qm-text-sm);
+        color: var(--qm-text-secondary);
+    }
+
+    .mc-chip {
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: rgba(var(--qm-primary-rgb), .12);
+        color: var(--qm-text-primary);
+    }
+
+    .mc-clear {
+        background: none;
+        border: 0;
+        padding: 2px 6px;
+        font: inherit;
+        font-size: var(--qm-text-sm);
+        color: var(--qm-text-muted);
+        text-decoration: underline;
+        cursor: pointer;
+    }
+
+    .roster-name-link { color: inherit; text-decoration: none; display: inline-flex; align-items: center; min-height: 24px; }
     .roster-name-link:hover { color: var(--qm-primary); text-decoration: underline; }
     .roster-name-link:focus-visible { outline: 2px solid var(--qm-primary); outline-offset: 2px; border-radius: var(--qm-radius-sm); }
     .consent-icon { display: inline-flex; color: var(--qm-text-muted); opacity: 0.55; cursor: help; }
@@ -2831,6 +2907,13 @@
         else if (studentModel.FullName.Trim().Length > 255)
             fieldErrors[nameof(studentModel.FullName)] = "Full name cannot exceed 255 characters";
 
+        // The SAME rule the API enforces and the import applies, from the one home. A client-side
+        // check is a courtesy and never a control — StudentsController refuses the same thing — but
+        // a field marked in red beats a 400 after the save, and the two cannot drift while both
+        // call PersonCode.
+        if (PersonCode.ValidateStudentCode(studentModel.StudentCode, "Student code") is { } codeProblem)
+            fieldErrors[nameof(studentModel.StudentCode)] = codeProblem;
+
         if (studentModel.DateOfBirth is { } dob)
         {
             if (dob > today)
@@ -2925,8 +3008,9 @@
         new ImportColumn("StudentFullName", true, "Student Name", "Student Full Name", "Name", "Pupil Name", "Learner Name")
             { Kind = ImportFieldKind.Name,
               Hint = "Kept whole, never split into first and last — W3C's own guidance, and the roll is read as written." },
-        new ImportColumn("StudentCode", false, "Student Code", "Admission No", "Admission Number", "Roll No", "Code", "Account")
-            { Kind = ImportFieldKind.Code },
+        new ImportColumn("StudentCode", true, "Student Code", "Admission No", "Admission Number", "Roll No", "Code", "Account")
+            { Kind = ImportFieldKind.Code,
+              Hint = "Required. It is the key this import matches on, so a row without one can only ever create a new student — which is how a re-import doubles a roll. Unique within the school; upper and lower case count as the same code." },
         // A school export writes the class in two columns — "Class" = S1 and "Stream" = A — and Q-Mgr
         // stores the one value S1A. The join is the automatic guess and is shown in the mapping step,
         // so a school that writes one column, or wants a separator, can say so (user decision 2026-09-21).
@@ -2991,21 +3075,231 @@
         if (string.IsNullOrWhiteSpace(code))
             warnings.Add("No student code — a later import cannot match this student and would create a second one.");
 
-        var className = C("ClassName");
-        if (!string.IsNullOrWhiteSpace(className) && vocabularies?.Classes is { Count: > 0 } known
-            && !known.Any(k => string.Equals(k.Name?.Trim(), className.Trim(), StringComparison.OrdinalIgnoreCase)))
-            warnings.Add($"\"{className}\" is not one of this branch's classes — the student will be imported with it as typed.");
+        // THE CLASS. Three outcomes, and only the third is a problem:
+        //   1. it matches a configured class exactly            → nothing to say;
+        //   2. it matches one written differently ("S1 A" vs    → adopt the configured spelling
+        //      "S1A", "S1-A", "s1a")                              silently, so the roll lands in
+        //                                                         the class the school already has;
+        //   3. the branch has no such class                    → collected for the panel above the
+        //                                                         rows, ONCE, not per row.
+        // Before this the comparison was Trim() + case only, so the first real school roster raised
+        // the same sentence on 1,584 of 1,711 rows and there was nothing to do about it.
+        var className = ClassName.Display(C("ClassName"));
+        if (!string.IsNullOrWhiteSpace(className) && vocabularies?.Classes is { Count: > 0 } known)
+        {
+            var match = ClassName.MatchIn(className, known.Select(k => k.Name));
+            if (match != null)
+            {
+                if (!string.Equals(match, className, StringComparison.Ordinal))
+                    className = match;   // the school's own spelling of the class it already has
+            }
+            // NO PER-ROW WARNING. The missing-classes panel above the rows says it once per class,
+            // with the number of students in it and the two things the reader can do. The same
+            // sentence on 1,584 rows was the original report.
+        }
 
         return (new RosterImportRow
         {
             StudentFullName = studentName,
             StudentCode = string.IsNullOrWhiteSpace(code) ? null : code,
-            ClassName = string.IsNullOrWhiteSpace(className) ? null : className,
+            ClassName = className,
             GuardianFullName = guardianName,
             GuardianPhone = normalizedPhone,
             GuardianEmail = string.IsNullOrWhiteSpace(email) ? null : email,
             Relationship = C("Relationship") is { Length: > 0 } rel ? rel : null
         }, null, warnings);
+    }
+
+    // ---- MISSING CLASSES -------------------------------------------------------------------------
+    // The same warning on 1,584 rows told the reader nothing they could act on. This says it ONCE
+    // per class, with how many students are in it, and offers the two answers that exist: the branch
+    // has this class under another spelling (already folded at row build, so it never reaches here),
+    // or the branch does not have it and somebody has to decide.
+    //
+    // ADD is not the only answer, which is why MAP is offered beside it. A roll that says "S1A" when
+    // the school's list says "Senior 1 A" is not a new class; adding it would leave the school with
+    // two classes holding one form, and every register, timetable and class-teacher assignment then
+    // has to pick one.
+
+    private sealed record MissingClass(string Name, int Students, List<string> Similar);
+
+    private readonly Dictionary<string, string> classMappings = new(StringComparer.OrdinalIgnoreCase);
+    private string? addingClass;
+    private bool savingClasses;
+
+    /// <summary>
+    /// Classes in the file that this branch has not configured, with the nearest existing names.
+    /// Recomputed from the rows each render: the reader can add a class and the list must shrink.
+    /// </summary>
+    private List<MissingClass> MissingClassesIn(List<RosterImportRow> rows)
+    {
+        var known = vocabularies?.Classes?.Select(c => c.Name).Where(n => !string.IsNullOrWhiteSpace(n)).ToList()
+                    ?? new List<string?>();
+        if (known.Count == 0) return new();
+
+        return rows
+            .Select(r => r.ClassName)
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .GroupBy(n => ClassName.Key(n)!, StringComparer.Ordinal)
+            .Where(g => ClassName.MatchIn(g.Key, known) == null && !classMappings.ContainsKey(g.First()!))
+            .Select(g => new MissingClass(
+                g.First()!,
+                g.Count(),
+                // "Nearest" is a shared prefix of at least two characters — "S1A" offers "S1B" and
+                // "S1C" rather than the whole list, which on a real school roll is forty names.
+                known.Where(k => SharesPrefix(ClassName.Key(k), ClassName.Key(g.First())))
+                     .Select(k => k!)
+                     .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
+                     .Take(6)
+                     .ToList()))
+            .OrderByDescending(m => m.Students)
+            .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static bool SharesPrefix(string? a, string? b)
+    {
+        if (a == null || b == null) return false;
+        var n = Math.Min(a.Length, b.Length);
+        var shared = 0;
+        while (shared < n && a[shared] == b[shared]) shared++;
+        return shared >= 2;
+    }
+
+    private RenderFragment<List<RosterImportRow>> MissingClassesPanel => rows => __builder =>
+    {
+        var missing = MissingClassesIn(rows);
+        var mapped = classMappings.Count;
+
+        if (missing.Count == 0 && mapped == 0) { return; }
+
+        <div class="mc-panel">
+            @if (missing.Count > 0)
+            {
+                <div class="mc-head">
+                    <QIcon Name="exclamation-triangle-fill" />
+                    <strong>@missing.Count class@(missing.Count == 1 ? "" : "es") in this file @(missing.Count == 1 ? "is" : "are") not on your list</strong>
+                </div>
+                <p class="mc-lede">
+                    Add each one, or point it at the class you already have. Students import either way —
+                    but a class nobody has configured cannot be given a class teacher or a timetable.
+                </p>
+
+                <div class="table-wrap">
+                    <table class="data-table q-stack mc-table">
+                        <thead>
+                            <tr>
+                                <th>In the file</th>
+                                <th class="num">Students</th>
+                                <th>What to do</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var m in missing)
+                            {
+                                <tr>
+                                    <td><span class="mc-name">@m.Name</span></td>
+                                    <td class="num">@m.Students.ToString("N0")</td>
+                                    <td class="mc-actions">
+                                        @if (canManageStudents)
+                                        {
+                                            <QButton Text="@($"Add \"{m.Name}\"")" Icon="plus-lg" Size="sm" Variant="secondary"
+                                                     OnClick="@(() => AddMissingClassAsync(m.Name))"
+                                                     Loading="@(savingClasses && addingClass == m.Name)"
+                                                     Disabled="@savingClasses" />
+                                            @if (m.Similar.Count > 0)
+                                            {
+                                                <QSelect TValue="string" TItem="string" Value="@null"
+                                                         ValueChanged="@(v => MapClass(m.Name, v))"
+                                                         Items="@m.Similar" TextSelector="@(k => k)" ValueSelector="@(k => k)"
+                                                         Placeholder="or use an existing class" Class="mc-pick" />
+                                            }
+                                        }
+                                        else
+                                        {
+                                            <span class="cell-sub">Ask an administrator to add it.</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+
+            @if (mapped > 0)
+            {
+                <p class="mc-mapped">
+                    <QIcon Name="arrow-left-right" />
+                    @foreach (var kv in classMappings)
+                    {
+                        <span class="mc-chip">@kv.Key &rarr; @kv.Value</span>
+                    }
+                    <button type="button" class="mc-clear" @onclick="@(() => classMappings.Clear())">Undo</button>
+                </p>
+            }
+        </div>
+    };
+
+    /// <summary>
+    /// Use the class the branch already has. Held only for this import — nothing is written to the
+    /// student until the import runs, and the mapping is applied there, so backing out costs nothing.
+    /// </summary>
+    private void MapClass(string typed, string? existing)
+    {
+        if (string.IsNullOrWhiteSpace(existing)) return;
+        classMappings[typed] = existing;
+    }
+
+    /// <summary>
+    /// Add the class to this branch's list.
+    ///
+    /// <para>The whole vocabulary blob is round-tripped because <c>UpdateVocabularies</c> writes it
+    /// OVER the stored value — sending only the new class would delete every house, dormitory and
+    /// room. That is the standing trap on this endpoint and it is why the read comes first.</para>
+    /// </summary>
+    private async Task AddMissingClassAsync(string name)
+    {
+        if (vocabularies == null || savingClasses) return;
+
+        savingClasses = true;
+        addingClass = name;
+        try
+        {
+            // Re-read rather than trusting the copy this page loaded: somebody else may have added
+            // it in the meantime, and a blind write would drop whatever they did.
+            var current = await StudentApi.GetVocabulariesAsync(branchId);
+            if (ClassName.MatchIn(name, current.Classes.Select(c => c.Name)) != null)
+            {
+                vocabularies = current;
+                NotificationService.Notify(ToastSeverity.Info, "Already there", $"\"{name}\" is on the list now.");
+                return;
+            }
+
+            current.Classes.Add(new VocabularyItemDto
+            {
+                Name = name,
+                IsActive = true,
+                SortOrder = current.Classes.Count == 0 ? 0 : current.Classes.Max(c => c.SortOrder) + 1,
+            });
+
+            var result = await StudentApi.UpdateVocabulariesAsync(branchId, new UpdateBranchVocabulariesRequest
+            {
+                Vocabularies = current,
+            });
+
+            vocabularies = result.Vocabularies;
+            NotificationService.Notify(ToastSeverity.Success, "Class added", $"\"{name}\" is now one of this branch's classes.");
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not add the class", ex.Message);
+        }
+        finally
+        {
+            savingClasses = false;
+            addingClass = null;
+        }
     }
 
     private RenderFragment<RosterImportRow> RosterRowSummary => row => __builder =>
@@ -3015,12 +3309,60 @@
     };
 
     /// <summary>
+    /// Who in this file is already on the roll, and what would change about them. Asked BEFORE anything
+    /// is sent, because a school re-imports its own sheet every term and "1,584 of these 1,711 are
+    /// already here, 62 of them with a different class" is what the reader needs to see coming.
+    ///
+    /// <para>It also raises the names that look like one child entered twice — the panel turns that
+    /// into a confirmation the reader has to give, never a row this page drops on a guess.</para>
+    ///
+    /// <para>Advisory: the import re-checks under its own transaction, so a failure here leaves the
+    /// import exactly as it was rather than blocking it.</para>
+    /// </summary>
+    private async Task<ImportExisting> CheckRosterExisting(List<RosterImportRow> rows)
+    {
+        RosterImportPrecheckDto precheck;
+        try
+        {
+            precheck = await StudentApi.PrecheckImportAsync(branchId, new RosterImportPrecheckRequest { Rows = rows });
+        }
+        catch
+        {
+            return ImportExisting.None;
+        }
+
+        var changed = precheck.Existing.Where(e => e.Changes.Count > 0).ToList();
+        return new ImportExisting(
+            precheck.Existing.Count,
+            precheck.Existing.Take(3).Select(e => e.FullName).ToList(),
+            changed.Count,
+            changed.Take(5).Select(e => new ImportChange(
+                string.IsNullOrWhiteSpace(e.ClassName) ? e.FullName : $"{e.FullName} ({e.ClassName})",
+                e.Changes)).ToList(),
+            precheck.PossibleDuplicates);
+    }
+
+    /// <summary>
     /// The roster import has always matched an existing student by code and refreshed their row, so
     /// there is nothing to ask here: options carries the reader's answer for imports that DO ask, and
     /// this one has no separate "add only" mode to offer. See docs/plans/BULK_IMPORT_SYSTEM.md §6.
     /// </summary>
     private async Task<Guid> StartRosterImport(List<RosterImportRow> rows, ImportOptions options)
     {
+        // The reader's class decisions are applied HERE, on the way out, not written into the rows
+        // while they were still deciding. Backing out of the panel therefore costs nothing, and the
+        // rows the preview showed are the rows that were checked.
+        if (classMappings.Count > 0)
+        {
+            // `with`, because the row is init-only — and that is the better shape anyway: the list
+            // the preview showed is not mutated under the reader, a new one is sent.
+            rows = rows
+                .Select(r => r.ClassName is { Length: > 0 } typed && classMappings.TryGetValue(typed, out var use)
+                    ? r with { ClassName = use }
+                    : r)
+                .ToList();
+        }
+
         var started = await StudentApi.StartImportAsync(branchId, new StartRosterImportRequest
         {
             SourceFileName = importFileName,

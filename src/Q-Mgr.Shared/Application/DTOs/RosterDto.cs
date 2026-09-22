@@ -605,3 +605,48 @@ public record VocabularyUsageDto
     public string Name { get; init; } = string.Empty;
     public int StudentCount { get; init; }
 }
+
+/// <summary>
+/// "Which of these children are already on the roll, and what would this file change about them?"
+/// Read-only and side-effect free, so it is safe to call on every file a reader opens.
+///
+/// <para>It takes the ROWS rather than a list of admission numbers, because the two useful answers —
+/// what differs, and which names look like one child entered twice — cannot be worked out from keys
+/// alone. See <see cref="StaffImportPrecheckRequest"/>, which is the same shape on the staff side.</para>
+/// </summary>
+public record RosterImportPrecheckRequest
+{
+    public List<RosterImportRow> Rows { get; set; } = new();
+}
+
+/// <summary>One child the import would land on rather than add.</summary>
+public record RosterImportExistingDto
+{
+    /// <summary>The admission number this row matched on — the key the import upserts by.</summary>
+    public string StudentCode { get; init; } = string.Empty;
+
+    /// <summary>Their name as it stands on the roll, so the reader recognises them.</summary>
+    public string FullName { get; init; } = string.Empty;
+
+    /// <summary>The class they are in now. Shown because a class move is the change a reader most wants to see coming.</summary>
+    public string? ClassName { get; init; }
+
+    /// <summary>What this file would overwrite, in the reader's words ("name", "class", "guardian phone"). Empty means nothing is different.</summary>
+    public List<string> Changes { get; init; } = new();
+}
+
+/// <summary>
+/// The answer. A re-import of last term's sheet is the normal case in a school, so the reader is
+/// told before they commit how much of it lands on children already on the roll and how much of THAT
+/// would actually change anything — rather than reading it in the summary afterwards.
+/// </summary>
+public record RosterImportPrecheckDto
+{
+    public List<RosterImportExistingDto> Existing { get; init; } = new();
+
+    /// <summary>How many of <see cref="Existing"/> this file would actually change something about.</summary>
+    public int ChangedCount => Existing.Count(e => e.Changes.Count > 0);
+
+    /// <summary>Names that look like one child entered twice. A question for the reader, never a refusal.</summary>
+    public List<ImportPossibleDuplicateDto> PossibleDuplicates { get; init; } = new();
+}

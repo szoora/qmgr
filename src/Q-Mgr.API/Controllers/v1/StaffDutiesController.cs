@@ -11,6 +11,7 @@ using QMgr.Domain.Entities.Staff;
 using QMgr.Domain.Enums;
 using QMgr.Filters;
 using QMgr.Infrastructure.Data;
+using QMgr.Infrastructure.Services.Storage;
 using QMgr.Infrastructure.Services;
 
 namespace QMgr.API.Controllers.v1;
@@ -767,6 +768,7 @@ public class StaffDutiesController : ControllerBase
             {
                 UserId = u.Id,
                 FullName = StaffPerformanceMapping.FullName(u),
+                PhotoUrl = UploadLinks.Sign(u.PhotoUrl),
                 JobTitle = u.JobTitle,
                 DepartmentNames = StaffLookups.DepartmentNames(u.DepartmentIds, departmentNames),
                 Outcome = r?.Outcome,

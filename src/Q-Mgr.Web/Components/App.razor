@@ -18,7 +18,13 @@
     for its subtree. Null renders no attribute at all, so admin pages are untouched and keep
     setting their own theme from localStorage.
 *@
-<html lang="en" data-theme="@_publicDisplayTheme">
+@* The tenant's palette goes on <html>, for the same reason data-theme does: this file is
+   server-rendered on every request whatever the render mode, so it is the ONE place that colours
+   the pixels shown before any layout has rendered. Without it the "Initializing…" splash, and the
+   first paint of every public page, are Q-Mgr's wine on a school's own domain — which is the most
+   visible place the white-labelling can leak. Empty on the platform host, where the shell's own
+   wrapper still brands the signed-in view. *@
+<html lang="en" data-theme="@_publicDisplayTheme" style="@_host.BrandingStyle">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
@@ -129,6 +135,7 @@
     <script src="@Assets["js/print-service.js"]"></script>
     <script src="@Assets["js/share-utils.js"]"></script>
     <script src="@Assets["js/q-select.js"]"></script>
+    <script src="@Assets["js/brand.js"]"></script>
     <script src="@Assets["js/qFileUpload.js"]"></script>
     <!-- PDF flip-book viewer. pdf.js (~340KB) and page-flip are NOT loaded here: this file runs on
          every page of the app, and only a handful ever show a PDF. pdfFlipbook.js injects both the

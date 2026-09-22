@@ -11,7 +11,7 @@
 
 @if (!Embedded)
 {
-    <PageTitle>Notification Settings - Q-Mgr</PageTitle>
+    <QPageTitle Text="Notification Settings" />
 }
 
 <div class="qm-admin-page">
@@ -426,7 +426,7 @@
 
                                 <div class="qm-admin-form-group">
                                     <QInput TValue="int" @bind-Value="@settings.SmsLeadTokens" Label="'Nearly your turn' threshold" Type="number" Min="1" Max="10"
-                                            HelperText="Warn a customer once they are this many positions from the front (shared with SMS Lead Tokens)"
+                                            Hint="Warn a customer once they are this many positions from the front (shared with SMS Lead Tokens)"
                                             Disabled="@(!settings.QueueNotificationsEnabled)" />
                                 </div>
                             </div>

@@ -1,0 +1,107 @@
+@namespace QMgr.Web.Components.Shared.UI
+@using QMgr.Web.Services
+
+@*
+    THE MARK AT THE TOP OF EVERY PUBLIC PAGE — sign in, join, forgot and reset a password, verify an
+    address. One home, because the sign-in page was branded and its siblings were not: a school on
+    their own domain saw their crest and their name to sign in, then a generic link icon and "Join
+    your organisation" one click later, which reads as somebody else's site.
+
+    On a public page the branding comes from the HOST, not from a session — there is nobody signed in
+    to ask about. That is the standing split: the host decides out here, the organisation decides
+    inside the shell.
+
+    THE FRAME IS THE POINT. A tenant's logo is a file they uploaded: a crest with white corners, a
+    wordmark, a photograph. Dropped straight onto a page it looks pasted on. Inside a consistent
+    tile — padded, clipped, with a hairline ring and a soft shadow — any logo reads as though the
+    page was designed around it, and the square corners of a badly cut PNG simply stop existing.
+*@
+
+<div class="q-brand-mark @Class">
+    <div class="q-brand-mark__tile @(Round ? "q-brand-mark__tile--round" : "")">
+        @if (HasLogo)
+        {
+            <img src="@Host!.Branding.LogoUrl" alt="@Host.AppName" class="q-brand-mark__img" />
+        }
+        else
+        {
+            <QIcon Name="@FallbackIcon" Size="30" />
+        }
+    </div>
+
+    @if (ShowName)
+    {
+        <h1 class="q-brand-mark__name">@Name</h1>
+    }
+    @if (!string.IsNullOrWhiteSpace(Tagline))
+    {
+        <p class="q-brand-mark__tagline">@Tagline</p>
+    }
+</div>
+
+<style>
+    .q-brand-mark { text-align: center; margin-bottom: 20px; }
+
+    /* WITHOUT a tenant logo this is the brand disc the sign-in page has always had. WITH one it
+       becomes a light tile carrying a hairline ring in the brand colour — because a school's crest
+       is usually a PNG with its own white background, and a white blob floating inside a coloured
+       disc is exactly the "unplanned" look. On the tile it reads as a badge somebody designed. */
+    .q-brand-mark__tile {
+        width: 80px;
+        height: 80px;
+        margin: 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--qm-primary);
+        color: var(--qm-text-on-primary);
+        border-radius: var(--qm-radius-lg);
+        box-shadow: 0 6px 18px rgba(0, 0, 0, .10);
+    }
+    .q-brand-mark__tile--round { border-radius: 50%; }
+
+    .q-brand-mark__tile:has(.q-brand-mark__img) {
+        background: var(--qm-bg-card);
+        box-shadow: 0 0 0 1px rgba(var(--qm-primary-rgb), .20), 0 6px 18px rgba(0, 0, 0, .10);
+        padding: 8px;
+    }
+
+    /* `contain`, never `cover`: a crest is usually taller than it is wide and cropping somebody's
+       school badge is worse than letterboxing it. */
+    .q-brand-mark__img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+
+    .q-brand-mark__name {
+        margin: 14px 0 4px;
+        font-family: var(--qm-font-display);
+        font-size: var(--qm-text-xl);
+        font-weight: 700;
+        color: var(--qm-text-primary);
+        text-wrap: balance;
+    }
+    .q-brand-mark__tagline { margin: 0; color: var(--qm-text-secondary); font-size: var(--qm-text-base); }
+</style>
+
+@code {
+    /// <summary>Which host the browser arrived on. Null on a page that does not cascade it.</summary>
+    [CascadingParameter] public TenantHostContext? Host { get; set; }
+
+    /// <summary>What this page is for, under the name — "Sign in to your … account".</summary>
+    [Parameter] public string? Tagline { get; set; }
+
+    /// <summary>The icon shown when there is no tenant logo: this page's own subject.</summary>
+    [Parameter] public string FallbackIcon { get; set; } = "people-fill";
+
+    /// <summary>A heading a page wants instead of the brand name — "Welcome" on the platform host.</summary>
+    [Parameter] public string? Heading { get; set; }
+
+    [Parameter] public bool ShowName { get; set; } = true;
+
+    /// <summary>A circle rather than a rounded tile. The sign-in page's long-standing look.</summary>
+    [Parameter] public bool Round { get; set; } = true;
+
+    [Parameter] public string? Class { get; set; }
+
+    private bool HasLogo => Host?.IsTenantHost == true && !string.IsNullOrWhiteSpace(Host.Branding.LogoUrl);
+
+    private string Name => Heading ?? (Host?.IsTenantHost == true ? Host.AppName : "Q-Mgr");
+}

@@ -15,7 +15,7 @@
 <QCard Title="Minutes" Icon="journal-text" Class="pol-card pol-card--wide">
     <div class="form-row">
         <QInput TValue="int" @bind-Value="@Defaults.QuorumPercent" Type="number" Min="0" Max="100" Label="Quorum (% of those expected)"
-                HelperText="0 = not tracked, which suits most staff meetings. Set it where a body has a constitutional quorum." />
+                Hint="0 = not tracked, which suits most staff meetings. Set it where a body has a constitutional quorum." />
         <QInput TValue="int" @bind-Value="@Defaults.CirculateWithinDays" Type="number" Min="1" Max="60" Label="Circulate the draft within (days)"
                 HelperText="How soon after a meeting its draft minutes should go out for correction." />
     </div>

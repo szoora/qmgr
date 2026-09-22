@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QMgr.API.Authorization;
 using QMgr.Application.DTOs;
+using QMgr.Application.Import;
 using QMgr.Application.Tenant;
 using QMgr.Domain.Constants;
 using QMgr.Domain.Entities.Welfare;
@@ -145,49 +146,177 @@ public class StaffImportController : ControllerBase
         var refusal = await ScopedCallerRefusalAsync();
         if (refusal != null) return refusal;
 
-        var numbers = (request.EmployeeNumbers ?? new List<string>())
+        // The rows are the better question and the keys are the fallback: a caller that sent rows
+        // gets "what would change" and "who might be the same person twice" as well as "who is here".
+        var rows = request.Rows ?? new List<StaffImportRow>();
+
+        var numbers = (rows.Count > 0 ? rows.Select(r => r.EmployeeNumber) : request.EmployeeNumbers ?? new List<string>())
             .Where(n => !string.IsNullOrWhiteSpace(n))
-            .Select(n => n.Trim())
+            .Select(n => n!.Trim())
             .Distinct()
             .Take(MaxPrecheckEmails)
             .ToList();
-
-        if ((request.Emails == null || request.Emails.Count == 0) && numbers.Count == 0)
-            return Ok(new StaffImportPrecheckDto());
 
         // The same normalization the duplicate-detection guard and the unique index use, so
         // "A.Okello@School.UG " and "a.okello@school.ug" are one person here exactly as they are
         // at sign-up. RegistrationIdentity is the one home for that rule.
-        var wanted = (request.Emails ?? new List<string>())
+        var wanted = (rows.Count > 0 ? rows.Select(r => r.Email) : request.Emails ?? new List<string>())
             .Where(e => !string.IsNullOrWhiteSpace(e))
-            .Select(e => RegistrationIdentity.NormalizeEmail(e))
+            .Select(e => RegistrationIdentity.NormalizeEmail(e!))
             .Where(e => !string.IsNullOrWhiteSpace(e))
             .Distinct()
             .Take(MaxPrecheckEmails)
             .ToList();
 
+        if (wanted.Count == 0 && numbers.Count == 0)
+            return Ok(new StaffImportPrecheckDto());
+
         var organizationId = await ResolveOrganizationIdAsync(branchId);
 
-        var existing = await _context.Users.IgnoreQueryFilters().AsNoTracking()
+        var matched = await _context.Users.IgnoreQueryFilters().AsNoTracking()
             // Matched by address where the file gave one, and by the school's own staff number where
             // it did not — the same two keys the import itself uses to decide who is already here.
             .Where(u => u.OrganizationId == organizationId
                         && ((u.NormalizedEmail != null && wanted.Contains(u.NormalizedEmail))
                             || (u.EmployeeNumber != null && numbers.Contains(u.EmployeeNumber))))
-            .Select(u => new StaffImportExistingDto
-            {
-                NormalizedEmail = u.NormalizedEmail ?? string.Empty,
-                EmployeeNumber = u.EmployeeNumber,
-                FullName = ((u.FirstName ?? "") + " " + (u.LastName ?? "")).Trim(),
-                RoleName = u.Role.Name,
-                IsActive = u.IsActive,
-                // A pending join request is NOT an account somebody can use yet, and importing over
-                // one would quietly approve it. Worth saying so in the preview.
-                PendingApproval = u.PendingApprovalAt != null && u.JoinRequestRejectedAt == null
-            })
+            .Include(u => u.Role)
             .ToListAsync();
 
-        return Ok(new StaffImportPrecheckDto { Existing = existing });
+        // Which row landed on which person, so the answer can say what that row would change. A row
+        // with no email is matched by staff number — on a Ugandan school roll that is most of them.
+        var byEmail = matched.Where(u => !string.IsNullOrWhiteSpace(u.NormalizedEmail))
+            .GroupBy(u => u.NormalizedEmail!).ToDictionary(g => g.Key, g => g.First());
+        var byNumber = matched.Where(u => !string.IsNullOrWhiteSpace(u.EmployeeNumber))
+            .GroupBy(u => u.EmployeeNumber!).ToDictionary(g => g.Key, g => g.First());
+
+        var changesFor = new Dictionary<Guid, List<string>>();
+        var matchedIds = new HashSet<Guid>();
+        foreach (var row in rows)
+        {
+            var email = string.IsNullOrWhiteSpace(row.Email) ? null : RegistrationIdentity.NormalizeEmail(row.Email);
+            var number = string.IsNullOrWhiteSpace(row.EmployeeNumber) ? null : row.EmployeeNumber.Trim();
+
+            global::QMgr.Domain.Entities.Identity.User? person = null;
+            if (email != null) byEmail.TryGetValue(email, out person);
+            if (person == null && number != null) byNumber.TryGetValue(number, out person);
+            if (person == null) continue;
+
+            matchedIds.Add(person.Id);
+            var (first, last) = StaffImportChanges.NamesOf(row, request.NameOrder);
+            var labels = StaffImportChanges.Compute(row, first, last, person).Select(c => c.Label).ToList();
+
+            // A person named on two rows: everything either row would change is a change.
+            if (changesFor.TryGetValue(person.Id, out var already))
+                changesFor[person.Id] = already.Union(labels, StringComparer.Ordinal).ToList();
+            else
+                changesFor[person.Id] = labels;
+        }
+
+        var existing = matched.Select(u => new StaffImportExistingDto
+        {
+            NormalizedEmail = u.NormalizedEmail ?? string.Empty,
+            EmployeeNumber = u.EmployeeNumber,
+            FullName = ((u.FirstName ?? "") + " " + (u.LastName ?? "")).Trim(),
+            RoleName = u.Role?.Name ?? string.Empty,
+            IsActive = u.IsActive,
+            // A pending join request is NOT an account somebody can use yet, and importing over
+            // one would quietly approve it. Worth saying so in the preview.
+            PendingApproval = u.PendingApprovalAt != null && u.JoinRequestRejectedAt == null,
+            Changes = changesFor.TryGetValue(u.Id, out var c) ? c : new List<string>()
+        }).ToList();
+
+        var duplicates = rows.Count > 0
+            ? await PossibleStaffDuplicatesAsync(organizationId, rows, request.NameOrder, matchedIds)
+            : new List<ImportPossibleDuplicateDto>();
+
+        return Ok(new StaffImportPrecheckDto { Existing = existing, PossibleDuplicates = duplicates });
+    }
+
+    /// <summary>
+    /// TWO ROWS THAT MIGHT BE ONE PERSON — raised, never refused.
+    ///
+    /// <para>A school really does employ two people with the same name, so this can only ever be a
+    /// question put to the reader before the file is sent. What it catches is the pair nobody spots
+    /// by eye: the same name written round the other way under a second staff number, which is how
+    /// one teacher becomes two accounts and then two salary records.</para>
+    ///
+    /// <para>Names already matched by a key are skipped — those are people the import will land on,
+    /// which the "already here" half of the answer covers, and repeating them as suspected duplicates
+    /// would make the real ones impossible to see.</para>
+    /// </summary>
+    private async Task<List<ImportPossibleDuplicateDto>> PossibleStaffDuplicatesAsync(
+        Guid organizationId, List<StaffImportRow> rows, NameOrder nameOrder, HashSet<Guid> matchedIds)
+    {
+        const int MaxReported = 25;
+        var found = new List<ImportPossibleDuplicateDto>();
+
+        // --- within the file ---
+        var byName = new Dictionary<string, (string Name, HashSet<string> Keys)>(StringComparer.Ordinal);
+        var unmatchedByName = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var row in rows)
+        {
+            var (first, last) = StaffImportChanges.NamesOf(row, nameOrder);
+            var display = $"{first} {last}".Trim();
+            var key = ImportMatching.NameKey(display);
+            if (key == null) continue;
+
+            // The identity keys this row carries. Two rows with the SAME key are the same person said
+            // twice, which the row-level rules already handle; two rows with DIFFERENT keys under one
+            // name are the case worth asking about.
+            var identity = !string.IsNullOrWhiteSpace(row.Email)
+                ? RegistrationIdentity.NormalizeEmail(row.Email)
+                : (row.EmployeeNumber ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(identity)) identity = "(no staff number or address)";
+
+            if (!byName.TryGetValue(key, out var seen)) byName[key] = (display, new HashSet<string>(StringComparer.Ordinal) { identity });
+            else seen.Keys.Add(identity);
+
+            unmatchedByName.TryAdd(key, display);
+        }
+
+        foreach (var (_, entry) in byName)
+        {
+            if (entry.Keys.Count < 2) continue;
+            found.Add(new ImportPossibleDuplicateDto
+            {
+                Name = entry.Name,
+                Detail = $"on {entry.Keys.Count} rows of this file under different staff numbers — {string.Join(", ", entry.Keys.Take(3))}",
+                WithinFile = true
+            });
+            if (found.Count >= MaxReported) return found;
+        }
+
+        // --- against the people already here ---
+        // Read in memory because the key folds case, punctuation and WORD ORDER, none of which SQL can
+        // do without an extension this project does not take. A staff list is bounded by the module's
+        // per-branch cap; the Take is the backstop for an organization far larger than that.
+        var onFile = await _context.Users.IgnoreQueryFilters().AsNoTracking()
+            .Where(u => u.OrganizationId == organizationId)
+            .Select(u => new { u.Id, u.FirstName, u.LastName, u.EmployeeNumber, u.NormalizedEmail })
+            .Take(5000)
+            .ToListAsync();
+
+        foreach (var person in onFile)
+        {
+            if (matchedIds.Contains(person.Id)) continue;   // the import lands on them; not a duplicate
+
+            var key = ImportMatching.NameKey($"{person.FirstName} {person.LastName}");
+            if (key == null || !unmatchedByName.TryGetValue(key, out var inFile)) continue;
+
+            var label = !string.IsNullOrWhiteSpace(person.EmployeeNumber) ? person.EmployeeNumber
+                : !string.IsNullOrWhiteSpace(person.NormalizedEmail) ? person.NormalizedEmail
+                : "no staff number";
+            found.Add(new ImportPossibleDuplicateDto
+            {
+                Name = inFile,
+                Detail = $"already here as {label}, which is not the staff number this file gives — this may be the same person twice",
+                WithinFile = false
+            });
+            if (found.Count >= MaxReported) break;
+        }
+
+        return found;
     }
 
     /// <summary>

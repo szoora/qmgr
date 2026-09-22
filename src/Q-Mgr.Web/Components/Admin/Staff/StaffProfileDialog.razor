@@ -1,3 +1,4 @@
+@using QMgr.Domain.Identity
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Web.Services
@@ -32,7 +33,7 @@
         else
         {
             <div class="sp-identity">
-                <QAvatar Name="@profile.FullName" Size="md" />
+                <QAvatar Name="@profile.FullName" PhotoUrl="@profile.PhotoUrl" Size="md" />
                 <div class="sp-identity__text">
                     <strong>@profile.FullName</strong>
                     <span>@profile.RoleName@(string.IsNullOrWhiteSpace(profile.Email) ? "" : " · " + profile.Email)</span>
@@ -71,7 +72,9 @@
                     <QInput TValue="string" Label="Job title" @bind-Value="form.JobTitle" Placeholder="Head of Year 4" Disabled="@(!CanEdit)" />
                 </div>
                 <div class="form-group">
-                    <QInput TValue="string" Label="Employee number" @bind-Value="form.EmployeeNumber" Disabled="@(!CanEdit)" />
+                    <QInput TValue="string" Label="Staff number" @bind-Value="form.EmployeeNumber" Required="true" Disabled="@(!CanEdit)"
+                            Hint="The school's own number for this person. Unique here, and for anybody with no email address it is the only way they are recognised when the staff list is imported again."
+                            HasError="@(numberProblem != null)" ErrorMessage="@numberProblem" />
                 </div>
                 <div class="form-group">
                     <QSelect TValue="StaffEmploymentType?" TItem="EnumOption<StaffEmploymentType>" Label="Terms"
@@ -246,6 +249,15 @@
     private async Task Save()
     {
         if (profile is null) return;
+
+        // The same rule the API enforces, from the one home.
+        numberProblem = PersonCode.ValidateStaffNumber(form.EmployeeNumber);
+        if (numberProblem != null)
+        {
+            Toast.Notify(ToastSeverity.Warning, numberProblem, "It is how the school's own file identifies this person.");
+            return;
+        }
+
         isSaving = true;
         try
         {
@@ -266,9 +278,12 @@
         }
     }
 
+    private string? numberProblem;
+
     private async Task Close()
     {
         loadedFor = null;
+        numberProblem = null;
         Visible = false;
         await VisibleChanged.InvokeAsync(false);
     }

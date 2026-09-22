@@ -1046,14 +1046,42 @@
     margin-bottom: 4px;
 }
 
+/* A <button> since 2026-09-22 — the row is the control that opens the notification — so it has to
+   un-inherit the button defaults the element brings with it. */
 .notification-item {
     display: flex;
+    align-items: center;
     gap: 14px;
+    width: 100%;
     padding: 12px 16px;
     min-height: var(--q-control-h-lg);
+    font: inherit;
     font-size: var(--q-control-font);
+    color: inherit;
+    text-align: left;
+    background: none;
+    border: 0;
+    cursor: pointer;
     transition: background 0.2s ease;
 }
+
+.notification-item:hover { background: var(--qm-bg-card-hover); }
+
+.notification-item:focus-visible {
+    outline: 2px solid var(--qm-primary);
+    outline-offset: -2px;
+}
+
+/* The unread mark and the "this one goes somewhere" chevron, mirroring /notifications' own rows. */
+.notification-dot {
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--qm-primary);
+}
+
+.notification-go { flex: 0 0 auto; color: var(--qm-text-muted); }
 
 [data-theme="dark"] .notification-item {
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
@@ -2013,4 +2041,181 @@
     --rz-grid-filter-font-size: var(--qm-text-base);
     --rz-pager-summary-font-size: var(--qm-text-sm);
     --rz-body-font-size: var(--qm-text-base);
+}
+
+/* ==========================================================================
+   MOBILE NAVIGATION BAR (2026-09-22) — the phone-only bottom bar.
+
+   Under 768px every destination used to be behind the hamburger, and hiding the
+   main navigation cuts discoverability almost in half (NN/g). Four role-chosen
+   slots plus More, which is inside Material 3's 3–5 and keeps Apple's warning
+   about over-using a More tab intact: More is overflow, never a daily task.
+
+   THE BAND IS RESERVED, NOT OVERLAID. .qm-main gets the bar's height plus the
+   phone's home-indicator inset as bottom padding, so nothing at the end of a
+   page sits under it. Before this, six pages placed real controls in the bottom
+   64px — dashboard tiles, roster and staff row actions, timetable cells, library
+   card buttons — and a bar laid over them would have covered every one.
+   ========================================================================== */
+:root {
+    --qm-mobilenav-h: 56px;
+    /* env() resolves to 0 everywhere but a notched phone, so this costs nothing
+       on a desktop and is the only thing standing between the bar and the home
+       indicator on an iPhone. Nothing in this app reserved it before. */
+    --qm-mobilenav-safe: env(safe-area-inset-bottom, 0px);
+    --qm-mobilenav-total: calc(var(--qm-mobilenav-h) + var(--qm-mobilenav-safe));
+}
+
+@media (max-width: 768px) {
+    .qm-main { padding-bottom: var(--qm-mobilenav-total); }
+}
+
+.qm-mobilenav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    /* Over the page, under the header (1030) and the sidebar overlay (1015/1020):
+       the bar must never sit above an open menu. */
+    z-index: 1025;
+    display: none;
+    align-items: stretch;
+    height: var(--qm-mobilenav-total);
+    padding-bottom: var(--qm-mobilenav-safe);
+    background: var(--qm-bg-card);
+    border-top: 1px solid var(--qm-border);
+    box-shadow: 0 -1px 8px rgba(0, 0, 0, .06);
+}
+
+@media (max-width: 768px) {
+    .qm-mobilenav { display: flex; }
+}
+
+.qm-mobilenav__slot {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    /* 48px clears WCAG 2.5.5 (44px, AAA) and this project's own 40px phone floor.
+       The bar is the one place a tap must never miss. */
+    min-height: 48px;
+    padding: 4px 2px;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: var(--qm-text-muted);
+    text-decoration: none;
+    cursor: pointer;
+    position: relative;
+}
+
+.qm-mobilenav__slot:hover { color: var(--qm-text-secondary); }
+
+/* Tokens, never literals: a white-labelled tenant's bar is theirs. */
+.qm-mobilenav__slot--active { color: var(--qm-primary); }
+
+.qm-mobilenav__slot:focus-visible {
+    outline: 2px solid var(--qm-primary);
+    outline-offset: -3px;
+}
+
+.qm-mobilenav__icon { font-size: 19px; line-height: 1; }
+
+/* LABELS ARE ALWAYS ON. Material 3 permits label-on-active-only; NN/g's
+   discoverability finding argues against it — icon-only navigation is the
+   hamburger problem at a smaller scale. */
+.qm-mobilenav__label {
+    font-size: var(--qm-text-xs);
+    line-height: 1.1;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.qm-mobilenav__badge {
+    position: absolute;
+    top: 2px;
+    left: 50%;
+    margin-left: 4px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: var(--qm-danger);
+    color: var(--qm-text-on-primary);
+    font-size: 10px;
+    line-height: 16px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---- The More sheet ------------------------------------------------------ */
+.qm-moresheet__backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1026;
+    background: rgba(0, 0, 0, .45);
+}
+
+.qm-moresheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1027;
+    max-height: 78vh;
+    overflow-y: auto;
+    padding: 8px 0 calc(12px + var(--qm-mobilenav-safe));
+    background: var(--qm-bg-card);
+    border-radius: var(--qm-radius-lg) var(--qm-radius-lg) 0 0;
+    box-shadow: 0 -6px 24px rgba(0, 0, 0, .18);
+}
+
+.qm-moresheet__grip {
+    width: 36px;
+    height: 4px;
+    margin: 4px auto 10px;
+    border-radius: 999px;
+    background: var(--qm-border);
+}
+
+.qm-moresheet__group {
+    padding: 10px 16px 4px;
+    font-size: var(--qm-text-xs);
+    font-weight: 600;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--qm-text-muted);
+}
+
+.qm-moresheet__item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 16px;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: var(--qm-text-base);
+    color: var(--qm-text-primary);
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.qm-moresheet__item:hover { background: var(--qm-bg-card-hover); }
+.qm-moresheet__item i { color: var(--qm-text-muted); width: 18px; text-align: center; }
+.qm-moresheet__item--active { color: var(--qm-primary); }
+.qm-moresheet__item--active i { color: var(--qm-primary); }
+
+/* The date picker escapes to the bottom of the screen under 480px and the bottom
+   sheet sits there too — both have to clear the bar. */
+@media (max-width: 768px) {
+    .q-datepicker__popover { bottom: calc(12px + var(--qm-mobilenav-total)) !important; }
+    .bottom-sheet { padding-bottom: var(--qm-mobilenav-total); }
 }

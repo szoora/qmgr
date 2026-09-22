@@ -6,6 +6,7 @@
 @inject IPermissionService PermissionService
 @inject IQueueApiService QueueApi
 @inject IJSRuntime JSRuntime
+@inject IBrandContext Brand
 @inject IBranchStateService BranchState
 @inject HttpClient Http
 @inject JsonSerializerOptions JsonOptions
@@ -29,10 +30,22 @@
 @* Show loading state until authentication is determined *@
 @if (!authChecked)
 {
+    @* THE FIRST THING ANYBODY SEES, and until 2026-09-22 it was Q-Mgr's logo in Q-Mgr's wine even on
+       a school's own domain. The palette now arrives on <html> from App.razor, which is rendered
+       before any circuit exists; the logo and the name come from the same host context, so a
+       white-labelled deployment never shows ours. The spinner takes the token rather than
+       Bootstrap's text-primary, which is a colour of its own and follows nothing. *@
     <div class="qm-app-loading" data-theme="@currentTheme">
         <div class="loading-content">
-            <img src="/images/icon-512.svg" alt="Q-Mgr" class="loading-logo" />
-            <div class="spinner-border text-primary mt-3" role="status">
+            @if (TenantHost?.IsTenantHost == true && !string.IsNullOrWhiteSpace(TenantHost.Branding.LogoUrl))
+            {
+                <img src="@TenantHost.Branding.LogoUrl" alt="@TenantHost.AppName" class="loading-logo" />
+            }
+            else
+            {
+                <img src="/images/icon-512.svg" alt="@(TenantHost?.AppName ?? "Q-Mgr")" class="loading-logo" />
+            }
+            <div class="spinner-border loading-spinner mt-3" role="status">
                 <span class="visually-hidden">Loading...</span>
             </div>
             <p class="loading-text mt-2">Initializing...</p>
@@ -53,6 +66,11 @@
                 margin: 0 auto;
                 width: 80px;
                 height: 80px;
+                /* A tenant's own logo is any shape; ours is square. Contain rather than crop. */
+                object-fit: contain;
+            }
+            .loading-spinner {
+                color: var(--qm-primary);
             }
             .loading-text {
                 color: var(--qm-text-secondary);
@@ -120,7 +138,7 @@ else
             <div class="dropdown">
                 <button class="user-dropdown" data-bs-toggle="dropdown" aria-expanded="false">
                     @* QAvatar, not a hand-built initial: FullName.Substring(0, 1) threw on an empty name. *@
-                    <QAvatar Name="@(string.IsNullOrWhiteSpace(currentUser?.FullName) ? currentUser?.Username : currentUser?.FullName)" Size="sm" Class="header-avatar" />
+                    <QAvatar Name="@(string.IsNullOrWhiteSpace(currentUser?.FullName) ? currentUser?.Username : currentUser?.FullName)" PhotoUrl="@currentUser?.PhotoUrl" Size="sm" Class="header-avatar" />
                     <i class="bi bi-chevron-down"></i>
                 </button>
                 <ul class="dropdown-menu dropdown-menu-end">
@@ -481,14 +499,11 @@ else
                to take "Powered by SACC Software" off their sign-in page and still reads "Q-Mgr" at
                the foot of every screen afterwards has not got what they bought. Same flag, same
                server-side resolution — see PoweredBy. *@
-            @if (shellBranding.AttributionRemoved)
-            {
-                <span>&copy; @DateTime.Now.Year @ShellAppName</span>
-            }
-            else
-            {
-                <span>&copy; @DateTime.Now.Year Q-Mgr Front-Office Platform</span>
-            }
+            @* QCopyright is the one home for this line — the shell had two branches of it, five
+               legal pages had a literal with the YEAR TYPED IN, and email had a ninth. The source
+               here is the ORGANISATION rather than the host, for the reason PoweredBy gives. *@
+            <QCopyright Owner="@ShellAppName" Attributed="@shellBranding.AttributionRemoved"
+                        Suffix="@(shellBranding.AttributionRemoved ? null : "Q-Mgr Front Office")" />
             <div class="footer-links">
                 @if (isSuperAdmin)
                 {
@@ -591,7 +606,14 @@ else
                 {
                     @foreach (var notification in notifications)
                     {
-                        <div class="notification-item @(notification.IsRead ? "" : "unread")">
+                        @* A BUTTON, not a div. Until 2026-09-22 these rows carried no handler at
+                           all: a notification could not be opened from the bell and nothing was
+                           ever marked read there — reported as "it does not respond, no signs that
+                           it has been read". MarkAsRead existed and nothing called it. *@
+                        <button type="button"
+                                class="notification-item @(notification.IsRead ? "" : "unread")"
+                                @onclick="@(() => OpenNotification(notification))"
+                                aria-label="@($"{notification.Title}{(notification.IsRead ? "" : ", unread")}")">
                             <div class="notification-icon @notification.Type">
                                 <i class="bi @GetNotificationIcon(notification.Type)"></i>
                             </div>
@@ -600,7 +622,15 @@ else
                                 <span class="notification-message">@notification.Message</span>
                                 <span class="notification-time">@HumanizeDateTime(notification.CreatedAt)</span>
                             </div>
-                        </div>
+                            @if (!notification.IsRead)
+                            {
+                                <span class="notification-dot" aria-hidden="true"></span>
+                            }
+                            @if (!string.IsNullOrEmpty(notification.ActionUrl))
+                            {
+                                <i class="bi bi-chevron-right notification-go" aria-hidden="true"></i>
+                            }
+                        </button>
                     }
                 }
             </div>
@@ -617,6 +647,25 @@ else
                 </a>
             </div>
         </div>
+    }
+
+    @* THE PHONE NAVIGATION BAR. Rendered whenever the shell is, and hidden above 768px by CSS —
+       the server cannot know the viewport, so a media query is the only honest answer. It sits
+       outside the sidebar and the main column so nothing has to grow a wrapper for it. *@
+    @if (authChecked && currentUser != null)
+    {
+        <QMobileNav Slots="@mobileSlots" MoreGroups="@mobileMore" UnreadCount="@notificationCount">
+            <ShellActions>
+                <button type="button" class="qm-moresheet__item" @onclick="ToggleTheme">
+                    <i class="bi @(currentTheme == "dark" ? "bi-sun" : "bi-moon")" aria-hidden="true"></i>
+                    <span>@(currentTheme == "dark" ? "Light mode" : "Dark mode")</span>
+                </button>
+                <button type="button" class="qm-moresheet__item" @onclick="Logout">
+                    <i class="bi bi-box-arrow-right" aria-hidden="true"></i>
+                    <span>Sign out</span>
+                </button>
+            </ShellActions>
+        </QMobileNav>
     }
 
     <!-- Connection Lost Overlay -->
@@ -663,6 +712,17 @@ else
         catch
         {
             shellBranding = new TenantHostBrandingDto { Resolved = false };
+        }
+
+        // The tab follows the organisation, not the host: most tenants sign in on the platform
+        // address, and should not need their own domain to stop seeing our name in their browser
+        // tab on every page. The same split the attribution rule makes — host for public pages,
+        // organisation inside the shell.
+        Brand.Set(ShellAppName, shellBranding.FaviconUrl);
+        if (!string.IsNullOrWhiteSpace(shellBranding.FaviconUrl))
+        {
+            try { await JSRuntime.InvokeVoidAsync("qmgrBrand.setFavicon", shellBranding.FaviconUrl); }
+            catch { /* the tab keeps the document's own icon; nothing else depends on this */ }
         }
     }
 
@@ -740,6 +800,30 @@ else
     // Fails open when the module list could not be fetched: an empty set then means "we don't
     // know", not "you own nothing", and hiding a customer's paid features during an API blip is
     // worse than briefly showing an item the API would refuse anyway.
+    @* The bar is derived ONCE, after permissions and modules are known, and re-derived only when
+       the permission set changes. Deriving it per render would run the whole gate on every
+       keystroke in a page beneath it. *@
+    private IReadOnlyList<MobileNav.Slot> mobileSlots = Array.Empty<MobileNav.Slot>();
+    private IReadOnlyList<MobileNav.Group> mobileMore = Array.Empty<MobileNav.Group>();
+
+    /// <summary>
+    /// Rebuild the phone bar from what this person can actually reach. MobileNav owns the choice;
+    /// this only supplies the two predicates, and both are the SAME ones the sidebar uses — a
+    /// second idea of "can they see this" is how a bar comes to offer a slot that 403s.
+    /// </summary>
+    private async Task RebuildMobileNavAsync()
+    {
+        // The WHOLE set once, not one awaited call per candidate: MobileNav asks about a dozen
+        // codes, and a predicate over the set is both cheaper and SYNCHRONOUS — which is what lets
+        // MobileNav stay a pure decision with no service of its own to mock or drift from.
+        var codes = await PermissionService.GetPermissionsAsync();
+        var superAdmin = isSuperAdmin;
+        bool Has(string code) => superAdmin || codes.Contains(code);
+
+        mobileSlots = MobileNav.SlotsFor(Has, HasModule);
+        mobileMore = MobileNav.MoreFor(Has, HasModule, mobileSlots);
+    }
+
     private bool HasModule(string moduleCode) =>
         isSuperAdmin || !ModuleState.LoadSucceeded || ModuleState.ActiveModuleCodes.Contains(moduleCode);
     private bool tokensInitialized = false;
@@ -748,6 +832,8 @@ else
     protected override async Task OnInitializedAsync()
     {
         AuthService.SessionExpired += HandleSessionExpired;
+        AuthService.CurrentUserChanged += HandleCurrentUserChanged;
+        Brand.BrandingSaved += HandleBrandingSaved;
 
         // During pre-rendering, TokenStorageService is empty and localStorage isn't available
         // We'll load everything in OnAfterRenderAsync instead
@@ -761,6 +847,7 @@ else
 
             // Load permissions for menu visibility
             await LoadPermissionsAsync();
+            await RebuildMobileNavAsync();
             await LoadActiveModulesAsync();
 
             // Load branches
@@ -850,6 +937,7 @@ else
                     if (RedirectIfPasswordChangeRequired()) return;
                     isSuperAdmin = await PermissionService.IsSuperAdminAsync();
                     await LoadPermissionsAsync();
+                    await RebuildMobileNavAsync();
                     await LoadBranches();
                     await LoadNotifications();
                     await BuildApiDocsUrlAsync();
@@ -1247,6 +1335,7 @@ else
         {
             await PermissionService.RefreshAsync();
             await LoadPermissionsAsync();
+            await RebuildMobileNavAsync();
             if (AuthStateProvider is CustomAuthenticationStateProvider provider)
             {
                 provider.NotifyAuthenticationStateChanged();
@@ -1260,6 +1349,12 @@ else
     {
         await InvokeAsync(() =>
         {
+            // A push can arrive twice — a reconnect replays, and two hub handlers can overlap while
+            // one is being swapped. Keyed on the row's own id, which is the only thing that cannot
+            // collide; without it the bell counted the same notification more than once and the
+            // badge drifted upwards for the life of the circuit.
+            if (notifications.Any(n => n.Id == notification.Id)) return;
+
             notifications.Insert(0, new NotificationItem
             {
                 Id = notification.Id,
@@ -1278,7 +1373,10 @@ else
                 notifications = notifications.Take(20).ToList();
             }
 
-            notificationCount++;
+            // Only an UNREAD arrival moves the badge. A notification pushed already-read (the
+            // sender marked it, or it is a replay of one this person has since opened) must not.
+            // The server's own count push corrects this either way; this keeps the interim honest.
+            if (!notification.IsRead) notificationCount++;
             StateHasChanged();
         });
     }
@@ -1483,24 +1581,47 @@ else
 
     private async Task MarkAllRead()
     {
-        await NotificationApi.MarkAllAsReadAsync();
+        // The API answers with the REMAINING unread count rather than nothing, so the badge follows
+        // what the server actually did. Assuming zero is wrong the moment a push lands mid-call.
+        var remaining = await NotificationApi.MarkAllAsReadRemainingAsync();
         foreach (var n in notifications)
         {
             n.IsRead = true;
         }
-        notificationCount = 0;
+        notificationCount = remaining ?? 0;
         StateHasChanged();
     }
 
-    private async Task MarkAsRead(NotificationItem notification)
+    /// <summary>
+    /// Opening a notification from the bell: mark it read, then go where it points.
+    ///
+    /// <para>The mark and the navigation are ordered deliberately. A notification with an ActionUrl
+    /// navigates, which on a soft navigation keeps this circuit and this layout alive — so the row
+    /// must already be updated. The count is NOT decremented here: the API pushes the real unread
+    /// count back over SignalR (<c>NotifyUnreadCountAsync</c>), and subtracting one locally as well
+    /// would double-count whenever that push lands.</para>
+    /// </summary>
+    private async Task OpenNotification(NotificationItem notification)
     {
         if (!notification.IsRead)
         {
-            await NotificationApi.MarkAsReadAsync(notification.Id);
-            notification.IsRead = true;
-            notificationCount = Math.Max(0, notificationCount - 1);
-            StateHasChanged();
+            // Reported success only. The client service swallows a failure and returns false, so a
+            // row that could not be marked read stays visibly unread rather than lying about it.
+            if (await NotificationApi.TryMarkAsReadAsync(notification.Id))
+            {
+                notification.IsRead = true;
+                notificationCount = Math.Max(0, notificationCount - 1);
+            }
         }
+
+        if (!string.IsNullOrEmpty(notification.ActionUrl))
+        {
+            showNotifications = false;
+            NavigationManager.NavigateTo(notification.ActionUrl);
+            return;
+        }
+
+        StateHasChanged();
     }
 
     private string GetNotificationIcon(string type) => type switch
@@ -1594,6 +1715,30 @@ else
     /// </summary>
     private void HandleSessionExpired() => _ = InvokeAsync(SendToSignIn);
 
+    /// <summary>
+    /// The stored copy of the signed-in person was replaced — they added a profile photograph. Re-read
+    /// it so the header avatar follows without a reload; the photo's link is signed per fetch, so the
+    /// copy this layout took at sign-in cannot carry it.
+    /// </summary>
+    /// <summary>
+    /// The Appearance page saved. Re-read the organisation branding and restamp the palette on the
+    /// shell so a new colour is on screen without a reload — BrandPalette derives the whole
+    /// --qm-primary-* family from it, so restamping the wrapper is all that is needed.
+    /// </summary>
+    private void HandleBrandingSaved() => _ = InvokeAsync(async () =>
+    {
+        if (disposed) return;
+        await LoadShellBrandingAsync();
+        StateHasChanged();
+    });
+
+    private void HandleCurrentUserChanged() => _ = InvokeAsync(async () =>
+    {
+        if (disposed) return;
+        currentUser = await AuthService.GetCurrentUserAsync();
+        StateHasChanged();
+    });
+
     private void SendToSignIn()
     {
         if (disposed || redirectingToLogin) return;
@@ -1621,6 +1766,8 @@ else
     {
         disposed = true;
         AuthService.SessionExpired -= HandleSessionExpired;
+        AuthService.CurrentUserChanged -= HandleCurrentUserChanged;
+        Brand.BrandingSaved -= HandleBrandingSaved;
         clockTimer?.Dispose();
 
         // Unsubscribe from notification events

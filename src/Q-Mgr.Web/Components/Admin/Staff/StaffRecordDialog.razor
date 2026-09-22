@@ -102,7 +102,7 @@
                             <QSelect TValue="Guid?" TItem="StaffDutyDto" @bind-Value="@dutyId" Items="@recentDuties" AllowClear="true"
                                      TextSelector="@(d => $"{d.Title} — {QDateFormat.DT(d.StartsAt.ToLocalTime())}")" ValueSelector="@(d => (Guid?)d.Id)"
                                      Label="Linked lesson or duty" Placeholder="@(isLoadingDuties ? "Loading duties..." : "Optional")"
-                                     HelperText="When a second observer links the same lesson, the two ratings show side by side in the reports." />
+                                     Hint="When a second observer links the same lesson, the two ratings show side by side in the reports." />
                         </div>
                         break;
 

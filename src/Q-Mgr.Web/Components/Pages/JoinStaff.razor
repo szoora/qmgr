@@ -15,7 +15,7 @@
     /join/{BranchId:guid} is the queue's page; a join code is base32 and can never parse as a GUID.
 *@
 
-<PageTitle>Join your school - Q-Mgr</PageTitle>
+<QPageTitle Text="Join your school" />
 
 <div class="login-container">
     <AmbientBackground />
@@ -36,9 +36,7 @@
         else if (done)
         {
             <div class="login-header">
-                <div class="logo-wrapper"><div class="logo-circle"><QIcon Name="check-circle-fill" Size="32" /></div></div>
-                <h1>Request sent</h1>
-                <p>@doneMessage</p>
+                <QBrandMark Heading="Request sent" FallbackIcon="check-circle-fill" Tagline="@doneMessage" />
             </div>
             <a href="/login" class="btn-login"><QIcon Name="box-arrow-in-right" Size="18" /><span>Go to sign in</span></a>
         }

@@ -26,7 +26,7 @@
    old links still work; standalone it renders its own shell. *@
 @if (!Embedded)
 {
-    <PageTitle>Departments &amp; Structure - Q-Mgr</PageTitle>
+    <QPageTitle Text="Departments &amp; Structure" />
 }
 
 <div class="admin-page">
@@ -112,7 +112,7 @@
                                 <tr>
                                     <td>
                                         <div class="ss-person">
-                                            <QAvatar Name="@m.FullName" Size="sm" />
+                                            <QAvatar Name="@m.FullName" PhotoUrl="@m.PhotoUrl" Size="sm" />
                                             <div>
                                                 <a href="/admin/staff/@m.UserId/timeline">@m.FullName</a>
                                                 <div class="ss-sub">@(m.JobTitle ?? m.Email)</div>
@@ -325,7 +325,7 @@
                               Placeholder="No department" HelperText="A person may belong to more than one department." />
                 <QSelect TValue="Guid?" TItem="StaffMemberDto" Label="Line manager" @bind-Value="@memberLineManager" Items="@ActiveStaff.Where(s => s.UserId != editingMember.UserId).ToList()"
                          TextSelector="@(m => m.FullName)" ValueSelector="@(m => (Guid?)m.UserId)" AllowClear="true" Placeholder="No line manager"
-                         HelperText="Appraises this person, is told about their standard records, and sees them with the Direct reports staff scope." />
+                         Hint="Appraises this person, is told about their standard records, and sees them with the Direct reports staff scope." />
                 <p class="ss-sub">They will be notified that their department or line manager changed.</p>
             </div>
         }
@@ -660,7 +660,9 @@
               Hint = "Optional. Without one, the person signs in with a username and a temporary password." },
         new ImportColumn("Username", false, "User Name", "Login") { Kind = ImportFieldKind.Code },
         new ImportColumn("Phone", false, "Telephone", "Mobile", "Phone Number", "Tel") { Kind = ImportFieldKind.Phone },
-        new ImportColumn("EmployeeNumber", false, "Employee No", "Staff Number", "Staff No", "Payroll Number"),
+        new ImportColumn("EmployeeNumber", true, "Employee No", "Staff Number", "Staff No", "Payroll Number", "Account", "Account No", "Account Number", "Staff Id", "Staff Code")
+            { Kind = ImportFieldKind.Code,
+              Hint = "Required. Most school staff have no email address, so this is the only way a second import recognises somebody already here — without it the same sheet creates the whole staff list again. Unique within the school; upper and lower case count as the same number." },
         new ImportColumn("JobTitle", false, "Job Title", "Title", "Position", "Designation"),
         new ImportColumn("RoleCode", false, "Role", "Role Code"),
         new ImportColumn("DepartmentCodes", false, "Departments", "Department", "Department Codes"),
@@ -892,10 +894,16 @@
     /// </summary>
     private async Task<ImportExisting> CheckStaffExisting(List<StaffImportRow> rows)
     {
+        StaffImportPrecheckDto precheck;
         try
         {
-            var precheck = await StaffApi.PrecheckStaffImportAsync(branchId, new StaffImportPrecheckRequest
+            // The ROWS, not just the keys: with them the answer can say what this file would change
+            // about each person and which names look like one person entered twice. The name order is
+            // sent too, because a combined name read the wrong way round lands a row on the wrong person.
+            precheck = await StaffApi.PrecheckStaffImportAsync(branchId, new StaffImportPrecheckRequest
             {
+                Rows = rows,
+                NameOrder = nameOrder,
                 Emails = rows.Select(r => r.Email).Where(e => !string.IsNullOrWhiteSpace(e)).ToList(),
                 // The other half of the question, for everybody in the file with no address.
                 EmployeeNumbers = rows.Select(r => r.EmployeeNumber ?? string.Empty)
@@ -916,7 +924,14 @@
             return ImportExisting.None;
         }
 
-        return new ImportExisting(existingEmails.Count, existingEmails.Values.Take(3).ToList());
+        var changed = precheck.Existing.Where(e => e.Changes.Count > 0).ToList();
+        return new ImportExisting(
+            existingEmails.Count,
+            existingEmails.Values.Take(3).ToList(),
+            changed.Count,
+            changed.Take(5).Select(e => new ImportChange(
+                string.IsNullOrWhiteSpace(e.FullName) ? "Somebody" : e.FullName, e.Changes)).ToList(),
+            precheck.PossibleDuplicates);
     }
 
     private async Task<Guid> StartStaffImport(List<StaffImportRow> rows, ImportOptions options)
