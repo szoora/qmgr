@@ -156,8 +156,32 @@ public class User : BaseAuditableEntity
     public Guid? AssignedCounterId { get; set; }
 
     public DateTime? LastLogin { get; set; }
+
+    /// <summary>
+    /// The BROWSER's refresh token — one per user, raw, replaced on each use. Deliberately left
+    /// exactly as it was when the mobile shell arrived: <see cref="UserDeviceSession"/> is the
+    /// per-device store and moving the web onto it has a blast radius across every signed-in tab.
+    /// See that class for why the two coexist.
+    /// </summary>
     public string? RefreshToken { get; set; }
     public DateTime? RefreshTokenExpiry { get; set; }
+
+    /// <summary>
+    /// The credential version, and the kill switch behind every signed-in device.
+    ///
+    /// <para>Rolled whenever this account's credentials change — a self-service reset, an
+    /// administrator issuing a temporary password, a deactivation. Every
+    /// <see cref="UserDeviceSession"/> keeps a copy of the value it was issued under, so rolling
+    /// this signs out every handset on its next refresh without finding and deleting rows. Q-Mgr
+    /// is not on ASP.NET Identity and had no security stamp, which is why this exists as a cheap
+    /// nullable column rather than a second table.</para>
+    ///
+    /// <para><b>Null means "never rolled"</b> and matches a session issued before this column
+    /// existed, so adding it did not sign anybody out. <c>CredentialStamps.Roll</c> is the one
+    /// place that writes it — a second writer that forgets is a password change that leaves the
+    /// phone signed in.</para>
+    /// </summary>
+    public string? CredentialStamp { get; set; }
 
     /// <summary>Consecutive failed login attempts since the last successful login or lockout reset.</summary>
     public int FailedLoginAttempts { get; set; }

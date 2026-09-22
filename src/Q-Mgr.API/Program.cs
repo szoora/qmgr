@@ -413,6 +413,15 @@ QMgr.Infrastructure.Services.Storage.UploadLinks.Use(app.Services.GetRequiredSer
         scope.ServiceProvider.GetRequiredService<ILogger<QMgr.Infrastructure.Data.PlatformEmailDefaults>>());
     await platformEmailDefaults.RunAsync();
 
+    // The same reconciliation for the platform's Firebase service account, for exactly the same
+    // reason: the initializer skips an existing install, so without this a server that predates
+    // push would never pick the credentials up and every handset would stay silent.
+    var platformPushDefaults = new QMgr.Infrastructure.Data.PlatformPushDefaults(
+        db,
+        configuration,
+        scope.ServiceProvider.GetRequiredService<ILogger<QMgr.Infrastructure.Data.PlatformPushDefaults>>());
+    await platformPushDefaults.RunAsync();
+
     // The row may have just changed underneath the 30-minute settings cache.
     await platformSettingsService.ReloadCacheAsync();
 }

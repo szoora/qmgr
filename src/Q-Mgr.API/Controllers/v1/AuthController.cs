@@ -31,6 +31,8 @@ public class AuthController : ControllerBase
     private readonly IPlatformSettingsService _platformSettingsService;
     private readonly QMgr.Infrastructure.Services.IActivityLogger _activity;
     private readonly QMgr.Infrastructure.Email.IEmailBrandService _emailBrands;
+    private readonly QMgr.Infrastructure.Services.Mobile.IDeviceSessionService _deviceSessions;
+    private readonly QMgr.Infrastructure.Services.Mobile.IMobileHandoffService _handoff;
 
     public AuthController(
         IUnitOfWork unitOfWork,
@@ -42,8 +44,12 @@ public class AuthController : ControllerBase
         IEmailSender emailSender,
         IPlatformSettingsService platformSettingsService,
         QMgr.Infrastructure.Email.IEmailBrandService emailBrands,
-        QMgr.Infrastructure.Services.IActivityLogger activity)
+        QMgr.Infrastructure.Services.IActivityLogger activity,
+        QMgr.Infrastructure.Services.Mobile.IDeviceSessionService deviceSessions,
+        QMgr.Infrastructure.Services.Mobile.IMobileHandoffService handoff)
     {
+        _deviceSessions = deviceSessions;
+        _handoff = handoff;
         _emailBrands = emailBrands;
         _activity = activity;
         _unitOfWork = unitOfWork;
@@ -118,7 +124,12 @@ public class AuthController : ControllerBase
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
-        var identifier = request.Email.Trim().ToLowerInvariant();
+        // Identifier, not Email: the mobile shell posts userName, the web posts email, and both
+        // have always been matched against Username as well as Email.
+        var identifier = request.Identifier.Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(identifier))
+            return Unauthorized(new { message = "Invalid email or password" });
+
         var tenantContext = _tenantAccessor.TenantContext;
 
         // Build query — "Email" on the request is a generic identifier: email or username.
@@ -237,15 +248,37 @@ public class AuthController : ControllerBase
 
         var expiryMinutes = await GetTokenExpiryMinutesAsync();
         var token = GenerateJwtToken(user, expiryMinutes);
-        var refreshToken = GenerateRefreshToken();
 
-        user.RefreshToken = refreshToken;
-        user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(7);
-        user.LastLogin = DateTime.UtcNow;
-        user.FailedLoginAttempts = 0;
-        user.LockoutEnd = null;
+        // A DEVICE gets its own session row; a browser keeps the single column it always used.
+        //
+        // The two must not be mixed: writing User.RefreshToken for a phone is what made a mobile
+        // sign-in evict the browser and vice versa, because that column holds exactly one value
+        // for the whole account. See UserDeviceSession for the full reasoning.
+        string refreshToken;
+        var isDevice = !string.IsNullOrWhiteSpace(request.DeviceId);
 
-        await _dbContext.SaveChangesAsync();
+        if (isDevice)
+        {
+            user.LastLogin = DateTime.UtcNow;
+            user.FailedLoginAttempts = 0;
+            user.LockoutEnd = null;
+            await _dbContext.SaveChangesAsync();
+
+            refreshToken = await _deviceSessions.IssueAsync(
+                user, request.DeviceId, request.DeviceName, request.Platform,
+                request.AppVersion, request.AppVersionCode);
+        }
+        else
+        {
+            refreshToken = GenerateRefreshToken();
+            user.RefreshToken = refreshToken;
+            user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(7);
+            user.LastLogin = DateTime.UtcNow;
+            user.FailedLoginAttempts = 0;
+            user.LockoutEnd = null;
+
+            await _dbContext.SaveChangesAsync();
+        }
 
         _logger.LogInformation("User {Username} logged in successfully", user.Username);
 
@@ -329,7 +362,8 @@ public class AuthController : ControllerBase
     [HttpPost("logout")]
     [Microsoft.AspNetCore.Authorization.Authorize]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
-    public async Task<IActionResult> Logout()
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Logout([FromBody] MobileLogoutRequest? request = null)
     {
         var raw = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
         if (!Guid.TryParse(raw, out var userId)) return NoContent();
@@ -337,6 +371,58 @@ public class AuthController : ControllerBase
         var user = await _dbContext.Users.IgnoreQueryFilters().FirstOrDefaultAsync(u => u.Id == userId);
         if (user == null) return NoContent();
 
+        // ── A DEVICE signing out ────────────────────────────────────────────────────────────
+        //
+        // A BODY is what distinguishes the two callers, and it has to be, because nothing else can:
+        // the bearer token says who, never which handset. The browser's sign-out posts no body at
+        // all and falls through to the block below, exactly as it always did. A caller that sends
+        // a body is asking for a revocation, so it must name what to revoke — and if it names
+        // nothing it gets a 400 rather than a 204, because a "signed out" that revoked nothing is
+        // the worst available outcome and a success code makes it indistinguishable from the real
+        // thing. (e2e 25.12; it read 204 until this was split out.)
+        //
+        // The user always comes from the bearer token and never from this body, so a caller cannot
+        // revoke somebody else's device by naming it — which is why the deviceId needs no ownership
+        // check of its own.
+        if (request is not null)
+        {
+            if (request.AllDevices)
+            {
+                var count = await _deviceSessions.RevokeAllAsync(userId, "Signed out of all devices.");
+                // Every device AND the browser: "sign out everywhere" that leaves the web session
+                // alive is not what anyone means by it, and this is the lost-phone path.
+                user.RefreshToken = null;
+                user.RefreshTokenExpiry = null;
+                await _dbContext.SaveChangesAsync();
+                await RecordSignOutAsync(user);
+                return Ok(new { message = $"Signed out of {count} device(s)." });
+            }
+
+            var device = request.DeviceId;
+            if (string.IsNullOrWhiteSpace(device) && !string.IsNullOrWhiteSpace(request.RefreshToken))
+            {
+                // Derive the device from the token the caller holds. Only the middle segment is
+                // read, and no validation is needed for the reason above.
+                var parts = request.RefreshToken.Split('.', 3);
+                if (parts.Length == 3 && !string.IsNullOrWhiteSpace(parts[1])) device = parts[1];
+            }
+
+            if (string.IsNullOrWhiteSpace(device))
+            {
+                // Say so rather than silently doing nothing. A "signed out" that revoked nothing is
+                // the worst available outcome, and a 200 here is indistinguishable from success.
+                return BadRequest(new { message = "Specify the device to sign out, or set allDevices to sign out everywhere." });
+            }
+
+            await _deviceSessions.RevokeAsync(userId, device, "Signed out on this device.");
+            await RecordSignOutAsync(user);
+            return Ok(new { message = "Signed out on this device." });
+        }
+
+        // ── The browser signing out (unchanged) ────────────────────────────────────────────
+        //
+        // Clears this account's one web refresh token. Deliberately does NOT touch device
+        // sessions: closing a browser tab must not sign the person's phone out.
         user.RefreshToken = null;
         user.RefreshTokenExpiry = null;
         await _dbContext.SaveChangesAsync();
@@ -356,6 +442,36 @@ public class AuthController : ControllerBase
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequest request)
     {
+        // A DEVICE token carries its own identity — {userId}.{deviceId}.{secret} — so it is
+        // recognised by shape rather than by a flag the caller sets, and validating it is one
+        // keyed lookup. A browser token is opaque base64 and falls through to the column below.
+        //
+        // Note base64 contains no '.', so the two shapes cannot be confused: a three-part value
+        // whose first part parses as a Guid is a device token and nothing else is.
+        if (LooksLikeDeviceToken(request.RefreshToken))
+        {
+            var redeemed = await _deviceSessions.RedeemAsync(request.RefreshToken);
+            if (!redeemed.Succeeded || redeemed.User is null)
+            {
+                // 401, never 400 or 500: this is what tells the app to stop retrying and ask for a
+                // password. A 5xx here makes a signed-out handset retry forever.
+                return Unauthorized(new { message = redeemed.Error ?? "Invalid or expired refresh token" });
+            }
+
+            var deviceExpiry = await GetTokenExpiryMinutesAsync();
+            var deviceUser = redeemed.User;
+
+            return Ok(new LoginResponse
+            {
+                AccessToken = GenerateJwtToken(deviceUser, deviceExpiry),
+                // The ROTATED token from the store, not a freshly generated one: the store's copy
+                // is the only value whose hash was persisted, and anything else fails on next use.
+                RefreshToken = redeemed.RefreshToken ?? string.Empty,
+                ExpiresIn = deviceExpiry * 60,
+                User = BuildUserInfo(deviceUser)
+            });
+        }
+
         var user = await _dbContext.Users
             .Include(u => u.Role)
             .ThenInclude(r => r.RolePermissions)
@@ -682,11 +798,186 @@ public class AuthController : ControllerBase
         user.FailedLoginAttempts = 0;
         user.LockoutEnd = null;
 
+        // Roll the credential version, which signs out every MOBILE DEVICE on its next refresh.
+        // Clearing User.RefreshToken above only ever covered the browser, so before this a
+        // password reset left every handset signed in with the old credential — which is exactly
+        // the situation a reset exists to end.
+        QMgr.Infrastructure.Services.Mobile.CredentialStamps.Roll(user);
+
         await _dbContext.SaveChangesAsync();
 
         _logger.LogInformation("Password reset completed for {Email}", user.Email);
 
         return Ok(new { message = "Your password has been reset. You can now sign in with your new password." });
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════════════════════
+    //  The mobile shell's session endpoints.
+    //
+    //  Kept here rather than in a controller of their own because they share this controller's
+    //  route prefix, its JWT generation and its user-info mapping — and a second controller on
+    //  `api/v1/auth` would be a second place to look for the same thing.
+    //  See docs/plans/MOBILE_APP_INTEGRATION.md §3.
+    // ═════════════════════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Devices currently holding a live session for the signed-in user — the "your devices" screen,
+    /// and the answer to a lost phone.
+    /// </summary>
+    [HttpGet("devices")]
+    [Microsoft.AspNetCore.Authorization.Authorize]
+    [ProducesResponseType(typeof(MobileEnvelope<List<DeviceSessionDto>>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Devices([FromQuery] string? deviceId = null)
+    {
+        if (!TryCurrentUserId(out var userId)) return Unauthorized();
+
+        var devices = await _deviceSessions.ListAsync(userId, deviceId);
+        return Ok(MobileEnvelope<List<DeviceSessionDto>>.Ok(devices.ToList()));
+    }
+
+    /// <summary>
+    /// Step 1 of moving a signed-in native identity into the app's own WebView: exchange the bearer
+    /// token for a code that is single-use and dead in 60 seconds.
+    ///
+    /// <para>Step 2 is <b>not here</b>. Q-Mgr's web session lives in <c>localStorage</c>, not in a
+    /// cookie, so there is nothing an API redirect could set — the code is redeemed by the Web
+    /// project's <c>/mobile-session</c> page, which calls <see cref="WebSessionRedeem"/>
+    /// server-to-server and then writes the session the same way an ordinary sign-in does.</para>
+    /// </summary>
+    [HttpPost("web-handoff")]
+    [Microsoft.AspNetCore.Authorization.Authorize]
+    [ProducesResponseType(typeof(MobileEnvelope<HandoffCodeDto>), StatusCodes.Status200OK)]
+    public IActionResult WebHandoff()
+    {
+        if (!TryCurrentUserId(out var userId)) return Unauthorized();
+
+        var (code, expiresAt) = _handoff.Issue(userId);
+        return Ok(MobileEnvelope<HandoffCodeDto>.Ok(new HandoffCodeDto
+        {
+            Code = code,
+            ExpiresAt = expiresAt
+        }));
+    }
+
+    /// <summary>
+    /// Step 2, called SERVER-TO-SERVER by the Web project's <c>/mobile-session</c> page — never by a
+    /// browser, and never navigated to.
+    ///
+    /// <para>That is the whole difference from the ERP's version of this endpoint. There, the
+    /// browser navigates here and the response is a redirect that sets a cookie, which is why every
+    /// failure path had to redirect rather than return JSON. Here the caller is C# and wants an
+    /// answer it can act on, so JSON is correct — and the redirect discipline moves to the Blazor
+    /// page, which IS navigated to.</para>
+    ///
+    /// <para>Anonymous because the whole point is that the caller holds no token yet; the code is
+    /// the credential, and it was minted against a bearer token one hop ago.</para>
+    /// </summary>
+    [HttpPost("web-session")]
+    [ProducesResponseType(typeof(LoginResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> WebSessionRedeem([FromBody] WebSessionRequest request)
+    {
+        // Consumed FIRST. A failure below must not leave a replayable code behind.
+        var userId = _handoff.Redeem(request.Code);
+        if (userId is null)
+            return Unauthorized(new { message = "That sign-in link has expired. Please try again from the app." });
+
+        var user = await _dbContext.Users
+            .IgnoreQueryFilters()
+            .Include(u => u.Role)
+                .ThenInclude(r => r.RolePermissions)
+                    .ThenInclude(rp => rp.Permission)
+            .Include(u => u.Organization)
+            .FirstOrDefaultAsync(u => u.Id == userId.Value);
+
+        if (user == null || !user.IsActive)
+            return Unauthorized(new { message = "That session is no longer valid." });
+
+        if (user.LockoutEnd.HasValue && user.LockoutEnd.Value > DateTime.UtcNow)
+            return Unauthorized(new { message = "This account is locked. Contact your administrator." });
+
+        var expiryMinutes = await GetTokenExpiryMinutesAsync();
+
+        // A web session, so the BROWSER's token column — not a device session. The WebView is a
+        // browser: giving it a device token would put two rotating credentials on one handset,
+        // either of which could revoke the other by racing it.
+        var webRefresh = GenerateRefreshToken();
+        user.RefreshToken = webRefresh;
+        user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(7);
+        await _dbContext.SaveChangesAsync();
+
+        return Ok(new LoginResponse
+        {
+            AccessToken = GenerateJwtToken(user, expiryMinutes),
+            RefreshToken = webRefresh,
+            ExpiresIn = expiryMinutes * 60,
+            User = BuildUserInfo(user)
+        });
+    }
+
+    // ── Shared helpers for the endpoints above ───────────────────────────────────────────────
+
+    /// <summary>
+    /// True when this looks like a per-device token — <c>{userId}.{deviceId}.{secret}</c>.
+    ///
+    /// <para>Recognised by SHAPE rather than by a flag the caller sets, because the caller is a
+    /// client and a client-supplied discriminator is a client-supplied choice of code path. The two
+    /// shapes cannot be confused: a browser token is raw base64, which contains no '.', so a
+    /// three-part value whose first part parses as a Guid is a device token and nothing else is.</para>
+    /// </summary>
+    private static bool LooksLikeDeviceToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return false;
+        var parts = token.Split('.', 3);
+        return parts.Length == 3
+               && parts.All(p => !string.IsNullOrWhiteSpace(p))
+               && Guid.TryParse(parts[0], out _);
+    }
+
+    private bool TryCurrentUserId(out Guid userId)
+    {
+        var raw = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                  ?? User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
+        return Guid.TryParse(raw, out userId);
+    }
+
+    /// <summary>
+    /// The one mapping from a loaded <c>User</c> to the wire's <c>UserInfo</c>.
+    ///
+    /// <para>Extracted because login, refresh and the handoff all had to build it, and three
+    /// hand-written copies of an object initialiser is how a field gets added to two of them. This
+    /// project has no auto-mapper — Mapster was removed in 2026-08 with zero call sites — so a
+    /// missed field here is a silent runtime difference, not a compile error.</para>
+    ///
+    /// <para><b>Signs the photo link</b>, which is what makes a picture appear at all: the link is
+    /// gated and dies in an hour, so it is minted at the point the DTO reaches a caller.</para>
+    /// </summary>
+    private static UserInfo BuildUserInfo(QMgr.Domain.Entities.Identity.User user) => new()
+    {
+        Id = user.Id,
+        Username = user.Username,
+        Email = user.Email ?? string.Empty,
+        FullName = user.FullName,
+        RoleId = user.RoleId,
+        RoleCode = user.Role.Code,
+        RoleName = user.Role.Name,
+        RoleColor = user.Role.Color,
+        OrganizationId = user.OrganizationId,
+        OrganizationName = user.Organization?.Name,
+        BranchId = user.AssignedBranchId,
+        PhotoUrl = UploadLinks.Sign(user.PhotoUrl),
+        Permissions = user.Role.RolePermissions.Select(rp => rp.Permission.Code).ToList()
+    };
+
+    /// <summary>
+    /// The sign-out row on a person's activity trail. Never throws — a failed audit write must not
+    /// fail a sign-out that has already happened.
+    /// </summary>
+    private async Task RecordSignOutAsync(QMgr.Domain.Entities.Identity.User user)
+    {
+        await _activity.RecordAsync(ActivityActions.SignedOut, "User", user.Id, user.Id,
+            $"{(string.IsNullOrWhiteSpace(user.FullName) ? user.Username : user.FullName)} signed out",
+            organizationId: user.OrganizationId, branchId: user.AssignedBranchId, actorUserId: user.Id);
     }
 
     private async Task SendPasswordResetEmailAsync(string toEmail, string? firstName, string token, Guid? organizationId = null)
@@ -738,6 +1029,36 @@ public record LoginRequest
     public string Email { get; init; } = string.Empty;
     public string Password { get; init; } = string.Empty;
     public Guid? OrganizationId { get; init; }
+
+    // ── The mobile shell's fields ────────────────────────────────────────────────────────
+    //
+    // All optional, so the Blazor web posts exactly what it always did and gets exactly what it
+    // always got. Supplying DeviceId is what switches this sign-in onto a per-device session
+    // (UserDeviceSession) instead of the browser's single User.RefreshToken column — which is how
+    // a phone signing in stopped evicting the browser.
+
+    /// <summary>
+    /// The mobile shell accepts an email OR a username and posts it as <c>userName</c>. Both land
+    /// on the same identifier: <see cref="Email"/> here has never meant "an email address" — it is
+    /// matched against <c>Username</c> too, a 2026-08-21 decision, and 133 of the 184 staff on the
+    /// first real school roll have no address at all.
+    /// </summary>
+    public string? UserName { get; init; }
+
+    /// <summary>Present means "this is a device, give it its own session".</summary>
+    public string? DeviceId { get; init; }
+
+    /// <summary>What its owner will recognise in a device list — "Samsung SM-A155F".</summary>
+    public string? DeviceName { get; init; }
+
+    public string? Platform { get; init; }
+    public string? AppVersion { get; init; }
+    public long AppVersionCode { get; init; }
+
+    /// <summary>The identifier actually used, whichever field carried it.</summary>
+    public string Identifier =>
+        !string.IsNullOrWhiteSpace(Email) ? Email
+        : (UserName ?? string.Empty);
 }
 
 public record LoginResponse
@@ -766,6 +1087,16 @@ public record TokenResponse
 public record RefreshTokenRequest
 {
     public string RefreshToken { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// The body of the server-to-server handoff redemption. Its own record rather than a bare string
+/// parameter so the route cannot be reached by a GET — this exchanges a credential, and a GET would
+/// put it in a log.
+/// </summary>
+public record WebSessionRequest
+{
+    public string Code { get; init; } = string.Empty;
 }
 
 public record ForgotPasswordRequest

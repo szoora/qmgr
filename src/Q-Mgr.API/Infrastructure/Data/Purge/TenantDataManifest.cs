@@ -84,6 +84,9 @@ public static class TenantDataManifest
         ["PlaylistItem"] = TenantDataClass.TenantDerived,
         ["RolePermission"] = TenantDataClass.TenantDerived,
         ["UserSession"] = TenantDataClass.TenantDerived,
+        // A signed-in handset. Derived rather than owned: it is a session, not a record the school
+        // keeps — and it carries a push token and a device name, so it must go with the tenant.
+        ["UserDeviceSession"] = TenantDataClass.TenantDerived,
         ["ApiLog"] = TenantDataClass.TenantDerived,
         ["WebhookOutgoing"] = TenantDataClass.TenantDerived,
         ["BroadcastAttachment"] = TenantDataClass.TenantDerived,

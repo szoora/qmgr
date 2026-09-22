@@ -318,6 +318,39 @@
     color: var(--qm-primary);
 }
 
+/* "Get the mobile app".
+   Deliberately QUIETER than an auth-door and on its own row: those two answer "how do I get in",
+   and making this look like a third of them is how downloading an app starts reading as a way of
+   signing in — the exact conflation the two-doors fix was for. A borderless link, not a button. */
+.login-container .get-app-row {
+    display: flex;
+    justify-content: center;
+    margin-top: 10px;
+}
+
+.login-container .get-app-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    /* Meets the project's 40px phone floor even though it reads as a link: it is a real tap target
+       on the screen most people open on a phone. */
+    min-height: var(--q-control-h);
+    padding: 0 10px;
+    border-radius: var(--qm-radius-md);
+    color: var(--qm-text-secondary);
+    font-size: var(--qm-text-sm);
+    text-decoration: none;
+}
+
+.login-container .get-app-link:hover {
+    color: var(--qm-primary);
+    background: var(--qm-bg-card-hover);
+}
+
+@media (max-width: 480px) {
+    .login-container .get-app-link { min-height: 40px; }
+}
+
 .login-container .form-group {
     margin-bottom: 20px;
 }

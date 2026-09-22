@@ -7,16 +7,26 @@ Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/
 ---
 ## ▶▶ HANDOVER — read this first (rewritten 2026-09-21 15:20; 2026-09-22 note prepended)
 
-### 2026-09-22 — the mobile app is PLANNED, not started
+### 2026-09-22 — the mobile app is BUILT (every stage but iOS submission)
+
+**BUILT the same day it was planned.** Section 25 reads 29/0/3, `getapp-page.mjs` 21/0, guards 8/8,
+both solutions 0 errors. The API suite found TWO REAL DEFECTS on its first run — five concurrent
+refresh redemptions all succeeded (no lock, so rotation was not detectable) and a logout naming no
+device answered 204 — and both are fixed. Full account in the 2026-09-22 section below.
 
 **`docs/plans/MOBILE_APP_INTEGRATION.md`** + artifact
 **https://claude.ai/artifact/77sEBi9hTZZnsFakKXCaUH**. Rebranding the CashBook MAUI shell
 (`D:\QMGR\Mobile\CashBook`) for Q-Mgr: a server-side adapter in one new folder, plus a rename of the
 app. **Seven decisions are taken** (`ug.qmgr`, out of store, `cashbook.ug` root plus white-label
-domains, all three platforms, workspace keyed per host AND school) and **no code is written.** The
-progress table is in the 2026-09-22 section below — update it as stages land, not at the end.
+domains, all three platforms, workspace keyed per host AND school). The app lives at
+**`D:\QMGR\Mobile\QMgr`** — a COPY, so CashBook's own tree is untouched — and identifies as
+`ug.qmgr` / "Q-Mgr", confirmed by reading the generated AndroidManifest rather than the source.
 
-The three findings most expensive to rediscover: **the qz shim does not decode base64 and Q-Mgr sends
+**What is NOT done: iOS submission (needs a Mac and an Apple account), and push is built but
+unexercised** because no Firebase service account is configured. Nothing has run on a physical
+device or a real thermal printer.
+
+The three findings most expensive to rediscover: **the qz shim did not decode base64 and Q-Mgr sends
 base64** (it would print `G1Ah…` with nothing erroring); **the ERP owns `server_name *.cashbook.ug`**,
 so an unprovisioned Q-Mgr subdomain silently reaches the ERP rather than erroring; and **Q-Mgr's
 refresh token is one plaintext column per user**, so a phone signing in would evict the browser.
@@ -174,17 +184,70 @@ one folder, six added lines, zero deletions.
 
 | Stage | What | Status |
 |---|---|---|
-| A | Copy, rename to `QMgr.Mobile`, `brands/qmgr.json`, split the icon layers, store text | `[ ]` |
-| B1 | `tenant/info` + login adapter | `[ ]` |
-| B2 | `UserDeviceSession`, refresh with rotation, logout, device list | `[ ]` |
-| B3 | `web-handoff` + `/mobile-session` | `[ ]` |
-| B4 | `app/update`, `app/releases`, `/getapp`, **the login-page link** | `[ ]` |
-| B5 | `branding/product-logo`, attribution flag | `[ ]` |
-| C1 | base64 in the qz shim, workspace key per host+school, PWA suppression | `[ ]` |
-| C2 | Push: platform FCM, `app/checkin`, inbox on real notifications | `[ ]` |
-| C3 | Kiosk lock task, native QR, biometric unlock | `[ ]` |
-| D1 | Windows artefact path in `release-info.ps1` / `build-app-host.ps1` | `[ ]` |
-| D2 | Apple Developer Program, macOS build, iOS submission | `[ ]` |
+| A | Copy, rename to `QMgr.Mobile`, `brands/qmgr.json`, split the icon layers, store text | `[x]` |
+| B1 | `tenant/info` + login adapter | `[x]` |
+| B2 | `UserDeviceSession`, refresh with rotation, logout, device list | `[x]` |
+| B3 | `web-handoff` + `/mobile-session` | `[x]` |
+| B4 | `app/update`, `app/releases`, `/getapp`, **the login-page link** | `[x]` |
+| B5 | `branding/product-logo`, attribution flag | `[x]` |
+| C1 | base64 in the qz shim, workspace key per host+school, PWA suppression | `[x]` |
+| C2 | Push: platform FCM, `app/checkin`, inbox on real notifications | `[x]` |
+| C3 | Kiosk lock task, native QR, biometric unlock | `[x]` |
+| D1 | Windows artefact path in `release-info.ps1` / `build-app-host.ps1` | `[x]` |
+| D2 | Apple Developer Program, macOS build, iOS submission | `[ ]` needs a Mac and an Apple account |
+
+### BUILT 2026-09-22 — every stage but D2, which needs hardware this machine does not have
+
+**Verified, not asserted:**
+
+| | |
+|---|---|
+| `scripts/e2e/mobile-shell-e2e.mjs` (section 25) | **29 passed, 0 failed, 3 skipped** |
+| `scripts/e2e/browser/getapp-page.mjs` | **21 passed, 0 failed** |
+| `bash scripts/e2e/guards.sh` | **8/8** |
+| `dotnet build Q-Mgr.slnx` | **0 errors**, 24 nullable warnings |
+| `dotnet build QMgr.Mobile` android + windows | **0 errors** |
+| `py -3 artwork/verify-brand-assets.py` | **14/14** — ink at 296px against a 313px safe radius |
+
+**THE API SUITE FOUND TWO REAL DEFECTS ON ITS FIRST RUN**, which is the argument for writing it
+before calling anything done:
+
+- **Five concurrent redemptions of one refresh token ALL SUCCEEDED** (25.8 read "5 of 5"). Each
+  request has its own scoped DbContext, so all five read the same hash, all matched, all rotated,
+  last write won and nothing errored — a stolen token used alongside the legitimate one would have
+  worked indefinitely, which is exactly what rotation exists to stop. Fixed with
+  `pg_advisory_xact_lock` on the session inside the execution strategy: this codebase's own idiom,
+  already used by the recognition budget, the register double-submit and the notice fan-out.
+- **A logout naming no device answered 204** rather than 400 — a "signed out" that revoked nothing,
+  reported as success. The BODY is now what distinguishes the two callers: no body is the browser's
+  own sign-out and stays 204; a body that names nothing is a 400.
+
+**Four findings from the build itself, each worth keeping:**
+
+- **The static guards caught two of my own mistakes**, both classes CLAUDE.md already names.
+  `css-token-check` found `--qm-bg-subtle-alt` and `--qm-warning-light`, neither of which exists,
+  each hidden behind a fallback literal; `component-param-check` found `<QBrandMark Size=…>`, a
+  parameter that component does not have. Neither is visible in a build or a code read.
+- **AN XML COMMENT CANNOT CONTAIN A DOUBLE HYPHEN.** Writing `--qm-primary` in one failed the whole
+  MAUI build twice — once in `Colors.xaml`, once in the generated `appicon.svg` — with an error
+  pointing at the comment rather than at the reason. Both now write the token names without their
+  leading dashes and say why.
+- **`android:label` was HARDCODED in AndroidManifest.xml** and silently beat `ApplicationTitle` from
+  the brand profile: the package changed to `ug.qmgr` and the launcher still read "CashBook". The
+  attribute is gone, so `brands/qmgr.json` is the only thing that decides identity. Confirmed by
+  reading the GENERATED manifest, not the source.
+- **Native QR scanning needed no code at all.** `WebViewCapabilities.OnPermissionRequest` already
+  grants the WebView's camera request, so Q-Mgr's own jsQR scanner works inside the app unchanged.
+  A second scanner would have been a second answer to one question.
+
+**Two things deliberately NOT done, stated rather than implied.** No Firebase project is configured,
+so push is built and unexercised — `PlatformPushSettings` stays blank until somebody pastes a
+service account into Platform Settings or the systemd unit. And nothing has run on a physical
+device or against a real thermal printer.
+
+**Also: `apps.cashbook.ug/qmgr` does not exist yet** (404), so `/getapp` correctly says no build is
+published on this server and `app/update` answers `updateAvailable: false` rather than erroring.
+Section 25 skips two checks honestly rather than passing them vacuously.
 
 **Android and Windows can ship from B4; iOS cannot ship before C2 and C3** — nobody reviews an APK
 and Apple reviews everything, so submitting before push and printing exist is submitting the thing

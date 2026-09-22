@@ -1052,5 +1052,20 @@ else
   printf '  \033[33mSKIP\033[0m  node is not installed; section 24 did not run\n'
 fi
 
+hdr "25. THE MOBILE SHELL (Node)"
+# Per-device sessions, rotation, the REPLAY that must revoke, the handoff, tenant/info and app
+# distribution. Node because the interesting half is concurrency: rotation is only worth having if
+# two simultaneous redemptions produce exactly one winner and the loser kills the device.
+if command -v node > /dev/null 2>&1; then
+  MS_OUT=$(API="$API" BRANCH="$BRANCH" SA_USER="$SA_USER" SA_PASS="$SA_PASS" node "$(dirname "$0")/mobile-shell-e2e.mjs" 2>&1)
+  echo "$MS_OUT" | sed 's/^/  /'
+  MS_PASS=$(echo "$MS_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  MS_FAIL=$(echo "$MS_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$MS_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 25 did not report a summary\n'
+  else PASS=$((PASS+MS_PASS)); FAIL=$((FAIL+MS_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 25 did not run\n'
+fi
+
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 exit "$FAIL"

@@ -104,16 +104,16 @@ public static class NotificationEventKeys
     {
         new(WelfareRecordLogged, "New record for a student in my class",
             "A behaviour, achievement or support-plan record is logged for one of your students. Safeguarding records are never sent here.",
-            "Student Welfare", DefaultEmail: true, DefaultSms: false),
+            "Student Welfare", DefaultEmail: true, DefaultSms: false, DefaultPush: true),
         new(WelfareActionOverdue, "My welfare follow-up is overdue",
             "A follow-up assigned to you has passed its due date and is still open.",
-            "Student Welfare", DefaultEmail: true, DefaultSms: false),
+            "Student Welfare", DefaultEmail: true, DefaultSms: false, DefaultPush: true),
         new(WelfareFlagReviewOverdue, "A flag I raised needs reviewing",
             "A standing flag you raised has passed its review date.",
             "Student Welfare", DefaultEmail: false, DefaultSms: false),
         new(VisitorArrived, "A visitor has arrived for me",
             "Someone has checked in at reception to see you.",
-            "Visitors", DefaultEmail: false, DefaultSms: false),
+            "Visitors", DefaultEmail: false, DefaultSms: false, DefaultPush: true),
         new(DocumentShareOpened, "A document I shared was opened",
             "The first time someone opens a share link you created. Only for links where you asked to be told.",
             "Document Library", DefaultEmail: true, DefaultSms: false),
@@ -122,7 +122,7 @@ public static class NotificationEventKeys
             "Document Library", DefaultEmail: true, DefaultSms: false),
         new(StaffRecordLogged, "A record was logged about me",
             "Attendance, duties, observations, contributions and conduct logged about you. A confidential record tells you only that one exists.",
-            "Staff Performance", DefaultEmail: true, DefaultSms: false),
+            "Staff Performance", DefaultEmail: true, DefaultSms: false, DefaultPush: true),
         new(StaffPointsEarned, "My points or band changed",
             "Every time a finalised record moves your points this period.",
             "Staff Performance", DefaultEmail: false, DefaultSms: false),
@@ -131,10 +131,10 @@ public static class NotificationEventKeys
             "Staff Performance", DefaultEmail: true, DefaultSms: false),
         new(StaffDutyReminder, "A duty I am expected at is coming up",
             "Sent ahead of a meeting, exam session or prep slot you are expected at.",
-            "Staff Performance", DefaultEmail: true, DefaultSms: false),
+            "Staff Performance", DefaultEmail: true, DefaultSms: false, DefaultPush: true),
         new(StaffRegisterDue, "A register I should take is outstanding",
             "You are the named recorder for a duty that has ended with no register taken.",
-            "Staff Performance", DefaultEmail: true, DefaultSms: false),
+            "Staff Performance", DefaultEmail: true, DefaultSms: false, DefaultPush: true),
         new(StaffAppraisalStage, "My appraisal needs me",
             "Self-assessment open, appraiser review awaited, moderation done, signed, or overdue.",
             "Staff Performance", DefaultEmail: true, DefaultSms: false),
@@ -152,7 +152,7 @@ public static class NotificationEventKeys
             "Duty Rota", DefaultEmail: true, DefaultSms: false),
         new(StaffRotaReminder, "My duty is coming up",
             "Reminders before a rota slot you are on. They grow more urgent as it approaches and stop once you acknowledge.",
-            "Duty Rota", DefaultEmail: true, DefaultSms: false),
+            "Duty Rota", DefaultEmail: true, DefaultSms: false, DefaultPush: true),
         new(StaffRotaUnacknowledged, "Someone I supervise has not acknowledged their duty",
             "For the administrator on duty, shortly before the slot starts.",
             "Duty Rota", DefaultEmail: true, DefaultSms: false),
@@ -188,7 +188,7 @@ public static class NotificationEventKeys
             "Lessons", DefaultEmail: true, DefaultSms: false),
         new(StaffTimetableClash, "New timetable clashes",
             "For timetable masters: new clashes found in a published timetable.",
-            "Lessons", DefaultEmail: true, DefaultSms: false),
+            "Lessons", DefaultEmail: true, DefaultSms: false, DefaultPush: true),
         new(StaffLessonAnalysis, "The weekly lesson analysis",
             "Mondays, for lesson supervisors and report readers: last week's lessons taught, missed, recovered and unrecorded for the staff you oversee.",
             "Lessons", DefaultEmail: true, DefaultSms: false),
@@ -200,7 +200,7 @@ public static class NotificationEventKeys
             "Staff Performance", DefaultEmail: true, DefaultSms: false),
         new(StaffMinuteAction, "An action minuted for me",
             "An action point the minutes gave you, as its date approaches and after it passes.",
-            "Staff Performance", DefaultEmail: true, DefaultSms: false),
+            "Staff Performance", DefaultEmail: true, DefaultSms: false, DefaultPush: true),
         new(General, "Everything else",
             "System alerts and anything not covered above.",
             "General", DefaultEmail: false, DefaultSms: false),
@@ -215,7 +215,21 @@ public record NotificationEventDefinition(
     string Description,
     string Category,
     bool DefaultEmail,
-    bool DefaultSms);
+    bool DefaultSms,
+
+    /// <summary>
+    /// Whether this event reaches a handset's lock screen by default.
+    ///
+    /// <para><b>Defaults to FALSE, and the short list of exceptions is deliberate.</b> A push is an
+    /// interruption somebody else chose for you, and this module has already learned what happens
+    /// when a channel carries everything: eleven identical "Recognition logged about you" rows
+    /// buried the appraisal that actually needed answering. So only the events a school would
+    /// genuinely interrupt a member of staff for are opted in — a concern logged about a child in
+    /// their class, a follow-up now overdue, a visitor waiting at reception, a register not taken, a
+    /// duty about to start, an action point falling due. Digests, points movements and
+    /// acknowledgements stay in the bell where they can be read when convenient.</para>
+    /// </summary>
+    bool DefaultPush = false);
 
 /// <summary>
 /// One person's channel choices for one event category. The in-app bell is deliberately NOT
@@ -227,6 +241,14 @@ public record NotificationChannelPreference
     public string EventKey { get; set; } = string.Empty;
     public bool Email { get; set; }
     public bool Sms { get; set; }
+
+    /// <summary>
+    /// Whether this event reaches a handset. Nullable, unlike the two above, because this property
+    /// arrived after people had already saved preferences: a stored row with no value must mean
+    /// "follow the default" rather than "off", or shipping push would have silently opted out
+    /// everybody who had ever touched the preferences panel.
+    /// </summary>
+    public bool? Push { get; set; }
 }
 
 /// <summary>
@@ -246,6 +268,17 @@ public record UserNotificationPreferencesDto
 
     /// <summary>The same, for SMS. SMS costs the tenant money per message, so this defaults on but the per-event defaults are off.</summary>
     public bool SmsEnabled { get; set; } = true;
+
+    /// <summary>
+    /// The master switch for notifications on a phone. Defaults on, because a handset that receives
+    /// nothing is indistinguishable from a broken one and the per-event defaults are already a short
+    /// list. Somebody who genuinely wants silence turns this off once rather than nine times.
+    ///
+    /// <para>The OS permission is a second, independent gate the server cannot see: this being on
+    /// does not mean Android will display anything, which is why
+    /// <c>UserDeviceSession.PushPermitted</c> exists beside it.</para>
+    /// </summary>
+    public bool PushEnabled { get; set; } = true;
 
     /// <summary>
     /// When the Staff Performance weekly digest was last sent to this person (UTC). The idempotency

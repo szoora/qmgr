@@ -126,6 +126,12 @@ public class QMgrDbContext : DbContext
 
     public DbSet<User> Users => Set<User>();
     public DbSet<UserSession> UserSessions => Set<UserSession>();
+
+    /// <summary>
+    /// One row per signed-in mobile handset. See <see cref="UserDeviceSession"/> for why the
+    /// browser's single <c>User.RefreshToken</c> could not be stretched to cover this.
+    /// </summary>
+    public DbSet<UserDeviceSession> UserDeviceSessions => Set<UserDeviceSession>();
     public DbSet<RegistrationAttempt> RegistrationAttempts => Set<RegistrationAttempt>();
     public DbSet<Role> Roles => Set<Role>();
     public DbSet<Permission> Permissions => Set<Permission>();
@@ -234,6 +240,12 @@ public class QMgrDbContext : DbContext
         // Add matching filter for UserSession (child of User)
         modelBuilder.Entity<UserSession>()
             .HasQueryFilter(e => !TenantIsolationEnabled || e.User.OrganizationId == CurrentOrganizationId);
+
+        // A mobile device session. Filtered on its OWN denormalised column rather than through the
+        // user, because the redeem path runs with no tenant context at all — see
+        // DeviceSessionService, which reaches these rows with IgnoreQueryFilters for that reason.
+        modelBuilder.Entity<UserDeviceSession>()
+            .HasQueryFilter(e => !TenantIsolationEnabled || e.OrganizationId == CurrentOrganizationId);
 
         modelBuilder.Entity<ApiClient>()
             .HasQueryFilter(e => !TenantIsolationEnabled || e.OrganizationId == CurrentOrganizationId);

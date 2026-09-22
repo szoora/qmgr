@@ -185,6 +185,34 @@ public static class DependencyInjection
             client.Timeout = TimeSpan.FromSeconds(30);
         });
 
+        // ── The mobile shell (2026-09-22) ─────────────────────────────────────────────────────
+        //
+        // Scoped, like everything else that touches the DbContext. IDeviceSessionService in
+        // particular must NOT be a singleton: it reads and rotates rows, and a shared DbContext
+        // across requests is how two concurrent refreshes from one handset corrupt each other.
+        services.AddScoped<Services.Mobile.IDeviceSessionService, Services.Mobile.DeviceSessionService>();
+        services.AddScoped<Services.Mobile.IPushSender, Services.Mobile.PushSender>();
+        services.AddScoped<Services.Mobile.IAppDistributionService, Services.Mobile.AppDistributionService>();
+
+        // The handoff code store is in-memory and holds no DbContext, so a singleton is right — and
+        // it has to be, or each request would get an empty cache and no code could ever be redeemed.
+        services.AddSingleton<Services.Mobile.IMobileHandoffService, Services.Mobile.MobileHandoffService>();
+
+        // Reads the published-build manifest from the central distribution host. Short timeout on
+        // purpose: this is called on the app's start-up path, and a slow answer must degrade to
+        // "no update" quickly rather than hold the splash screen.
+        services.AddHttpClient(Services.Mobile.AppDistributionService.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(10);
+        });
+
+        // Firebase Cloud Messaging, plus Google's OAuth token endpoint. One client for both because
+        // they are the same hop to the same operator and share the same failure mode.
+        services.AddHttpClient(Services.Mobile.PushSender.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(20);
+        });
+
         // HTTP Clients for Spotify (platform-wide OAuth connection — see ISpotifyService)
         services.AddHttpClient("SpotifyAuth", client =>
         {

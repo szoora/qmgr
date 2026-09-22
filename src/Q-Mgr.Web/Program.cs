@@ -117,6 +117,9 @@ builder.Services.AddScoped<IClassTeacherApiService, ClassTeacherApiService>();
 builder.Services.AddScoped<IStaffPerformanceApiService, StaffPerformanceApiService>();
 builder.Services.AddScoped<IStaffOnboardingApiService, StaffOnboardingApiService>();
 builder.Services.AddScoped<IModuleApiService, ModuleApiService>();
+// The download page and the native app's sign-in handoff. Scoped like the rest: it uses the
+// circuit's own HttpClient, which is the only one carrying the right token.
+builder.Services.AddScoped<IMobileAppApiService, MobileAppApiService>();
 builder.Services.AddScoped<IPaymentApiService, PaymentApiService>();
 builder.Services.AddScoped<ISelfServiceApiService, SelfServiceApiService>();
 builder.Services.AddScoped<IMarketingApiService, MarketingApiService>();

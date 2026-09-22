@@ -27,8 +27,37 @@
         updateAccepted: false,
         reloading: false,
 
+        // ---- Inside the native app, the PWA stands back -------------------------------------
+        //
+        // The Q-Mgr app is a native shell hosting this web UI, and it has its own updater: it polls
+        // the release manifest, verifies a sha256 and hands the artefact to Android's installer.
+        // Leaving the PWA running inside it puts TWO update mechanisms on one screen — the app's own
+        // mandatory-update dialog, and a web banner offering to reload a page the app is hosting.
+        //
+        // That is not merely untidy. The reload guards above this exist because a spurious reload on
+        // the login page read to users as a login bug; the same reload inside a WebView reads as the
+        // app crashing. One concept, one owner.
+        //
+        // Detected from the User-Agent token the shell appends (Brand.WebViewToken). It is a CONTRACT
+        // with the installed binary rather than a label — see Brand.g.cs, where the same class of
+        // mistake silently stopped a sibling product's webview integration from matching.
+        isNativeShell() {
+            try {
+                return /QMgrApp/i.test(navigator.userAgent || '');
+            } catch (e) {
+                // A blocked or exotic navigator is not a reason to fail: assume a browser, which is
+                // the behaviour everything had before this check existed.
+                return false;
+            }
+        },
+
         // Initialize PWA
         async init() {
+            if (this.isNativeShell()) {
+                console.log('[PWA] Running inside the Q-Mgr app — the app owns updating; PWA disabled.');
+                return;
+            }
+
             if (!('serviceWorker' in navigator)) {
                 console.log('[PWA] Service workers not supported');
                 return;

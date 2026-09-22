@@ -215,6 +215,25 @@
                     <a href="/register" class="auth-door"><QIcon Name="building-add" Size="18" /><span>Register Organisation</span></a>
                 }
             </div>
+            @*
+                GET THE APP — deliberately NOT a third auth-door.
+
+                The two buttons above answer "how do I get in"; 2026-09-20's fix was precisely about
+                not conflating two different doors, and a third pill beside them would undo that by
+                making "download an app" look like a way of signing in. So it is its own quiet row,
+                which is also where the ERP puts it.
+
+                It is on THIS page because the people who need the app are the people who cannot get
+                in yet — and because on the ERP the download endpoints sat unreachable for a full day
+                with nothing anywhere linking to them.
+            *@
+            <div class="get-app-row">
+                <a href="/getapp" class="get-app-link">
+                    <QIcon Name="phone" Size="15" />
+                    <span>Get the mobile app</span>
+                </a>
+            </div>
+
             <div class="footer-links">
                 <a href="/privacy">Privacy Policy</a>
                 <span>•</span>

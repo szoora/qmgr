@@ -29,6 +29,7 @@ public class NotificationDispatchJob
     private readonly QMgrDbContext _context;
     private readonly INotificationService _notificationService;
     private readonly Infrastructure.Email.IEmailBrandService _brands;
+    private readonly Services.Mobile.IPushSender _push;
     private readonly ILogger<NotificationDispatchJob> _logger;
 
     /// <summary>
@@ -42,11 +43,13 @@ public class NotificationDispatchJob
         QMgrDbContext context,
         INotificationService notificationService,
         Infrastructure.Email.IEmailBrandService brands,
+        Services.Mobile.IPushSender push,
         ILogger<NotificationDispatchJob> logger)
     {
         _context = context;
         _notificationService = notificationService;
         _brands = brands;
+        _push = push;
         _logger = logger;
     }
 
@@ -82,6 +85,40 @@ public class NotificationDispatchJob
         string html,
         PerformContext? context = null)
         => DispatchCoreAsync(notificationId, NotificationChannel.Email, organizationId, recipient, subject, html, bodyIsHtml: true, context);
+
+    /// <summary>
+    /// A push to every handset this person has signed in on.
+    ///
+    /// <para>Takes a USER ID where the others take a phone number or an address, because the devices
+    /// are resolved at SEND time rather than at enqueue time — a handset that signs in between the
+    /// two would otherwise be missed, and one that signs out would still be tried.</para>
+    ///
+    /// <para>Its own job method for the same reason <see cref="DispatchHtmlEmailAsync"/> is: Hangfire
+    /// stores a queued job by its method signature.</para>
+    /// </summary>
+    [AutomaticRetry(Attempts = MaxAttempts)]
+    public async Task DispatchPushAsync(
+        Guid notificationId,
+        Guid organizationId,
+        Guid userId,
+        string title,
+        string message,
+        string? actionUrl,
+        PerformContext? context = null)
+    {
+        var attempt = context?.GetJobParameter<int>("RetryCount") ?? 0;
+        var result = await _push.SendAsync(userId, title, message, actionUrl);
+
+        // The recipient is MASKED to the user's id rather than written as a push token. A token is a
+        // credential for sending to that handset, and the delivery log is read by administrators.
+        await RecordAsync(notificationId, NotificationChannel.Push, $"user:{userId}", result, attempt);
+
+        // Rethrown so a genuine failure retries, exactly as the other channels do. A Skipped
+        // outcome — nobody has a handset, or push is not configured — is NOT retried, because
+        // nothing about it will be different in thirty seconds.
+        if (result.Outcome == ChannelSendOutcome.Failed)
+            throw new InvalidOperationException($"Push delivery failed: {result.Reason}");
+    }
 
     private async Task DispatchCoreAsync(
         Guid notificationId,
@@ -159,6 +196,50 @@ public class NotificationDispatchJob
         // Failed rather than throwing, so without this the job would look successful to Hangfire.
         throw new InvalidOperationException(
             $"{channel} delivery failed for notification {notificationId}: {result.Reason}");
+    }
+
+    /// <summary>
+    /// Writes one delivery-log row, honouring the standing rule that a SKIPPED outcome writes none.
+    ///
+    /// <para>Extracted so the push path shares it rather than carrying a second copy — the row's
+    /// shape, and above all the skipped-writes-nothing rule, is exactly the kind of thing that
+    /// drifts when it exists twice.</para>
+    /// </summary>
+    private async Task RecordAsync(Guid notificationId, NotificationChannel channel, string recipient,
+                                   ChannelSendResult result, int attempt)
+    {
+        if (result.Outcome != ChannelSendOutcome.Skipped)
+        {
+            _context.NotificationLogs.Add(new NotificationLog
+            {
+                NotificationId = notificationId,
+                Channel = channel,
+                Recipient = recipient,
+                Success = result.IsSent,
+                ErrorMessage = result.Reason,
+                RetryCount = attempt,
+                LastRetryAt = attempt > 0 ? DateTime.UtcNow : null
+            });
+        }
+
+        if (result.IsSent)
+        {
+            var notification = await _context.Notifications.FirstOrDefaultAsync(n => n.Id == notificationId);
+            if (notification != null && channel == NotificationChannel.Push)
+            {
+                notification.PushSent = true;
+                notification.PushSentAt = DateTime.UtcNow;
+            }
+        }
+
+        await _context.SaveChangesAsync();
+
+        if (result.IsSent)
+            _logger.LogInformation("Notification {NotificationId} delivered via {Channel}", notificationId, channel);
+        else if (result.Outcome == ChannelSendOutcome.Skipped)
+            _logger.LogInformation("Notification {NotificationId} skipped {Channel}: {Reason}", notificationId, channel, result.Reason);
+        else
+            _logger.LogWarning("Notification {NotificationId} failed {Channel}: {Reason}", notificationId, channel, result.Reason);
     }
 
     /// <summary>

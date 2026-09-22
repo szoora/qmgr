@@ -11,6 +11,16 @@ public interface IAuthService
 {
     Task<IdentifyUserResponse?> IdentifyUserAsync(string email);
     Task<SignInOutcome> LoginAsync(string email, string password, Guid? organizationId = null);
+
+    /// <summary>
+    /// Store a session this service did not obtain itself — the native app's WebView handoff, which
+    /// redeems a one-shot code server-side and arrives holding real tokens rather than a password.
+    ///
+    /// <para>It exists so <c>/mobile-session</c> does not write the three localStorage keys itself.
+    /// Duplicating that is how the app and the browser come to disagree about one of them, and this
+    /// service is the only thing that should know what a stored session looks like.</para>
+    /// </summary>
+    Task AdoptSessionAsync(string accessToken, string? refreshToken, UserInfo? user);
     Task LogoutAsync();
     Task<UserInfo?> GetCurrentUserAsync();
     Task<string?> GetAccessTokenAsync();
@@ -180,6 +190,32 @@ public class AuthService : IAuthService
         }
     }
 
+    /// <summary>
+    /// Store tokens obtained somewhere other than this service — the native app's WebView handoff.
+    ///
+    /// <para>Writes exactly what <see cref="LoginAsync"/> writes, in the same order, so there is one
+    /// definition of a stored session rather than two that can drift. A throw is allowed to escape:
+    /// the caller is a page that must redirect on failure, and silently continuing with a
+    /// half-written session would leave somebody signed in to a browser that cannot prove it.</para>
+    /// </summary>
+    public async Task AdoptSessionAsync(string accessToken, string? refreshToken, UserInfo? user)
+    {
+        if (string.IsNullOrWhiteSpace(accessToken))
+            throw new ArgumentException("No access token was supplied.", nameof(accessToken));
+
+        await _localStorage.SetItemAsync(AccessTokenKey, accessToken);
+        if (string.IsNullOrEmpty(refreshToken)) await _localStorage.RemoveItemAsync(RefreshTokenKey);
+        else await _localStorage.SetItemAsync(RefreshTokenKey, refreshToken);
+        if (user != null) await _localStorage.SetItemAsync(UserInfoKey, user);
+
+        _tokenStorage.AccessToken = accessToken;
+        _tokenStorage.RefreshToken = string.IsNullOrEmpty(refreshToken) ? null : refreshToken;
+        _tokenStorage.UserInfo = user;
+
+        _logger.LogInformation("Adopted a session for {User} from the mobile handoff",
+            user?.Username ?? "an unknown user");
+    }
+
     public async Task LogoutAsync()
     {
         // Tell the API first, while the token is still in hand: it revokes the refresh token and
@@ -274,7 +310,7 @@ public class AuthService : IAuthService
 
             var user = await response.Content.ReadFromJsonAsync<UserInfo>(_jsonOptions);
             if (user == null) return null;
-
+
             await _localStorage.SetItemAsync(UserInfoKey, user);
             _tokenStorage.UserInfo = user;
             CurrentUserChanged?.Invoke();

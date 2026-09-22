@@ -117,7 +117,16 @@ public static class ServiceExtensions
         services.PostConfigure<IpRateLimitOptions>(options =>
         {
             options.EndpointWhitelist ??= new List<string>();
-            foreach (var entry in new[] { "get:/uploads/*", "head:/uploads/*", "get:/api/v1/health" })
+            // get:/api/v1/app/* for a third instance of the same reasoning (2026-09-22): a school's
+            // handsets all reach the API from ONE public address, so they share one rate-limit key —
+            // and a 429 on the update check is the one answer that must never happen, because a
+            // device that cannot be told about a MANDATORY security update is stranded silently.
+            // An administrator's edit to the RateLimiting row must not be able to cause that.
+            foreach (var entry in new[]
+            {
+                "get:/uploads/*", "head:/uploads/*", "get:/api/v1/health",
+                "get:/api/v1/app/*", "get:/api/v1/tenant/info"
+            })
             {
                 if (!options.EndpointWhitelist.Contains(entry, StringComparer.OrdinalIgnoreCase))
                     options.EndpointWhitelist.Add(entry);

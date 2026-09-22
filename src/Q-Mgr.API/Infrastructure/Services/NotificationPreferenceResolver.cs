@@ -30,8 +30,14 @@ public interface INotificationPreferenceResolver
 {
     /// <summary>
     /// Narrows <paramref name="requested"/> to what this recipient actually wants and this
-    /// organization actually has switched on. InApp always survives; Push is passed through
-    /// untouched (there is no mobile app yet, so there is nothing to express a preference about).
+    /// organization actually has switched on. InApp always survives.
+    ///
+    /// <para><b>Push is now decided here rather than passed through</b> (2026-09-22, when the mobile
+    /// app arrived). It can be ADDED as well as removed, because the caller of a notification does
+    /// not know whether the recipient owns a handset and should not have to: the event's own default
+    /// and the person's switch decide, and a person with no device is skipped harmlessly further
+    /// down. That makes this the one method that can widen the requested set, which is why it is
+    /// stated here.</para>
     /// </summary>
     Task<NotificationChannel> ResolveAsync(Guid? userId, Guid organizationId, string? eventKey,
         NotificationChannel requested, CancellationToken cancellationToken = default);
@@ -112,8 +118,16 @@ public class NotificationPreferenceResolver : INotificationPreferenceResolver
         var wantsEmail = orgEmail && prefs.EmailEnabled && (mine?.Email ?? definition.DefaultEmail);
         var wantsSms = orgSms && prefs.SmsEnabled && (mine?.Sms ?? definition.DefaultSms);
 
+        // Push has no organization gate, and that is on purpose: unlike SMS it costs the tenant
+        // nothing per message, and unlike email it needs no per-tenant relay to configure. The gates
+        // that matter are the person's (here) and the handset's OS permission, which the server
+        // cannot see and which UserDeviceSession.PushPermitted carries instead.
+        var wantsPush = prefs.PushEnabled && (mine?.Push ?? definition.DefaultPush);
+
         if (!wantsEmail) resolved &= ~NotificationChannel.Email;
         if (!wantsSms) resolved &= ~NotificationChannel.Sms;
+        if (!wantsPush) resolved &= ~NotificationChannel.Push;
+        else resolved |= NotificationChannel.Push;
 
         return resolved;
     }

@@ -1,0 +1,327 @@
+@page "/getapp"
+@layout PublicLayout
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@using Microsoft.AspNetCore.Authorization
+@using QMgr.Application.DTOs
+@using QMgr.Web.Components.Shared
+@using QMgr.Web.Services
+@attribute [AllowAnonymous]
+@inject IMobileAppApiService MobileApi
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+@*
+    HOW A PERSON ACTUALLY OBTAINS THE APP.
+
+    On the ERP the endpoints existed for a full day before anybody noticed there was no way for a
+    human to reach them — no link, no page, nothing in the UI. A user would have had to be told a URL
+    by hand. So this page exists, and it is linked from the SIGN-IN SCREEN, because the people who
+    need the app are exactly the people who cannot get in yet.
+
+    ANONYMOUS, for the same reason: somebody setting up a new front desk has not signed in, and often
+    cannot until they have this.
+
+    Four rules this page keeps, each of which is a way the ERP's version went wrong first:
+      * Only downloads whose FILE exists are rendered. A page is where an operator's mistake becomes
+        a customer's problem; never render a button that 404s.
+      * Earlier builds are COLLAPSED, and the warning comes BEFORE the links — Android will not
+        install an older version over a newer one, so the app must be uninstalled first, which erases
+        everything on the device. That consequence is why the section is quiet.
+      * An empty state is EXPLAINED. A blank panel reads as broken.
+      * "No builds published on this SERVER", never "for this workspace" — one app serves every
+        school, and the other wording sends an administrator hunting for a per-tenant upload that
+        does not exist.
+*@
+
+<QPageTitle Text="Get the mobile app" />
+
+<div class="getapp">
+    <header class="getapp__head">
+        <QBrandMark />
+        <h1>Get the Q&#8209;Mgr app</h1>
+        <p class="getapp__sub">
+            The front-office app for Android, Windows and iPhone. It does what a browser cannot:
+            printing to a till-roll printer over Wi&#8209;Fi or Bluetooth, notifications on your
+            phone, and a sign-in that survives a restart.
+        </p>
+    </header>
+
+    @* ── The workspace address ──────────────────────────────────────────────────────────────
+       First, and with a copy button, because a mistyped workspace is the commonest first-run
+       failure and it surfaces much later as a login the person cannot explain. Handing it to them
+       beats asking them to remember it. *@
+    <section class="getapp__card">
+        <h2>1. The address to type</h2>
+        <p>When the app asks for your workspace, enter this:</p>
+        <div class="getapp__workspace">
+            <code id="workspace-address">@WorkspaceAddress</code>
+            <QButton Variant="secondary" Size="sm" OnClick="CopyWorkspaceAsync">
+                <QIcon Name="clipboard" Size="14" /> @(copied ? "Copied" : "Copy")
+            </QButton>
+        </div>
+        @if (Host.IsTenantHost)
+        {
+            <p class="getapp__note">This is your school's own address, so the app will show your name and colours before anyone signs in.</p>
+        }
+        else
+        {
+            <p class="getapp__note">
+                Sign in with your email address <strong>or your staff username</strong> — many staff
+                have no email address on file, and a username works exactly the same way.
+            </p>
+        }
+    </section>
+
+    @* ── Downloads ─────────────────────────────────────────────────────────────────────────── *@
+    <section class="getapp__card">
+        <h2>2. Download it</h2>
+
+        @if (loading)
+        {
+            <p class="getapp__note">Looking for the latest build&hellip;</p>
+        }
+        else if (loadFailed)
+        {
+            @* Distinct from "nothing published". The reader can retry this one; they cannot retry
+               the other. Telling them apart is the whole reason GetReleasesAsync returns null
+               rather than an empty list on a failure. *@
+            <QEmptyState Icon="cloud-slash"
+                         Title="Downloads unavailable"
+                         Message="We could not reach the download service just now. Please try again in a few minutes." />
+        }
+        else if (latest is null)
+        {
+            <QEmptyState Icon="box-seam"
+                         Title="No builds yet"
+                         Message="No app build has been published on this server yet. Ask your administrator." />
+        }
+        else
+        {
+            <div class="getapp__latest">
+                <div class="getapp__latest-meta">
+                    <span class="getapp__version">Version @latest.Version</span>
+                    <span class="getapp__size">@Megabytes(latest.SizeBytes)</span>
+                </div>
+                @* A plain anchor, not QButton: this is a NAVIGATION to a file on another origin, and QButton
+                   renders a <button> with no href. Styled to match so it does not read as a stray link. *@
+                <a class="q-btn q-btn--primary getapp__dl" href="@latest.Url">
+                    <QIcon Name="download" Size="16" /> Download for Android
+                </a>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(latest.Notes))
+            {
+                <p class="getapp__note">@latest.Notes</p>
+            }
+
+            <p class="getapp__note">
+                Android will ask you to allow installing from this site the first time.
+                @* Stated rather than discovered: the build is 64-bit only, deliberately, because it
+                   halves the download. A very old tablet cannot install it, and finding that out
+                   from a failure message is worse than reading it here. *@
+                Needs Android 7 or newer, on a 64-bit device.
+            </p>
+
+            @if (earlier.Count > 0)
+            {
+                <details class="getapp__earlier">
+                    <summary>Earlier versions (@earlier.Count)</summary>
+                    @* THE WARNING COMES FIRST. Not styling — it is the reason this section is
+                       collapsed at all. *@
+                    <p class="getapp__warn">
+                        <QIcon Name="exclamation-triangle" Size="14" />
+                        Android will not install an older version over a newer one. The app has to be
+                        uninstalled first, which erases everything stored on the device. Only do this
+                        if you have been asked to.
+                    </p>
+                    <ul class="getapp__earlier-list">
+                        @foreach (var release in earlier)
+                        {
+                            <li>
+                                <span>Version @release.Version</span>
+                                @if (release.Available)
+                                {
+                                    <a href="@release.Url">Download</a>
+                                }
+                                else
+                                {
+                                    @* Reported, not linked. The manifest is history; the disk is what
+                                       can be installed. *@
+                                    <span class="getapp__gone">No longer on this server</span>
+                                }
+                            </li>
+                        }
+                    </ul>
+                </details>
+            }
+        }
+    </section>
+
+    @* ── Provisioning QR ───────────────────────────────────────────────────────────────────
+       So a handset is configured by scanning rather than by dictating an address across a room.
+       Uses qrcodejs, which App.razor already loads for visitor badges — no new dependency. *@
+    <section class="getapp__card">
+        <h2>3. Or scan to set it up</h2>
+        <p>Already have the app? Scan this to point it at @WorkspaceAddress.</p>
+        <div id="getapp-qr" class="getapp__qr"></div>
+    </section>
+
+    <footer class="getapp__foot">
+        <a href="/login">Back to sign in</a>
+        <span>&bull;</span>
+        <a href="/privacy">Privacy Policy</a>
+        <PoweredBy />
+    </footer>
+</div>
+
+<style>
+    .getapp { max-width: 720px; margin: 0 auto; padding: 28px var(--qm-page-pad, 24px) 56px; }
+
+    .getapp__head { text-align: center; margin-bottom: 26px; }
+    .getapp__head h1 { margin: 12px 0 8px; font-size: var(--qm-text-xl); }
+    .getapp__sub { margin: 0 auto; max-width: 52ch; color: var(--qm-text-secondary); font-size: var(--qm-text-base); }
+
+    .getapp__card {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        padding: 18px;
+        margin-bottom: var(--qm-block-gap, 10px);
+    }
+    .getapp__card h2 { margin: 0 0 8px; font-size: var(--qm-text-md); }
+    .getapp__card p { margin: 0 0 10px; font-size: var(--qm-text-base); color: var(--qm-text-secondary); }
+
+    .getapp__workspace { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .getapp__workspace code {
+        font-size: var(--qm-text-md);
+        padding: 7px 11px;
+        border-radius: var(--qm-radius-md);
+        background: var(--qm-bg-elevated);
+        color: var(--qm-text-primary);
+        word-break: break-all;
+    }
+
+    .getapp__note { font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
+
+    .getapp__latest { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .getapp__latest-meta { display: flex; flex-direction: column; }
+    .getapp__version { font-weight: 600; color: var(--qm-text-primary); }
+    .getapp__size { font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
+
+    .getapp__earlier { margin-top: 14px; border-top: 1px solid var(--qm-border); padding-top: 12px; }
+    .getapp__earlier summary { cursor: pointer; font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
+    .getapp__warn {
+        display: flex; align-items: flex-start; gap: 7px;
+        margin: 10px 0; padding: 10px 12px;
+        border-radius: var(--qm-radius-md);
+        background: rgba(var(--qm-warning-rgb), 0.12);
+        color: var(--qm-text-primary);
+        font-size: var(--qm-text-sm);
+    }
+    .getapp__earlier-list { list-style: none; margin: 0; padding: 0; }
+    .getapp__earlier-list li {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 10px; padding: 7px 0; font-size: var(--qm-text-sm);
+        border-bottom: 1px solid var(--qm-border);
+    }
+    .getapp__earlier-list li:last-child { border-bottom: none; }
+    .getapp__gone { color: var(--qm-text-muted); }
+
+    .getapp__qr { display: flex; justify-content: center; padding: 8px 0; }
+
+    .getapp__foot {
+        display: flex; align-items: center; justify-content: center; gap: 10px;
+        flex-wrap: wrap; margin-top: 22px;
+        font-size: var(--qm-text-sm); color: var(--qm-text-secondary);
+    }
+</style>
+
+@code {
+    /// <summary>
+    /// Which host the browser arrived on, cascaded by <c>App.razor</c> — the only file that can see
+    /// <c>Request.Host</c>, because it is server-rendered on every request whatever the render mode.
+    /// </summary>
+    [CascadingParameter] public TenantHostContext Host { get; set; } = TenantHostContext.Platform;
+
+    private bool loading = true;
+    private bool loadFailed;
+    private bool copied;
+
+    private AppReleaseDto? latest;
+    private List<AppReleaseDto> earlier = new();
+
+    /// <summary>
+    /// What the person types into the app.
+    ///
+    /// <para>On a school's own domain it is that domain, and the app then wears their name and
+    /// colours from the sign-in screen onwards. On the shared platform host it is simply this host,
+    /// because every school that has not bought a domain reaches Q-Mgr there and which school is
+    /// decided by whoever signs in — not by the address.</para>
+    ///
+    /// <para>Read from the BROWSER's own address rather than from configuration, so the page always
+    /// prints the address that actually reached it. A configured value would be one more thing to get
+    /// wrong per deployment, and getting it wrong here means a workspace nobody can connect to.</para>
+    /// </summary>
+    private string WorkspaceAddress =>
+        !string.IsNullOrWhiteSpace(Host.Host)
+            ? Host.Host
+            : new Uri(Navigation.BaseUri).Host;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var releases = await MobileApi.GetReleasesAsync("android");
+
+        if (releases is null)
+        {
+            loadFailed = true;
+        }
+        else
+        {
+            latest = releases.Latest;
+            // Everything that is not the newest installable build. Kept even when its artefact has
+            // been pruned, so the page can say "no longer on this server" rather than link to a 404.
+            earlier = releases.Releases
+                .Where(r => latest is null || r.VersionCode != latest.VersionCode)
+                .ToList();
+        }
+
+        loading = false;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        // The provisioning deep link the app registers. Scheme "qmgr" matches Brand.UrlScheme in the
+        // app — a contract with the installed binary, not a label.
+        var deepLink = $"qmgr://workspace?host={Uri.EscapeDataString(WorkspaceAddress)}";
+
+        try
+        {
+            await JS.InvokeVoidAsync("visitorBadge.renderQr", "getapp-qr", deepLink);
+        }
+        catch (Exception)
+        {
+            // The QR is a convenience; the address above it is the real instruction. A failed render
+            // must not take the page down, and there is nothing useful to say about it.
+        }
+    }
+
+    private async Task CopyWorkspaceAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", WorkspaceAddress);
+            copied = true;
+        }
+        catch (Exception)
+        {
+            // Clipboard access can be refused outright. The address is on screen and selectable, so
+            // there is nothing to recover — the label simply does not change to "Copied", which is
+            // honest.
+        }
+    }
+
+    private static string Megabytes(long bytes)
+        => bytes <= 0 ? "" : $"{bytes / 1024d / 1024d:0.#} MB";
+}

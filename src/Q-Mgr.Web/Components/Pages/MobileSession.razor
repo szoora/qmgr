@@ -1,0 +1,141 @@
+@page "/mobile-session"
+@layout MinimalLayout
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@using Microsoft.AspNetCore.Authorization
+@using QMgr.Web.Services
+@attribute [AllowAnonymous]
+@inject IMobileAppApiService MobileApi
+@inject IAuthService Auth
+@inject NavigationManager Navigation
+@inject ILogger<MobileSession> Log
+
+@*
+    STEP 2 OF THE NATIVE APP'S SIGN-IN HANDOFF — and the place Q-Mgr's architecture genuinely
+    differs from the shell's contract.
+
+    The contract assumes the web UI is COOKIE-authenticated: the app navigates its WebView to an API
+    endpoint, that endpoint sets a cookie and redirects, done. Q-Mgr's web is Blazor Server and its
+    session lives in localStorage (access_token / refresh_token / user_info), so there is no cookie
+    for an API redirect to set. The redemption therefore happens HERE, in the Web project, which is
+    the only thing that can write that storage.
+
+    THREE RULES, each carried over from the ERP where each one cost real debugging time:
+
+      1. The code is CONSUMED BEFORE the session is written (the API removes it the moment it is
+         looked up), so a failure on this page cannot leave a replayable code behind.
+      2. returnUrl is validated as LOCAL. This page is anonymous and takes a redirect target, which
+         is an open redirector if it is trusted.
+      3. EVERY failure path NAVIGATES. Rendering an error here would leave the app showing a web
+         page where a signed-in screen should be — and on the ERP, returning JSON from the
+         equivalent endpoint put a raw {"success":false} body on screen inside the app, complete
+         with the browser's pretty-print checkbox. It looked exactly like a broken app.
+
+    AND ONE THAT IS OURS: this page carries no [Authorize], so Routes.razor sends it through a plain
+    RouteView rather than AuthorizeRouteView. That is load-bearing — AuthorizeRouteView renders its
+    Authorizing state inside MainLayout, whose own check would bounce an anonymous visitor to /login
+    before this page ever ran.
+*@
+
+<QPageTitle Text="Signing you in" />
+
+<div class="mobile-session">
+    <div class="mobile-session__panel">
+        <QBrandMark ShowName="false" />
+        <p class="mobile-session__status" aria-live="polite">@status</p>
+    </div>
+</div>
+
+<style>
+    /* Deliberately plain. This page is on screen for about a second inside a native app, between a
+       splash screen and the dashboard, so anything decorative here reads as a flash. */
+    .mobile-session {
+        min-height: 60vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: var(--qm-page-pad, 24px);
+    }
+
+    .mobile-session__panel {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+        text-align: center;
+    }
+
+    .mobile-session__status {
+        margin: 0;
+        color: var(--qm-text-secondary);
+        font-size: var(--qm-text-base);
+    }
+</style>
+
+@code {
+    [SupplyParameterFromQuery] public string? Code { get; set; }
+    [SupplyParameterFromQuery] public string? ReturnUrl { get; set; }
+
+    private string status = "Signing you in…";
+
+    /// <summary>
+    /// In OnAfterRenderAsync and not OnInitializedAsync, because writing the session is a JS-interop
+    /// call into localStorage and there is no interop during prerendering. That is the same rule
+    /// every component acting on auth state in this app follows.
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        // Where to land. Validated as local BEFORE anything else, so a bad value cannot be carried
+        // through a successful sign-in and then followed.
+        var target = LocalOrRoot(ReturnUrl);
+
+        if (string.IsNullOrWhiteSpace(Code))
+        {
+            // No code at all. Straight to sign-in — and NOT to "/", which would be
+            // indistinguishable from a successful handoff: the same 302, and the person bounced to
+            // login a moment later with no idea why.
+            Navigation.NavigateTo("/login", forceLoad: true);
+            return;
+        }
+
+        try
+        {
+            var session = await MobileApi.RedeemHandoffAsync(Code);
+
+            // Written through the SAME path an ordinary sign-in uses, so there is one place that
+            // knows what a stored session looks like. Duplicating the three localStorage keys here
+            // is how the app and the browser end up disagreeing about one of them.
+            await Auth.AdoptSessionAsync(session.AccessToken, session.RefreshToken, session.User);
+
+            status = "Signed in. Opening…";
+            StateHasChanged();
+
+            // forceLoad, deliberately: the circuit that rendered this page was created anonymous, so
+            // a soft navigation would carry an AuthenticationStateProvider that has already answered
+            // "not signed in" for this circuit's lifetime. A fresh document is the cheap, reliable
+            // way to start from the session just written.
+            Navigation.NavigateTo(target, forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            // Logged, never rendered. A stack trace inside the app is worse than a sign-in screen,
+            // and the person can do something about a sign-in screen.
+            Log.LogWarning(ex, "A mobile handoff code could not be redeemed");
+            Navigation.NavigateTo("/login", forceLoad: true);
+        }
+    }
+
+    /// <summary>
+    /// A local path, or "/". Rejects an absolute URL, a scheme-relative one (<c>//evil.example</c>,
+    /// which a naive "starts with /" check lets straight through) and a backslash form that some
+    /// browsers normalise into one.
+    /// </summary>
+    private static string LocalOrRoot(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return "/";
+        if (!url.StartsWith('/')) return "/";
+        if (url.StartsWith("//") || url.StartsWith("/\\")) return "/";
+        return url;
+    }
+}

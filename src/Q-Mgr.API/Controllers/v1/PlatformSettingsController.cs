@@ -334,7 +334,12 @@ public class PlatformSettingsController : ControllerBase
         ["Email"] = new[] { "SmtpPassword" },
         ["Stripe"] = new[] { "SecretKey", "WebhookSecret" },
         ["MobileMoney"] = new[] { "ApiKey", "WebhookSecret" },
-        ["JWT"] = new[] { "Secret" }
+        ["JWT"] = new[] { "Secret" },
+        // The Firebase service account's RSA private key. Anyone holding it can send a notification
+        // to every handset in the estate, so it is masked on read like the SMTP password beside it —
+        // the leak of 2026-09-15 was exactly this shape, and adding a secret without adding it here
+        // is how that repeats.
+        ["Push"] = new[] { "FirebasePrivateKey" }
     };
 
     /// <summary>Replaces each non-empty secret with the mask. Empty stays empty so "(not set)" still reads as not set.</summary>

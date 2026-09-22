@@ -510,9 +510,26 @@ public class NotificationService : INotificationService
             notification.DeliveredVia |= NotificationChannel.Email;
         }
 
-        // No push branch: there is no mobile app and no device token is ever stored, so a push
-        // sender could only ever be a stub that reported a channel it never used. The enum value
-        // stays for the day an app exists; the sender is built then (user decision, 2026-09-17).
+        // ── Push ────────────────────────────────────────────────────────────────────────────
+        //
+        // The note that stood here from 2026-09-17 said there was no push sender because there was
+        // no app and no device token was ever stored, and that the enum value stayed "for the day an
+        // app exists". That day is this one.
+        //
+        // The RECIPIENT is the user id, not a phone or an address: a push goes to every handset the
+        // person has signed in on, and which handsets those are is a server-side lookup rather than
+        // something a caller can be asked to supply. UserDeviceSession is where they live.
+        //
+        // An organisation-wide notification (UserId == null) is deliberately NOT pushed. There is no
+        // recipient to resolve devices for, and fanning one out to every handset in the tenant is a
+        // different feature with a different cost — it would also be read on a lock screen by
+        // whoever is holding the phone.
+        if (channels.HasFlag(NotificationChannel.Push) && request.UserId.HasValue)
+        {
+            EnqueuePushDispatch(notification.Id, request.OrganizationId, request.UserId.Value,
+                                request.Title, request.Message, request.ActionUrl);
+            notification.DeliveredVia |= NotificationChannel.Push;
+        }
 
         await _context.SaveChangesAsync(cancellationToken);
 
@@ -569,6 +586,30 @@ public class NotificationService : INotificationService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Could not queue {Channel} delivery for notification {NotificationId}", channel, notificationId);
+        }
+    }
+
+    /// <summary>
+    /// The same hand-off for a push. A SEPARATE job method rather than a flag, for the reason the
+    /// HTML-email one gives below: Hangfire stores a queued job by method signature, so widening an
+    /// existing one leaves every job queued before the deploy unable to deserialise.
+    ///
+    /// <para>It carries a USER ID where the others carry a phone number or an address, because the
+    /// devices are resolved server-side at send time. Resolving them here instead would freeze the
+    /// device list into the queued job, so a handset that signed in between the enqueue and the send
+    /// would be missed and one that signed out would still be tried.</para>
+    /// </summary>
+    private void EnqueuePushDispatch(Guid notificationId, Guid organizationId, Guid userId,
+                                     string title, string message, string? actionUrl)
+    {
+        try
+        {
+            BackgroundJob.Enqueue<NotificationDispatchJob>(job =>
+                job.DispatchPushAsync(notificationId, organizationId, userId, title, message, actionUrl, null));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not queue push delivery for notification {NotificationId}", notificationId);
         }
     }
 
