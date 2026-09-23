@@ -341,10 +341,20 @@ hdr("15.4 DUTY REPORTS — rows, write, submit, who reads, review, return, evide
         const n = ((await get(U.hod.token, "/api/v1/notifications?eventKey=staff.duty-report-overdue&limit=100")).json ?? []).find((x) => x.title.includes(needle));
         return n && !n.message.includes(U.math2.name.split(" ")[0]);
       })));
-      const once = await count(U.math2.token, "staff.duty-report-overdue", needle);
+      // Count ONE report's reminders, by its own link, never by title. This person has two overdue reports on the
+      // duty, and one sweep reminds them about both, one after the other. The full run of 2026-09-23 read the title
+      // count BETWEEN those two sends (1) and again after the extra sweep (2) — the database shows one reminder per
+      // report, both in the same second, so nothing was sent twice; the count raced a sweep still running. Every stage
+      // of the OLDEST report is long past, so for it nothing new is the right answer, whenever the count is read.
+      const oldest = m2[0]?.id;
+      const forOldest = async () => ((await get(U.math2.token, "/api/v1/notifications?eventKey=staff.duty-report-overdue&limit=100")).json ?? [])
+        .filter((x) => (x.actionUrl ?? "").endsWith(`/duty-reports/${oldest}`)).length;
+      await waitFor(async () => (await forOldest()) >= 1, 30_000); // the sweep may still be sending it
+      const once = await forOldest();
       await trigger("staff-reminder-ladder");
       await sleep(6000);
-      eq("LADDER: a second sweep sends nothing new to the author", await count(U.math2.token, "staff.duty-report-overdue", needle), once);
+      truthy("LADDER: the oldest report was chased (the count below is not a count of nothing)", once >= 1, `${once}`);
+      eq("LADDER: a second sweep sends nothing new to the author about that report", await forOldest(), once);
       const hodPortal = (await get(U.hod.token, "/api/v1/staff/portal")).json;
       truthy("TO-DO: the supervisor's portal lists the overdue report", (hodPortal?.openItems ?? []).some((i) => i.kind === "duty-report-overdue" && i.title.includes(needle)), JSON.stringify((hodPortal?.openItems ?? []).filter((i) => i.kind === "duty-report-overdue").map((i) => i.title)));
       const m2Portal = (await get(U.math2.token, "/api/v1/staff/portal")).json;

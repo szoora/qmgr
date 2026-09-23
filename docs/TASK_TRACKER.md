@@ -75,14 +75,12 @@ them into the repo.** Suites read them through `E2E_DOCS_DIR=D:/QMGR/DATA` and s
       `rooms-ui` 8/0 + 1 honest skip (no room has lessons); `density-and-staff` 43/0 ("Staff number");
       `import-wizard` 22/0 (drive E: is mounted again); `staff-hub`/`staff-nav-hubs` read only the hub's strip.
 
-**Where the runs stand (2026-09-23 night, after the above).** API full run **1,635 passed, 1 failed** (was
-1,542/65). The one: section 15 "LADDER: a second sweep sends nothing new to the author" (1 → 2). Section 15 alone
-passes **208/0**. Each ladder stage is claimed once per report, but the check counts by title across several
-reports of one duty, so a later stage of ANOTHER report reads as a repeat. **Not explained yet; not called flaky.**
-Browser: every suite touched here passes; guards 14/14.
-
-**NEXT SESSION:** commit the above when asked; explain the section-15 ladder count (make the check count per
-report id).
+**Committed and pushed as `c50b9a9`.** API full run **1,635 passed, 1 failed** (was 1,542/65); the one was
+section 15's "a second sweep sends nothing new to the author" (1 → 2), **now explained and fixed (uncommitted)**: the
+database shows ONE reminder per report — two overdue reports, both reminded in the same second by one sweep — and the
+check counted by TITLE, so it read the count between the two sends. It now waits for, and counts, the OLDEST report's
+reminders by their own link (`actionUrl`), and asserts that report was chased at all. Section 15 **209/0**, twice.
+No product change: nothing was ever sent twice.
 
 **Local tooling left running** (not in the repo): API :5001, Web :5003, headless Chrome :9333, **headed Chrome
 :9334** (`CDP_PORT=9334` makes any browser suite visible), and a **live results viewer on :5010** —
