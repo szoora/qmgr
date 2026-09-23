@@ -203,7 +203,9 @@ public class UsageTrackingService : IUsageTrackingService
             "branches" => await _dbContext.Branches.CountAsync(b => b.OrganizationId == organizationId),
             // A join request waiting for approval is not a seat (duty rota plan §12.4): counting it would let
             // anyone holding the join link fill a school's user cap with applications nobody approved.
-            "users" => await _dbContext.Users.CountAsync(u => u.OrganizationId == organizationId && u.PendingApprovalAt == null),
+            // ACTIVE users only (2026-09-23): the product's own "delete" is a soft deactivate, so counting
+            // inactive rows meant a seat could never be given back. Re-enabling is guarded by UserSeats.
+            "users" => await _dbContext.Users.CountAsync(u => u.OrganizationId == organizationId && u.PendingApprovalAt == null && u.IsActive),
             "displays" => await _dbContext.Displays.CountAsync(d => d.Branch != null && d.Branch.OrganizationId == organizationId),
             "tokens" => usage.TokensCreated,
             "api_calls" => usage.ApiCalls,

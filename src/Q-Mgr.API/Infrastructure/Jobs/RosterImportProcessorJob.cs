@@ -63,6 +63,7 @@ public class RosterImportProcessorJob
     private readonly IPlatformSettingsService _platformSettings;
     private readonly IDataProtectionProvider _dataProtection;
     private readonly INotificationService _notifications;
+    private readonly QMgr.Application.Interfaces.Billing.IBillingService _billing;
 
     public RosterImportProcessorJob(
         QMgrDbContext context,
@@ -72,8 +73,10 @@ public class RosterImportProcessorJob
         IDataProtectionProvider dataProtection,
         INotificationService notifications,
         IActivityLogger activity,
-        ILogger<RosterImportProcessorJob> logger)
+        ILogger<RosterImportProcessorJob> logger,
+        QMgr.Application.Interfaces.Billing.IBillingService billing)
     {
+        _billing = billing;
         _context = context;
         _broadcaster = broadcaster;
         _activity = activity;
@@ -822,6 +825,9 @@ public class RosterImportProcessorJob
         if (request == null) { await FailJobAsync(job, "Could not read the uploaded rows (corrupted payload)."); return; }
 
         var context = await StaffImportContext.LoadAsync(_context, job.OrganizationId, job.BranchId);
+        // The user limit counts ACTIVE people and this job saves in chunks, so the room is read once and counted
+        // down per account created (UserSeats). Rows past it fail by name; the ones before it are kept.
+        (context.SeatsLeft, context.SeatMax) = await UserSeats.RoomAsync(_billing, job.OrganizationId);
         var created = new List<(Guid UserId, string? LineManagerEmail)>();
         var protector = _dataProtection.CreateProtector(TemporaryPasswords.ImportProtectorPurpose).ToTimeLimitedDataProtector();
 
@@ -907,6 +913,8 @@ public class RosterImportProcessorJob
         public Dictionary<string, Guid> DepartmentsByCode { get; } = new(StringComparer.OrdinalIgnoreCase);
         public string OrganizationName { get; private set; } = "your organization";
         public string BaseUrl { get; set; } = "https://qmgr.app";
+        public int SeatsLeft { get; set; } = int.MaxValue;
+        public int SeatMax { get; set; }
 
         public static async Task<StaffImportContext> LoadAsync(QMgrDbContext db, Guid organizationId, Guid branchId)
         {
@@ -1096,6 +1104,13 @@ public class RosterImportProcessorJob
             if (ctx.DepartmentsByCode.TryGetValue(code, out var id)) departmentIds.Add(id);
             else unknownCodes.Add(code);
         }
+
+        if (ctx.SeatsLeft <= 0)
+        {
+            Fail(UserSeats.FullForImportRow(ctx.SeatMax));
+            return;
+        }
+        ctx.SeatsLeft--;
 
         // A random password nobody knows; the invitation (or a later "forgot password") sets the real one.
         var randomPassword = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));

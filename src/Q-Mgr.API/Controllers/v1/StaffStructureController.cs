@@ -352,6 +352,7 @@ public class StaffStructureController : StaffPerformanceControllerBase
     /// there, and the dialog links to it for exactly those.</para>
     /// </summary>
     [HttpPost("members")]
+    [CheckLimit(UserSeats.LimitType)]
     [RequirePermission(Permissions.StaffStructureManage)]
     [ProducesResponseType(typeof(CreateStaffMemberResult), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]

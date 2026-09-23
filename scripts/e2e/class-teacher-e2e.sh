@@ -1252,5 +1252,21 @@ else
   printf '  \033[33mSKIP\033[0m  node is not installed; section 33 did not run\n'
 fi
 
+hdr "34. User limit — active people only, and every way back in asks first"
+# The limit counted deactivated users while the product's only "delete" deactivates, so a seat could never
+# be given back. It counts ACTIVE people now, and every path that re-enables somebody asks first: the toggle,
+# the bulk enable (preview and run), and undoing a bulk disable. Registers its own scratch tenant with a
+# 10-user limit and purges it afterwards; Development only.
+if command -v node > /dev/null 2>&1; then
+  US_OUT=$(API="$API" SA_USER="$SA_USER" SA_PASS="$SA_PASS" node "$(dirname "$0")/user-seats-e2e.mjs" 2>&1)
+  echo "$US_OUT" | sed 's/^/  /'
+  US_PASS=$(echo "$US_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  US_FAIL=$(echo "$US_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$US_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 34 did not report a summary\n'
+  else PASS=$((PASS+US_PASS)); FAIL=$((FAIL+US_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 34 did not run\n'
+fi
+
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 exit "$FAIL"

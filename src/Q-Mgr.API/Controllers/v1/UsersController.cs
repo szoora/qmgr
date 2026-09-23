@@ -29,6 +29,7 @@ public class UsersController : ControllerBase
     private readonly IPasswordValidationService _passwordValidation;
     private readonly INotificationHubService _notificationHub;
     private readonly QMgr.Infrastructure.Services.IStaffProfileChangeNotifier _profileChanges;
+    private readonly QMgr.Application.Interfaces.Billing.IBillingService _billing;
 
     private Guid? GetCurrentUserIdOrNull()
     {
@@ -43,8 +44,10 @@ public class UsersController : ControllerBase
         ILogger<UsersController> logger,
         IPasswordValidationService passwordValidation,
         INotificationHubService notificationHub,
-        QMgr.Infrastructure.Services.IStaffProfileChangeNotifier profileChanges)
+        QMgr.Infrastructure.Services.IStaffProfileChangeNotifier profileChanges,
+        QMgr.Application.Interfaces.Billing.IBillingService billing)
     {
+        _billing = billing;
         _profileChanges = profileChanges;
         _notificationHub = notificationHub;
         _dbContext = dbContext;
@@ -735,6 +738,21 @@ public class UsersController : ControllerBase
                 Detail = $"User with ID '{userId}' was not found in your organization.",
                 Status = StatusCodes.Status404NotFound
             });
+
+        // Re-enabling somebody takes a seat: the limit counts ACTIVE users (see UserSeats), so without this
+        // disable-then-enable would be a way round it. Disabling never needs room.
+        if (!user.IsActive)
+        {
+            var refusal = await UserSeats.RefusalAsync(_billing, user.OrganizationId, 1);
+            if (refusal != null)
+                return StatusCode(StatusCodes.Status402PaymentRequired, new
+                {
+                    error = "LIMIT_EXCEEDED",
+                    limitType = UserSeats.LimitType,
+                    message = refusal,
+                    upgradeUrl = BillingLinks.Modules
+                });
+        }
 
         user.IsActive = !user.IsActive;
         user.UpdatedAt = DateTime.UtcNow;

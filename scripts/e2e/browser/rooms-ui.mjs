@@ -16,7 +16,11 @@ await t.waitFor(`[...document.querySelectorAll('.q-card')].some(c => /Rooms/.tes
 const card = `[...document.querySelectorAll('.q-card')].find(c => c.querySelector('.q-card__title, h3, h2')?.innerText.trim() === 'Rooms' || /^Rooms/.test(c.innerText.trim()))`;
 check('the page has a Rooms card listing the branch rooms', await t.eval(`(${card})?.querySelectorAll('tbody tr').length > 0`), await t.eval(`(${card})?.innerText.slice(0, 200)`));
 check('the header no longer sends people to Student Roster for rooms', !(await t.eval(`[...document.querySelectorAll('.header-actions button')].some(b => b.innerText.trim() === 'Rooms')`)));
-check('a room with lessons cannot be removed (its button is disabled)', await t.eval(`[...(${card}).querySelectorAll('tbody tr')].some(r => r.cells[4].innerText.trim() !== '—' && r.querySelector('button')?.disabled)`));
+// Only meaningful when some room HAS lessons; on a branch where none does it must SKIP, not fail (it failed on
+// the dev branch for exactly that reason, 2026-09-22) — and when some do, EVERY one of them must be locked.
+const withLessons = await t.eval(`[...(${card}).querySelectorAll('tbody tr')].filter(r => r.cells[4] && r.cells[4].innerText.trim() !== '—').map(r => !!r.querySelector('button')?.disabled)`);
+if (!withLessons.length) { const l = '    SKIP  ROOMS UI: no room on this branch has lessons, so "cannot be removed" has nothing to test'; console.log(l); post(l); }
+else check('a room with lessons cannot be removed (its button is disabled)', withLessons.every(Boolean), `${withLessons.filter(x => !x).length} of ${withLessons.length} are removable`);
 
 const before = await t.eval(`(${card}).querySelectorAll('tbody tr').length`);
 await t.eval(`[...(${card}).querySelectorAll('button')].find(b => b.innerText.includes('Add a room')).click()`); await t.sleep(800);
@@ -47,8 +51,9 @@ await t.viewport(1440, 900); await t.sleep(600);
 // Student Roster's lists editor
 await t.goto(BASE + '/admin/students/roster');
 await t.waitFor(`[...document.querySelectorAll('button')].some(b => b.innerText.trim() === 'Lists')`, 20000); await t.sleep(1000);
-await t.clickText('Lists'); await t.waitFor(`!!document.querySelector('.stu-tab')`, 8000); await t.sleep(800);
-const tabs = await t.eval(`[...document.querySelectorAll('.stu-tab')].map(x => x.innerText.trim())`);
+// The dialog's strip is QTabs now (id prefix stu-vocab); the old .stu-tab strip is gone.
+await t.clickText('Lists'); await t.waitFor(`!!document.querySelector('[id^="stu-vocab-"][role=tab]')`, 8000); await t.sleep(800);
+const tabs = await t.eval(`[...document.querySelectorAll('[id^="stu-vocab-"][role=tab]')].map(x => x.innerText.trim())`);
 check('Student Roster lists no longer have a Rooms tab', tabs.length > 0 && !tabs.some(x => /Rooms/.test(x)), JSON.stringify(tabs));
 check('no console errors', t.consoleErrors.length === 0, t.consoleErrors.slice(0, 3).join(' | '));
 const sum = `\n  Rooms UI: ${pass} passed, ${fail} failed`; console.log(sum); post(sum);

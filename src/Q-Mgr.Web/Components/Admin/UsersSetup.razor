@@ -356,9 +356,13 @@
             </div>
         }
 
-        <div class="form-group">
-            <QCheckbox @bind-Value="@formData.IsActive" Label="User is active" />
-        </div>
+        @* A new account is always active; the box means something only on an existing one. *@
+        @if (editingUser != null)
+        {
+            <div class="form-group">
+                <QCheckbox @bind-Value="@formData.IsActive" Label="User is active" />
+            </div>
+        }
     </ChildContent>
     <FooterContent>
         <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showDialog = false)" />
@@ -1696,6 +1700,23 @@
                     AssignedBranchId = formData.BranchId
                 };
                 response = await Http.PutAsJsonAsync($"api/v1/users/{editingUser.Id}", updateRequest, JsonOptions);
+            }
+
+            // The PUT carries no active flag, so this box was bound and never sent: unticking it and saving left the
+            // person active and said nothing. It goes through the toggle, which is where the user limit is checked
+            // (re-enabling somebody takes a seat) — and a refusal is shown rather than a false "User updated".
+            if (response.IsSuccessStatusCode && editingUser != null && formData.IsActive != editingUser.IsActive)
+            {
+                var toggled = await Http.PatchAsync($"api/v1/users/{editingUser.Id}/toggle", null);
+                if (!toggled.IsSuccessStatusCode)
+                {
+                    var (toggleTitle, toggleDetail) = await ApiErrorService.GetErrorDetailsAsync(toggled);
+                    NotificationService.Notify(ToastSeverity.Warning, formData.IsActive ? "Details saved, account not enabled" : "Details saved, account not disabled",
+                        string.IsNullOrWhiteSpace(toggleDetail) ? toggleTitle : toggleDetail);
+                    showDialog = false;
+                    await LoadData();
+                    return;
+                }
             }
 
             if (response.IsSuccessStatusCode)

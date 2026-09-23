@@ -150,7 +150,7 @@ else {
   })()`));
   check('the staff record dialog opens', dlg.open);
   // The twelve fields that only the bulk import could write until today.
-  for (const field of ['Qualification', 'Registration number', 'Employee number', 'Terms', 'Appointed', 'National ID', 'Emergency contact']) {
+  for (const field of ['Qualification', 'Registration number', 'Staff number', 'Terms', 'Appointed', 'National ID', 'Emergency contact']) {
     check(`it carries "${field}"`, (dlg.labels || []).some(l => l.toLowerCase().includes(field.toLowerCase())), JSON.stringify(dlg.labels));
   }
   check('contact and employment are separate sections', (dlg.heads || []).length >= 2, JSON.stringify(dlg.heads));

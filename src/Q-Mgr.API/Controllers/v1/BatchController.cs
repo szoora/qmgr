@@ -48,6 +48,7 @@ public class BatchController : ControllerBase
     private readonly IStudentScopeService _scope;
     private readonly ILogger<BatchController> _logger;
     private readonly QMgr.Infrastructure.Services.IStaffProfileChangeNotifier _profileChanges;
+    private readonly QMgr.Application.Interfaces.Billing.IBillingService _billing;
 
     public BatchController(
         QMgrDbContext context,
@@ -55,8 +56,10 @@ public class BatchController : ControllerBase
         ITenantContextAccessor tenantAccessor,
         IStudentScopeService scope,
         ILogger<BatchController> logger,
-        QMgr.Infrastructure.Services.IStaffProfileChangeNotifier profileChanges)
+        QMgr.Infrastructure.Services.IStaffProfileChangeNotifier profileChanges,
+        QMgr.Application.Interfaces.Billing.IBillingService billing)
     {
+        _billing = billing;
         _profileChanges = profileChanges;
         _context = context;
         _resolver = resolver;
@@ -206,6 +209,15 @@ public class BatchController : ControllerBase
                 Message = $"{conflicts.Count} of {entries.Count} record{(entries.Count == 1 ? "" : "s")} {(conflicts.Count == 1 ? "has" : "have")} changed since this batch ran, so reversing it would overwrite somebody else's work. Nothing was undone.",
                 ConflictedRows = conflicts.Take(25).ToList()
             });
+        }
+
+        // Reversing a bulk DISABLE re-enables everybody in it, and an active account takes a seat (UserSeats).
+        // Refused whole, before a single write, for the same reason a partial undo is refused above.
+        if (request.Operation == BatchOperation.SetUserActive)
+        {
+            var reenabling = entries.Count(e => string.Equals(e.PreviousValue, "Active", StringComparison.OrdinalIgnoreCase));
+            if (await UserSeats.RefusalAsync(_billing, job.OrganizationId, reenabling) is { } refusal)
+                return Ok(new BatchUndoResultDto { Success = false, Message = refusal + " Nothing was undone." });
         }
 
         var reverted = 0;

@@ -57,27 +57,32 @@ them into the repo.** Suites read them through `E2E_DOCS_DIR=D:/QMGR/DATA` and s
       asks for Email + Push (a new tenant's settings may drop email), and 20.2e asserts the seed. The purge
       removed 2 real jobs — the first time its Hangfire half has ever been exercised.
 
-**Where the runs stand (2026-09-23 night).** API full run: **1,542 passed, 65 failed — every failure traced to
-the dev tenant's user cap** (402 on user creation; sections 13, 14, 15, 23 cascade). The nine browser suites
-that failed during the disrupted full run were **re-run one at a time with the web left alone**:
-- clean: `getapp-page` 28/0, `localization` 15/0 (+1 Core Queue skip), `mobile-readiness` 56/0,
-  `student-roster` 31/0, `staff-hub` 15/0, `staff-nav-hubs` 42/0.
-- **ONE REAL REGRESSION, mine, fixed:** the compacted roster summary buttons were **19px** tall on a phone, under
-  WCAG 2.5.8's 24px — `button.roster-sum` now has `min-height: 24px`.
-- **Stale suites fixed:** `staff-hub` / `staff-nav-hubs` expected 4 Staff tabs (there are 6) and counted the
-  timetable editor's axis picker as hub tabs — both now read only the FIRST `.q-tabs` (the hub's strip).
-- **Still failing, all already on the 09-22 list:** `action-location` 219/2 (the overcrowded Staff Directory title
-  row — needs a design answer), `rooms-ui` 7/2 (stale assertions), `import-wizard` 0/0/2 skips (its files were on
-  drive E:, not mounted).
-- **Environment:** `timetable-print` 24/1 — 9a needs a PUBLISHED timetable in force today and the dev branch has
-  none (every suite archives what it publishes). Publish one, or have the suite seed its own.
+**Committed and pushed as `753da33`.** Then, uncommitted on top of it:
 
-**NEXT SESSION, in order:**
-1. **User decision still open: the dev tenant's user cap** (260/250) — remove old e2e accounts or raise the
-   limit; until then ~65 API checks fail by construction.
-2. The Staff Directory title row (six buttons, 84px band) needs a design answer — overflow menu or fewer buttons.
-3. `timetable-print` 9a: make the suite seed and archive its own published timetable.
-4. Commit only when the user asks; single branch `master`; no attribution.
+- [x] **The user limit counts ACTIVE people** — the dev tenant's 260/250 was a product defect: the product's only
+      "delete" is a soft deactivate, so a seat could never be given back. `UserSeats` is the one home for "room for n
+      more?", asked by the toggle, the bulk enable (resolver: preview, run and job), undoing a bulk disable, Add staff
+      (had NO limit check) and the staff import (counted down per row). The edit form's "User is active" tick box was
+      inert (never sent) and now goes through the toggle. **Section 34 (`user-seats-e2e.mjs`) 19/0**, on a scratch
+      tenant it purges. CLAUDE.md has a section.
+- [x] **Staff Directory title row** — the hub's Log record · Add staff · Import a list · Export act on People and
+      now show there only; Class teachers carries its own two. `action-location` 212/0, `uniform-check` 42/0.
+- [x] **The lost QInfo** — the hub owns the open tab's explanation (`ClassTeachers.PastoralHelp`/`SubjectHelp`).
+- [x] **`.ct-card-empty`** — an unassigned card is one line with its actions on it and does not stretch to its
+      row; "empty" now means empty FOR THE TAB (it marked subject cards by the class teacher). `empty-state-check` 205/0.
+- [x] **Suites**: `timetable-print` 29/0 — 9a was STALE (the card moved to My Workspace's My teaching tab on
+      09-21) and the suite now seeds its own published week (copy + subject-teacher assignments, all removed after);
+      `rooms-ui` 8/0 + 1 honest skip (no room has lessons); `density-and-staff` 43/0 ("Staff number");
+      `import-wizard` 22/0 (drive E: is mounted again); `staff-hub`/`staff-nav-hubs` read only the hub's strip.
+
+**Where the runs stand (2026-09-23 night, after the above).** API full run **1,635 passed, 1 failed** (was
+1,542/65). The one: section 15 "LADDER: a second sweep sends nothing new to the author" (1 → 2). Section 15 alone
+passes **208/0**. Each ladder stage is claimed once per report, but the check counts by title across several
+reports of one duty, so a later stage of ANOTHER report reads as a repeat. **Not explained yet; not called flaky.**
+Browser: every suite touched here passes; guards 14/14.
+
+**NEXT SESSION:** commit the above when asked; explain the section-15 ladder count (make the check count per
+report id).
 
 **Local tooling left running** (not in the repo): API :5001, Web :5003, headless Chrome :9333, **headed Chrome
 :9334** (`CDP_PORT=9334` makes any browser suite visible), and a **live results viewer on :5010** —

@@ -152,7 +152,8 @@
             <div class="ct-grid">
                 @foreach (var row in coverage.Classes)
                 {
-                    <div class="ct-card @(row.ClassTeacher == null ? "ct-card-empty" : "")">
+                    var unassigned = Pastoral ? row.ClassTeacher == null : !row.SubjectTeachers.Any();
+                    <div class="ct-card @(unassigned ? "ct-card-empty" : "")">
                         <div class="ct-card-head">
                             <div class="ct-class">
                                 <span class="ct-swatch" style="background:@(row.Color ?? "var(--qm-border)")"></span>
@@ -174,12 +175,17 @@
                         }
                         else
                         {
+                            @* One line, its own actions on it: an unassigned card is a line of news, not a block
+                               (empty-state-check measured these at 159–272px, 2026-09-22). *@
                             <div class="ct-none">
                                 <QIcon Name="dash-circle" />
                                 <span>No class teacher</span>
                                 @if (canManage)
                                 {
-                                    <QButton Text="Assign" Icon="person-plus" Variant="ghost" Size="sm" OnClick="@(() => ShowAssignDialog(row.ClassName))" />
+                                    <span class="ct-none-actions">
+                                        <QButton Text="Assign" Icon="person-plus" Variant="ghost" Size="sm" OnClick="@(() => ShowAssignDialog(row.ClassName))" />
+                                        <QButton Text="History" Icon="clock-history" Variant="ghost" Size="sm" OnClick="@(() => ShowHistoryDialog(row.ClassName))" />
+                                    </span>
                                 }
                             </div>
                         }
@@ -196,16 +202,23 @@
                         @* Subject teachers: the Teaching tier. Compact rows — the contact card belongs to the
                            pastoral lead, the person a parent or the front desk actually calls. *@
                         <div class="ct-subjects">
-                            <div class="ct-subjects-head">
-                                <span>Subject teachers</span>
-                                @if (row.SubjectTeachers.Any())
-                                {
+                            @* On an empty card the heading only repeats the tab's own name. *@
+                            @if (!unassigned)
+                            {
+                                <div class="ct-subjects-head">
+                                    <span>Subject teachers</span>
                                     <span class="ct-count">@row.SubjectTeachers.Sum(t => t.PeriodsPerWeek ?? 0) periods a week</span>
-                                }
-                            </div>
+                                </div>
+                            }
                             @if (!row.SubjectTeachers.Any())
                             {
-                                <div class="ct-subjects-none">None assigned</div>
+                                <div class="ct-subjects-none">
+                                    <span>None assigned</span>
+                                    @if (canManage)
+                                    {
+                                        <QButton Text="Add subject teacher" Icon="book" Variant="ghost" Size="sm" OnClick="@(() => ShowSubjectDialog(row.ClassName))" />
+                                    }
+                                </div>
                             }
                             else
                             {
@@ -239,7 +252,7 @@
                         </div>
                         }
 
-                        @if (canManage)
+                        @if (canManage && !unassigned)
                         {
                             <div class="ct-card-foot">
                                 @* Each tab offers only its own act: a button that adds a subject teacher
@@ -525,9 +538,11 @@
     /// <summary>The pastoral half — class teachers and assistants — rather than subject teaching.</summary>
     private bool Pastoral => !string.Equals(EmbeddedTab, "subject-teachers", StringComparison.OrdinalIgnoreCase);
 
-    private string HeadingHelp => Pastoral
-        ? "Who holds pastoral responsibility for each class. A class teacher sees their own classes' students and their welfare, is alerted about them, and may log a concern — the assignment itself is what grants that, so anybody on the staff can hold a class."
-        : "Who teaches each class which subject, and for how many periods a week. A subject teacher sees only the students they teach, with no guardians, welfare or discipline, and the timetable reads this as its planned load.";
+    // Public so the Staff Directory hub can say it beside ITS title when this section is embedded: the
+    // section's own title (and the QInfo on it) is hidden there, and until 2026-09-23 the explanation went with it.
+    public const string PastoralHelp = "Who holds pastoral responsibility for each class. A class teacher sees their own classes' students and their welfare, is alerted about them, and may log a concern — the assignment itself is what grants that, so anybody on the staff can hold a class.";
+    public const string SubjectHelp = "Who teaches each class which subject, and for how many periods a week. A subject teacher sees only the students they teach, with no guardians, welfare or discipline, and the timetable reads this as its planned load.";
+    private string HeadingHelp => Pastoral ? PastoralHelp : SubjectHelp;
 
     private bool isLoading = true;
     private bool canManage;
@@ -952,7 +967,8 @@
     }
     /* A class with nobody on it is the state this page exists to make visible, so it does not
        look like an ordinary empty card. */
-    .ct-card-empty { border-style: dashed; }
+    /* …and it keeps its own height rather than stretching to its grid row's tallest card. */
+    .ct-card-empty { border-style: dashed; align-self: start; }
 
     .ct-card-head {
         display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -985,7 +1001,8 @@
     .ct-contact a { color: var(--qm-text-secondary); text-decoration: none; overflow: hidden; text-overflow: ellipsis; }
     .ct-contact a:hover { color: var(--qm-primary); text-decoration: underline; }
 
-    .ct-none { display: flex; align-items: center; gap: 10px; padding: 16px; color: var(--qm-text-muted); font-size: var(--qm-text-base); }
+    .ct-none { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 8px 16px; color: var(--qm-text-muted); font-size: var(--qm-text-base); }
+    .ct-none-actions { display: inline-flex; gap: 2px; margin-left: auto; }
     /* flex-wrap at source: two buttons on a narrow card is exactly the *-footer shape that
        widened the document and made the whole page scroll sideways. */
     .ct-card-foot { display: flex; flex-wrap: wrap; gap: var(--q-row-gap, 8px); padding: 0 16px 12px; }
@@ -1029,7 +1046,7 @@
 
     .ct-subjects { border-top: 1px solid var(--qm-border); padding: 10px 16px 12px; }
     .ct-subjects-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: var(--qm-text-xs); text-transform: uppercase; letter-spacing: .04em; color: var(--qm-text-muted); margin-bottom: 6px; }
-    .ct-subjects-none { font-size: var(--qm-text-base); color: var(--qm-text-muted); }
+    .ct-subjects-none { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; font-size: var(--qm-text-base); color: var(--qm-text-muted); }
     .ct-subject-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
     .ct-subject { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px dashed var(--qm-border); min-width: 0; }
     .ct-subject:last-child { border-bottom: none; }

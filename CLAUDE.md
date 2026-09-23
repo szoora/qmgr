@@ -2617,6 +2617,10 @@ rendering a `.page-header` holding only its buttons — and `.page-header` is sp
 - **A filter is not an action.** A period picker, a search box or a range belongs in `QFilterBar` below the band — the
   title row holds buttons only. Two period pickers and the Dashboard's range moved for this reason.
 - `.page-header .header-actions` carries `margin-left: auto` as a backstop, and `:empty` hides an outlet with no section.
+- **A hub's OWN buttons that act on one tab's list show on that tab only** (2026-09-23). Staff Directory's Log
+  record · Add staff · Import a list · Export act on People, and on Class teachers they sat beside that section's two
+  — six in one row, 84px (`action-location`, `uniform-check`). The hub also owns the open tab's `QInfo` now, because
+  an embedded section's own title — and the explanation on it — is hidden.
 - **Guards:** `scripts/e2e/section-actions-check.mjs` now also fails a section that renders its own `header-actions`,
   `toolbar-right` or similar band instead of `QPageActions`; `scripts/e2e/browser/action-location.mjs` opens every tab
   of every hub and asserts one band, buttons right of centre and above the tabs.
@@ -4125,6 +4129,27 @@ without it.
 - Verified: sections **29** (gates, 59), **30** (calendar, 107), **31** (programme import, 80 — the counts measured
   from the real documents asserted by the product code); browser suites `visitor-gates` (22), `calendar-ui` (42),
   `programme-import` (24 with `E2E_COMMIT=1`).
+
+## The user limit counts ACTIVE people, and every way back in asks first (2026-09-23)
+
+The dev tenant sat at 260 of 250 and about 65 API checks failed at their first "create a user" step. That was
+a product defect, not test clutter: `UsageTrackingService` counted every user row, while the product's only
+way to remove a person — `DELETE /users/{id}` — is a SOFT delete that sets `IsActive = false`. A school that
+removed a teacher who had left never got the seat back; once full, it was full for good.
+
+- **The count is active people, not pending join requests** (`u.IsActive && u.PendingApprovalAt == null`).
+- **`UserSeats` (API `Application/Services`) is the one home for "is there room for n more?"** Counting active
+  makes re-enabling an ADD, so every path that turns somebody on asks it: the Users & Roles toggle (402,
+  `LIMIT_EXCEEDED`), the bulk "enable accounts" batch (refused in the RESOLVER, so the preview says it, the run
+  refuses it and the Hangfire job — which re-resolves — cannot slip past), undoing a bulk DISABLE (refused whole,
+  before a write), `POST …/staff/structure/members` (`[CheckLimit("users")]` — it had no limit check at all), and
+  the staff import (room read once and counted down per account, because it saves in chunks; rows past it fail by
+  name). **A new path that activates a user and does not ask `UserSeats` is a way round the limit.**
+- **Disabling never needs room.**
+- **The edit form's "User is active" tick box did nothing**: bound, never sent, since the PUT has no active field.
+  It now goes through the toggle and shows the refusal; on a new account it is not shown.
+- Verified by **section 34 (`user-seats-e2e.mjs`, 19 checks)**, which registers a scratch tenant with a 10-user
+  limit, fills it, drives every path above, and purges the tenant — there is no endpoint to lower a limit.
 
 ## Every list pages through `QPager`, and the roster was never paged (built 2026-09-23)
 

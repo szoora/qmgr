@@ -17,33 +17,39 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Staff</h1>
+            <h1>Staff@if (TabHelp != null) { <QInfo Text="@TabHelp" Label="@TabHelpLabel" /> }</h1>
             <p class="subtitle">Everyone on this branch's staff, with their department, line manager and this period's band.</p>
         </div>
         <div class="header-actions">
             @* The open section's own buttons land here — see QPageActions. *@
             <SectionOutlet SectionId="QPageActions.Id" />
-            @if (canCreate)
+            @* These four act on the PEOPLE list (Export exports its filters; Import a list only opens the Import
+               tab), so they show on People only. On the other tabs they sat beside that section's own buttons —
+               six in one row on Class teachers, 84px tall (action-location, uniform-check, 2026-09-22). *@
+            @if (hubTab == "people")
             {
-                <QButton Text="Log record" Icon="journal-plus" Variant="primary" OnClick="@(() => showRecordDialog = true)" Disabled="@(directory == null)" />
+                @if (canCreate)
+                {
+                    <QButton Text="Log record" Icon="journal-plus" Variant="primary" OnClick="@(() => showRecordDialog = true)" Disabled="@(directory == null)" />
+                }
+                @* The page somebody opens to look for staff is the page that should let them add some.
+                   Before this, adding one lived under Administration > Users & Roles and importing a
+                   list lived on Departments & Structure — neither reachable from here, which is exactly
+                   the report: "I see Staff Directory but no way to add or import staff." *@
+                @if (canAddStaff)
+                {
+                    <QButton Text="Add staff" Icon="person-plus" Variant="secondary"
+                             OnClick="@(() => showAddDialog = true)" />
+                }
+                @if (canImportStaff)
+                {
+                    <QButton Text="Import a list" Icon="upload" Variant="secondary"
+                             OnClick="@(() => hubTab = "import")" />
+                }
+                <QDataExport TItem="StaffMemberDto" Title="Staff directory" FileStem="staff-directory" Subtitle="@ExportSubtitle"
+                             Columns="@ExportColumns" RowProvider="@ProvideExportRowsAsync" OnExported="@OnExported"
+                             Disabled="@(!Visible.Any())" DisabledReason="Nothing matches the current filters." />
             }
-            @* The page somebody opens to look for staff is the page that should let them add some.
-               Before this, adding one lived under Administration > Users & Roles and importing a
-               list lived on Departments & Structure — neither reachable from here, which is exactly
-               the report: "I see Staff Directory but no way to add or import staff." *@
-            @if (canAddStaff)
-            {
-                <QButton Text="Add staff" Icon="person-plus" Variant="secondary"
-                         OnClick="@(() => showAddDialog = true)" />
-            }
-            @if (canImportStaff)
-            {
-                <QButton Text="Import a list" Icon="upload" Variant="secondary"
-                         OnClick="@(() => hubTab = "import")" />
-            }
-            <QDataExport TItem="StaffMemberDto" Title="Staff directory" FileStem="staff-directory" Subtitle="@ExportSubtitle"
-                         Columns="@ExportColumns" RowProvider="@ProvideExportRowsAsync" OnExported="@OnExported"
-                         Disabled="@(!Visible.Any())" DisabledReason="Nothing matches the current filters." />
         </div>
     </div>
 
@@ -242,6 +248,17 @@
 </style>
 
 @code {
+    // The hub owns the title row, so it also owns the explanation of whichever tab is open. An embedded section's
+    // own title is hidden, and its QInfo went with it when Class teachers folded in (density-and-staff, 2026-09-22).
+    private string? TabHelp => hubTab switch
+    {
+        "class-teachers" => ClassTeachers.PastoralHelp,
+        "subject-teachers" => ClassTeachers.SubjectHelp,
+        // People (and the structure tabs) already say what they are in the subtitle; a popover repeating it is noise.
+        _ => null
+    };
+    private string TabHelpLabel => hubTab switch { "class-teachers" => "Class teachers", "subject-teachers" => "Subject teachers", _ => "Staff" };
+
     // ---- Bulk: a department, or a line manager, for everybody ticked ----------------------------
     // The two jobs a school actually does to a group. Neither gets its own API: each runs the
     // ordinary per-person endpoint once per row, which keeps every rule that endpoint enforces and

@@ -36,13 +36,15 @@ public interface IBatchOperationService
 public class BatchOperationService : IBatchOperationService
 {
     private readonly QMgrDbContext _context;
+    private readonly QMgr.Application.Interfaces.Billing.IBillingService _billing;
 
     /// <summary>A batch is a set somebody selected on a list, not a filter. This is a sanity ceiling.</summary>
     public const int MaxBatchSize = 5000;
 
-    public BatchOperationService(QMgrDbContext context)
+    public BatchOperationService(QMgrDbContext context, QMgr.Application.Interfaces.Billing.IBillingService billing)
     {
         _context = context;
+        _billing = billing;
     }
 
     public async Task<BatchPreviewDto> ResolveAsync(Guid branchId, BatchRequest request, CancellationToken ct = default)
@@ -454,6 +456,12 @@ public class BatchOperationService : IBatchOperationService
         AddMissing(rows, users.Select(u => u.Id), request.Ids, "That account no longer exists.");
 
         var changing = rows.Count(r => r.Outcome == RosterImportRowOutcome.Updated);
+
+        // Enabling accounts takes seats (the limit counts ACTIVE users). Refused here, in the resolver, so the
+        // preview says it, the run refuses it, and the job — which re-resolves — cannot slip past it either.
+        if (activating && changing > 0 && await UserSeats.RefusalAsync(_billing, orgId, changing) is { } refusal)
+            return Blocked(request, refusal);
+
         return Build(request, rows,
             activating ? $"Enable {changing:N0} account{(changing == 1 ? "" : "s")}" : $"Disable {changing:N0} account{(changing == 1 ? "" : "s")}");
     }
