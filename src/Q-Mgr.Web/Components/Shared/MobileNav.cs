@@ -60,6 +60,8 @@ public static class MobileNav
     private static readonly Slot Timetable = new("timetable", "Timetable", "grid-3x3-gap", "/admin/timetable", Permissions.TimetableManage, ModuleCodes.StudentWelfare);
     private static readonly Slot Staff = new("staff", "Staff", "person-lines-fill", "/admin/staff", Permissions.StaffRecordsView, ModuleCodes.StudentWelfare);
     private static readonly Slot Dashboard = new("dashboard", "Dashboard", "speedometer2", "/", Permissions.DashboardView);
+    /// <summary>The school calendar: base product, open to everybody signed in (TERM_PROGRAMME_CALENDAR_AND_GATES D8). In More, not a candidate, so no role's bar changed.</summary>
+    private static readonly Slot Calendar = new("calendar", "Calendar", "calendar3", "/calendar");
 
     /// <summary>Always slot four. See <see cref="SlotsFor"/> for why it is pinned.</summary>
     public static readonly Slot Notifications = new("notifications", "Alerts", "bell", "/notifications");
@@ -124,7 +126,7 @@ public static class MobileNav
 
         var groups = new List<Group>
         {
-            new("My work", new Slot[] { Portal, MySchoolDay, Dashboard }),
+            new("My work", new Slot[] { Portal, MySchoolDay, Calendar, Dashboard }),
             new("Queue", new Slot[]
             {
                 Queue,
@@ -140,7 +142,7 @@ public static class MobileNav
             new("Student welfare", new Slot[]
             {
                 Students,
-                new("class-teachers", "Class Teachers", "person-video3", "/admin/students/class-teachers", Permissions.ClassTeachersManage, ModuleCodes.StudentWelfare),
+                new("class-teachers", "Class Teachers", "person-video3", "/admin/staff?tab=class-teachers", Permissions.ClassTeachersManage, ModuleCodes.StudentWelfare),
                 Welfare,
                 new("welfare-reports", "Welfare Reports", "bar-chart-line-fill", "/admin/welfare-reports", Permissions.WelfareReportsView, ModuleCodes.StudentWelfare),
             }),

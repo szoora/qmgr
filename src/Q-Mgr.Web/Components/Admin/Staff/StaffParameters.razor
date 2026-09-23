@@ -16,7 +16,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Setup<QInfo Text="What is measured, how it is scored, what staff are told, and who did what. Organisation-wide." Label="Setup" /></h1>
+            <h1>Setup</h1>
             <p class="subtitle">What is measured, how it is scored, what staff are told, and who did what. Organisation-wide.</p>
         </div>
         <div class="header-actions">
@@ -64,7 +64,7 @@
                     <thead>
                         <tr>
                             <th>Parameter</th>
-                            <th>Kind</th>
+                            <th>Scored as</th>
                             <th>Applies to</th>
                             <th class="pp-num">Default points</th>
                             <th class="pp-num">Cap / entry</th>
@@ -97,7 +97,7 @@
                                     </div>
                                 </td>
                                 <td><QChip Text="@StaffDisplay.KindLabel(p.Kind)" Color="@StaffDisplay.KindColor(p.Kind)" Icon="@StaffDisplay.KindIcon(p.Kind)" Size="sm" /></td>
-                                <td>@GroupLabel(p.AppliesTo)</td>
+                                <td>@GroupLabel(p.AppliesToGroup)</td>
                                 <td class="pp-num">@(p.DefaultPoints.HasValue ? StaffDisplay.Points(p.DefaultPoints) : "—")</td>
                                 <td class="pp-num">@(p.Kind == ParameterKind.Wellbeing ? "—" : p.MaxPointsPerEntry.ToString())</td>
                                 <td class="pp-num">@(p.MaxPointsPerPeriod?.ToString() ?? "—")</td>
@@ -122,16 +122,21 @@
     }
 </div>
 
-<QModal @bind-Visible="showDialog" Title="@(editing == null ? "New parameter" : $"Edit — {editing.Name}")" Icon="list-check" Size="lg">
+<QModal @bind-Visible="showDialog" Title="@(editing == null ? "New parameter" : $"Edit — {editing.Name}")" Icon="list-check" Size="xl">
     <ChildContent>
         <div class="form-row">
             <div class="form-group pp-grow">
                 <QInput TValue="string" @bind-Value="@form.Name" Label="Name" Required="true" MaxLength="120" Placeholder="e.g. Lesson Observation" HasError="@nameError" ErrorMessage="A name is required." />
             </div>
             <div class="form-group">
+                @* "Kind" read as a classification the school should own, and it is not — it names
+                   which FORMULA scores the parameter, and a school cannot author arithmetic. The
+                   name a person reads is theirs already: Name above is free text, so they can call
+                   this Punctuality and pick the attendance formula underneath it. *@
                 <QSelect TValue="ParameterKind" TItem="ParameterKind" Value="@form.Kind" ValueChanged="@OnKindChanged" Items="@Kinds"
-                         TextSelector="@(k => StaffDisplay.KindLabel(k))" ValueSelector="@(k => k)" Label="Kind" Required="true" Disabled="@(editing != null)"
-                         HelperText="@(editing != null ? "The kind decides the sign rule and the formula, so it cannot change once records exist." : KindHelp(form.Kind))" />
+                         TextSelector="@(k => StaffDisplay.KindLabel(k))" ValueSelector="@(k => k)" Label="How it is scored" Required="true" Disabled="@(editing != null)"
+                         Hint="Which formula turns this parameter's records into a score. The name above is yours — this is only the arithmetic underneath it."
+                         HelperText="@(editing != null ? "This decides the sign rule and the formula, so it cannot change once records exist." : KindHelp(form.Kind))" />
             </div>
         </div>
         <div class="form-group">
@@ -139,7 +144,8 @@
         </div>
         <div class="form-row">
             <div class="form-group">
-                <QSelect TValue="StaffGroup" TItem="StaffGroup" @bind-Value="@form.AppliesTo" Items="@Groups" TextSelector="@(g => GroupLabel(g))" ValueSelector="@(g => g)" Label="Applies to" Required="true" />
+                <QSelect TValue="string" TItem="string" @bind-Value="@form.AppliesToGroup" Items="@Groups" TextSelector="@(g => GroupLabel(g))" ValueSelector="@(g => g)" Label="Applies to"
+                         Hint="Which staff this is measured for. The groups are yours — add or rename them on the Scoring Policy tab. Leave it on All staff to measure everybody." />
             </div>
             <div class="form-group">
                 <QSelect TValue="WelfareVisibility" TItem="WelfareVisibility" @bind-Value="@form.DefaultVisibility" Items="@Visibilities"
@@ -276,7 +282,14 @@
     private string? appliedTab;
 
     private static readonly IReadOnlyList<ParameterKind> Kinds = Enum.GetValues<ParameterKind>();
-    private static readonly IReadOnlyList<StaffGroup> Groups = Enum.GetValues<StaffGroup>();
+    /// <summary>
+    /// The tenant's own staff groups, from the policy, with a leading "All staff" that stores NULL.
+    /// Was Enum.GetValues, which is why a school could only ever say teaching, support or everybody.
+    /// </summary>
+    private List<string?> Groups => new List<string?> { null }
+        .Concat(policy?.StaffGroups?.Where(g => g.IsActive).OrderBy(g => g.SortOrder).Select(g => (string?)g.Name)
+                ?? new List<string?>())
+        .ToList();
     private static readonly IReadOnlyList<WelfareVisibility> Visibilities = Enum.GetValues<WelfareVisibility>();
     private static readonly string[] Colors =
     {
@@ -288,6 +301,8 @@
     private PerformanceParameterDto? editing;
     private SavePerformanceParameterRequest form = new();
     private int maxWeightPercent = 50;
+    /// <summary>The tenant policy, kept for the staff-group list the Applies-to picker offers.</summary>
+    private StaffPerformancePolicyDto? policy;
     private bool nameError, purposeError, pointsError, scaleError;
     private string pointsErrorText = "";
 
@@ -303,12 +318,8 @@
 
     private decimal TotalWeight => parameters.Where(p => p.IsActive && p.Kind != ParameterKind.Wellbeing).Sum(p => p.Weight);
 
-    private static string GroupLabel(StaffGroup g) => g switch
-    {
-        StaffGroup.TeachingStaff => "Teaching staff",
-        StaffGroup.SupportStaff => "Support staff",
-        _ => "All staff"
-    };
+    /// <summary>The group name, or "All staff" when a parameter names none. Null IS "everybody".</summary>
+    private static string GroupLabel(string? g) => string.IsNullOrWhiteSpace(g) ? StaffGroups.AllLabel : g;
 
     private static string KindHelp(ParameterKind k) => k switch
     {
@@ -360,7 +371,7 @@
 
         try
         {
-            var policy = await StaffApi.GetPolicyAsync();
+            policy = await StaffApi.GetPolicyAsync();
             maxWeightPercent = policy.MaxParameterWeightPercent;
         }
         catch (Exception) { }
@@ -398,7 +409,7 @@
         editing = p;
         form = new SavePerformanceParameterRequest
         {
-            Name = p.Name, Description = p.Description, Kind = p.Kind, AppliesTo = p.AppliesTo,
+            Name = p.Name, Description = p.Description, Kind = p.Kind, AppliesToGroup = p.AppliesToGroup,
             DefaultPoints = p.DefaultPoints, MaxPointsPerEntry = p.MaxPointsPerEntry, MaxPointsPerPeriod = p.MaxPointsPerPeriod,
             Weight = p.Weight, RatingScale = p.RatingScale, Rubric = new List<string>(p.Rubric),
             DefaultVisibility = p.DefaultVisibility, Purpose = p.Purpose, Color = p.Color, SortOrder = p.SortOrder, IsSystemSource = p.IsSystemSource,

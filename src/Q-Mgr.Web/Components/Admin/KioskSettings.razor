@@ -50,9 +50,7 @@
                 </div>
 
                 <div class="toggle-group">
-                    <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.ShowCountdown" />
-                    </div>
+                    <QSwitch @bind-Value="settings.ShowCountdown" aria-label="Show Countdown Timer" />
                     <div class="toggle-info">
                         <span class="toggle-label">Show Countdown Timer</span>
                         <small>Display a countdown on the ticket screen so customers know when it will close</small>
@@ -60,9 +58,7 @@
                 </div>
 
                 <div class="toggle-group">
-                    <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.AutoPrintBeforeRedirect" />
-                    </div>
+                    <QSwitch @bind-Value="settings.AutoPrintBeforeRedirect" aria-label="Auto-Print Before Redirect" />
                     <div class="toggle-info">
                         <span class="toggle-label">Auto-Print Before Redirect</span>
                         <small>Automatically print the ticket before returning to home (if not already printed)</small>

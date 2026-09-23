@@ -1,3 +1,4 @@
+using QMgr.Infrastructure.Services;
 using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -5,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using QMgr.API.Application.Services;
 using QMgr.API.Authorization;
 using QMgr.Filters;
+using QMgr.Application;
 using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
 using QMgr.Application.Tenant;
@@ -466,7 +468,8 @@ public class VisitorsController : ControllerBase
         profile.UpdatedAt = DateTime.UtcNow;
     }
 
-    internal static VisitorDto MapToDto(Visitor v, VisitorProfile p, ProfileStats? stats = null, string? qrToken = null, string? checkInWarning = null) => new()
+    internal static VisitorDto MapToDto(Visitor v, VisitorProfile p, ProfileStats? stats = null, string? qrToken = null, string? checkInWarning = null,
+        IReadOnlyDictionary<Guid, string>? staffNames = null) => new()
     {
         Id = v.Id,
         BranchId = v.BranchId,
@@ -504,8 +507,18 @@ public class VisitorsController : ControllerBase
         ConsentGivenAt = v.ConsentGivenAt,
         TotalVisits = stats?.Total ?? 1,
         VisitsLast24Hours = stats?.Last24h ?? 1,
-        BadgeQrToken = qrToken
+        BadgeQrToken = qrToken,
+        EntryGate = v.EntryGate,
+        ExitGate = v.ExitGate,
+        CheckedInByUserId = v.CheckedInByUserId,
+        CheckedInByName = v.CheckedInByUserId is { } inBy ? staffNames?.GetValueOrDefault(inBy) : null,
+        CheckedOutByUserId = v.CheckedOutByUserId,
+        CheckedOutByName = v.CheckedOutByUserId is { } outBy ? staffNames?.GetValueOrDefault(outBy) : null
     };
+
+    /// <summary>Who admitted and saw out these visits, by name — see <see cref="VisitorGates.StaffNamesAsync"/>.</summary>
+    private Task<Dictionary<Guid, string>> StaffNamesAsync(params Visitor[] visits) =>
+        VisitorGates.StaffNamesAsync(_context, visits);
 
     private async Task NotifyHostAsync(Visitor visitor, VisitorProfile profile, Guid organizationId, Guid branchId)
     {
@@ -575,7 +588,8 @@ public class VisitorsController : ControllerBase
         Guid branchId,
         [FromQuery] VisitorStatus? status = null,
         [FromQuery] DateTime? fromDate = null,
-        [FromQuery] bool watchlistOnly = false)
+        [FromQuery] bool watchlistOnly = false,
+        [FromQuery] string? gate = null)
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
@@ -605,9 +619,16 @@ public class VisitorsController : ControllerBase
             query = query.Where(v => v.VisitorProfile!.IsWatchlisted);
 
         var visits = await query.OrderByDescending(v => v.CreatedAt).ToListAsync();
-        var stats = await GetStatsAsync(visits.Select(v => v.VisitorProfileId));
 
-        return Ok(visits.Select(v => MapToDto(v, v.VisitorProfile!, stats.GetValueOrDefault(v.VisitorProfileId))).ToList());
+        // A gate is matched by its folded name (VisitorGateRule.Key), in memory: "came in OR left by" this gate.
+        // SQL cannot fold the way the rule does, and a day's visits (or a report range's) is a small list.
+        if (VisitorGateRule.Key(gate) is { } gateKey)
+            visits = visits.Where(v => VisitorGateRule.Key(v.EntryGate) == gateKey || VisitorGateRule.Key(v.ExitGate) == gateKey).ToList();
+
+        var stats = await GetStatsAsync(visits.Select(v => v.VisitorProfileId));
+        var names = await StaffNamesAsync(visits.ToArray());
+
+        return Ok(visits.Select(v => MapToDto(v, v.VisitorProfile!, stats.GetValueOrDefault(v.VisitorProfileId), staffNames: names)).ToList());
     }
 
     [HttpGet("branches/{branchId:guid}/visitors/summary")]
@@ -689,7 +710,8 @@ public class VisitorsController : ControllerBase
             Phone = v.VisitorProfile.Phone,
             CheckedInAt = v.CheckedInAt,
             VisitorType = v.VisitorType,
-            StudentName = v.StudentName
+            StudentName = v.StudentName,
+            EntryGate = v.EntryGate
         }).ToList();
 
         var passes = activePasses.Select(p => new EvacuationGroupPassDto
@@ -821,8 +843,9 @@ public class VisitorsController : ControllerBase
             .OrderBy(v => v.CreatedAt)
             .ToListAsync();
 
+        var names = await StaffNamesAsync(visits.ToArray());
         var csv = new System.Text.StringBuilder();
-        csv.AppendLine("Badge Code,Full Name,Phone,Email,Purpose,Host,Student,Status,Checked In,Checked Out,Watchlisted");
+        csv.AppendLine("Badge Code,Full Name,Phone,Email,Purpose,Host,Student,Status,Checked In,Checked Out,Watchlisted,Entry Gate,Exit Gate,Admitted By");
         foreach (var v in visits)
         {
             var p = v.VisitorProfile!;
@@ -831,7 +854,9 @@ public class VisitorsController : ControllerBase
                 CsvField(v.BadgeCode), CsvField(p.FullName), CsvField(p.Phone ?? ""), CsvField(p.Email ?? ""),
                 CsvField(v.Purpose), CsvField(v.HostName), CsvField(v.StudentName ?? ""), CsvField(v.Status.ToString()),
                 CsvField(v.CheckedInAt?.ToString("u") ?? ""), CsvField(v.CheckedOutAt?.ToString("u") ?? ""),
-                CsvField(p.IsWatchlisted ? "Yes" : "No")
+                CsvField(p.IsWatchlisted ? "Yes" : "No"),
+                CsvField(v.EntryGate ?? ""), CsvField(v.ExitGate ?? ""),
+                CsvField(v.CheckedInByUserId is { } by ? names.GetValueOrDefault(by) ?? "" : "")
             }));
         }
 
@@ -881,7 +906,7 @@ public class VisitorsController : ControllerBase
 
     private static VisitorReportFilter FilterFrom(
         DateOnly? from, DateOnly? to, VisitorType? visitorType, VisitorStatus? status,
-        string? host, string? company, bool watchlistOnly, bool rosterOnly) => new()
+        string? host, string? company, bool watchlistOnly, bool rosterOnly, string? gate = null) => new()
     {
         From = from,
         To = to,
@@ -890,7 +915,8 @@ public class VisitorsController : ControllerBase
         HostName = host,
         Company = company,
         WatchlistOnly = watchlistOnly,
-        RosterOnly = rosterOnly
+        RosterOnly = rosterOnly,
+        Gate = string.IsNullOrWhiteSpace(gate) ? null : gate.Trim()
     };
 
     /// <summary>
@@ -904,13 +930,14 @@ public class VisitorsController : ControllerBase
         [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null,
         [FromQuery] VisitorType? visitorType = null, [FromQuery] VisitorStatus? status = null,
         [FromQuery] string? host = null, [FromQuery] string? company = null,
-        [FromQuery] bool watchlistOnly = false, [FromQuery] bool rosterOnly = false)
+        [FromQuery] bool watchlistOnly = false, [FromQuery] bool rosterOnly = false,
+        [FromQuery] string? gate = null)
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
         var scope = await BranchScopeAsync(branchId);
-        var filter = FilterFrom(from, to, visitorType, status, host, company, watchlistOnly, rosterOnly);
+        var filter = FilterFrom(from, to, visitorType, status, host, company, watchlistOnly, rosterOnly, gate);
         return Ok(await _reporting.BuildReportAsync(scope, filter));
     }
 
@@ -926,14 +953,15 @@ public class VisitorsController : ControllerBase
         [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null,
         [FromQuery] VisitorType? visitorType = null, [FromQuery] VisitorStatus? status = null,
         [FromQuery] string? host = null, [FromQuery] string? company = null,
-        [FromQuery] bool watchlistOnly = false, [FromQuery] bool rosterOnly = false)
+        [FromQuery] bool watchlistOnly = false, [FromQuery] bool rosterOnly = false,
+        [FromQuery] string? gate = null)
     {
         var tenantContext = _tenantAccessor.TenantContext;
         if (tenantContext == null || !tenantContext.IsResolved) return Unauthorized();
         if (!RoleCodes.IsSuperAdmin(tenantContext.UserRole) && tenantContext.OrganizationId != organizationId) return Forbid();
 
         var scope = await OrganizationScopeAsync(organizationId);
-        var filter = FilterFrom(from, to, visitorType, status, host, company, watchlistOnly, rosterOnly);
+        var filter = FilterFrom(from, to, visitorType, status, host, company, watchlistOnly, rosterOnly, gate);
         return Ok(await _reporting.BuildReportAsync(scope, filter));
     }
 
@@ -997,13 +1025,14 @@ public class VisitorsController : ControllerBase
         [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null,
         [FromQuery] VisitorType? visitorType = null, [FromQuery] VisitorStatus? status = null,
         [FromQuery] string? host = null, [FromQuery] string? company = null,
-        [FromQuery] bool watchlistOnly = false, [FromQuery] bool rosterOnly = false)
+        [FromQuery] bool watchlistOnly = false, [FromQuery] bool rosterOnly = false,
+        [FromQuery] string? gate = null)
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
         var scope = await BranchScopeAsync(branchId);
-        var filter = FilterFrom(from, to, visitorType, status, host, company, watchlistOnly, rosterOnly);
+        var filter = FilterFrom(from, to, visitorType, status, host, company, watchlistOnly, rosterOnly, gate);
         var (rangeFrom, rangeTo, _, _) = _reporting.ResolveRange(filter, scope.TimeZoneId);
         var csv = await _reporting.BuildLogCsvAsync(scope, filter);
 
@@ -1233,6 +1262,118 @@ public class VisitorsController : ControllerBase
         return Ok(request);
     }
 
+    // =========================================================================================
+    // Gates (plan TERM_PROGRAMME_CALENDAR_AND_GATES §10). Stored with the branch lists
+    // (BranchVocabulariesDto.Gates) and written ONLY here — the Rooms precedent: UpdateVocabularies keeps the
+    // stored gates whatever it is sent, the write takes the branch-settings lock and re-reads under it, and a
+    // gate a visit has used is retired, never removed.
+    // =========================================================================================
+
+    /// <summary>
+    /// The branch's gates, active and retired. Readable by anybody who can check a visitor in or read the log: the
+    /// desk needs the list to offer it, the report needs it to name the rows.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/visitors/gates")]
+    [RequirePermissionAny(Permissions.VisitorsView, Permissions.VisitorsCheckIn)]
+    [ProducesResponseType(typeof(List<VocabularyItemDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetGates(Guid branchId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+        return Ok(VisitorGates.Read(await BranchSettingsJsonAsync(branchId)));
+    }
+
+    /// <summary>
+    /// Saves the gate list. Renames arrive as an explicit old → new map (a diff cannot tell a rename from a delete
+    /// plus an add) and change the LIST only: a visit keeps the name its gate had that day, because that is what
+    /// the gate man wrote down. Removing a gate that any visit has used is refused — retire it instead, so it
+    /// stays readable on the visits that name it and stops being offered on new ones.
+    /// </summary>
+    [HttpPut("branches/{branchId:guid}/visitors/gates")]
+    [RequirePermission(Permissions.VisitorsManage)]
+    [ProducesResponseType(typeof(List<VocabularyItemDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> UpdateGates(Guid branchId, [FromBody] UpdateVisitorGatesRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var gates = (request.Gates ?? new()).ToList();
+        foreach (var g in gates) g.Name = ClassNameDisplay(g.Name);
+
+        static IActionResult Refuse(string message) => new BadRequestObjectResult(new ProblemDetails
+        {
+            Title = message,
+            Status = StatusCodes.Status400BadRequest
+        });
+
+        if (gates.Count > 50) return Refuse("A branch can list at most 50 gates.");
+        if (gates.Any(g => g.Name.Length == 0)) return Refuse("Every gate needs a name.");
+        if (gates.FirstOrDefault(g => VisitorGateRule.Key(g.Name) == null) is { } noKey)
+            return Refuse($"“{noKey.Name}” needs at least one letter or digit.");
+        if (gates.FirstOrDefault(g => g.Name.Length > 100) is { } longName)
+            return Refuse($"“{longName.Name[..40]}…” is longer than 100 characters.");
+        if (gates.GroupBy(g => VisitorGateRule.Key(g.Name)).FirstOrDefault(grp => grp.Count() > 1) is { } dup)
+            return Refuse($"“{dup.First().Name}” is listed twice.");
+
+        var newKeys = gates.Select(g => VisitorGateRule.Key(g.Name)!).ToHashSet();
+        var renamedFrom = (request.Renames ?? new())
+            .Where(kv => VisitorGateRule.Key(kv.Key) != null && VisitorGateRule.Key(kv.Value) != null
+                         && VisitorGateRule.Key(kv.Key) != VisitorGateRule.Key(kv.Value))
+            .ToList();
+        if (renamedFrom.FirstOrDefault(kv => !newKeys.Contains(VisitorGateRule.Key(kv.Value)!)) is { Key: not null } lostTarget)
+            return Refuse($"“{lostTarget.Value.Trim()}” is renamed to but is not in the list.");
+        var renamedKeys = renamedFrom.Select(kv => VisitorGateRule.Key(kv.Key)!).ToHashSet();
+
+        IActionResult? result = null;
+        var strategy = _context.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            _context.ChangeTracker.Clear();
+            result = null;
+            await using var tx = await _context.Database.BeginTransactionAsync();
+            await BranchSettingsLock.AcquireAsync(_context, branchId);
+            var branch = await _context.Branches.FirstAsync(b => b.Id == branchId);
+            var vocab = StudentsController.ReadVocabularies(branch.Settings);
+
+            // A stored gate that leaves the list (and was not renamed) must not have been used by any visit.
+            var leaving = vocab.Gates
+                .Where(g => VisitorGateRule.Key(g.Name) is { } k && !newKeys.Contains(k) && !renamedKeys.Contains(k))
+                .ToList();
+            if (leaving.Count > 0)
+            {
+                var used = await _context.Visitors.AsNoTracking()
+                    .Where(v => v.BranchId == branchId && (v.EntryGate != null || v.ExitGate != null))
+                    .Select(v => new { v.EntryGate, v.ExitGate })
+                    .Distinct()
+                    .ToListAsync();
+                var usedKeys = used.SelectMany(u => new[] { VisitorGateRule.Key(u.EntryGate), VisitorGateRule.Key(u.ExitGate) })
+                    .Where(k => k != null)
+                    .ToHashSet();
+                var stranded = leaving.FirstOrDefault(g => usedKeys.Contains(VisitorGateRule.Key(g.Name)));
+                if (stranded != null)
+                {
+                    result = Refuse($"“{stranded.Name}” has been used by visits, so it cannot be removed. Retire it instead — it stays on the visits that name it and stops being offered.");
+                    return;
+                }
+            }
+
+            vocab.Gates = gates.Select((g, i) => new VocabularyItemDto { Name = g.Name, IsActive = g.IsActive, SortOrder = i }).ToList();
+            branch.Settings = StudentsController.WriteVocabularies(branch.Settings, vocab);
+            branch.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+            await tx.CommitAsync();
+        });
+        if (result != null) return result;
+
+        _logger.LogInformation("Branch {BranchId} gates saved: {Active} in use, {Retired} retired, {Renamed} renamed",
+            branchId, gates.Count(g => g.IsActive), gates.Count(g => !g.IsActive), renamedFrom.Count);
+        return Ok(VisitorGates.Read(await BranchSettingsJsonAsync(branchId)));
+    }
+
+    /// <summary>A gate's stored name: trimmed with inner whitespace collapsed, the class-name rule.</summary>
+    private static string ClassNameDisplay(string? name) => QMgr.Domain.Identity.ClassName.Display(name) ?? string.Empty;
+
     private const string RetentionSettingsKey = "VisitorRetention";
 
     internal static VisitorRetentionSettingsDto ReadRetentionSettings(string? orgSettingsJson)
@@ -1321,11 +1462,13 @@ public class VisitorsController : ControllerBase
         if (request.RetentionDays < 30 || request.RetentionDays > 3650)
             return BadRequest(new ProblemDetails { Title = "RetentionDays must be between 30 and 3650 (10 years)", Status = StatusCodes.Status400BadRequest });
 
-        var org = await _context.Organizations.FirstOrDefaultAsync(o => o.Id == organizationId);
-        if (org == null) return NotFound();
-
-        org.Settings = WriteRetentionSettings(org.Settings, request);
-        await _context.SaveChangesAsync();
+        // Through the one writer of Organization.Settings, under its lock (2026-09-23).
+        var found = await OrganizationSettingsLock.MutateAsync(_context, organizationId, org =>
+        {
+            org.Settings = WriteRetentionSettings(org.Settings, request);
+            return true;
+        });
+        if (!found) return NotFound();
 
         return Ok(request);
     }
@@ -1426,7 +1569,7 @@ public class VisitorsController : ControllerBase
 
         if (visitor == null) return NotFound();
         var stats = await GetStatsAsync(new[] { visitor.VisitorProfileId });
-        return Ok(MapToDto(visitor, visitor.VisitorProfile!, stats.GetValueOrDefault(visitor.VisitorProfileId)));
+        return Ok(MapToDto(visitor, visitor.VisitorProfile!, stats.GetValueOrDefault(visitor.VisitorProfileId), staffNames: await StaffNamesAsync(visitor)));
     }
 
     /// <summary>
@@ -1461,7 +1604,7 @@ public class VisitorsController : ControllerBase
             });
 
         var stats = await GetStatsAsync(new[] { visitor.VisitorProfileId });
-        return Ok(MapToDto(visitor, visitor.VisitorProfile!, stats.GetValueOrDefault(visitor.VisitorProfileId), qrToken));
+        return Ok(MapToDto(visitor, visitor.VisitorProfile!, stats.GetValueOrDefault(visitor.VisitorProfileId), qrToken, staffNames: await StaffNamesAsync(visitor)));
     }
 
     /// <summary>
@@ -1748,6 +1891,11 @@ public class VisitorsController : ControllerBase
             return BadRequest(new ProblemDetails { Title = "Visitor consent is required to check in", Status = StatusCodes.Status400BadRequest });
         var visitingDaySettings = ReadVisitingDaySettings(branchSettingsJson);
 
+        // The gate they came in by (plan §10): required where the branch has a choice, filled where it has one.
+        var (entryGate, gateError) = VisitorGateRule.Resolve(VisitorGates.Read(branchSettingsJson), request.Gate);
+        if (gateError != null) return VisitorGates.Refusal(gateError);
+        var admittedBy = CurrentUserId();
+
         var organizationId = await ResolveOrganizationIdAsync(branchId);
         var (studentId, studentName, defaultHostName, defaultPurpose) = await ResolveStudentAsync(request.StudentId, branchId);
 
@@ -1842,6 +1990,8 @@ public class VisitorsController : ControllerBase
                 Status = VisitorStatus.CheckedIn,
                 VisitorType = request.VisitorType ?? VisitorType.Guest,
                 CheckedInAt = DateTime.UtcNow,
+                EntryGate = entryGate,
+                CheckedInByUserId = admittedBy,
                 ConsentGivenAt = consentSettings.Required ? DateTime.UtcNow : null,
                 Notes = ComposeCheckInNotes(request.Notes, request.WatchlistOverrideReason, profile.IsWatchlisted),
                 // Same value, two homes, on purpose — see Visitor.WatchlistOverrideReason. Notes is
@@ -1870,7 +2020,7 @@ public class VisitorsController : ControllerBase
 
         var stats = await GetStatsAsync(new[] { profile.Id });
         var qrToken = TryIssueVisitToken(visitor.Id, branchId);
-        var dto = MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id), qrToken, InductionWarning(visitor, profile));
+        var dto = MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id), qrToken, InductionWarning(visitor, profile), await StaffNamesAsync(visitor));
         await _activityBroadcaster.BroadcastAsync(branchId, VisitorActivityKind.CheckedIn, dto);
 
         return CreatedAtAction(nameof(GetVisitor), new { branchId, visitorId = visitor.Id }, dto);
@@ -1936,6 +2086,10 @@ public class VisitorsController : ControllerBase
             return BadRequest(new ProblemDetails { Title = "Visitor consent is required to check in", Status = StatusCodes.Status400BadRequest });
         var visitingDaySettings = ReadVisitingDaySettings(branchSettingsJson);
 
+        // A pre-registered arrival comes in by a gate too (plan §10) — the same rule as a walk-in.
+        var (entryGate, gateError) = VisitorGateRule.Resolve(VisitorGates.Read(branchSettingsJson), request?.Gate);
+        if (gateError != null) return VisitorGates.Refusal(gateError);
+
         if (visitor.StudentId.HasValue)
         {
             var checkInsToday = await GetCheckInsTodayAsync(profile.Id);
@@ -1983,6 +2137,8 @@ public class VisitorsController : ControllerBase
 
         visitor.Status = VisitorStatus.CheckedIn;
         visitor.CheckedInAt = DateTime.UtcNow;
+        visitor.EntryGate = entryGate;
+        visitor.CheckedInByUserId = CurrentUserId();
         visitor.ConsentGivenAt = consentSettings.Required ? DateTime.UtcNow : null;
         visitor.Notes = ComposeCheckInNotes(visitor.Notes, request?.WatchlistOverrideReason, wasWatchlisted);
         if (wasWatchlisted && !string.IsNullOrWhiteSpace(request?.WatchlistOverrideReason))
@@ -2000,7 +2156,7 @@ public class VisitorsController : ControllerBase
 
         var stats = await GetStatsAsync(new[] { profile.Id });
         var qrToken = TryIssueVisitToken(visitor.Id, branchId);
-        var dto = MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id), qrToken, InductionWarning(visitor, profile));
+        var dto = MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id), qrToken, InductionWarning(visitor, profile), await StaffNamesAsync(visitor));
         await _activityBroadcaster.BroadcastAsync(branchId, VisitorActivityKind.CheckedIn, dto);
 
         return Ok(dto);
@@ -2011,10 +2167,16 @@ public class VisitorsController : ControllerBase
     [ProducesResponseType(typeof(VisitorDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> CheckOut(Guid branchId, Guid visitorId)
+    public async Task<IActionResult> CheckOut(Guid branchId, Guid visitorId, [FromBody] CheckOutVisitorRequest? request = null)
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
+
+        // The gate they left by, and who saw them out (plan §10, D12). The same rule as the way in: required where
+        // the branch has a choice — the desk defaults it to the device's own gate, so a person rarely picks.
+        var (exitGate, gateError) = await VisitorGates.ResolveAsync(_context, branchId, request?.Gate, leaving: true);
+        if (gateError != null) return VisitorGates.Refusal(gateError);
+        var seenOutBy = CurrentUserId();
 
         // CONCURRENCY: atomic conditional update, same pattern as FeedbackController's
         // double-submit guard — only a visitor still CheckedIn can transition to CheckedOut,
@@ -2024,6 +2186,8 @@ public class VisitorsController : ControllerBase
             .ExecuteUpdateAsync(s => s
                 .SetProperty(v => v.Status, VisitorStatus.CheckedOut)
                 .SetProperty(v => v.CheckedOutAt, DateTime.UtcNow)
+                .SetProperty(v => v.ExitGate, exitGate)
+                .SetProperty(v => v.CheckedOutByUserId, seenOutBy)
                 .SetProperty(v => v.UpdatedAt, DateTime.UtcNow));
 
         if (affected == 0)
@@ -2040,7 +2204,7 @@ public class VisitorsController : ControllerBase
 
         var visitor = await _context.Visitors.Include(v => v.VisitorProfile).FirstAsync(v => v.Id == visitorId);
         var stats = await GetStatsAsync(new[] { visitor.VisitorProfileId });
-        var dto = MapToDto(visitor, visitor.VisitorProfile!, stats.GetValueOrDefault(visitor.VisitorProfileId));
+        var dto = MapToDto(visitor, visitor.VisitorProfile!, stats.GetValueOrDefault(visitor.VisitorProfileId), staffNames: await StaffNamesAsync(visitor));
         await _activityBroadcaster.BroadcastAsync(branchId, VisitorActivityKind.CheckedOut, dto);
         return Ok(dto);
     }
@@ -2081,7 +2245,7 @@ public class VisitorsController : ControllerBase
 
         await _context.SaveChangesAsync();
         var stats = await GetStatsAsync(new[] { profile.Id });
-        return Ok(MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id)));
+        return Ok(MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id), staffNames: await StaffNamesAsync(visitor)));
     }
 
     [HttpPut("branches/{branchId:guid}/visitors/{visitorId:guid}/watchlist")]
@@ -2112,7 +2276,7 @@ public class VisitorsController : ControllerBase
 
         await _context.SaveChangesAsync();
         var stats = await GetStatsAsync(new[] { profile.Id });
-        var dto = MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id));
+        var dto = MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id), staffNames: await StaffNamesAsync(visitor));
         await _activityBroadcaster.BroadcastAsync(branchId, request.IsWatchlisted ? VisitorActivityKind.Flagged : VisitorActivityKind.Unflagged, dto);
         return Ok(dto);
     }
@@ -2262,8 +2426,8 @@ public class VisitorsController : ControllerBase
         var deleterIds = deleted.Select(v => v.DeletedByUserId).Where(id => id != null).Select(id => id!.Value).Distinct().ToList();
         var deleterNames = await _context.Users
             .Where(u => deleterIds.Contains(u.Id))
-            .Select(u => new { u.Id, u.FirstName, u.LastName })
-            .ToDictionaryAsync(u => u.Id, u => $"{u.FirstName} {u.LastName}".Trim());
+            .Select(u => new { u.Id, u.OrganizationId, u.FirstName, u.LastName })
+            .ToDictionaryAsync(u => u.Id, u => PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName));
 
         var results = deleted.Select(v => new DeletedVisitorDto
         {

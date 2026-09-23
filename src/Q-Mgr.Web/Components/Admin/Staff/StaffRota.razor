@@ -572,7 +572,7 @@
         if (lookupsLoaded) return;
         try
         {
-            staff = (await StaffApi.GetDirectoryAsync(branchId)).Items.Where(s => s.IsActive).OrderBy(s => s.FullName).ToList();
+            staff = (await StaffApi.GetDirectoryAsync(branchId)).Items.Where(s => s.IsActive).OrderBy(s => s.SortName ?? s.FullName).ToList();
             staffUnavailable = false;
         }
         catch

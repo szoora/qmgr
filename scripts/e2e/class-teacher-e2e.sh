@@ -129,6 +129,36 @@ echo "$GHOST" | grep -q 'Class not found' && ok "assignment to an unknown class 
   || bad "unknown class refused" "400 Class not found" "$(echo "$GHOST" | head -c 160)"
 
 # -----------------------------------------------------------------------------
+hdr "2b. DERIVED POST PERMISSIONS reach EVERY path that reports them"
+# A live ClassTeacherAssignment grants welfare permissions the teacher's ROLE does not hold
+# (PostPermissionService). Six places build a UserInfo, and on 2026-09-22 ONE of them —
+# GET /auth/me — still read user.Role.RolePermissions directly and so reported the role's
+# permissions only.
+#
+# That is the REFRESH path: the browser persists UserInfo in localStorage and re-reads it from
+# there, so every `@if (HasPermission(...))` in the app silently lost the derived permissions on
+# a refresh while the API gate went on honouring them — the UI vanishing from under somebody who
+# could still make the calls. Asserted on both paths, because one passing says nothing about the
+# other: that is the "guarded door beside an unguarded one" lesson from section 13.
+T4_REFRESHED=$(login e2e.teacher.s4@qmgr.local "$PW")
+LOGIN_PERMS=$(body "$AD" GET "/api/v1/users/$UID4" > /dev/null 2>&1; curl -s -X POST "$API/api/v1/auth/login" \
+  -H 'Content-Type: application/json' -d "{\"email\":\"e2e.teacher.s4@qmgr.local\",\"password\":\"$PW\"}" \
+  | grep -o '"permissions":\[[^]]*\]')
+ME_PERMS=$(body "$T4_REFRESHED" GET "/api/v1/auth/me" | grep -o '"permissions":\[[^]]*\]')
+
+echo "$LOGIN_PERMS" | grep -q 'welfare.view' \
+  && ok "login reports the class teacher's DERIVED welfare.view" \
+  || bad "login reports derived welfare.view" "welfare.view present" "$LOGIN_PERMS"
+
+echo "$ME_PERMS" | grep -q 'welfare.view' \
+  && ok "auth/me reports it too — the refresh path, not just sign-in" \
+  || bad "auth/me reports derived welfare.view" "welfare.view present" "$ME_PERMS"
+
+[ "$LOGIN_PERMS" = "$ME_PERMS" ] \
+  && ok "the two paths agree exactly, so a refresh never narrows what the UI renders" \
+  || bad "login and auth/me agree" "identical lists" "login=$LOGIN_PERMS me=$ME_PERMS"
+
+# -----------------------------------------------------------------------------
 hdr "3. SCOPE — the roster narrows to the teacher's own class"
 R4=$(body "$T4" GET "$B/students")
 R2=$(body "$T2" GET "$B/students")
@@ -253,7 +283,25 @@ AID=$(echo "$A4" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 eq "assignment ended" "$(code "$AD" DELETE "$B/class-teachers/$AID" '{"reason":"E2E probe"}')" "200"
 R4B=$(body "$T4" GET "$B/students")
 eq "roster is empty again, on the very next request" "$(count "$R4B")" "0"
-eq "the record they could read a moment ago is now 404" "$(code "$T4" GET "$B/welfare-records/$STD_ID")" "404"
+
+# THE REVOCATION IS THE POINT, AND THE LINE ABOVE IS WHAT PROVES IT: the roster empties on the very
+# next request. This one is about the SHAPE of the refusal, and it changed on 2026-09-22 when welfare
+# access started arriving with the POST rather than the role.
+#
+# Before: the role granted welfare.view permanently and only the SCOPE moved, so a record out of scope
+# answered 404 — the standing rule, because a 403 on a particular student confirms that student exists.
+# Now: ending the assignment removes the post, so the teacher holds no welfare permission at all and
+# every welfare read answers 403 — the SAME answer for any id, including one that never existed. It
+# therefore discloses strictly less than the 404 it replaced, which is why both are accepted here.
+#
+# 404 is still accepted because a caller who DOES hold the permission and is merely out of scope must
+# keep getting it — that rule is unchanged and is asserted per-student elsewhere (sections 3, 3b, 9).
+REVOKED_CODE=$(code "$T4" GET "$B/welfare-records/$STD_ID")
+if [ "$REVOKED_CODE" = "403" ] || [ "$REVOKED_CODE" = "404" ]; then
+  ok "the record they could read a moment ago is refused, without confirming it exists ($REVOKED_CODE)"
+else
+  bad "the record they could read a moment ago is refused" "403 or 404" "$REVOKED_CODE"
+fi
 
 # -----------------------------------------------------------------------------
 hdr "9. The endpoints that had no UI until 2026-09-10, and the reports gate"
@@ -455,8 +503,12 @@ echo "$TE" | grep -q '"success":true' && ok "a tenant with no SMTP of its own se
 # Hangfire job, which is the only thing that writes NotificationLog. This is the assertion the
 # delivery log was built for and has never been able to make.
 BEFORE_OK=$(body "$AD" GET "/api/v1/notifications/deliveries" | grep -o '"success":true' | wc -l | tr -d ' ')
+# A notification names ONE person (2026-09-23). This probe posted with no userId for weeks, and
+# every run left a row the whole tenant read in its bell — 51 of them on the dev tenant. It is
+# addressed to the administrator running the suite now; the email still goes to $MAILBOX.
+PROBE_TO=$(body "$AD" GET "/api/v1/auth/me" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 code "$AD" POST "/api/v1/notifications" \
-  '{"organizationId":"'"$ORG_ID"'","title":"Q-Mgr E2E delivery probe","message":"Dummy message from the Q-Mgr end-to-end suite. Safe to ignore.","channels":["Email"],"email":"'"$MAILBOX"'","emailSubject":"Q-Mgr E2E delivery probe"}' > /dev/null
+  '{"userId":"'"$PROBE_TO"'","organizationId":"'"$ORG_ID"'","title":"Q-Mgr E2E delivery probe","message":"Dummy message from the Q-Mgr end-to-end suite. Safe to ignore.","channels":["Email"],"email":"'"$MAILBOX"'","emailSubject":"Q-Mgr E2E delivery probe"}' > /dev/null
 DELIVERED=0; AFTER_OK="$BEFORE_OK"
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
   sleep 2
@@ -802,19 +854,26 @@ else
 fi
 
 # --- 13c3. A module's roles are hidden from a tenant that has not enabled it --------------
-# "it makes no sense showing a business the default roles of a school." class-teacher and the five
-# Staff Performance roles belong to student-welfare (display name "Welfare & Performance").
+# "it makes no sense showing a business the default roles of a school." The Staff Performance roles
+# belong to student-welfare (display name "Welfare & Performance").
 # The dev tenant HAS that module, so they must be present here; the negative is asserted by
 # revoking it and putting it back.
-echo "$ROLES_AD" | grep -q '"class-teacher"' \
+#
+# THE PROBE IS director-of-studies, NOT class-teacher (changed 2026-09-22). This block used
+# class-teacher, and that role was DELETED when heading a class became a POST rather than a role — so
+# all three assertions tested a row that no longer exists and reported its absence as a failure. Any
+# role RoleCodes.ModuleFor maps to student-welfare serves; director-of-studies is the one certain to
+# survive, being the timetable-and-appraisal role the module is built around.
+MODULE_ROLE='"director-of-studies"'
+echo "$ROLES_AD" | grep -q "$MODULE_ROLE" \
   && ok "a module's roles are listed while the tenant has the module" \
-  || bad "module roles listed" "class-teacher present" "class-teacher missing"
+  || bad "module roles listed" "director-of-studies present" "director-of-studies missing"
 
 if [ -n "${ORG_ID:-}" ]; then
   code "$SA" DELETE "/api/v1/admin/tenants/$ORG_ID/modules/student-welfare" > /dev/null
   ROLES_NOMOD=$(body "$AD" GET "/api/v1/roles")
-  if echo "$ROLES_NOMOD" | grep -q '"class-teacher"'; then
-    bad "a module's roles are hidden without the module" "no class-teacher" "class-teacher still listed"
+  if echo "$ROLES_NOMOD" | grep -q "$MODULE_ROLE"; then
+    bad "a module's roles are hidden without the module" "no director-of-studies" "director-of-studies still listed"
   else
     ok "a module's roles are hidden from a tenant without that module"
   fi
@@ -823,9 +882,9 @@ if [ -n "${ORG_ID:-}" ]; then
     || bad "core roles survive" "admin present" "admin missing"
   code "$SA" PUT "/api/v1/admin/tenants/$ORG_ID/modules/student-welfare" '{"note":"e2e restore"}' > /dev/null
   ROLES_BACK=$(body "$AD" GET "/api/v1/roles")
-  echo "$ROLES_BACK" | grep -q '"class-teacher"' \
+  echo "$ROLES_BACK" | grep -q "$MODULE_ROLE" \
     && ok "restoring the module restores its roles" \
-    || bad "module restored" "class-teacher present again" "still missing"
+    || bad "module restored" "director-of-studies present again" "still missing"
 fi
 
 # --- 13d. Welfare exports and publishes are logged, and the log is scoped ------------------
@@ -1065,6 +1124,132 @@ if command -v node > /dev/null 2>&1; then
   else PASS=$((PASS+MS_PASS)); FAIL=$((FAIL+MS_FAIL)); fi
 else
   printf '  \033[33mSKIP\033[0m  node is not installed; section 25 did not run\n'
+fi
+
+
+hdr "26. TIMETABLE OWNERSHIP, COVER AND SWAPS (Node)"
+# Appointed masters, the visible administrator override, the publish that no longer archives a live
+# version silently, dated cover, and the permanent swap that used to refuse after everybody had agreed.
+# Node because half of it is concurrency and the rest needs a teacher holding no timetable permission.
+if command -v node > /dev/null 2>&1; then
+  TO_OUT=$(API="$API" BRANCH="$BRANCH" SA_USER="$SA_USER" SA_PASS="$SA_PASS" node "$(dirname "$0")/timetable-ownership-e2e.mjs" 2>&1)
+  echo "$TO_OUT" | sed 's/^/  /'
+  TO_PASS=$(echo "$TO_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  TO_FAIL=$(echo "$TO_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$TO_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 26 did not report a summary\n'
+  else PASS=$((PASS+TO_PASS)); FAIL=$((FAIL+TO_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 26 did not run\n'
+fi
+
+hdr "27. EVERY NOTIFICATION NAMES ONE PERSON (Node)"
+# A teacher onboarded at Maryhill read the school's failed payments in the bell: payment and trial
+# notices had no recipient, were read by the whole tenant, and were pushed live to every tenant. A
+# refused purchase through the gateway stub, then who heard — in the list, the count and live over
+# SignalR — plus the shared read flag and five settlements racing one payment.
+if command -v node > /dev/null 2>&1; then
+  NR_OUT=$(API="$API" BRANCH="$BRANCH" SA_USER="$SA_USER" SA_PASS="$SA_PASS" node "$(dirname "$0")/notification-routing-e2e.mjs" 2>&1)
+  echo "$NR_OUT" | sed 's/^/  /'
+  NR_PASS=$(echo "$NR_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  NR_FAIL=$(echo "$NR_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$NR_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 27 did not report a summary\n'
+  else PASS=$((PASS+NR_PASS)); FAIL=$((FAIL+NR_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 27 did not run\n'
+fi
+
+hdr "28. A SCHOOL CHOOSES HOW A NAME IS WRITTEN (Node)"
+# Organization.Settings["People"]: the display order and the sort order, through every door that
+# names a person, and a race against another writer of the same settings column.
+if command -v node > /dev/null 2>&1; then
+  NO_OUT=$(API="$API" BRANCH="$BRANCH" node "$(dirname "$0")/name-order-e2e.mjs" 2>&1)
+  echo "$NO_OUT" | sed 's/^/  /'
+  NO_PASS=$(echo "$NO_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  NO_FAIL=$(echo "$NO_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$NO_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 28 did not report a summary\n'
+  else PASS=$((PASS+NO_PASS)); FAIL=$((FAIL+NO_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 28 did not run\n'
+fi
+
+hdr "29. GATES AT VISITOR CHECK-IN AND CHECK-OUT (Node)"
+# The branch's gate list has one writer and a used gate is retired, never removed. Every check-in and
+# check-out resolves its gate by VisitorGateRule — required with two, filled with one, absent with none —
+# and records who admitted and saw out the visitor; the roll call, the report and the export carry it.
+if command -v node > /dev/null 2>&1; then
+  VG_OUT=$(API="$API" BRANCH="$BRANCH" SA_USER="$SA_USER" SA_PASS="$SA_PASS" node "$(dirname "$0")/visitor-gates-e2e.mjs" 2>&1)
+  echo "$VG_OUT" | sed 's/^/  /'
+  VG_PASS=$(echo "$VG_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  VG_FAIL=$(echo "$VG_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$VG_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 29 did not report a summary\n'
+  else PASS=$((PASS+VG_PASS)); FAIL=$((FAIL+VG_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 29 did not run\n'
+fi
+
+hdr "30. THE SCHOOL CALENDAR, THE PERSONAL FEED AND THE NATIONAL DATES (Node)"
+# SchoolEventVisibility (a teacher sees Staff events and their own, never Students- or Public-only),
+# the write refusals, the settings key raced against another writer, the anonymous .ics feed (CRLF,
+# 75-octet folding, exclusive all-day DTEND, a replaced link dying), the Public-only signage list,
+# My School Day and the portal, the platform-kept national calendar, and a term's theme.
+if command -v node > /dev/null 2>&1; then
+  CA_OUT=$(API="$API" BRANCH="$BRANCH" SA_USER="$SA_USER" SA_PASS="$SA_PASS" node "$(dirname "$0")/calendar-e2e.mjs" 2>&1)
+  echo "$CA_OUT" | sed 's/^/  /'
+  CA_PASS=$(echo "$CA_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  CA_FAIL=$(echo "$CA_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$CA_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 30 did not report a summary\n'
+  else PASS=$((PASS+CA_PASS)); FAIL=$((FAIL+CA_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 30 did not run\n'
+fi
+hdr "31. THE TERM PROGRAMME IMPORT (Node)"
+# A school's own documents become events, staff meetings and rota slots through one preview and one commit.
+# With E2E_DOCS_DIR set it also reads the school's five real documents (never in this repository — they carry
+# staff phone numbers) and asserts the measured counts, the gap, the doubles, the one suggestion and the conflict.
+# Always: the preview writes nothing, a re-import creates nothing, a teacher is refused, two racing commits
+# create each row once, and undo keeps a meeting whose register was taken.
+if command -v node > /dev/null 2>&1; then
+  PI_OUT=$(API="$API" BRANCH="$BRANCH" E2E_DOCS_DIR="${E2E_DOCS_DIR:-}" node "$(dirname "$0")/programme-import-e2e.mjs" 2>&1)
+  echo "$PI_OUT" | sed 's/^/  /'
+  PI_PASS=$(echo "$PI_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  PI_FAIL=$(echo "$PI_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$PI_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 31 did not report a summary\n'
+  else PASS=$((PASS+PI_PASS)); FAIL=$((FAIL+PI_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 31 did not run\n'
+fi
+
+hdr "32. LOGGING ONE RECORD FOR A GROUP, AND TIDYING SHOUTED NAMES (Node)"
+# POST …/welfare-records/bulk: one record per student through the single create's own code, one incident for
+# behaviour only, the whole batch refused (unknown-student words) when one child is out of scope, no welfare
+# concern in bulk, the 200 cap, alerts coalesced to one per recipient, one activity line. Then tidy-names:
+# preview writes nothing, a SHOUTED name moves, mixed case never does. Scratch students are deactivated after.
+if command -v node > /dev/null 2>&1; then
+  BL_OUT=$(API="$API" BRANCH="$BRANCH" node "$(dirname "$0")/bulk-log-e2e.mjs" 2>&1)
+  echo "$BL_OUT" | sed 's/^/  /'
+  BL_PASS=$(echo "$BL_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  BL_FAIL=$(echo "$BL_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$BL_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 32 did not report a summary\n'
+  else PASS=$((PASS+BL_PASS)); FAIL=$((FAIL+BL_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 32 did not run\n'
+fi
+
+hdr "33. LOGGING ONE RECORD FOR A GROUP OF STAFF (Node)"
+# POST …/staff/records/bulk: one Contribution or Conduct record per person through the single create's own code, in
+# one transaction; the caller left out and named; the whole batch refused (the single create's not-found words) when
+# one person is outside the caller's staff scope; every other kind, Confidential, drafts, the 200 cap (checked before
+# scope) and a parameter that does not apply to one of them refused; late entry once; a supervisor told ONCE per
+# batch; one activity line. Uses section 14's staff and creates no users; every record it writes is annulled after.
+if command -v node > /dev/null 2>&1; then
+  BSL_OUT=$(API="$API" BRANCH="$BRANCH" node "$(dirname "$0")/bulk-staff-log-e2e.mjs" 2>&1)
+  echo "$BSL_OUT" | sed 's/^/  /'
+  BSL_PASS=$(echo "$BSL_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  BSL_FAIL=$(echo "$BSL_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$BSL_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 33 did not report a summary\n'
+  else PASS=$((PASS+BSL_PASS)); FAIL=$((FAIL+BSL_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 33 did not run\n'
 fi
 
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"

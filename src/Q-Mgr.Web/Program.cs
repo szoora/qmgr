@@ -105,6 +105,8 @@ builder.Services.AddScoped<ViewerRequestContext>();
 builder.Services.AddScoped<IAppInitializationService, AppInitializationService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IPermissionService, PermissionService>();
+// The one home for "what must a password be" — four forms asked, three carried a copy of the fetch.
+builder.Services.AddScoped<IPasswordRulesService, PasswordRulesService>();
 builder.Services.AddScoped<AuthenticationStateProvider, CustomAuthenticationStateProvider>();
 builder.Services.AddScoped<IDataExportService, DataExportService>();
 builder.Services.AddScoped<IBatchApiService, BatchApiService>();
@@ -115,6 +117,7 @@ builder.Services.AddScoped<IAppointmentApiService, AppointmentApiService>();
 builder.Services.AddScoped<IStudentApiService, StudentApiService>();
 builder.Services.AddScoped<IClassTeacherApiService, ClassTeacherApiService>();
 builder.Services.AddScoped<IStaffPerformanceApiService, StaffPerformanceApiService>();
+builder.Services.AddScoped<IProgrammeImportApiService, ProgrammeImportApiService>();
 builder.Services.AddScoped<IStaffOnboardingApiService, StaffOnboardingApiService>();
 builder.Services.AddScoped<IModuleApiService, ModuleApiService>();
 // The download page and the native app's sign-in handoff. Scoped like the rest: it uses the
@@ -122,11 +125,14 @@ builder.Services.AddScoped<IModuleApiService, ModuleApiService>();
 builder.Services.AddScoped<IMobileAppApiService, MobileAppApiService>();
 builder.Services.AddScoped<IPaymentApiService, PaymentApiService>();
 builder.Services.AddScoped<ISelfServiceApiService, SelfServiceApiService>();
+// The school calendar, its settings, the personal feed and the national dates (TERM_PROGRAMME_CALENDAR_AND_GATES §9).
+builder.Services.AddScoped<ICalendarApiService, CalendarApiService>();
 builder.Services.AddScoped<IMarketingApiService, MarketingApiService>();
 builder.Services.AddScoped<IContentApiService, ContentApiService>();
 builder.Services.AddScoped<IDocumentShareApiService, DocumentShareApiService>();
 builder.Services.AddScoped<ISpotifyApiService, SpotifyApiService>();
 builder.Services.AddScoped<IOrganizationApiService, OrganizationApiService>();
+builder.Services.AddScoped<IPeopleNamesService, PeopleNamesService>();
 builder.Services.AddScoped<ISignalRService, SignalRService>();
 builder.Services.AddScoped<IBranchStateService, BranchStateService>();
 builder.Services.AddScoped<IModuleStateService, ModuleStateService>();

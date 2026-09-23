@@ -24,6 +24,7 @@
 @using QMgr.Web.Components.Shared
 @using QMgr.Web.Components.Shared.UI
 @using QMgr.Web.Services
+@using QMgr.Web.Components.Admin.Welfare
 
 <QPageTitle Text="Students" />
 
@@ -44,82 +45,16 @@
                    that opens a permanently empty modal reads as broken (a teacher sees this page now). *@
                 <QButton Text="Import History" Icon="clock-history" Variant="secondary" OnClick="@OpenHistoryModal" />
                 <QButton Text="Lists" Icon="list-check" Variant="secondary" OnClick="@OpenVocabModal" Title="Classes, houses, dormitories and the suggestion lists" />
+                @* A school's own export arrives SHOUTED ("AINE GRACE"). PersonName.FixShouting does the
+                   work server-side and never touches a name already in mixed case; the dialog shows every
+                   change before anything is written (plan STUDENT_ROSTER_AND_LIST_STANDARD §2). *@
+                <QButton Text="Tidy names" Icon="type" Variant="secondary" OnClick="@OpenTidyNames" Class="roster-tidy-open"
+                         Title="Take names out of capitals — you see every change before anything is saved" />
                 <QButton Text="Bulk Import" Icon="file-earmark-spreadsheet" Variant="secondary" OnClick="@OpenImportModal" />
                 <QButton Text="Add Student" Icon="person-plus-fill" Variant="primary" OnClick="@OpenAddStudentModal" />
             </PermissionGuard>
         </div>
     </div>
-
-    <div class="roster-toolbar">
-        <input class="roster-search-input" @bind="filterQuery" @bind:event="oninput" placeholder="Filter by student name, code, class, or guardian name..." />
-        <label class="roster-toggle">
-            <input type="checkbox" @bind="includeInactive" @bind:after="LoadStudents" />
-            <span>Show inactive</span>
-        </label>
-        <QButton Text="@($"Print Selected ({selectedStudentIds.Count})")" Icon="printer-fill" Variant="secondary" OnClick="@PrintAllStudentCards"
-                 Disabled="@(selectedStudentIds.Count == 0)"
-                 Title="Print Student Visitation Cards for the checked students — 8 per A4 sheet" />
-
-        @* Export gates on the permission that governs *reading* the roster, not a second one of
-           its own. Downloading a list is a bigger data-protection event than paging through it,
-           but a separate permission on every list is friction nobody asked for — and this page is
-           already behind students.view. *@
-        <QDataExport TItem="StudentDto"
-                     Title="Student roster"
-                     FileStem="@($"roster-{(BranchState.CurrentBranchName ?? "branch")}")"
-                     Subtitle="@ExportSubtitle"
-                     Columns="@RosterExportColumns"
-                     RowProvider="@ProvideExportRowsAsync" />
-    </div>
-
-    @* The batch bar appears only when something is selected, and says what is selected — a bar
-       that is always there reads as chrome, and one that says "Actions" makes somebody click it
-       to find out what it would act on. *@
-    @if (selectedStudentIds.Count > 0 && canManageStudents)
-    {
-        <div class="batch-bar">
-            <span class="batch-bar-count">
-                <QIcon Name="check2-square" />
-                <strong>@selectedStudentIds.Count.ToString("N0")</strong> selected
-            </span>
-
-            <QButton Text="Promote to next class" Icon="arrow-up-circle" Size="sm" Variant="primary"
-                     OnClick="@(() => OpenBatch(BatchOperation.AdvanceClass))"
-                     Title="Move each selected student to the next class in this branch's list" />
-
-            <div class="dropdown">
-                <QButton Text="Set a field" Icon="pencil-square" Size="sm" Variant="secondary"
-                         data-bs-toggle="dropdown" aria-expanded="false" />
-                <ul class="dropdown-menu batch-menu">
-                    @foreach (var f in BatchFields)
-                    {
-                        <li><button type="button" class="dropdown-item" @onclick="@(() => OpenSetField(f))">@FieldLabel(f)</button></li>
-                    }
-                </ul>
-            </div>
-
-            <div class="dropdown">
-                <QButton Text="More" Icon="three-dots" Size="sm" Variant="ghost"
-                         data-bs-toggle="dropdown" aria-expanded="false" />
-                <ul class="dropdown-menu dropdown-menu-end batch-menu">
-                    <li><button type="button" class="dropdown-item" @onclick="@(() => OpenBatch(BatchOperation.SetConsent, "give"))">
-                        <QIcon Name="patch-check" /> Record data consent
-                    </button></li>
-                    <li><button type="button" class="dropdown-item" @onclick="@(() => OpenBatch(BatchOperation.SetConsent, "withdraw"))">
-                        <QIcon Name="patch-exclamation" /> Withdraw data consent
-                    </button></li>
-                    <li><hr class="dropdown-divider" /></li>
-                    @* Retiring a child hides them from the roster, the gate and visiting day, so it
-                       is its own deliberate action and never a side effect of promotion. *@
-                    <li><button type="button" class="dropdown-item batch-danger" @onclick="@(() => OpenBatch(BatchOperation.Deactivate))">
-                        <QIcon Name="box-arrow-right" /> Mark as left
-                    </button></li>
-                </ul>
-            </div>
-
-            <button type="button" class="batch-clear" @onclick="@(() => selectedStudentIds.Clear())">Clear selection</button>
-        </div>
-    }
 
     @* Undo stays offered until it is used or the page is left. There is deliberately no time
        limit — a window would be arbitrary, and the real question is whether anything has moved
@@ -134,49 +69,218 @@
         </div>
     }
 
+    @if (TeachingRowCount > 0)
+    {
+        @* Duty rota plan §5.3. The rows were blanked server-side; this only says why, so an empty guardian
+           column reads as "with their class teacher", not as missing data. *@
+        <div class="roster-tier-note" role="note">
+            <QIcon Name="info-circle-fill" />
+            <span>
+                @if (TeachingRowCount == students.Count)
+                {
+                    <text>These are the students you teach.</text>
+                }
+                else
+                {
+                    <text>You teach @TeachingRowCount of these students (marked <strong>You teach</strong>).</text>
+                }
+                Welfare, discipline and guardians are with each student's class teacher.
+                @if (CanLogConcern)
+                {
+                    <text>If you are worried about a student, use <strong>Log a concern</strong> — it goes to the people who hold their file.</text>
+                }
+            </span>
+        </div>
+    }
+
+    @* The summary (plan §2). A tile that names a filter applies it when pressed; the rest are
+       figures. When the caller's roll is scope-limited the first tile SAYS so — a class teacher
+       reading their own class's total as the school's is a wrong conclusion drawn from a correct
+       query (the WelfareSummaryDto.ScopedToClasses rule). *@
+    <div class="roster-summary" role="group" aria-label="Summary">
+        @* One line, not four tiles (2026-09-23: "the filters are occupying more space than actual content").
+           A count that names a filter applies it when pressed. *@
+        <button type="button" class="roster-sum" data-tile="roll" @onclick="@ClearAllFilters" title="Show every student — clears the filters">
+            <strong>@OnRollCount.ToString("N0")</strong> on the roll@(RollScopeNote == null ? "" : $" ({RollScopeNote})")
+        </button>
+        <span class="roster-sum" data-tile="match"><strong>@filtered.Count.ToString("N0")</strong> match</span>
+        <span class="roster-sum" data-tile="classes"><strong>@ClassCount.ToString("N0")</strong> classes</span>
+        @if (GuardianKnownCount > 0)
+        {
+            <button type="button" class="roster-sum @(NoGuardianCount > 0 ? "roster-sum--warn" : "")" data-tile="no-guardian"
+                    @onclick="@(() => SetGuardianFilter("none"))" title="Show the students with no guardian on file">
+                <strong>@NoGuardianCount.ToString("N0")</strong> no guardian yet
+            </button>
+        }
+        @if (canViewWelfare)
+        {
+            <button type="button" class="roster-sum @(FlaggedCount > 0 ? "roster-sum--danger" : "")" data-tile="flagged"
+                    @onclick="@(() => SetFlagsFilter(true))" title="Show the students carrying an active flag">
+                <strong>@FlaggedCount.ToString("N0")</strong> flagged
+            </button>
+        }
+    </div>
+
+    @* The filters (plan §2). Every one of them is in the address, so a filtered roll is a link a
+       head of year can send; the page reads them back on arrival and writes them as they change. *@
+
+
+    @if (ActiveFilterChips.Any())
+    {
+        <div class="roster-chips" role="group" aria-label="Active filters">
+            @foreach (var chip in ActiveFilterChips)
+            {
+                <QChip Text="@chip.Label" Removable="true" OnRemove="@chip.Remove" RemoveLabel="@($"Remove the filter {chip.Label}")" Variant="primary" />
+            }
+            <QButton Text="Clear all" Icon="x-circle" Variant="link" Size="sm" OnClick="@ClearAllFilters" Class="roster-clear-all" />
+        </div>
+    }
+
+    @* QBulkBar is the one home for a list page's bar. Select-all covers THIS PAGE; "all N matching"
+       is a second, explicit press (decision L2). Every filter, search, status and page-size change
+       prunes the selection to the filtered list, so a bulk action never reaches a student the
+       filters are hiding. *@
+    <QBulkBar Class="roster-bulk"
+              Search="@filterQuery" SearchChanged="@OnSearchChanged"
+              SearchPlaceholder="Search name, code, class or guardian"
+              ShowSelection="@(filtered.Count > 0)"
+              VisibleCount="@PageRows.Count"
+              SelectedCount="@selectedStudentIds.Count"
+              AllSelected="@PageAllSelected"
+              AllSelectedChanged="@SelectPage"
+              ClearSelection="@ClearSelection">
+        <Start>
+            @* The filters share the search's row (2026-09-23). Each option says what it is, so no label row above. *@
+            <div class="roster-filters">
+
+        @if (ClassFilterOptions.Any())
+        {
+            <QMultiSelect TValue="string" TItem="RosterClassOption" SelectedValues="@classFilter" SelectedValuesChanged="@OnClassFilterChanged"
+                          Items="@ClassFilterOptions" Sorted="true" ValueSelector="@(o => o.Key)" TextSelector="@(o => o.Label)" Placeholder="All classes" MaxChipsVisible="2" Class="roster-f roster-f--class" />
+        }
+        <QSelect TValue="string" TItem="RosterOption" Value="@statusFilter" ValueChanged="@OnStatusChanged"
+                 Items="@StatusOptions" ValueSelector="@(o => o.Value)" TextSelector="@StatusText" Class="roster-f roster-f--status" />
+        @if (HouseFilterOptions.Any())
+        {
+            <QSelect TValue="string" TItem="string" Value="@houseFilter" ValueChanged="@OnHouseChanged"
+                     Items="@HouseFilterOptions" Sorted="true" ValueSelector="@(h => h)" TextSelector="@(h => h)" Placeholder="Any house" AllowClear="true" Class="roster-f roster-f--house" />
+        }
+        @if (DormitoryFilterOptions.Any())
+        {
+            <QSelect TValue="string" TItem="string" Value="@dormitoryFilter" ValueChanged="@OnDormitoryChanged"
+                     Items="@DormitoryFilterOptions" Sorted="true" ValueSelector="@(d => d)" TextSelector="@(d => d)" Placeholder="Any dormitory" AllowClear="true" Class="roster-f roster-f--dorm" />
+        }
+        @if (GuardianKnownCount > 0)
+        {
+            <QSelect TValue="string" TItem="RosterOption" Value="@guardianFilter" ValueChanged="@SetGuardianFilter"
+                     Items="@GuardianOptions" ValueSelector="@(o => o.Value)" TextSelector="@GuardianText" Class="roster-f roster-f--guardian" />
+        }
+        @if (canViewWelfare)
+        {
+            <QSelect TValue="string" TItem="RosterOption" Value="@(flagsFilter ? "1" : "any")" ValueChanged="@(v => SetFlagsFilter(v == "1"))"
+                     Items="@FlagOptions" ValueSelector="@(o => o.Value)" TextSelector="@FlagText" Class="roster-f roster-f--flags" />
+        }
+            </div>
+            @* The whole list's export sits on the filter row: it exports what the filters show. *@
+            <div class="roster-export">
+            @* Export gates on the permission that governs *reading* the roster, not a second one of
+               its own. It exports what the filters show, not what is scrolled into view. *@
+            <QDataExport TItem="StudentDto"
+                         Title="Student roster"
+                         FileStem="@($"roster-{(BranchState.CurrentBranchName ?? "branch")}")"
+                         Subtitle="@ExportSubtitle"
+                         Columns="@RosterExportColumns"
+                         RowProvider="@ProvideExportRowsAsync" />
+            </div>
+        </Start>
+        <Actions>
+            @if (PageAllSelected && selectedStudentIds.Count < filtered.Count)
+            {
+                <QButton Text="@($"Select all {filtered.Count:N0} matching")" Icon="check2-all" Variant="link" Size="sm"
+                         OnClick="@SelectAllMatching" Class="roster-select-matching"
+                         Title="Every student the filters match, on every page" />
+            }
+            @if (canLogWelfare)
+            {
+                <QButton Text="Log a record" Icon="journal-plus" Size="sm" Variant="primary" OnClick="@OpenBulkLog"
+                         Class="roster-bulk-log" Disabled="@SelectionHasTeachingRows"
+                         Title="@(SelectionHasTeachingRows ? "Some of these are students you teach rather than hold the file for — log a concern for each of them from their row" : "One record for each selected student — an achievement or a behaviour record")" />
+            }
+            <QButton Text="Print cards" Icon="printer-fill" Size="sm" Variant="secondary" OnClick="@PrintAllStudentCards"
+                     Title="Print Student Visitation Cards for the selected students — 8 per A4 sheet" />
+            <QDataExport TItem="StudentDto"
+                         Title="Selected students"
+                         Text="Export selected"
+                         FileStem="@($"roster-selected-{(BranchState.CurrentBranchName ?? "branch")}")"
+                         Subtitle="@($"{selectedStudentIds.Count:N0} selected students")"
+                         Columns="@RosterExportColumns"
+                         RowProvider="@ProvideSelectedExportRowsAsync" />
+            @if (canManageStudents)
+            {
+                <QButton Text="Promote to next class" Icon="arrow-up-circle" Size="sm" Variant="secondary"
+                         OnClick="@(() => OpenBatch(BatchOperation.AdvanceClass))"
+                         Title="Move each selected student to the next class in this branch's list" />
+
+                <div class="dropdown">
+                    <QButton Text="Set a field" Icon="pencil-square" Size="sm" Variant="secondary"
+                             data-bs-toggle="dropdown" aria-expanded="false" />
+                    <ul class="dropdown-menu batch-menu">
+                        @foreach (var f in BatchFields)
+                        {
+                            <li><button type="button" class="dropdown-item" @onclick="@(() => OpenSetField(f))">@FieldLabel(f)</button></li>
+                        }
+                    </ul>
+                </div>
+
+                <div class="dropdown">
+                    <QButton Text="More" Icon="three-dots" Size="sm" Variant="ghost"
+                             data-bs-toggle="dropdown" aria-expanded="false" />
+                    <ul class="dropdown-menu dropdown-menu-end batch-menu">
+                        <li><button type="button" class="dropdown-item" @onclick="@(() => OpenBatch(BatchOperation.SetConsent, "give"))">
+                            <QIcon Name="patch-check" /> Record data consent
+                        </button></li>
+                        <li><button type="button" class="dropdown-item" @onclick="@(() => OpenBatch(BatchOperation.SetConsent, "withdraw"))">
+                            <QIcon Name="patch-exclamation" /> Withdraw data consent
+                        </button></li>
+                        <li><button type="button" class="dropdown-item" @onclick="@OpenTidyNamesForSelection">
+                            <QIcon Name="type" /> Tidy names out of capitals
+                        </button></li>
+                        <li><hr class="dropdown-divider" /></li>
+                        @* Retiring a child hides them from the roster, the gate and visiting day, so it
+                           is its own deliberate action and never a side effect of promotion. *@
+                        <li><button type="button" class="dropdown-item batch-danger" @onclick="@(() => OpenBatch(BatchOperation.Deactivate))">
+                            <QIcon Name="box-arrow-right" /> Mark as left
+                        </button></li>
+                    </ul>
+                </div>
+            }
+        </Actions>
+    </QBulkBar>
+
     @if (isLoading)
     {
-        <div class="loading-state"><QSpinner Size="lg" /><span>Loading roster...</span></div>
+        <div class="loading-state"><QSpinner Size="lg" /><span>Loading students...</span></div>
     }
     else if (!students.Any())
     {
-        <div class="empty-state">
-            <QIcon Name="mortarboard" Size="xl" />
-            <h3>No students yet</h3>
-            <p>Add students one at a time, or use Bulk Import to upload your whole roll from a spreadsheet.</p>
-        </div>
+        <QEmptyState Icon="mortarboard" Title="@(statusFilter == "inactive" ? "No inactive students" : "No students yet")"
+                     Text="@(statusFilter == "inactive" ? null : "Add students one at a time, or use Bulk Import to upload your whole roll from a spreadsheet.")" />
+    }
+    else if (!filtered.Any())
+    {
+        <QEmptyState Icon="funnel" Title="No students match" Text="Nothing on the roll matches these filters." Class="roster-no-match">
+            <Action>
+                <QButton Text="Clear filters" Icon="x-circle" Variant="secondary" Size="sm" OnClick="@ClearAllFilters" />
+            </Action>
+        </QEmptyState>
     }
     else
     {
-        @if (TeachingRowCount > 0)
-        {
-            @* Duty rota plan §5.3. The rows were blanked server-side; this only says why, so an empty guardian
-               column reads as "with their class teacher", not as missing data. *@
-            <div class="roster-tier-note" role="note">
-                <QIcon Name="info-circle-fill" />
-                <span>
-                    @if (TeachingRowCount == students.Count)
-                    {
-                        <text>These are the students you teach.</text>
-                    }
-                    else
-                    {
-                        <text>You teach @TeachingRowCount of these students (marked <strong>You teach</strong>).</text>
-                    }
-                    Welfare, discipline and guardians are with each student's class teacher.
-                    @if (CanLogConcern)
-                    {
-                        <text>If you are worried about a student, use <strong>Log a concern</strong> — it goes to the people who hold their file.</text>
-                    }
-                </span>
-            </div>
-        }
-
-        <div class="roster-table">
+        <div class="roster-table @(UseVirtualize ? "roster-table--virtual" : "")">
             <div class="roster-row roster-header">
                 <span class="roster-select">
-                    <input type="checkbox" checked="@AllFilteredSelected" @onchange="@(e => ToggleSelectAll((bool)(e.Value ?? false)))"
-                           title="Select all matching the current filter" />
+                    <QCheckbox Value="@PageAllSelected" ValueChanged="@SelectPage"
+                               title="Select every student on this page" aria-label="Select every student on this page" />
                 </span>
                 <span>Student</span>
                 <span>Code</span>
@@ -184,216 +288,37 @@
                 <span>Guardians</span>
                 <span></span>
             </div>
-            @foreach (var s in FilteredStudents)
+            @if (UseVirtualize)
             {
-                var teaching = IsTeachingTier(s);
-                <div class="roster-row @(s.IsActive ? "" : "inactive")">
-                    <span class="roster-select">
-                        <input type="checkbox" checked="@selectedStudentIds.Contains(s.Id)" @onchange="@(e => ToggleStudentSelection(s.Id, (bool)(e.Value ?? false)))" />
-                    </span>
-                    <span class="roster-name">
-                        @* The name is the way in to the student. It is what people aim at first,
-                           and making it the link removed an icon from the action cluster that did
-                           nothing else. A Teaching-tier row has no picture to open — it is pastoral. *@
-                        @if (teaching)
-                        {
-                            <span class="roster-name-text">@s.FullName</span>
-                            <span class="roster-chip teaching"
-                                  title="@($"You teach {s.FullName} {TaughtText(s)}. Welfare, discipline and guardians are with their class teacher.")">
-                                <QIcon Name="book" Size="12" />
-                                You teach@(s.TaughtSubjects.Any() ? ": " + string.Join(", ", s.TaughtSubjects) : "")
-                            </span>
-                        }
-                        else if (canViewWelfare)
-                        {
-                            <a class="roster-name-text roster-name-link" href="@($"/admin/students/{s.Id}/picture")"
-                               title="@($"Open {s.FullName}'s picture")">@s.FullName</a>
-                        }
-                        else
-                        {
-                            <span class="roster-name-text">@s.FullName</span>
-                        }
-                        @* A patch, not a shield. The shield is what a *restriction* looks like on
-                           this row (below, and on the flag chips), and one glyph meaning both
-                           "consent is on file" and "a guardian may not have contact" a centimetre
-                           apart is how somebody misreads a safeguarding row. *@
-                        @* Consent is blanked on a Teaching-tier row, so "No data consent on file" would be false there. *@
-                        @if (!teaching)
-                        {
-                            <span class="consent-icon @(s.DataConsentGivenAt.HasValue ? "consent-icon--given" : "")"
-                                  title="@(s.DataConsentGivenAt.HasValue ? $"Data consent recorded {QDateFormat.D(s.DataConsentGivenAt.Value.ToLocalTime())}{(string.IsNullOrWhiteSpace(s.DataConsentNotes) ? "" : " — " + s.DataConsentNotes)}" : "No data consent on file")">
-                                <QIcon Name="@(s.DataConsentGivenAt.HasValue ? "patch-check-fill" : "patch-question")" Size="sm" />
-                            </span>
-                        }
-
-                        @* A restriction is the one thing on this row somebody has to act on at the
-                           gate, so it is loud and it comes first. The reason behind it stays on the
-                           picture page, where the confidential tier governs it. *@
-                        @if (s.HasGuardianRestriction)
-                        {
-                            <span class="roster-chip restriction" title="A guardian on this child has a contact restriction — open the picture for the detail">
-                                <QIcon Name="shield-exclamation" Size="12" />
-                                Restricted
-                            </span>
-                        }
-                        @foreach (var f in s.Flags.Take(3))
-                        {
-                            <span class="roster-chip tier-@f.Tier.ToString().ToLowerInvariant() @(f.IsReviewOverdue ? "overdue" : "")"
-                                  title="@($"{f.CategoryName}{(f.IsReviewOverdue ? " — review overdue" : "")}")">
-                                @f.CategoryName
-                            </span>
-                        }
-                        @if (s.Flags.Count > 3)
-                        {
-                            <span class="roster-chip more" title="@string.Join(", ", s.Flags.Skip(3).Select(f => f.CategoryName))">
-                                +@(s.Flags.Count - 3)
-                            </span>
-                        }
-                    </span>
-                    <span class="roster-code">@(s.StudentCode ?? "—")</span>
-                    <span class="roster-class-cell">
-                        @if (!string.IsNullOrEmpty(s.ClassName))
-                        {
-                            <span class="class-pill" style="@($"background:{GetClassColor(s.ClassName)}")">@s.ClassName</span>
-
-                            @* "Who do I call about this child" answered on the row itself. The DTO
-                               already carries the teacher's contact block, so this costs no extra
-                               request — and the tel: link matters because the front desk reads this
-                               list on a touch screen where a tooltip never appears. *@
-                            @if (ClassTeacherFor(s.ClassName) is { } ct)
-                            {
-                                <span class="roster-ct">
-                                    <QIcon Name="person-video3" Size="11" />
-                                    @if (!string.IsNullOrWhiteSpace(ct.Phone))
-                                    {
-                                        <a href="tel:@ct.Phone" title="@ContactTitle(ct)">@ct.FullName</a>
-                                    }
-                                    else
-                                    {
-                                        <span title="@ContactTitle(ct)">@ct.FullName</span>
-                                    }
-                                </span>
-                            }
-                        }
-                        else
-                        {
-                            @:—
-                        }
-                    </span>
-                    <span class="roster-guardians">
-                        @if (teaching)
-                        {
-                            <span class="roster-empty-guardians">With their class teacher</span>
-                        }
-                        else if (s.Guardians.Any())
-                        {
-                            @foreach (var g in s.Guardians)
-                            {
-                                <span class="guardian-chip">
-                                    @g.FullName (@g.Relationship)
-                                    <QButton Icon="printer-fill" Size="sm" Variant="ghost" Class="guardian-print-btn"
-                                             OnClick="@(() => PrintGuardianCard(s, g))" Title="@($"Print visiting-day pass for {g.FullName}")" />
-                                </span>
-                            }
-                        }
-                        else
-                        {
-                            <span class="roster-empty-guardians">None yet</span>
-                        }
-                    </span>
-                    @* One action on the row, everything else behind a menu that names them.
-                       There were eight identical ghost icons here and no way to tell them apart
-                       without hovering each one in turn — and two of them were the same glyph in
-                       outline and filled form (person-vcard for "open picture", person-vcard-fill
-                       for "print card"). Logging a record is the only thing done on every pass
-                       down this list; editing a student, adding a guardian, printing a card, an
-                       export or a consent withdrawal are all occasional, so they are one
-                       deliberate click away where they get a written label rather than a tooltip
-                       nobody hovers. The one that stays keeps its label at every width. *@
-                    <span class="roster-actions">
-                        @if (teaching)
-                        {
-                            @* Reporting a concern is not reading one (plan §5.3). Every other action on this row is
-                               pastoral — the picture, the timeline, guardians, the pass, consent, the SAR export —
-                               so the menu is not offered at all rather than offered and refused. *@
-                            @if (CanLogConcern)
-                            {
-                                <QButton Icon="flag" Text="Log a concern" Size="sm" Variant="secondary" Class="roster-action"
-                                         OnClick="@(() => OpenQuickLogModal(s, concern: true))" Title="@($"Tell the people who hold {s.FullName}'s file about something that worried you")" />
-                            }
-                        }
-                        else
-                        {
-                        @if (canLogWelfare)
-                        {
-                            <QButton Icon="journal-plus" Text="Log" Size="sm" Variant="primary" Class="roster-action"
-                                     OnClick="@(() => OpenQuickLogModal(s))" Title="Log achievement, behavior or welfare record" />
-                        }
-                        <div class="dropdown roster-more">
-                            <QButton Icon="three-dots" Size="sm" Variant="ghost" Title="More actions"
-                                     data-bs-toggle="dropdown" aria-expanded="false" aria-label="@($"More actions for {s.FullName}")" />
-                            <ul class="dropdown-menu dropdown-menu-end">
-                                <li>
-                                    <button type="button" class="dropdown-item" @onclick="@(() => OpenEditStudentModal(s))">
-                                        <QIcon Name="pencil" /> Edit student
-                                    </button>
-                                </li>
-                                @if (canViewWelfare)
-                                {
-                                    <li>
-                                        <button type="button" class="dropdown-item" @onclick="@(() => Navigation.NavigateTo($"/admin/students/{s.Id}/picture"))">
-                                            <QIcon Name="person-vcard" /> Open student picture
-                                        </button>
-                                    </li>
-                                    <li>
-                                        <button type="button" class="dropdown-item" @onclick="@(() => Navigation.NavigateTo($"/admin/students/{s.Id}/welfare"))">
-                                            <QIcon Name="clipboard2-pulse" /> Welfare timeline
-                                        </button>
-                                    </li>
-                                }
-                                @* Next to the card it prints: both are about the guardians rather
-                                   than the child, and a guardian is added once, not every day. *@
-                                <li>
-                                    <button type="button" class="dropdown-item" @onclick="@(() => OpenAddGuardianModal(s))">
-                                        <QIcon Name="person-plus" /> Add guardian
-                                    </button>
-                                </li>
-                                <li>
-                                    <button type="button" class="dropdown-item" @onclick="@(() => PrintStudentIdCard(s))">
-                                        <QIcon Name="printer-fill" /> Print visitation card
-                                    </button>
-                                </li>
-
-                                @* Below the line: the two that carry legal weight rather than daily use. *@
-                                @if (canManageStudents || canViewWelfare)
-                                {
-                                    <li><hr class="dropdown-divider" /></li>
-                                }
-                                @if (canManageStudents)
-                                {
-                                    <li>
-                                        <button type="button" class="dropdown-item" @onclick="@(() => OpenConsentModal(s))">
-                                            <QIcon Name="@(s.DataConsentGivenAt.HasValue ? "patch-exclamation" : "patch-check")" />
-                                            @(s.DataConsentGivenAt.HasValue ? "Withdraw or re-record consent" : "Record data consent")
-                                        </button>
-                                    </li>
-                                }
-                                @if (canViewWelfare)
-                                {
-                                    <li>
-                                        <button type="button" class="dropdown-item" @onclick="@(() => ExportStudentData(s))"
-                                                title="Everything held about this student as one JSON file">
-                                            <QIcon Name="file-earmark-arrow-down" /> Export data (SAR)
-                                        </button>
-                                    </li>
-                                }
-                            </ul>
-                        </div>
-                        }
-                    </span>
+                @* "All" above 200 rows renders through Virtualize (decision L3): every row is a
+                   component subtree Blazor Server diffs and ships down the circuit, and 1,711 of them
+                   at once freezes the page. The body is a subgrid so the columns still line up. *@
+                <div class="roster-vbody">
+                    <Virtualize Items="@filtered" Context="s" ItemSize="58" OverscanCount="12">
+                        @RosterRow(s)
+                    </Virtualize>
                 </div>
             }
+            else
+            {
+                @foreach (var s in PageRows)
+                {
+                    @RosterRow(s)
+                }
+            }
         </div>
+
+        <QPager Count="@filtered.Count"
+                PageSize="@paging.PageSize"
+                PageIndex="@paging.PageIndex"
+                PageIndexChanged="@OnPageChanged"
+                PageSizeOptions="@QPagerDefaults.Sizes"
+                AllowAll="true"
+                PageSizeChanged="@OnPageSizeChanged"
+                StorageKey="students-roster"
+                SelectedCount="@selectedStudentIds.Count"
+                ItemLabel="students"
+                Class="roster-pager" />
     }
 </div>
 
@@ -425,6 +350,47 @@
    roster owns none of its behaviour, only the request it hands over. *@
 <QBatchDialog @ref="batchDialog" BranchId="@branchId" OnQueued="@OnBatchQueued" />
 
+@* Log a record for the selected group (plan §3). The dialog owns the form, the Welfare-never-bulk
+   rule (L7) and the one-incident choice (L1); the page only hands it the students. *@
+<BulkLogDialog @bind-Visible="showBulkLog" BranchId="@branchId" Students="@bulkLogStudents" OnLogged="@OnBulkLogged" />
+
+@* Tidy names out of capitals. A preview first, always: the reader sees every change before
+   anything is written, and the change writes exactly the rows the preview listed. *@
+<QModal @bind-Visible="showTidy" Title="Tidy names out of capitals" Size="md">
+    <ChildContent>
+        @if (tidyLoading)
+        {
+            <div class="loading-state"><QSpinner /><span>Checking names...</span></div>
+        }
+        else if (tidyPreview == null || tidyPreview.Changes.Count == 0)
+        {
+            <QEmptyState Icon="check2-circle" Title="Nothing to tidy" Text="No name is written entirely in capitals." />
+        }
+        else
+        {
+            <p class="roster-tidy-lede">
+                @tidyPreview.Changes.Count.ToString("N0") name@(tidyPreview.Changes.Count == 1 ? "" : "s") will change.
+                A name already in mixed case is never touched, so McDonald stays McDonald.
+            </p>
+            <ul class="roster-tidy-list">
+                @foreach (var c in tidyPreview.Changes.Take(20))
+                {
+                    <li><span class="roster-tidy-from">@c.From</span> <QIcon Name="arrow-right" Size="sm" /> <strong>@c.To</strong></li>
+                }
+            </ul>
+            @if (tidyPreview.Changes.Count > 20)
+            {
+                <p class="roster-tidy-more">and @((tidyPreview.Changes.Count - 20).ToString("N0")) more.</p>
+            }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showTidy = false)" />
+        <QButton Text="@TidyApplyLabel" Icon="check-lg" Variant="primary" OnClick="@ApplyTidyAsync" Loading="@tidyApplying"
+                 Disabled="@(tidyLoading || tidyApplying || tidyPreview == null || tidyPreview.Changes.Count == 0)" />
+    </FooterContent>
+</QModal>
+
 @* Suggestion sources for the fields that stay free text. A datalist offers the known values and
    accepts anything else, which is the right shape for a vocabulary a school will always have an
    outlier for. Rendered once here rather than inside the dialog so they survive its open/close. *@
@@ -453,23 +419,11 @@
         @* Four tabs, not one long scroll. The roster form was four fields; it is now twenty-three,
            and a wall of inputs is how a matron ends up filling in nothing. Identity is what the
            gate needs, so it stays first and is the only tab that can be required. *@
-        <div class="stu-tabs" role="tablist">
-            @foreach (var tab in ProfileTabs)
-            {
-                <button type="button"
-                        role="tab"
-                        aria-selected="@(activeTab == tab.Key ? "true" : "false")"
-                        class="stu-tab @(activeTab == tab.Key ? "active" : "")"
-                        @onclick="@(() => activeTab = tab.Key)">
-                    <QIcon Name="@tab.Icon" Size="15" />
-                    <span>@tab.Label</span>
-                    @if (TabFilledCount(tab.Key) > 0)
-                    {
-                        <span class="stu-tab-count">@TabFilledCount(tab.Key)</span>
-                    }
-                </button>
-            }
-        </div>
+        @* QTabs, not a strip of our own: "a hand-rolled tab strip is QTabs" (CLAUDE.md, the size
+           scale). It carries the same icon, label and count, plus the horizontal scroll a narrow
+           screen needs — a wrapped tab strip reads as broken in a way a wrapped button row does
+           not, and the copy this replaces could wrap. *@
+        <QTabs Tabs="@ProfileTabs" @bind-ActiveKey="activeTab" IdPrefix="stu-profile" AriaLabel="Student details" />
 
         @if (!string.IsNullOrEmpty(studentFormError))
         {
@@ -501,7 +455,7 @@
                     {
                         <QSelect TValue="string" TItem="string" @bind-Value="studentModel.ClassName"
                                  Label="Class" Placeholder="Not set" AllowClear="true"
-                                 Items="@ClassOptions" ValueSelector="@(c => c)" TextSelector="@(c => c)" />
+                                 Items="@ClassOptions" Sorted="true" ValueSelector="@(c => c)" TextSelector="@(c => c)" />
                     }
                     else
                     {
@@ -701,21 +655,9 @@
    Replaces the old colour-only dialog. Colour now lives ON the class entry rather than in a
    parallel map keyed by class name, which is what made a rename orphan its colour: the old key
    kept a colour nobody used and the new name had none. *@
-<QModal @bind-Visible="showVocabModal" Title="Classes, houses & lists" Size="lg">
+<QModal @bind-Visible="showVocabModal" Title="Classes, houses & lists" Size="xl">
     <ChildContent>
-        <div class="stu-tabs" role="tablist">
-            @foreach (var tab in VocabTabs)
-            {
-                <button type="button" role="tab"
-                        aria-selected="@(vocabTab == tab.Key ? "true" : "false")"
-                        class="stu-tab @(vocabTab == tab.Key ? "active" : "")"
-                        @onclick="@(() => vocabTab = tab.Key)">
-                    <QIcon Name="@tab.Icon" Size="15" />
-                    <span>@tab.Label</span>
-                    <span class="stu-tab-count">@VocabCount(tab.Key)</span>
-                </button>
-            }
-        </div>
+        <QTabs Tabs="@VocabTabs" @bind-ActiveKey="vocabTab" IdPrefix="stu-vocab" AriaLabel="Vocabulary lists" />
 
         @if (!string.IsNullOrEmpty(vocabError))
         {
@@ -748,6 +690,14 @@
                 }
                 else
                 {
+                    @* A school types its classes in the order they think of them and then cannot find
+                       one in a list of 28. This renumbers rather than re-displays — see SortItemsByName. *@
+                    <div class="vocab-toolbar">
+                        <QButton Text="Sort A–Z" Icon="sort-alpha-down" Variant="ghost" Size="sm"
+                                 OnClick="@(() => SortItemsByName(vocabTab))"
+                                 Title="Put this list in name order. Numbers read as numbers, so S2C comes before S10A. Save to keep it." />
+                        <span class="vocab-toolbar-count">@items.Count() @(items.Count() == 1 ? "entry" : "entries")</span>
+                    </div>
                     <div class="vocab-list">
                         @foreach (var item in items.OrderBy(i => i.SortOrder).ToList())
                         {
@@ -784,7 +734,7 @@
                                     var holder = ClassTeacherFor(OriginalNameOf(item));
                                     @if (holder != null)
                                     {
-                                        <a class="vocab-ct" href="/admin/students/class-teachers"
+                                        <a class="vocab-ct" href="/admin/staff?tab=class-teachers"
                                            title="@($"{holder.FullName} holds this class — open Class Teachers")">
                                             <QIcon Name="person-video3" Size="12" />
                                             <span>@holder.FullName</span>
@@ -792,7 +742,7 @@
                                     }
                                     else
                                     {
-                                        <a class="vocab-ct vocab-ct-none" href="/admin/students/class-teachers"
+                                        <a class="vocab-ct vocab-ct-none" href="/admin/staff?tab=class-teachers"
                                            title="Nobody is alerted when a student in this class has a record logged — open Class Teachers to assign one">
                                             <QIcon Name="person-dash" Size="12" />
                                             <span>No teacher</span>
@@ -915,7 +865,7 @@
     </FooterContent>
 </QModal>
 @* ---------------- Import History ---------------- *@
-<QModal @bind-Visible="showHistoryModal" Title="Import History" Size="lg">
+<QModal @bind-Visible="showHistoryModal" Title="Import History" Size="xl">
     <ChildContent>
         @if (!historyJobs.Any())
         {
@@ -1009,6 +959,8 @@
         line-height: 1.5;
     }
 
+    .vocab-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--q-row-gap); margin-bottom: 8px; }
+    .vocab-toolbar-count { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
     .vocab-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 
     .vocab-row {
@@ -1172,71 +1124,8 @@
     }
 
     /* ---------------- Tabbed student profile ---------------- */
-
-    .stu-tabs {
-        display: flex;
-        gap: 2px;
-        border-bottom: 1px solid var(--qm-border);
-        margin: -4px 0 18px;
-        overflow-x: auto;
-        scrollbar-width: none;
-    }
-
-    .stu-tabs::-webkit-scrollbar { display: none; }
-
-    .stu-tab {
-        display: inline-flex;
-        align-items: center;
-        gap: 7px;
-        padding: 10px 14px;
-        background: none;
-        border: none;
-        border-bottom: 2px solid transparent;
-        color: var(--qm-text-secondary);
-        font-family: var(--qm-font-primary);
-        font-size: var(--qm-text-base);
-        font-weight: 500;
-        white-space: nowrap;
-        cursor: pointer;
-        /* The underline slides between tabs rather than blinking on and off — the cheapest way to
-           make four panels read as one form with four views instead of four separate screens. */
-        transition: color .18s ease, border-color .18s ease;
-    }
-
-    .stu-tab:hover { color: var(--qm-text-primary); }
-
-    .stu-tab.active {
-        color: var(--qm-primary);
-        border-bottom-color: var(--qm-primary);
-        font-weight: 600;
-    }
-
-    .stu-tab:focus-visible {
-        outline: 2px solid var(--qm-primary);
-        outline-offset: -2px;
-        border-radius: var(--qm-radius-sm) var(--qm-radius-sm) 0 0;
-    }
-
-    /* How many fields on that tab are already filled. Deliberately quiet — it is an orientation
-       aid for someone part-way through a long form, not a score. */
-    .stu-tab-count {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-width: 17px;
-        height: 17px;
-        padding: 0 4px;
-        border-radius: var(--qm-radius-md);
-        background: var(--qm-bg-elevated);
-        color: var(--qm-text-muted);
-        font-size: var(--qm-text-xs);
-        font-weight: 700;
-    }
-
-    .stu-tab.active .stu-tab-count {
-        background: var(--qm-primary-light);
-        color: var(--qm-primary);
-    }
+    /* The strip itself is QTabs now and carries its own look, its own scroll and its own count
+       badge; only the PANEL below it is this page's. */
 
     /* @@key on the panel forces a fresh element per tab, so this replays on every switch. A 6px
        rise, not a slide across — a horizontal slide implies the tabs are a sequence you move
@@ -1352,21 +1241,50 @@
         .stu-form-error {
             animation: none !important;
         }
-        .stu-tab { transition: none; }
     }
-    .roster-toolbar { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+    /* ---------------- Summary, filters and the bulk bar (plan STUDENT_ROSTER_AND_LIST_STANDARD §2) ----------------
+       Every rule here is scoped under a roster-* class: a Razor style block is not scoped, so a bare
+       shared name (.q-filter-bar, .q-bulkbar__bulk) restyled here would restyle every page. */
+    .roster-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; margin-bottom: var(--qm-page-header-gap); font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
+    .roster-sum { display: inline-flex; gap: 4px; align-items: baseline; padding: 0; border: 0; background: none; color: inherit; font: inherit; }
+    /* 24px is WCAG 2.2 SC 2.5.8's minimum target: the compacted line measured 19px (mobile-readiness). */
+    button.roster-sum { cursor: pointer; min-height: 24px; align-items: center; }
+    button.roster-sum:hover strong, button.roster-sum:focus-visible strong { text-decoration: underline; }
+    .roster-sum strong { color: var(--qm-text-primary); font-variant-numeric: tabular-nums; }
+    .roster-sum--warn strong { color: var(--qm-warning); }
+    .roster-sum--danger strong { color: var(--qm-danger); }
+    .roster-filters { display: flex; flex-wrap: wrap; gap: var(--q-row-gap); flex: 0 1 auto; min-width: 0; }
+    .roster-filters .roster-f { flex: 0 0 136px; margin-bottom: 0; }
+    .roster-filters .roster-f--class { flex: 0 0 160px; }
+    .roster-filters .roster-f--flags { flex-basis: 112px; }
+    .roster-export { display: flex; align-items: center; }
+    /* On a desktop the table header already carries "select this page", so the bar's own select-all row is hidden
+       until something is selected. On a phone the header is hidden, so the row stays — it is the only select-all. */
+    @@media (min-width: 641px) {
+        .roster-bulk .q-bulkbar__row--bulk:not(:has(.q-bulkbar__bulk)) { display: none; }
+    }
+    /* One row for filters, export and search on a desktop: the search yields width before a filter wraps. */
+    .roster-bulk .q-bulkbar__search { flex: 1 1 180px; max-width: 260px; }
+    .roster-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 var(--qm-block-gap, 10px); }
 
-    /* The batch bar. Present only while something is selected, and leading with the count —
-       a bar that is always there reads as chrome, and one labelled "Actions" makes somebody
-       click it to find out what it would act on. */
-    .batch-bar {
-        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-        background: var(--qm-primary-light); border: 1px solid var(--qm-primary);
-        border-radius: var(--qm-radius-md); padding: 10px 14px; margin-bottom: 16px;
-    }
-    .batch-bar-count { display: flex; align-items: center; gap: 7px; font-size: var(--qm-text-base); margin-right: 4px; }
-    .batch-bar-count strong { font-variant-numeric: tabular-nums; }
-    .batch-bar .dropdown { display: inline-flex; }
+    /* The roster offers more actions than the bar's one-line desktop row holds, and a row that
+       does not wrap scrolls the page sideways — the one thing the layout must never do. */
+    .roster-bulk .q-bulkbar__row--bulk,
+    .roster-bulk .q-bulkbar__bulk { flex-wrap: wrap; }
+    .roster-bulk .q-bulkbar__bulk .dropdown { display: inline-flex; }
+    .roster-pager { margin-top: 10px; }
+
+    /* "All" above 200 rows: Virtualize inserts a spacer before and after the rows it draws. The
+       body is a SUBGRID of the table so its cells still share the header's tracks, and each spacer
+       spans the whole width so it reads as one tall row rather than one cell. */
+    .roster-vbody { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; }
+    .roster-vbody > div:not(.roster-row) { grid-column: 1 / -1; }
+
+    .roster-tidy-lede { margin: 0 0 10px; font-size: var(--qm-text-base); color: var(--qm-text-secondary); }
+    .roster-tidy-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 360px; overflow-y: auto; }
+    .roster-tidy-list li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 5px 8px; border-bottom: 1px solid var(--qm-border); font-size: var(--qm-text-base); }
+    .roster-tidy-from { color: var(--qm-text-muted); }
+    .roster-tidy-more { margin: 8px 0 0; font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
 
     .batch-menu {
         min-width: 220px; padding: 6px;
@@ -1396,9 +1314,6 @@
         border-radius: var(--qm-radius-md); padding: 10px 14px; margin-bottom: 16px; font-size: var(--qm-text-base);
     }
     .batch-done .q-icon { color: var(--qm-success); }
-    .roster-search-input { flex: 1; min-width: 240px; padding: 10px 14px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); color: var(--qm-text-primary); }
-    .roster-toggle { display: flex; align-items: center; gap: 6px; font-size: var(--qm-text-base); color: var(--qm-text-muted); cursor: pointer; }
-    .roster-toggle input[type="checkbox"] { width: 24px; height: 24px; cursor: pointer; }
 
     /* One grid for the whole table, with every row contributing its cells to it.
        Each row used to be its own grid sharing only a template string, and two of that template's
@@ -1413,7 +1328,7 @@
         border: 1px solid var(--qm-border);
         border-radius: var(--qm-radius-lg);
         display: grid;
-        grid-template-columns: auto 2.4fr 0.8fr 0.8fr 1.9fr auto;
+        grid-template-columns: auto 2.2fr 0.7fr 1.3fr 1.6fr auto; /* class carries its badge AND its teacher on one line */
     }
 
     /* No `overflow: hidden` here, deliberately: it used to clip the header background to the
@@ -1443,9 +1358,6 @@
     .roster-row:last-child > * { border-bottom: none; }
 
     .roster-select { display: flex; align-items: center; }
-    /* 24px, not 16: WCAG 2.2 SC 2.5.8 is a 24x24 floor and these are the two raw checkboxes left
-       on this page. The box still DRAWS at 16px — the extra is hit area, via the outline offset. */
-    .roster-select input[type="checkbox"] { width: 24px; height: 24px; cursor: pointer; }
     .roster-header > * { font-size: var(--qm-text-sm); text-transform: uppercase; letter-spacing: .04em; color: var(--qm-text-muted); background: var(--qm-bg-secondary); font-weight: 600; }
     .roster-row.inactive > * { opacity: 0.5; }
     /* Flex-wrap, not inline-flex: a student can carry a restriction warning plus several flag
@@ -1538,7 +1450,7 @@
 
     /* min-width:0 so this grid child can shrink below its content — a cell that refuses to
        shrink is what widened the document and made the whole page scroll sideways. */
-    .roster-class-cell { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; min-width: 0; }
+    .roster-class-cell { display: flex; flex-wrap: wrap; gap: 3px 8px; align-items: center; min-width: 0; } /* badge and class teacher on ONE line — a row is a line of data */
     .roster-ct { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; font-size: var(--qm-text-xs); color: var(--qm-text-muted); min-width: 0; }
     .roster-ct a, .roster-ct span { color: inherit; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .roster-ct a:hover { color: var(--qm-primary); text-decoration: underline; }
@@ -1645,6 +1557,7 @@
         .roster-row > *:first-child { padding-left: 0; }
         .roster-row > *:last-child { padding-right: 0; }
         .roster-header { display: none; }
+        .roster-vbody { display: block; }
         .import-preview-row { grid-template-columns: 1fr 1fr; }
         .import-log-row { grid-template-columns: 1fr; }
     }
@@ -1703,22 +1616,12 @@
 @code {
     private Guid branchId;
     private bool isLoading = true;
-    private bool includeInactive = false;
     private string filterQuery = "";
     private List<StudentDto> students = new();
     private PrintLetterheadDto? printLetterhead;
 
-    private IEnumerable<StudentDto> FilteredStudents => string.IsNullOrWhiteSpace(filterQuery)
-        ? students
-        : students.Where(s =>
-            s.FullName.Contains(filterQuery, StringComparison.OrdinalIgnoreCase) ||
-            (s.StudentCode?.Contains(filterQuery, StringComparison.OrdinalIgnoreCase) ?? false) ||
-            (s.ClassName?.Contains(filterQuery, StringComparison.OrdinalIgnoreCase) ?? false) ||
-            s.Guardians.Any(g => g.FullName.Contains(filterQuery, StringComparison.OrdinalIgnoreCase)));
-
-    // Which students to include in the next batch print — persists across filter changes (so
-    // picking a few from class A, then filtering to class B and picking more, combines both) but
-    // "select all" only ever acts on what the current filter shows, same as most bulk-action UIs.
+    // The selection behind every bulk action. It may only ever hold students the filters show:
+    // PruneSelection runs on every filter, search, status and page-size change (plan §2, L2).
     private HashSet<Guid> selectedStudentIds = new();
 
     // ---- Batch operations -------------------------------------------------------------------
@@ -1849,8 +1752,8 @@
     // ---- Export -----------------------------------------------------------------------------
 
     private string ExportSubtitle =>
-        (string.IsNullOrWhiteSpace(filterQuery) ? "All students" : $"Filtered by \"{filterQuery}\"")
-        + (includeInactive ? ", including inactive" : ", active only");
+        (ActiveFilterChips.Any() ? string.Join(", ", ActiveFilterChips.Select(c => c.Label)) : "All students")
+        + (statusFilter == "active" ? ", active only" : "");
 
     /// <summary>
     /// Declared once and used by every format, so a column added here cannot be forgotten in the
@@ -1880,24 +1783,7 @@
     /// narrowed by the search box, not the rows scrolled into view.
     /// </summary>
     private Task<ExportRows<StudentDto>> ProvideExportRowsAsync() =>
-        Task.FromResult(new ExportRows<StudentDto>(FilteredStudents.ToList(), false));
-
-    private bool AllFilteredSelected => FilteredStudents.Any() && FilteredStudents.All(s => selectedStudentIds.Contains(s.Id));
-
-    private void ToggleSelectAll(bool select)
-    {
-        foreach (var s in FilteredStudents)
-        {
-            if (select) selectedStudentIds.Add(s.Id);
-            else selectedStudentIds.Remove(s.Id);
-        }
-    }
-
-    private void ToggleStudentSelection(Guid studentId, bool select)
-    {
-        if (select) selectedStudentIds.Add(studentId);
-        else selectedStudentIds.Remove(studentId);
-    }
+        Task.FromResult(new ExportRows<StudentDto>(filtered.ToList(), false));
 
     // Admin-defined, not auto-derived — a class only gets a color once someone picks one via
     // the Class Colors modal below. Unassigned classes render with UnassignedClassColor instead
@@ -2219,9 +2105,9 @@
 
     private Dictionary<string, List<VocabularyUsageDto>> vocabUsage = new();
 
-    private sealed record VocabTab(string Key, string Label, string Icon);
-
-    private static readonly VocabTab[] VocabTabs =
+    // QTab(Key, Label, Icon, Badge) is this shape already — VocabTab and ProfileTab were two
+    // private records of it, in one file. The count moves onto Badge, which QTabs renders itself.
+    private static readonly QTab[] VocabTabDefs =
     {
         new("classes",       "Classes",       "mortarboard"),
         new("houses",        "Houses",        "house"),
@@ -2231,6 +2117,10 @@
         new("relationships", "Relationships", "people"),
         new("actions",       "Actions",       "clipboard-check")
     };
+
+    /// <summary>The strip, with each list's own size on it. Always shown, even at zero.</summary>
+    private IReadOnlyList<QTab> VocabTabs =>
+        VocabTabDefs.Select(t => t with { Badge = VocabCount(t.Key) }).ToList();
 
     private async Task OpenVocabModal()
     {
@@ -2313,13 +2203,14 @@
     private ClassTeacherDto? ClassTeacherFor(string? className)
     {
         if (string.IsNullOrWhiteSpace(className)) return null;
-        var key = className.Trim().ToLowerInvariant();
 
         // The fallback is an assistant, never a subject teacher: this is "who do I call about this child",
         // and a subject teacher holds no pastoral responsibility for the class (duty rota plan §5.3).
+        // ClassName.AreSame is the one home for the comparison (2026-09-23): "S2 A" on the row and "S2A"
+        // on the assignment are one class.
         return classTeachers.FirstOrDefault(t =>
-                   t.Role == ClassTeacherRole.ClassTeacher && t.ClassName.Trim().ToLowerInvariant() == key)
-               ?? classTeachers.FirstOrDefault(t => t.Role == ClassTeacherRole.Assistant && t.ClassName.Trim().ToLowerInvariant() == key);
+                   t.Role == ClassTeacherRole.ClassTeacher && ClassName.AreSame(t.ClassName, className))
+               ?? classTeachers.FirstOrDefault(t => t.Role == ClassTeacherRole.Assistant && ClassName.AreSame(t.ClassName, className));
     }
 
     /// <summary>The teacher's contact card as one hover line — job title, email, phones, office.</summary>
@@ -2468,6 +2359,25 @@
     /// Order is explicit because the natural one is wrong: S.1 … S.10 sorts alphabetically as
     /// S.1, S.10, S.2, which is the first thing a school notices.
     /// </summary>
+    /// <summary>
+    /// Renumbers the whole list into name order, numbers read as numbers — so a school's 28 classes
+    /// land as S1A, S1B, S2A … S10A rather than S1A, S10A, S1B (user request, 2026-09-22).
+    ///
+    /// <para><b>It writes SortOrder rather than sorting the view</b>, because this list HAS an order
+    /// the school owns: the up/down arrows beside every row set it, and it decides the order of
+    /// every class picker in the product. A display-only sort would hide that order without changing
+    /// it, so the arrows would appear to do nothing. Sorting is therefore an ACTION with a Save
+    /// behind it, and it is undone by Cancel like any other edit here.</para>
+    ///
+    /// <para><see cref="NaturalOrder"/> is the one home for the comparison, shared with
+    /// <c>QSelect.Sorted</c> so a list sorted here and a dropdown sorted there cannot disagree.</para>
+    /// </summary>
+    private void SortItemsByName(string tab)
+    {
+        var ordered = ItemsFor(tab).OrderBy(i => i.Name, NaturalOrder.Comparer).ToList();
+        for (var i = 0; i < ordered.Count; i++) ordered[i].SortOrder = i;
+    }
+
     private void MoveItem(string tab, VocabularyItemDto item, int direction)
     {
         var ordered = ItemsFor(tab).OrderBy(i => i.SortOrder).ToList();
@@ -2536,15 +2446,24 @@
         vocabularies = await StudentApi.GetVocabulariesAsync(branchId);
     }
 
-    private sealed record ProfileTab(string Key, string Label, string Icon);
-
-    private static readonly ProfileTab[] ProfileTabs =
+    private static readonly QTab[] ProfileTabDefs =
     {
         new("identity",   "Identity",     "person-vcard"),
         new("home",       "Home",         "house"),
         new("health",     "Health",       "heart-pulse"),
         new("continuity", "Continuity",   "cash-coin")
     };
+
+    /// <summary>
+    /// The strip. A tab with nothing filled carries NO badge rather than a zero — the count is
+    /// there to show progress, and a row of zeros reads as a fault rather than as "not started".
+    /// </summary>
+    private IReadOnlyList<QTab> ProfileTabs =>
+        ProfileTabDefs.Select(t =>
+        {
+            var filled = TabFilledCount(t.Key);
+            return filled > 0 ? t with { Badge = filled } : t;
+        }).ToList();
 
     /// <summary>
     /// How many fields on a tab are filled. Shown as a small count on the tab itself so somebody
@@ -2701,7 +2620,16 @@
         // kept offering the previous organization's categories (or none at all) until a reload.
         TrackBranch();
 
+        // The address first, so the first load already renders the filtered roll.
+        var addressNamedAClass = !string.IsNullOrWhiteSpace(ClassQuery);
+        ReadQuery();
+        appliedQuery = ParameterSignature();
+
         await LoadBranchDataAsync();
+
+        PresetScopedClasses(addressNamedAClass);
+        RefreshView();
+        WriteQuery();
     }
 
     /// <summary>
@@ -2723,6 +2651,7 @@
 
             await LoadVocabulariesAsync();
             await LoadClassTeachersAsync();
+            await LoadScopeAsync();
         }
 
         await LoadStudents();
@@ -2746,7 +2675,22 @@
         classTeachers = new();
         classTeachersLoaded = false;
         subjectTeachersMayLogConcerns = null;
+
+        // Classes, houses and dormitories are this branch's own lists, so a filter on the previous
+        // branch's names means nothing here. Status, guardian, flags and the search carry over.
+        classFilter = new();
+        houseFilter = null;
+        dormitoryFilter = null;
+        scopedClasses = new();
+        scopePresetDone = false;
+        selectedStudentIds.Clear();
+        paging.Reset();
+
         await LoadBranchDataAsync();
+
+        PresetScopedClasses(addressNamedAClass: false);
+        RefreshView();
+        WriteQuery();
     }
 
     private async Task LoadStudents()
@@ -2760,10 +2704,39 @@
             return;
         }
 
-        students = await StudentApi.GetStudentsAsync(branchId, includeInactive);
+        students = await FetchStudentsAsync();
         await LoadConcernPolicyAsync();
+        RefreshView();
+        PruneSelection();
         isLoading = false;
     }
+
+    /// <summary>
+    /// The whole roll, not the API's default page. IStudentApiService.GetStudentsAsync passes no
+    /// limit, so GetStudents answered with the first 100 students by name and a school of 1,711 saw
+    /// 100 with nothing to say so. The page asks for all of them (the API clamps what it will send;
+    /// see RosterFetchLimit); filtering and paging are client-side. A failure SAYS so rather than
+    /// rendering an empty roll, which the service's swallow-and-return-empty could not.
+    /// </summary>
+    private async Task<List<StudentDto>> FetchStudentsAsync()
+    {
+        try
+        {
+            var response = await Http.GetAsync($"api/v1/branches/{branchId}/students?includeInactive={includeInactive}&limit={RosterFetchLimit}");
+            if (response.IsSuccessStatusCode)
+                return await response.Content.ReadFromJsonAsync<List<StudentDto>>(JsonOptions) ?? new();
+
+            NotificationService.Notify(ToastSeverity.Error, "Could not load the students",
+                await ApiErrorService.GetErrorMessageAsync(response, "The student list could not be loaded."));
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not load the students", ex.Message);
+        }
+        return new();
+    }
+
+    private const int RosterFetchLimit = 10000;
 
     // ---------------- Student CRUD ----------------
 
@@ -3014,9 +2987,9 @@
         // A school export writes the class in two columns — "Class" = S1 and "Stream" = A — and Q-Mgr
         // stores the one value S1A. The join is the automatic guess and is shown in the mapping step,
         // so a school that writes one column, or wants a separator, can say so (user decision 2026-09-21).
-        new ImportColumn("ClassName", false, "Class Name", "Class", "Grade", "Form")
+        new ImportColumn("ClassName", true, "Class Name", "Class", "Grade", "Form")
             { Kind = ImportFieldKind.Code, AlsoJoin = new[] { "Stream", "Section", "Arm" }, DefaultJoiner = "",
-              Hint = "Class and Stream are joined into one class name — S1 + A becomes S1A." },
+              Hint = "Required. Class and Stream are joined into one class name — S1 + A becomes S1A. Student.ClassName is what the class-teacher scope matches on, so a child imported without one is invisible to their own class teacher." },
         new ImportColumn("GuardianFullName", false, "Guardian Name", "Guardian Full Name", "Parent Name")
             { Kind = ImportFieldKind.Name },
         new ImportColumn("GuardianPhone", false, "Guardian Phone", "Phone", "Phone Number", "Mobile", "Contact")
@@ -3597,4 +3570,799 @@
             NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save record: {ex.Message}");
         }
     }
+
+    // =====================================================================================
+    // Filters, paging, the summary and the bulk bar (plan STUDENT_ROSTER_AND_LIST_STANDARD §2).
+    //
+    // The page computes ONE filtered list (`filtered`) and everything reads it: the pager, the
+    // summary's "Match the filters", the export, the bulk bar and the selection pruning. It is a
+    // field refreshed by RefreshView rather than a property, because a property over 1,711 rows is
+    // re-run by every tile, the pager and the bar on every render.
+    // =====================================================================================
+
+    private sealed record RosterOption(string Value, string Label);
+
+    /// <summary>A class in the filter: the comparison key, the name shown, and how many students carry it.</summary>
+    private sealed record RosterClassOption(string Key, string Name, int Count)
+    {
+        public string Label => $"{Name} ({Count:N0})";
+    }
+
+    private sealed record FilterChip(string Label, Func<Task> Remove);
+
+    /// <summary>Students with no class at all get a key of their own, so "no class" can be filtered for too.</summary>
+    private const string NoClassKey = "~none";
+
+    private static readonly RosterOption[] StatusOptions =
+    {
+        new("active", "Active"), new("inactive", "Inactive"), new("all", "All")
+    };
+
+    private static readonly RosterOption[] GuardianOptions =
+    {
+        new("any", "Any"), new("has", "Has a guardian"), new("none", "None yet")
+    };
+
+    // What a filter box SHOWS (2026-09-23): self-describing, so the row needs no labels above it and nothing is cut
+    // off. The option's Label stays the short word the active-filter chip prefixes ("Status: Inactive").
+    private static string StatusText(RosterOption o) => o.Value switch { "inactive" => "Inactive students", "all" => "All students", _ => "Active students" };
+    private static string GuardianText(RosterOption o) => o.Value switch { "has" => "Has a guardian", "none" => "No guardian yet", _ => "Any guardian" };
+    private static string FlagText(RosterOption o) => o.Value == "1" ? "Flagged" : "Any flags";
+
+    private static readonly RosterOption[] FlagOptions =
+    {
+        new("any", "Any"), new("1", "Has an active flag")
+    };
+
+    // ---- filter state ------------------------------------------------------------------
+    private List<string> classFilter = new();        // ClassName.Key values (or NoClassKey)
+    private string statusFilter = "active";           // active | inactive | all
+    private string? houseFilter;
+    private string? dormitoryFilter;
+    private string guardianFilter = "any";           // any | has | none
+    private bool flagsFilter;
+
+    /// <summary>Inactive and All need the same includeInactive fetch the old "Show inactive" tick triggered.</summary>
+    private bool includeInactive => statusFilter != "active";
+
+    private List<StudentDto> filtered = new();
+    private List<RosterClassOption> ClassFilterOptions = new();
+    private List<string> HouseFilterOptions = new();
+    private List<string> DormitoryFilterOptions = new();
+
+    private readonly QPaging paging = new();
+
+    private List<StudentDto> PageRows => paging.Apply(filtered).ToList();
+
+    /// <summary>"All" above QPaging.VirtualizeAbove rows renders through Virtualize (decision L3).</summary>
+    private bool UseVirtualize => paging.IsAll && filtered.Count > QPaging.VirtualizeAbove;
+
+    private bool AnyFilter => classFilter.Count > 0 || statusFilter != "active" || houseFilter != null
+                              || dormitoryFilter != null || guardianFilter != "any" || flagsFilter
+                              || !string.IsNullOrWhiteSpace(filterQuery);
+
+    private static string ClassKeyOf(string? className) => ClassName.Key(className) ?? NoClassKey;
+
+    /// <summary>
+    /// Recomputes the filter options and the filtered list. Called after every load and every
+    /// filter change — the one place the list is decided.
+    /// </summary>
+    private void RefreshView()
+    {
+        // The status filter narrows first: every option count below is "within this status".
+        var byStatus = StatusScoped().ToList();
+
+        // Classes: the branch's configured list PLUS any class a student actually carries, keyed with
+        // ClassName.Key so "S2 A" on a row and "S2A" on the list are one entry, labelled by the
+        // configured spelling where there is one.
+        var counts = byStatus.GroupBy(s => ClassKeyOf(s.ClassName)).ToDictionary(g => g.Key, g => g.Count());
+        var names = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var c in vocabularies.Classes)
+        {
+            var key = ClassName.Key(c.Name);
+            if (key != null && !names.ContainsKey(key)) names[key] = c.Name;
+        }
+        foreach (var s in byStatus)
+        {
+            var key = ClassKeyOf(s.ClassName);
+            if (!names.ContainsKey(key)) names[key] = key == NoClassKey ? "No class" : (ClassName.Display(s.ClassName) ?? s.ClassName!);
+        }
+        // A configured class with nobody in it is still offered (a class teacher's class may be empty
+        // this term), but a retired one with nobody in it is not — it is not a class any more.
+        ClassFilterOptions = names
+            .Where(kv => counts.ContainsKey(kv.Key)
+                         || vocabularies.Classes.Any(c => c.IsActive && ClassName.Key(c.Name) == kv.Key)
+                         || classFilter.Contains(kv.Key))
+            .Select(kv => new RosterClassOption(kv.Key, kv.Value, counts.GetValueOrDefault(kv.Key)))
+            .ToList();
+
+        HouseFilterOptions = vocabularies.Houses.Select(h => h.Name)
+            .Concat(byStatus.Select(s => s.House).Where(h => !string.IsNullOrWhiteSpace(h)).Select(h => h!.Trim()))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        DormitoryFilterOptions = vocabularies.Dormitories.Select(d => d.Name)
+            .Concat(byStatus.Select(s => s.DormitoryOrStream).Where(d => !string.IsNullOrWhiteSpace(d)).Select(d => d!.Trim()))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        filtered = byStatus.Where(MatchesFilters).ToList();
+        paging.ClampTo(filtered.Count);
+    }
+
+    private IEnumerable<StudentDto> StatusScoped() => statusFilter switch
+    {
+        "inactive" => students.Where(s => !s.IsActive),
+        "all" => students,
+        _ => students.Where(s => s.IsActive)
+    };
+
+    private bool MatchesFilters(StudentDto s)
+    {
+        if (classFilter.Count > 0 && !classFilter.Contains(ClassKeyOf(s.ClassName))) return false;
+        if (houseFilter != null && !string.Equals(s.House?.Trim(), houseFilter, StringComparison.OrdinalIgnoreCase)) return false;
+        if (dormitoryFilter != null && !string.Equals(s.DormitoryOrStream?.Trim(), dormitoryFilter, StringComparison.OrdinalIgnoreCase)) return false;
+
+        // A Teaching-tier row has its guardians blanked server-side, so it is neither "has" nor
+        // "none" — counting it as "none yet" would report a missing guardian that is not missing.
+        if (guardianFilter == "has" && (IsTeachingTier(s) || !s.Guardians.Any())) return false;
+        if (guardianFilter == "none" && (IsTeachingTier(s) || s.Guardians.Any())) return false;
+
+        if (flagsFilter && !s.Flags.Any()) return false;
+
+        // Search searches WITHIN the filters.
+        if (!string.IsNullOrWhiteSpace(filterQuery))
+        {
+            var q = filterQuery.Trim();
+            return s.FullName.Contains(q, StringComparison.OrdinalIgnoreCase)
+                   || (s.StudentCode?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+                   || (s.ClassName?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+                   || s.Guardians.Any(g => g.FullName.Contains(q, StringComparison.OrdinalIgnoreCase));
+        }
+        return true;
+    }
+
+    // ---- the summary -------------------------------------------------------------------
+    private int OnRollCount => students.Count(s => s.IsActive);
+    private int ClassCount => students.Where(s => s.IsActive && ClassName.Key(s.ClassName) != null)
+        .Select(s => ClassName.Key(s.ClassName)).Distinct().Count();
+    /// <summary>Rows whose guardians the caller can actually see — a Teaching-tier row's are blanked.</summary>
+    private int GuardianKnownCount => students.Count(s => s.IsActive && !IsTeachingTier(s));
+    private int NoGuardianCount => students.Count(s => s.IsActive && !IsTeachingTier(s) && !s.Guardians.Any());
+    private int FlaggedCount => students.Count(s => s.IsActive && s.Flags.Any());
+
+    /// <summary>The caller's pastoral classes when their student scope is class-limited; empty when unscoped.</summary>
+    private List<string> scopedClasses = new();
+
+    private string? RollScopeNote =>
+        scopedClasses.Count > 0 ? "Your classes only"
+        : TeachingRowCount > 0 ? "The classes you teach"
+        : null;
+
+    // ---- chips -------------------------------------------------------------------------
+    private List<FilterChip> ActiveFilterChips
+    {
+        get
+        {
+            var chips = new List<FilterChip>();
+            foreach (var key in classFilter)
+            {
+                var name = ClassFilterOptions.FirstOrDefault(o => o.Key == key)?.Name ?? key;
+                var k = key;
+                chips.Add(new FilterChip($"Class: {name}", () => OnClassFilterChanged(classFilter.Where(x => x != k).ToList())));
+            }
+            if (statusFilter != "active")
+                chips.Add(new FilterChip($"Status: {StatusOptions.First(o => o.Value == statusFilter).Label}", () => OnStatusChanged("active")));
+            if (houseFilter != null) chips.Add(new FilterChip($"House: {houseFilter}", () => OnHouseChanged(null)));
+            if (dormitoryFilter != null) chips.Add(new FilterChip($"Dormitory: {dormitoryFilter}", () => OnDormitoryChanged(null)));
+            if (guardianFilter != "any")
+                chips.Add(new FilterChip($"Guardian: {GuardianOptions.First(o => o.Value == guardianFilter).Label}", () => SetGuardianFilter("any")));
+            if (flagsFilter) chips.Add(new FilterChip("Has an active flag", () => SetFlagsFilter(false)));
+            if (!string.IsNullOrWhiteSpace(filterQuery)) chips.Add(new FilterChip($"Search: \"{filterQuery.Trim()}\"", () => OnSearchChanged("")));
+            return chips;
+        }
+    }
+
+    // ---- filter changes: every one resets the page, prunes the selection and writes the address ----
+
+    private Task FiltersChangedAsync(bool reload = false)
+    {
+        paging.Reset();
+        return ApplyAsync(reload);
+    }
+
+    private async Task ApplyAsync(bool reload)
+    {
+        if (reload) await LoadStudents();   // LoadStudents ends in RefreshView
+        else RefreshView();
+        PruneSelection();
+        WriteQuery();
+    }
+
+    private Task OnClassFilterChanged(IEnumerable<string> keys)
+    {
+        classFilter = keys.Distinct().ToList();
+        return FiltersChangedAsync();
+    }
+
+    private Task OnStatusChanged(string? value)
+    {
+        var next = value is "inactive" or "all" ? value! : "active";
+        if (next == statusFilter) return Task.CompletedTask;
+        var needsFetch = (next != "active") != includeInactive;
+        statusFilter = next;
+        return FiltersChangedAsync(reload: needsFetch);
+    }
+
+    private Task OnHouseChanged(string? value)
+    {
+        houseFilter = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        return FiltersChangedAsync();
+    }
+
+    private Task OnDormitoryChanged(string? value)
+    {
+        dormitoryFilter = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        return FiltersChangedAsync();
+    }
+
+    private Task SetGuardianFilter(string? value)
+    {
+        guardianFilter = value is "has" or "none" ? value! : "any";
+        return FiltersChangedAsync();
+    }
+
+    private Task SetFlagsFilter(bool on)
+    {
+        flagsFilter = on && canViewWelfare;
+        return FiltersChangedAsync();
+    }
+
+    private Task OnSearchChanged(string value)
+    {
+        filterQuery = value ?? "";
+        return FiltersChangedAsync();
+    }
+
+    private Task ClearAllFilters()
+    {
+        var needsFetch = includeInactive;
+        classFilter = new();
+        statusFilter = "active";
+        houseFilter = null;
+        dormitoryFilter = null;
+        guardianFilter = "any";
+        flagsFilter = false;
+        filterQuery = "";
+        return FiltersChangedAsync(reload: needsFetch);
+    }
+
+    // ---- paging ------------------------------------------------------------------------
+
+    private void OnPageChanged(int index)
+    {
+        paging.PageIndex = index;
+    }
+
+    private void OnPageSizeChanged(int size)
+    {
+        paging.SetSize(size);
+        paging.ClampTo(filtered.Count);
+        PruneSelection();
+    }
+
+    // ---- selection (QBulkBar) ------------------------------------------------------------
+
+    private bool PageAllSelected
+    {
+        get
+        {
+            var rows = PageRows;
+            return rows.Count > 0 && rows.All(s => selectedStudentIds.Contains(s.Id));
+        }
+    }
+
+    /// <summary>Select-all covers THIS PAGE (decision L2); "all N matching" is a separate, explicit press.</summary>
+    private void SelectPage(bool on)
+    {
+        foreach (var s in PageRows)
+        {
+            if (on) selectedStudentIds.Add(s.Id);
+            else selectedStudentIds.Remove(s.Id);
+        }
+    }
+
+    private void SelectAllMatching()
+    {
+        foreach (var s in filtered) selectedStudentIds.Add(s.Id);
+    }
+
+    private void ClearSelection() => selectedStudentIds.Clear();
+
+    private void ToggleStudentSelection(Guid studentId, bool select)
+    {
+        if (select) selectedStudentIds.Add(studentId);
+        else selectedStudentIds.Remove(studentId);
+    }
+
+    /// <summary>
+    /// A selection may only ever cover rows the reader can SEE — here, the filtered list. Run on every
+    /// filter, search, status and page-size change, or "log for 20 selected" reaches students the
+    /// filters are hiding (CLAUDE.md, "A list page has one shape").
+    /// </summary>
+    private void PruneSelection()
+    {
+        if (selectedStudentIds.Count == 0) return;
+        var visible = filtered.Select(s => s.Id).ToHashSet();
+        selectedStudentIds.RemoveWhere(id => !visible.Contains(id));
+    }
+
+    private List<StudentDto> SelectedStudents =>
+        filtered.Where(s => selectedStudentIds.Contains(s.Id)).ToList();
+
+    private bool SelectionHasTeachingRows => SelectedStudents.Any(IsTeachingTier);
+
+    private Task<ExportRows<StudentDto>> ProvideSelectedExportRowsAsync() =>
+        Task.FromResult(new ExportRows<StudentDto>(SelectedStudents, false));
+
+    // ---- log a record for the group (plan §3) ---------------------------------------------
+
+    private bool showBulkLog;
+    private List<StudentDto> bulkLogStudents = new();
+
+    private void OpenBulkLog()
+    {
+        if (!canLogWelfare || SelectionHasTeachingRows) return;
+        bulkLogStudents = SelectedStudents;
+        if (bulkLogStudents.Count == 0) return;
+        showBulkLog = true;
+    }
+
+    private Task OnBulkLogged(BulkWelfareRecordResultDto result)
+    {
+        var n = result.Students > 0 ? result.Students : bulkLogStudents.Count;
+        NotificationService.Notify(ToastSeverity.Success, "Logged", $"Logged for {n:N0} student{(n == 1 ? "" : "s")}");
+        showBulkLog = false;
+        selectedStudentIds.Clear();
+        return Task.CompletedTask;
+    }
+
+    // ---- tidy names out of capitals ------------------------------------------------------
+
+    private bool showTidy, tidyLoading, tidyApplying;
+    private TidyStudentNamesResultDto? tidyPreview;
+    private List<Guid>? tidyScope;
+
+    private string TidyApplyLabel => tidyPreview is { Changes.Count: > 0 } p
+        ? $"Change {p.Changes.Count:N0} name{(p.Changes.Count == 1 ? "" : "s")}"
+        : "Change names";
+
+    private Task OpenTidyNames() => PreviewTidyAsync(null);
+
+    private Task OpenTidyNamesForSelection() => PreviewTidyAsync(selectedStudentIds.ToList());
+
+    private async Task PreviewTidyAsync(List<Guid>? ids)
+    {
+        if (!canManageStudents || branchId == Guid.Empty) return;
+        tidyScope = ids is { Count: > 0 } ? ids : null;
+        tidyPreview = null;
+        tidyLoading = true;
+        showTidy = true;
+        try
+        {
+            tidyPreview = await StudentApi.TidyStudentNamesAsync(branchId, new TidyStudentNamesRequest { Preview = true, StudentIds = tidyScope });
+        }
+        catch (Exception ex)
+        {
+            showTidy = false;
+            NotificationService.Notify(ToastSeverity.Error, "Could not check the names", ex.Message);
+        }
+        finally
+        {
+            tidyLoading = false;
+        }
+    }
+
+    private async Task ApplyTidyAsync()
+    {
+        if (tidyPreview == null || tidyPreview.Changes.Count == 0) return;
+        tidyApplying = true;
+        try
+        {
+            // Exactly the students the preview listed — never "whoever is shouting now", which could
+            // include a row added since the reader looked.
+            var ids = tidyPreview.Changes.Select(c => c.StudentId).ToList();
+            var result = await StudentApi.TidyStudentNamesAsync(branchId, new TidyStudentNamesRequest { Preview = false, StudentIds = ids });
+            NotificationService.Notify(ToastSeverity.Success, "Names tidied",
+                $"{result.Applied:N0} name{(result.Applied == 1 ? "" : "s")} taken out of capitals");
+            showTidy = false;
+            await LoadStudents();
+            PruneSelection();
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Names not changed", ex.Message);
+        }
+        finally
+        {
+            tidyApplying = false;
+        }
+    }
+
+    // ---- the address ---------------------------------------------------------------------
+    //
+    // ?class=S2A,S2B&status=inactive&house=…&dormitory=…&guardian=none&flags=1&q=text
+    //
+    // Read on arrival and whenever the QUERY changes under the page (a same-route navigation does not
+    // re-run OnInitializedAsync), written back with replace:true as the filters change. The guard is
+    // the HubTabs.FollowQuery rule: compare against the query last ACTED ON, never against current
+    // state, or the page's own write reads itself back and fights the reader. `pendingWrites` covers
+    // the case the plain guard cannot: two quick writes whose LocationChanged arrive out of order.
+
+    [SupplyParameterFromQuery(Name = "class")] public string? ClassQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "status")] public string? StatusQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "house")] public string? HouseQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "dormitory")] public string? DormitoryQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "guardian")] public string? GuardianQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "flags")] public string? FlagsQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "q")] public string? SearchQuery { get; set; }
+
+    private string? appliedQuery;
+    private readonly List<string> pendingWrites = new();
+    private bool initialised;
+
+    /// <summary>
+    /// A query, reduced to what the page acts on. Both directions go through this ONE function —
+    /// what the address says now, and what the page is about to write — so the two compare equal
+    /// exactly when they mean the same filters.
+    /// </summary>
+    private static string QuerySig(string? cls, string? status, string? house, string? dorm, string? guardian, string? flags, string? q)
+    {
+        var st = Blank(status)?.ToLowerInvariant();
+        var gd = Blank(guardian)?.ToLowerInvariant();
+        return string.Join("",
+            Blank(cls) ?? "",
+            st is "inactive" or "all" ? st : "",
+            Blank(house) ?? "",
+            Blank(dorm) ?? "",
+            gd is "has" or "none" ? gd : "",
+            Blank(flags) is "1" or "true" ? "1" : "",
+            Blank(q) ?? "");
+    }
+
+    private string ParameterSignature() =>
+        QuerySig(ClassQuery, StatusQuery, HouseQuery, DormitoryQuery, GuardianQuery, FlagsQuery, SearchQuery);
+
+    private static string? Blank(string? v) => string.IsNullOrWhiteSpace(v) ? null : v.Trim();
+
+    /// <summary>The class filter as the address carries it: the names a person reads, comma-separated.</summary>
+    private string? ClassQueryValue()
+    {
+        if (classFilter.Count == 0) return null;
+        return string.Join(",", classFilter.Select(k =>
+            k == NoClassKey ? "none" : ClassFilterOptions.FirstOrDefault(o => o.Key == k)?.Name ?? k));
+    }
+
+    /// <summary>Takes the filters from the address.</summary>
+    private void ReadQuery()
+    {
+        classFilter = (Blank(ClassQuery) ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(c => c.Equals("none", StringComparison.OrdinalIgnoreCase) ? NoClassKey : ClassName.Key(c))
+            .Where(k => k != null).Select(k => k!).Distinct().ToList();
+        var status = Blank(StatusQuery)?.ToLowerInvariant();
+        statusFilter = status is "inactive" or "all" ? status : "active";
+        houseFilter = Blank(HouseQuery);
+        dormitoryFilter = Blank(DormitoryQuery);
+        var guardian = Blank(GuardianQuery)?.ToLowerInvariant();
+        guardianFilter = guardian is "has" or "none" ? guardian : "any";
+        flagsFilter = canViewWelfare && Blank(FlagsQuery) is "1" or "true";
+        filterQuery = Blank(SearchQuery) ?? "";
+    }
+
+    private void WriteQuery()
+    {
+        var cls = ClassQueryValue();
+        var status = statusFilter == "active" ? null : statusFilter;
+        var guardian = guardianFilter == "any" ? null : guardianFilter;
+        var flags = flagsFilter ? "1" : null;
+        var q = string.IsNullOrWhiteSpace(filterQuery) ? null : filterQuery.Trim();
+
+        var sig = QuerySig(cls, status, houseFilter, dormitoryFilter, guardian, flags, q);
+        if (sig == appliedQuery) return;
+        appliedQuery = sig;
+        pendingWrites.Add(sig);
+        if (pendingWrites.Count > 20) pendingWrites.RemoveAt(0);
+
+        var uri = Navigation.GetUriWithQueryParameters(new Dictionary<string, object?>
+        {
+            ["class"] = cls,
+            ["status"] = status,
+            ["house"] = houseFilter,
+            ["dormitory"] = dormitoryFilter,
+            ["guardian"] = guardian,
+            ["flags"] = flags,
+            ["q"] = q
+        });
+        Navigation.NavigateTo(uri, replace: true);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Arrival is handled in OnInitializedAsync (it needs the permissions first); this is for a
+        // query that changes AFTER it — a link from elsewhere to this same route, or Back/Forward.
+        // The FIRST call follows OnInitializedAsync and still carries the arrival query, which the page
+        // has already read (and may have rewritten with the class-teacher preset). Acting on it here
+        // would undo that preset.
+        if (!initialised) { initialised = true; return; }
+
+        var sig = ParameterSignature();
+        if (sig == appliedQuery) return;
+        if (pendingWrites.Remove(sig)) return;   // our own write, landing late
+
+        var hadInactive = includeInactive;
+        ReadQuery();
+        appliedQuery = sig;
+        pendingWrites.Clear();
+        paging.Reset();
+        if (includeInactive != hadInactive) await LoadStudents();
+        else RefreshView();
+        PruneSelection();
+    }
+
+    /// <summary>
+    /// Decision L6: a caller whose student scope is class-limited opens on their own pastoral classes —
+    /// preset, never forced, and only when the address named no class. The Web learns "class-limited, and
+    /// which classes" from WelfareSummaryDto.ScopedToClasses, the one field the API already returns for
+    /// exactly this question (empty for an unscoped caller, the pastoral classes otherwise). It is read
+    /// for today only, so the summary it rides on costs nothing. Every pastoral post carries
+    /// welfare.reports.own, so a class teacher can always read it.
+    /// </summary>
+    private async Task LoadScopeAsync()
+    {
+        scopedClasses = new();
+        if (branchId == Guid.Empty) return;
+        if (!await PermissionService.HasPermissionAsync(Permissions.WelfareReportsView)
+            && !await PermissionService.HasPermissionAsync(Permissions.WelfareReportsOwn)) return;
+
+        try
+        {
+            var today = DateTime.Today;
+            var response = await Http.GetAsync($"api/v1/branches/{branchId}/welfare/summary?dateFrom={today:yyyy-MM-dd}&dateTo={today:yyyy-MM-dd}");
+            if (!response.IsSuccessStatusCode) return;
+            var summary = await response.Content.ReadFromJsonAsync<WelfareSummaryDto>(JsonOptions);
+            scopedClasses = summary?.ScopedToClasses ?? new();
+        }
+        catch
+        {
+            // A decoration and a default, never a gate: the API scopes the roster whatever this says.
+        }
+    }
+
+    private bool scopePresetDone;
+
+    private void PresetScopedClasses(bool addressNamedAClass)
+    {
+        if (scopePresetDone) return;
+        scopePresetDone = true;
+        if (addressNamedAClass || classFilter.Count > 0 || scopedClasses.Count == 0) return;
+
+        classFilter = scopedClasses.Select(ClassName.Key).Where(k => k != null).Select(k => k!).Distinct().ToList();
+    }
+
+    /// <summary>
+    /// One student's row, shared by the paged list and the virtualised "All" list so the two can
+    /// never differ. Unchanged from the row the page always drew, except that the row's Log button
+    /// is secondary (the bulk bar's Log a record is the primary action now) and the consent patch
+    /// shows only where consent is on file.
+    /// </summary>
+    private RenderFragment RosterRow(StudentDto s) => __builder =>
+    {
+        var teaching = IsTeachingTier(s);
+        <div class="roster-row @(s.IsActive ? "" : "inactive")" @key="s.Id" data-student="@s.Id">
+            <span class="roster-select">
+                <QCheckbox Value="@selectedStudentIds.Contains(s.Id)" ValueChanged="@(v => ToggleStudentSelection(s.Id, v))" aria-label="@($"Select {s.FullName}")" />
+            </span>
+            <span class="roster-name">
+                @* The name is the way in to the student. It is what people aim at first,
+                   and making it the link removed an icon from the action cluster that did
+                   nothing else. A Teaching-tier row has no picture to open — it is pastoral. *@
+                @if (teaching)
+                {
+                    <span class="roster-name-text">@s.FullName</span>
+                    <span class="roster-chip teaching"
+                          title="@($"You teach {s.FullName} {TaughtText(s)}. Welfare, discipline and guardians are with their class teacher.")">
+                        <QIcon Name="book" Size="12" />
+                        You teach@(s.TaughtSubjects.Any() ? ": " + string.Join(", ", s.TaughtSubjects) : "")
+                    </span>
+                }
+                else if (canViewWelfare)
+                {
+                    <a class="roster-name-text roster-name-link" href="@($"/admin/students/{s.Id}/picture")"
+                       title="@($"Open {s.FullName}'s picture")">@s.FullName</a>
+                }
+                else
+                {
+                    <span class="roster-name-text">@s.FullName</span>
+                }
+                @* A patch, not a shield. The shield is what a *restriction* looks like on
+                   this row (below, and on the flag chips), and one glyph meaning both
+                   "consent is on file" and "a guardian may not have contact" a centimetre
+                   apart is how somebody misreads a safeguarding row. *@
+                @* Consent is blanked on a Teaching-tier row, so "No data consent on file" would be false there. *@
+                @* Shown only when consent IS on file (plan §2, 2026-09-23). A "patch-question" beside
+                   every name on a roll where most rows have none said nothing about any one child;
+                   the recorded consent, with its date and note, is a specific fact about this one. *@
+                @if (!teaching && s.DataConsentGivenAt.HasValue)
+                {
+                    <span class="consent-icon consent-icon--given"
+                          title="@($"Data consent recorded {QDateFormat.D(s.DataConsentGivenAt.Value.ToLocalTime())}{(string.IsNullOrWhiteSpace(s.DataConsentNotes) ? "" : " — " + s.DataConsentNotes)}")">
+                        <QIcon Name="patch-check-fill" Size="sm" />
+                    </span>
+                }
+
+                @* A restriction is the one thing on this row somebody has to act on at the
+                   gate, so it is loud and it comes first. The reason behind it stays on the
+                   picture page, where the confidential tier governs it. *@
+                @if (s.HasGuardianRestriction)
+                {
+                    <span class="roster-chip restriction" title="A guardian on this child has a contact restriction — open the picture for the detail">
+                        <QIcon Name="shield-exclamation" Size="12" />
+                        Restricted
+                    </span>
+                }
+                @foreach (var f in s.Flags.Take(3))
+                {
+                    <span class="roster-chip tier-@f.Tier.ToString().ToLowerInvariant() @(f.IsReviewOverdue ? "overdue" : "")"
+                          title="@($"{f.CategoryName}{(f.IsReviewOverdue ? " — review overdue" : "")}")">
+                        @f.CategoryName
+                    </span>
+                }
+                @if (s.Flags.Count > 3)
+                {
+                    <span class="roster-chip more" title="@string.Join(", ", s.Flags.Skip(3).Select(f => f.CategoryName))">
+                        +@(s.Flags.Count - 3)
+                    </span>
+                }
+            </span>
+            <span class="roster-code">@(s.StudentCode ?? "—")</span>
+            <span class="roster-class-cell">
+                @if (!string.IsNullOrEmpty(s.ClassName))
+                {
+                    <span class="class-pill" style="@($"background:{GetClassColor(s.ClassName)}")">@s.ClassName</span>
+
+                    @* "Who do I call about this child" answered on the row itself. The DTO
+                       already carries the teacher's contact block, so this costs no extra
+                       request — and the tel: link matters because the front desk reads this
+                       list on a touch screen where a tooltip never appears. *@
+                    @if (ClassTeacherFor(s.ClassName) is { } ct)
+                    {
+                        <span class="roster-ct">
+                            <QIcon Name="person-video3" Size="11" />
+                            @if (!string.IsNullOrWhiteSpace(ct.Phone))
+                            {
+                                <a href="tel:@ct.Phone" title="@ContactTitle(ct)">@ct.FullName</a>
+                            }
+                            else
+                            {
+                                <span title="@ContactTitle(ct)">@ct.FullName</span>
+                            }
+                        </span>
+                    }
+                }
+                else
+                {
+                    @:—
+                }
+            </span>
+            <span class="roster-guardians">
+                @if (teaching)
+                {
+                    <span class="roster-empty-guardians">With their class teacher</span>
+                }
+                else if (s.Guardians.Any())
+                {
+                    @foreach (var g in s.Guardians)
+                    {
+                        <span class="guardian-chip">
+                            @g.FullName (@g.Relationship)
+                            <QButton Icon="printer-fill" Size="sm" Variant="ghost" Class="guardian-print-btn"
+                                     OnClick="@(() => PrintGuardianCard(s, g))" Title="@($"Print visiting-day pass for {g.FullName}")" />
+                        </span>
+                    }
+                }
+                else
+                {
+                    <span class="roster-empty-guardians">None yet</span>
+                }
+            </span>
+            @* One action on the row, everything else behind a menu that names them.
+               There were eight identical ghost icons here and no way to tell them apart
+               without hovering each one in turn — and two of them were the same glyph in
+               outline and filled form (person-vcard for "open picture", person-vcard-fill
+               for "print card"). Logging a record is the only thing done on every pass
+               down this list; editing a student, adding a guardian, printing a card, an
+               export or a consent withdrawal are all occasional, so they are one
+               deliberate click away where they get a written label rather than a tooltip
+               nobody hovers. The one that stays keeps its label at every width. *@
+            <span class="roster-actions">
+                @if (teaching)
+                {
+                    @* Reporting a concern is not reading one (plan §5.3). Every other action on this row is
+                       pastoral — the picture, the timeline, guardians, the pass, consent, the SAR export —
+                       so the menu is not offered at all rather than offered and refused. *@
+                    @if (CanLogConcern)
+                    {
+                        <QButton Icon="flag" Text="Log a concern" Size="sm" Variant="secondary" Class="roster-action"
+                                 OnClick="@(() => OpenQuickLogModal(s, concern: true))" Title="@($"Tell the people who hold {s.FullName}'s file about something that worried you")" />
+                    }
+                }
+                else
+                {
+                @if (canLogWelfare)
+                {
+                    <QButton Icon="journal-plus" Text="Log" Size="sm" Variant="secondary" Class="roster-action"
+                             OnClick="@(() => OpenQuickLogModal(s))" Title="Log achievement, behavior or welfare record" />
+                }
+                <div class="dropdown roster-more">
+                    <QButton Icon="three-dots" Size="sm" Variant="ghost" Title="More actions"
+                             data-bs-toggle="dropdown" aria-expanded="false" aria-label="@($"More actions for {s.FullName}")" />
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        <li>
+                            <button type="button" class="dropdown-item" @onclick="@(() => OpenEditStudentModal(s))">
+                                <QIcon Name="pencil" /> Edit student
+                            </button>
+                        </li>
+                        @if (canViewWelfare)
+                        {
+                            <li>
+                                <button type="button" class="dropdown-item" @onclick="@(() => Navigation.NavigateTo($"/admin/students/{s.Id}/picture"))">
+                                    <QIcon Name="person-vcard" /> Open student picture
+                                </button>
+                            </li>
+                            <li>
+                                <button type="button" class="dropdown-item" @onclick="@(() => Navigation.NavigateTo($"/admin/students/{s.Id}/welfare"))">
+                                    <QIcon Name="clipboard2-pulse" /> Welfare timeline
+                                </button>
+                            </li>
+                        }
+                        @* Next to the card it prints: both are about the guardians rather
+                           than the child, and a guardian is added once, not every day. *@
+                        <li>
+                            <button type="button" class="dropdown-item" @onclick="@(() => OpenAddGuardianModal(s))">
+                                <QIcon Name="person-plus" /> Add guardian
+                            </button>
+                        </li>
+                        <li>
+                            <button type="button" class="dropdown-item" @onclick="@(() => PrintStudentIdCard(s))">
+                                <QIcon Name="printer-fill" /> Print visitation card
+                            </button>
+                        </li>
+
+                        @* Below the line: the two that carry legal weight rather than daily use. *@
+                        @if (canManageStudents || canViewWelfare)
+                        {
+                            <li><hr class="dropdown-divider" /></li>
+                        }
+                        @if (canManageStudents)
+                        {
+                            <li>
+                                <button type="button" class="dropdown-item" @onclick="@(() => OpenConsentModal(s))">
+                                    <QIcon Name="@(s.DataConsentGivenAt.HasValue ? "patch-exclamation" : "patch-check")" />
+                                    @(s.DataConsentGivenAt.HasValue ? "Withdraw or re-record consent" : "Record data consent")
+                                </button>
+                            </li>
+                        }
+                        @if (canViewWelfare)
+                        {
+                            <li>
+                                <button type="button" class="dropdown-item" @onclick="@(() => ExportStudentData(s))"
+                                        title="Everything held about this student as one JSON file">
+                                    <QIcon Name="file-earmark-arrow-down" /> Export data (SAR)
+                                </button>
+                            </li>
+                        }
+                    </ul>
+                </div>
+                }
+            </span>
+        </div>
+    };
 }

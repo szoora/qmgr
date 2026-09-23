@@ -1,0 +1,136 @@
+@using QMgr.Application.DTOs
+@inject IJSRuntime JS
+
+@*
+    THE GATE A VISIT RECORDS (plan TERM_PROGRAMME_CALENDAR_AND_GATES §10). One component for every check-in and
+    check-out surface — the desk walk-in, the pre-registered arrival, the expected-arrivals page, check-out and the
+    badge scanner — so the three shapes cannot drift apart:
+
+      * no active gate  → renders nothing and records nothing;
+      * one active gate → says which, and fills it in (nobody is asked a question with one answer);
+      * two or more     → a required picker, preselected with the gate THIS DEVICE last used.
+
+    Device memory is the point: a tablet at the lower gate is at the lower gate all day, so the gate man should
+    never have to pick it twice — and "This device: Lower gate" stays visible, so a device that moved is noticed.
+    It lives in localStorage under qmgr-visitor-gate:{branchId}, wrapped, because a private window throws and the
+    picker must work without it. The refusal is the server's own sentence (VisitorGateRule), shown when the page
+    passes ShowError after a press.
+*@
+
+@if (active.Count == 1)
+{
+    <div class="visitor-gate visitor-gate--single" data-gate-picker="single">
+        <QIcon Name="signpost-split" /> <span>@(Leaving ? "Leaving by" : "Gate"): <strong>@active[0].Name</strong></span>
+    </div>
+}
+else if (active.Count >= 2)
+{
+    <div class="visitor-gate" data-gate-picker="choose">
+        <QSelect TValue="string" TItem="VocabularyItemDto"
+                 Items="@active"
+                 Value="@Value"
+                 ValueChanged="@OnPicked"
+                 ValueSelector="@(g => g.Name)"
+                 TextSelector="@(g => g.Name)"
+                 Label="@(Leaving ? "Gate they are leaving by" : "Gate they came in by")"
+                 Placeholder="Choose a gate"
+                 Required="true"
+                 HasError="@(ShowError && Problem != null)"
+                 ErrorMessage="@Problem" />
+        <span class="visitor-gate__device" data-gate-device>
+            <QIcon Name="tablet" />
+            @if (!string.IsNullOrWhiteSpace(remembered) && active.Any(g => VisitorGateRule.Key(g.Name) == VisitorGateRule.Key(remembered)))
+            {
+                <span>This device: <strong>@remembered</strong></span>
+            }
+            else
+            {
+                <span>This device has no gate yet — the one you choose is remembered here.</span>
+            }
+        </span>
+    </div>
+}
+
+<style>
+    .visitor-gate { display: flex; flex-direction: column; gap: 4px; margin-top: var(--qm-field-gap, 12px); }
+    .visitor-gate--single { flex-direction: row; align-items: center; gap: 6px; font-size: var(--qm-text-base); color: var(--qm-text-secondary); }
+    .visitor-gate__device { display: inline-flex; align-items: center; gap: 6px; font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public Guid BranchId { get; set; }
+
+    /// <summary>The branch's gates, active and retired, as <c>GetGatesAsync</c> returned them.</summary>
+    [Parameter] public List<VocabularyItemDto>? Gates { get; set; }
+
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+
+    /// <summary>Check-out wording ("leaving by") rather than check-in.</summary>
+    [Parameter] public bool Leaving { get; set; }
+
+    /// <summary>Set by the page after a press that the rule refused, so the field shows the sentence.</summary>
+    [Parameter] public bool ShowError { get; set; }
+
+    private List<VocabularyItemDto> active = new();
+    private string? remembered;
+    private bool memoryLoaded;
+
+    private string? Problem => VisitorGateRule.Problem(Gates, Value, Leaving);
+
+    /// <summary>Where this device's gate is kept. One per branch: a device moved to another branch starts afresh.</summary>
+    public static string MemoryKey(Guid branchId) => $"qmgr-visitor-gate:{branchId}";
+
+    private Guid memoryBranch;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        active = VisitorGateRule.Active(Gates);
+        // The page switched branch under us: that branch's device gate, not the old one's.
+        if (memoryLoaded && memoryBranch != BranchId) await LoadMemoryAsync();
+        await ApplyDefaultAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await LoadMemoryAsync();
+        await ApplyDefaultAsync();
+        StateHasChanged();
+    }
+
+    private async Task LoadMemoryAsync()
+    {
+        memoryBranch = BranchId;
+        try { remembered = await JS.InvokeAsync<string?>("localStorage.getItem", MemoryKey(BranchId)); }
+        catch { remembered = null; /* private window, blocked storage, or no interop yet: the picker still works */ }
+        memoryLoaded = true;
+    }
+
+    /// <summary>
+    /// Fills the value when there is exactly one sensible answer: the only gate, or — with a choice — the gate this
+    /// device last used, when the page has not chosen one yet. Never overwrites a value the page already holds.
+    /// </summary>
+    private async Task ApplyDefaultAsync()
+    {
+        if (active.Count == 1)
+        {
+            if (Value != active[0].Name) await ValueChanged.InvokeAsync(active[0].Name);
+            return;
+        }
+        if (active.Count >= 2 && memoryLoaded && string.IsNullOrWhiteSpace(Value) && !string.IsNullOrWhiteSpace(remembered))
+        {
+            var match = active.FirstOrDefault(g => VisitorGateRule.Key(g.Name) == VisitorGateRule.Key(remembered));
+            if (match != null) await ValueChanged.InvokeAsync(match.Name);
+        }
+    }
+
+    private async Task OnPicked(string? gate)
+    {
+        await ValueChanged.InvokeAsync(gate);
+        if (string.IsNullOrWhiteSpace(gate)) return;
+        remembered = gate;
+        try { await JS.InvokeVoidAsync("localStorage.setItem", MemoryKey(BranchId), gate); }
+        catch { /* remembering is a convenience; the visit records the gate either way */ }
+    }
+}

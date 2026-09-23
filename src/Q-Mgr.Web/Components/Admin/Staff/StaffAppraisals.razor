@@ -17,7 +17,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Appraisals<QInfo Text="The termly appraisal board: who is at which stage, and what the evidence says so far." Label="Appraisals" /></h1>
+            <h1>Appraisals</h1>
             <p class="subtitle">The termly appraisal board: who is at which stage, and what the evidence says so far.</p>
         </div>
         <div class="header-actions">
@@ -294,7 +294,7 @@
         selectedSubjects = new();
         if (directory.Count == 0)
         {
-            try { directory = (await StaffApi.GetDirectoryAsync(branchId, period)).Items.OrderBy(m => m.FullName).ToList(); }
+            try { directory = (await StaffApi.GetDirectoryAsync(branchId, period)).Items.OrderBy(m => m.SortName ?? m.FullName).ToList(); }
             catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not load the directory", ex.Message); }
         }
         showOpenDialog = true;

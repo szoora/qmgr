@@ -52,7 +52,7 @@ public record StaffProfileDto
     /// stored: <c>IStaffPerformancePolicyService.GroupFor</c> derives it from the person's role.
     /// Changing it means changing their role, which is <c>RoleAssignmentGuard</c>'s business.
     /// </summary>
-    public StaffGroup StaffGroup { get; init; }
+    public string? StaffGroup { get; init; }
 
     public DateOnly? EmploymentStartDate { get; init; }
     public DateOnly? EmploymentEndDate { get; init; }

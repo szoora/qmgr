@@ -57,6 +57,8 @@ public static class ActivityActions
     public const string TimelineViewed = "staff.timeline.viewed";
     public const string TimelineExported = "staff.timeline.exported";
     public const string RecognitionGiven = "staff.recognition.given";
+    /// <summary>One record logged for a group of staff (the Staff Directory's "Log a record", 2026-09-23) — ONE line for the batch, naming no individual; each record still writes its own RecordCreated.</summary>
+    public const string RecordsBulkLogged = "staff.records.bulk-logged";
 
     public const string DutyCreated = "staff.duty.created";
     public const string DutyUpdated = "staff.duty.updated";
@@ -164,6 +166,17 @@ public static class ActivityActions
     public const string TimetablePublished = "timetable.published";
     public const string TimetableArchived = "timetable.archived";
     public const string TimetableImported = "timetable.imported";
+    /// <summary>The appointed master(s) of a version changed (2026-09-22).</summary>
+    public const string TimetableManagersSet = "timetable.managers-set";
+    /// <summary>
+    /// A write by somebody who is not a named manager of the version (2026-09-22). The override is allowed —
+    /// a school must not be locked out of its own timetable — so this line, and the notice to the managers,
+    /// is the whole control. NIST SP 800-53 AC-5's maker–checker intent without a two-person workflow.
+    /// </summary>
+    public const string TimetableOverridden = "timetable.overridden";
+    /// <summary>A one-day cover or cancellation against a published timetable (2026-09-22).</summary>
+    public const string TimetableExceptionSet = "timetable.exception-set";
+    public const string TimetableExceptionWithdrawn = "timetable.exception-withdrawn";
     /// <summary>The integrity sweep's daily count of a published timetable's clashes — the timetable health trend (plan §11).</summary>
     public const string TimetableChecked = "timetable.checked";
     public const string LessonFlagged = "staff.lesson.flagged";
@@ -234,6 +247,9 @@ public static class WelfareActivityActions
 
     /// <summary>One named student's welfare chronology exported or printed.</summary>
     public const string TimelineExported = "welfare.timeline.exported";
+
+    /// <summary>One record logged for a group of students (the roster's "Log a record", 2026-09-23) — ONE line for the batch, naming no child.</summary>
+    public const string RecordsBulkLogged = "welfare.records.bulk-logged";
 }
 
 /// <summary>The things a welfare page can report it exported or published. Wire format.</summary>

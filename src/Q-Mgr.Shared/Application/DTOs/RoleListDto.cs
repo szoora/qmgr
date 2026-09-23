@@ -35,4 +35,11 @@ public record RoleListDto
 
     /// <summary>Which other STAFF this role's holders may see. <c>IStaffScopeService</c> is its only reader.</summary>
     public StaffDataScope StaffScope { get; init; }
+
+    /// <summary>
+    /// Which staff GROUP this role's holders belong to (teaching, support, or a group the school
+    /// added). Null falls back to the tenant's first. Read by parameters and notices that apply to
+    /// some staff rather than all — see <c>StaffGroups</c>.
+    /// </summary>
+    public string? StaffGroup { get; init; }
 }

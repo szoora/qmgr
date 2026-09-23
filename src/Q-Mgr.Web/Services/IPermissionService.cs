@@ -300,6 +300,9 @@ public static class Permissions
     public const string TimetableManage = "timetable.manage";
     public const string TimetableLessonsFlag = "timetable.lessons.flag";
 
+    // School calendar (2026-09-23) — mirrors Permissions.cs and RbacSeeder.AllPermissions
+    public const string CalendarManage = "calendar.manage";
+
     // Marketing
     public const string MarketingView = "marketing.view";
     public const string MarketingManage = "marketing.manage";
@@ -367,11 +370,9 @@ public static class RoleCodes
     /// </summary>
     public const string Staff = "staff";
 
-    /// <summary>
-    /// Class Teacher - Pastoral responsibility for one or more classes. Sees only the students in
-    /// those classes; the narrowing lives on the role's DataScope server-side, never here.
-    /// </summary>
-    public const string ClassTeacher = "class-teacher";
+    /// <summary><b>RETIRED 2026-09-22.</b> Mirrors RoleCodes.RetiredClassTeacher on the API side —
+    /// no role row carries it any more, because being a class teacher is a POST, not a role.</summary>
+    public const string RetiredClassTeacher = "class-teacher";
 
     /// <summary>
     /// Viewer - Read-only access and customer self-service.
@@ -381,15 +382,15 @@ public static class RoleCodes
     // Staff Performance Monitor hierarchy (2026-09-16); all rank below Manager, as on the API side.
     public const string DirectorOfStudies = "director-of-studies";
     public const string AcademicAssistant = "academic-assistant";
-    public const string HeadOfDepartment = "head-of-department";
+    /// <summary><b>RETIRED 2026-09-22</b>, for the same reason: heading a department is a post.</summary>
+    public const string RetiredHeadOfDepartment = "head-of-department";
     public const string Teacher = "teacher";
     public const string SupportStaff = "support-staff";
 
     /// <summary>The roles whose landing page is the staff portal rather than the operational dashboard.</summary>
     public static bool IsPortalFirst(string? roleCode)
         => string.Equals(roleCode, Teacher, StringComparison.OrdinalIgnoreCase)
-           || string.Equals(roleCode, SupportStaff, StringComparison.OrdinalIgnoreCase)
-           || string.Equals(roleCode, ClassTeacher, StringComparison.OrdinalIgnoreCase);
+           || string.Equals(roleCode, SupportStaff, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Checks if the role code represents a platform administrator
@@ -407,13 +408,13 @@ public static class RoleCodes
         return IsSuperAdmin(roleCode) || string.Equals(roleCode, Admin, StringComparison.OrdinalIgnoreCase);
     }
 
-    // Mirrors the API RoleCodes.All ordering, which is load-bearing there: ClassTeacher sits
-    // between Staff and Viewer so IsManagerOrAbove keeps meaning what it meant.
+    // Mirrors the API RoleCodes.All ordering, which is load-bearing there. Removing class-teacher
+    // and head-of-department shifted nothing: Rank is relative and both sat below Manager.
     private static readonly string[] TierOrder =
     {
         SuperAdmin, Admin, Manager,
-        DirectorOfStudies, AcademicAssistant, HeadOfDepartment,
-        Staff, ClassTeacher, Teacher, SupportStaff, Viewer
+        DirectorOfStudies, AcademicAssistant,
+        Staff, Teacher, SupportStaff, Viewer
     };
 
     /// <summary>

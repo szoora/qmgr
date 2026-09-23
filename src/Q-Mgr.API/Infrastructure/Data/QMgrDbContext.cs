@@ -89,12 +89,16 @@ public class QMgrDbContext : DbContext
     public DbSet<QMgr.Domain.Entities.Staff.StaffConfigRequest> StaffConfigRequests => Set<QMgr.Domain.Entities.Staff.StaffConfigRequest>();
     public DbSet<QMgr.Domain.Entities.Staff.Timetable> Timetables => Set<QMgr.Domain.Entities.Staff.Timetable>();
     public DbSet<QMgr.Domain.Entities.Staff.TimetableLesson> TimetableLessons => Set<QMgr.Domain.Entities.Staff.TimetableLesson>();
+    public DbSet<QMgr.Domain.Entities.Staff.TimetableLessonException> TimetableLessonExceptions => Set<QMgr.Domain.Entities.Staff.TimetableLessonException>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffPerformanceRecord> StaffPerformanceRecords => Set<QMgr.Domain.Entities.Staff.StaffPerformanceRecord>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffPerformanceNote> StaffPerformanceNotes => Set<QMgr.Domain.Entities.Staff.StaffPerformanceNote>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffPerformanceAttachment> StaffPerformanceAttachments => Set<QMgr.Domain.Entities.Staff.StaffPerformanceAttachment>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffAppraisal> StaffAppraisals => Set<QMgr.Domain.Entities.Staff.StaffAppraisal>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffNotice> StaffNotices => Set<QMgr.Domain.Entities.Staff.StaffNotice>();
     public DbSet<QMgr.Domain.Entities.Audit.ActivityEvent> ActivityEvents => Set<QMgr.Domain.Entities.Audit.ActivityEvent>();
+
+    // School calendar (2026-09-23): organization-scoped, filtered below like StaffNotice.
+    public DbSet<QMgr.Domain.Entities.Calendar.SchoolEvent> SchoolEvents => Set<QMgr.Domain.Entities.Calendar.SchoolEvent>();
 
     #endregion
 
@@ -282,6 +286,8 @@ public class QMgrDbContext : DbContext
         modelBuilder.Entity<QMgr.Domain.Entities.Staff.PerformanceParameter>()
             .HasQueryFilter(e => !TenantIsolationEnabled || e.OrganizationId == CurrentOrganizationId);
         modelBuilder.Entity<QMgr.Domain.Entities.Staff.StaffNotice>()
+            .HasQueryFilter(e => !TenantIsolationEnabled || e.OrganizationId == CurrentOrganizationId);
+        modelBuilder.Entity<QMgr.Domain.Entities.Calendar.SchoolEvent>()
             .HasQueryFilter(e => !TenantIsolationEnabled || e.OrganizationId == CurrentOrganizationId);
         modelBuilder.Entity<QMgr.Domain.Entities.Audit.ActivityEvent>()
             .HasQueryFilter(e => !TenantIsolationEnabled || e.OrganizationId == CurrentOrganizationId);

@@ -14,7 +14,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Visitor Activity Board<QInfo Text="Live feed — updates the instant someone checks in, checks out, or is flagged" Label="Visitor Activity Board" /></h1>
+            <h1>Visitor Activity Board</h1>
             <p class="subtitle">Live feed — updates the instant someone checks in, checks out, or is flagged</p>
         </div>
         <div class="header-actions">
@@ -63,6 +63,7 @@
                                 @if (!string.IsNullOrEmpty(v.Purpose)) { <text>@v.Purpose · </text> }
                                 @if (!string.IsNullOrEmpty(v.HostName)) { <text>Visiting @v.HostName · </text> }
                                 in @QDateFormat.T(v.CheckedInAt)
+                                @if (!string.IsNullOrEmpty(v.EntryGate)) { <text> · by <span class="onsite-gate" data-visitor-gate>@v.EntryGate</span></text> }
                             </span>
                         </div>
                     }
@@ -85,6 +86,8 @@
                             <span class="feed-icon"><QIcon Name="@IconFor(entry.Kind)" /></span>
                             <span class="feed-text">
                                 <strong>@entry.Visitor.FullName</strong> @LabelFor(entry.Kind)
+                                @if (entry.Kind == VisitorActivityKind.CheckedIn && !string.IsNullOrEmpty(entry.Visitor.EntryGate)) { <span class="feed-gate"> at @entry.Visitor.EntryGate</span> }
+                                @if (entry.Kind == VisitorActivityKind.CheckedOut && !string.IsNullOrEmpty(entry.Visitor.ExitGate)) { <span class="feed-gate"> at @entry.Visitor.ExitGate</span> }
                                 @if (entry.Kind == VisitorActivityKind.Flagged)
                                 {
                                     <span class="feed-danger"> — @(string.IsNullOrWhiteSpace(entry.Visitor.WatchlistReason) ? "no reason recorded" : entry.Visitor.WatchlistReason)</span>
@@ -117,6 +120,7 @@
     .board-panel { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 20px; max-height: 560px; overflow-y: auto; }
     .board-panel h2 { margin: 0 0 14px; font-size: var(--qm-text-md); color: var(--qm-text-primary); }
     .board-empty { color: var(--qm-text-muted); font-size: var(--qm-text-base); }
+    .onsite-gate, .feed-gate { font-weight: 600; color: var(--qm-text-secondary); }
 
     .onsite-list { display: flex; flex-direction: column; gap: 10px; }
     .onsite-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-radius: var(--qm-radius-sm); background: var(--qm-bg-secondary); }

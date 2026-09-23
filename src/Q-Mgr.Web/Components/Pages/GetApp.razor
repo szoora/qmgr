@@ -33,25 +33,35 @@
         does not exist.
 *@
 
-<QPageTitle Text="Get the mobile app" />
+<QPageTitle Text="Get mobile app" />
 
-<div class="getapp">
-    <header class="getapp__head">
-        <QBrandMark />
-        <h1>Get the Q&#8209;Mgr app</h1>
-        <p class="getapp__sub">
-            The front-office app for Android, Windows and iPhone. It does what a browser cannot:
-            printing to a till-roll printer over Wi&#8209;Fi or Bluetooth, notifications on your
-            phone, and a sign-in that survives a restart.
-        </p>
-    </header>
+@*
+    THE SAME SHELL AS THE SIGN-IN PAGE, deliberately.
+
+    This page shipped with a card of its own and was wrong twice for it: unbranded (a school on its
+    own domain met the vendor's name one click from its own crest — the exact complaint the join page
+    was fixed for on 2026-09-21) and unreadable, because .getapp__card painted a light surface while
+    PublicLayout's ground is dark and the heading inherited the dark ink.
+
+    Reusing login-container / login-card / QBrandMark fixes both at once and cannot drift from them
+    later, which a second set of card styles certainly would.
+*@
+<div class="login-container" style="@Host.BrandingStyle">
+    <AmbientBackground />
+    <div class="login-card wide getapp">
+        <div class="login-header">
+            <QBrandMark Heading="Get mobile app" />
+        </div>
 
     @* ── The workspace address ──────────────────────────────────────────────────────────────
        First, and with a copy button, because a mistyped workspace is the commonest first-run
        failure and it surfaces much later as a login the person cannot explain. Handing it to them
        beats asking them to remember it. *@
     <section class="getapp__card">
-        <h2>1. The address to type</h2>
+        <h2>
+            1. The address to type
+            <QInfo Label="The address to type" Text="@AddressHelp" />
+        </h2>
         <p>When the app asks for your workspace, enter this:</p>
         <div class="getapp__workspace">
             <code id="workspace-address">@WorkspaceAddress</code>
@@ -59,22 +69,14 @@
                 <QIcon Name="clipboard" Size="14" /> @(copied ? "Copied" : "Copy")
             </QButton>
         </div>
-        @if (Host.IsTenantHost)
-        {
-            <p class="getapp__note">This is your school's own address, so the app will show your name and colours before anyone signs in.</p>
-        }
-        else
-        {
-            <p class="getapp__note">
-                Sign in with your email address <strong>or your staff username</strong> — many staff
-                have no email address on file, and a username works exactly the same way.
-            </p>
-        }
     </section>
 
     @* ── Downloads ─────────────────────────────────────────────────────────────────────────── *@
     <section class="getapp__card">
-        <h2>2. Download it</h2>
+        <h2>
+            2. Download it
+            <QInfo Label="Download it" Text="Android asks you to allow installs from this site the first time. The app needs Android 7 or newer on a 64-bit device — the build is 64-bit only, which halves the download." />
+        </h2>
 
         @if (loading)
         {
@@ -104,23 +106,32 @@
                 </div>
                 @* A plain anchor, not QButton: this is a NAVIGATION to a file on another origin, and QButton
                    renders a <button> with no href. Styled to match so it does not read as a stray link. *@
-                <a class="q-btn q-btn--primary getapp__dl" href="@latest.Url">
-                    <QIcon Name="download" Size="16" /> Download for Android
+                @* The download never leaves the page — the browser saves the file and stays here — so
+                   without this the only sign a press did anything was the button's pressed colour.
+                   The spinner is QButton's own. A second press while it spins is swallowed
+                   (preventDefault), or two copies of a 13 MB file start at once. *@
+                <a class="q-btn q-btn--primary getapp__dl @(downloadStarting ? "q-btn--disabled" : "")" href="@latest.Url"
+                   aria-busy="@(downloadStarting ? "true" : "false")"
+                   @onclick="StartDownloadAsync" @onclick:preventDefault="downloadStarting">
+                    @if (downloadStarting)
+                    {
+                        <span class="q-btn__spinner"></span> <span>Downloading&hellip;</span>
+                    }
+                    else
+                    {
+                        <QIcon Name="download" Size="16" /> <span>Download for Android</span>
+                    }
                 </a>
             </div>
+            @if (downloadStarted)
+            {
+                <p class="getapp__note" role="status">Download started. See your browser's downloads.</p>
+            }
 
             @if (!string.IsNullOrWhiteSpace(latest.Notes))
             {
                 <p class="getapp__note">@latest.Notes</p>
             }
-
-            <p class="getapp__note">
-                Android will ask you to allow installing from this site the first time.
-                @* Stated rather than discovered: the build is 64-bit only, deliberately, because it
-                   halves the download. A very old tablet cannot install it, and finding that out
-                   from a failure message is worse than reading it here. *@
-                Needs Android 7 or newer, on a 64-bit device.
-            </p>
 
             @if (earlier.Count > 0)
             {
@@ -157,60 +168,69 @@
         }
     </section>
 
-    @* ── Provisioning QR ───────────────────────────────────────────────────────────────────
-       So a handset is configured by scanning rather than by dictating an address across a room.
-       Uses qrcodejs, which App.razor already loads for visitor badges — no new dependency. *@
+    @* ── QR to this page ───────────────────────────────────────────────────────────────────
+       So the address is carried to a handset by scanning rather than dictated across a room.
+       Uses qrcodejs, which App.razor already loads for visitor badges — no new dependency.
+
+       The heading says "Open this on your phone", not "scan to set it up": the scan opens THIS
+       PAGE on the phone, which is what it can honestly promise before the app exists. See the
+       comment on scanUrl for why it is no longer a qmgr:// link. *@
     <section class="getapp__card">
-        <h2>3. Or scan to set it up</h2>
-        <p>Already have the app? Scan this to point it at @WorkspaceAddress.</p>
+        <h2>3. Scan on your phone</h2>
         <div id="getapp-qr" class="getapp__qr"></div>
     </section>
 
-    <footer class="getapp__foot">
-        <a href="/login">Back to sign in</a>
-        <span>&bull;</span>
-        <a href="/privacy">Privacy Policy</a>
-        <PoweredBy />
-    </footer>
+        @* A BUTTON, not a link: signing in is the act this page leads to, and every other action
+           here (Copy, Download) is already a button. "Sign In" rather than "Back to sign in": a
+           button label names its destination, and "back" is the browser's word, not ours.
+
+           A styled ANCHOR, not QButton, for the reason stated on the download button above — QButton
+           renders a <button> and has no Href, so a navigation has to be a link wearing the button
+           class. Passing Href to it would render an inert button and component-param-check fails it. *@
+        <div class="getapp__foot">
+            <a class="q-btn q-btn--secondary" href="/login"><QIcon Name="box-arrow-in-right" Size="16" /> Sign In</a>
+            <a href="/privacy">Privacy Policy</a>
+        </div>
+        @* The copyright, not the attribution line — see Login.razor. QCopyright reads the host itself. *@
+        <QCopyright Class="login-copyright" />
+    </div>
 </div>
 
 <style>
-    .getapp { max-width: 720px; margin: 0 auto; padding: 28px var(--qm-page-pad, 24px) 56px; }
+    /* Everything here is scoped under .login-container, like the rest of auth-pages.css and for the
+       same reason: these class names are generic enough to collide with the dashboard's own. */
+    .login-container .getapp { text-align: left; }
 
-    .getapp__head { text-align: center; margin-bottom: 26px; }
-    .getapp__head h1 { margin: 12px 0 8px; font-size: var(--qm-text-xl); }
-    .getapp__sub { margin: 0 auto; max-width: 52ch; color: var(--qm-text-secondary); font-size: var(--qm-text-base); }
-
-    .getapp__card {
-        background: var(--qm-bg-card);
+    .login-container .getapp__card {
+        background: var(--qm-bg-elevated);
         border: 1px solid var(--qm-border);
         border-radius: var(--qm-radius-lg);
-        padding: 18px;
-        margin-bottom: var(--qm-block-gap, 10px);
+        padding: 16px;
+        margin-bottom: 12px;
     }
-    .getapp__card h2 { margin: 0 0 8px; font-size: var(--qm-text-md); }
-    .getapp__card p { margin: 0 0 10px; font-size: var(--qm-text-base); color: var(--qm-text-secondary); }
+    .login-container .getapp__card h2 { margin: 0 0 8px; font-size: var(--qm-text-md); color: var(--qm-text-primary); }
+    .login-container .getapp__card p { margin: 0 0 10px; font-size: var(--qm-text-base); color: var(--qm-text-secondary); }
 
-    .getapp__workspace { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-    .getapp__workspace code {
+    .login-container .getapp__workspace { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .login-container .getapp__workspace code {
         font-size: var(--qm-text-md);
         padding: 7px 11px;
         border-radius: var(--qm-radius-md);
-        background: var(--qm-bg-elevated);
+        background: var(--qm-bg-card);
         color: var(--qm-text-primary);
         word-break: break-all;
     }
 
-    .getapp__note { font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
+    .login-container .getapp__note { font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
 
-    .getapp__latest { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-    .getapp__latest-meta { display: flex; flex-direction: column; }
-    .getapp__version { font-weight: 600; color: var(--qm-text-primary); }
-    .getapp__size { font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
+    .login-container .getapp__latest { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .login-container .getapp__latest-meta { display: flex; flex-direction: column; }
+    .login-container .getapp__version { font-weight: 600; color: var(--qm-text-primary); }
+    .login-container .getapp__size { font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
 
-    .getapp__earlier { margin-top: 14px; border-top: 1px solid var(--qm-border); padding-top: 12px; }
-    .getapp__earlier summary { cursor: pointer; font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
-    .getapp__warn {
+    .login-container .getapp__earlier { margin-top: 14px; border-top: 1px solid var(--qm-border); padding-top: 12px; }
+    .login-container .getapp__earlier summary { cursor: pointer; font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
+    .login-container .getapp__warn {
         display: flex; align-items: flex-start; gap: 7px;
         margin: 10px 0; padding: 10px 12px;
         border-radius: var(--qm-radius-md);
@@ -218,20 +238,25 @@
         color: var(--qm-text-primary);
         font-size: var(--qm-text-sm);
     }
-    .getapp__earlier-list { list-style: none; margin: 0; padding: 0; }
-    .getapp__earlier-list li {
+    .login-container .getapp__earlier-list { list-style: none; margin: 0; padding: 0; }
+    .login-container .getapp__earlier-list li {
         display: flex; align-items: center; justify-content: space-between;
         gap: 10px; padding: 7px 0; font-size: var(--qm-text-sm);
         border-bottom: 1px solid var(--qm-border);
     }
-    .getapp__earlier-list li:last-child { border-bottom: none; }
-    .getapp__gone { color: var(--qm-text-muted); }
+    .login-container .getapp__earlier-list li:last-child { border-bottom: none; }
+    .login-container .getapp__gone { color: var(--qm-text-muted); }
 
-    .getapp__qr { display: flex; justify-content: center; padding: 8px 0; }
+    /* A QR is READ BY A CAMERA, so its quiet zone must be white whatever the theme — this is the
+       one literal on the page and it is a literal on purpose. */
+    .login-container .getapp__qr {
+        display: flex; justify-content: center; padding: 12px;
+        background: #ffffff; border-radius: var(--qm-radius-md);
+    }
 
-    .getapp__foot {
+    .login-container .getapp__foot {
         display: flex; align-items: center; justify-content: center; gap: 10px;
-        flex-wrap: wrap; margin-top: 22px;
+        flex-wrap: wrap; margin-top: 18px;
         font-size: var(--qm-text-sm); color: var(--qm-text-secondary);
     }
 </style>
@@ -243,7 +268,30 @@
     /// </summary>
     [CascadingParameter] public TenantHostContext Host { get; set; } = TenantHostContext.Platform;
 
+    /// <summary>
+    /// Standing explanation for the address, in the QInfo beside the heading rather than as prose
+    /// under it. Both branches were a paragraph on the page until 2026-09-22; they are read once.
+    /// </summary>
+    private string AddressHelp => Host.IsTenantHost
+        ? "This is your school's own address, so the app shows your name and colours before anyone signs in."
+        : "Sign in with your email address or your staff username. Many staff have no email address on file, and a username works exactly the same way.";
+
     private bool loading = true;
+
+    /// <summary>True for the few seconds after a press — long enough for the browser's own download
+    /// indicator to appear. A web page cannot see a download's progress, so it does not pretend to.</summary>
+    private bool downloadStarting;
+    private bool downloadStarted;
+
+    private async Task StartDownloadAsync()
+    {
+        if (downloadStarting) return;
+        downloadStarting = true;
+        StateHasChanged();
+        await Task.Delay(TimeSpan.FromSeconds(4));
+        downloadStarting = false;
+        downloadStarted = true;
+    }
     private bool loadFailed;
     private bool copied;
 
@@ -292,13 +340,29 @@
     {
         if (!firstRender) return;
 
-        // The provisioning deep link the app registers. Scheme "qmgr" matches Brand.UrlScheme in the
-        // app — a contract with the installed binary, not a label.
-        var deepLink = $"qmgr://workspace?host={Uri.EscapeDataString(WorkspaceAddress)}";
+        // THE QR ENCODES AN https URL — THIS PAGE — NOT A PRIVATE SCHEME.
+        //
+        // It used to encode qmgr://workspace?host=… , which decoded perfectly (verified with jsQR)
+        // and was useless to every single person who scanned it:
+        //
+        //   * A custom scheme resolves only when the app that registered it is ALREADY INSTALLED.
+        //     Everyone reading this page is here BECAUSE THEY DO NOT HAVE THE APP. The scan had
+        //     nothing to open and failed silently, or raised "no app can open this link".
+        //   * Both platforms' CAMERA apps refuse non-http(s) schemes outright as an anti-abuse
+        //     measure, so even an installed app frequently would not have been offered.
+        //
+        // An https URL degrades the right way round: a phone with no app opens this page and can
+        // download it, and once the app registers this address as an Android App Link / iOS
+        // Universal Link the same scan deep-links straight into provisioning. That is the standard
+        // pattern precisely because it works in both states.
+        //
+        // The host comes from the browser's own address for the reason on WorkspaceAddress, so a
+        // white-labelled tenant's QR points at the tenant's own domain rather than ours.
+        var scanUrl = $"https://{WorkspaceAddress}/getapp";
 
         try
         {
-            await JS.InvokeVoidAsync("visitorBadge.renderQr", "getapp-qr", deepLink);
+            await JS.InvokeVoidAsync("visitorBadge.renderQr", "getapp-qr", scanUrl);
         }
         catch (Exception)
         {

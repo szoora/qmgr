@@ -1,0 +1,327 @@
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@inject IStudentApiService StudentApi
+@inject HttpClient Http
+@inject System.Text.Json.JsonSerializerOptions JsonOptions
+
+@*
+    Logging ONE record for a group of students (plan STUDENT_ROSTER_AND_LIST_STANDARD §3, 2026-09-23) — a merit
+    for a whole class, or a behaviour incident several students were part of. Hosted by the roster's bulk bar.
+
+    The rules it shows, each of them the server's own (WelfareController.CreateRecordsBulk):
+      - Achievement or Behaviour only. A welfare concern is never bulk (decision L7) and the form says why.
+      - One record for each student by default; "one incident involving all of them" for Behaviour only (L1).
+      - At most 200 students, in the server's own words.
+      - A CONFIRM step that states the consequence, because a welfare record cannot be deleted — a mistake
+        across forty children is forty annulments.
+    The server re-checks every student against the caller's scope; a refusal is shown here, in the dialog.
+*@
+
+<QModal Visible="@Visible" VisibleChanged="@OnVisibleChanged" Title="@HeaderTitle" Icon="journal-plus" Size="lg">
+    <ChildContent>
+        <div class="bl-who">
+            <span>@NamesPreview</span>
+        </div>
+
+        @if (Students.Count > WelfareBulkLimits.MaxStudents)
+        {
+            <div class="bl-error" role="alert">
+                <i class="bi bi-exclamation-triangle"></i>
+                <span>@WelfareBulkLimits.CapMessage</span>
+            </div>
+        }
+        else if (!confirming)
+        {
+            <div class="bl-field">
+                <span class="bl-label">Type of record <span class="bl-req">*</span></span>
+                <div class="bl-seg" role="group" aria-label="Type of record">
+                    <QButton Text="Achievement" Icon="trophy" Size="sm"
+                             Variant="@(caseType == WelfareCaseType.Achievement ? "primary" : "secondary")"
+                             OnClick="@(() => SelectCaseType(WelfareCaseType.Achievement))" />
+                    <QButton Text="Behaviour" Icon="exclamation-diamond" Size="sm"
+                             Variant="@(caseType == WelfareCaseType.Behavior ? "primary" : "secondary")"
+                             OnClick="@(() => SelectCaseType(WelfareCaseType.Behavior))" />
+                </div>
+                <p class="bl-note">A welfare concern is not offered here: it is logged for one student at a time, as that child's own record.</p>
+            </div>
+
+            <div class="form-row">
+                <QSelect TValue="Guid" TItem="WelfareCategoryDto" Label="Category" Required="true"
+                         Value="@categoryId" ValueChanged="@OnCategorySelected"
+                         Items="@categories.Where(c => c.CaseType == caseType && c.IsActive)" Sorted="true"
+                         TextSelector="@(c => c.Name)" ValueSelector="@(c => c.Id)" Placeholder="Choose a category"
+                         HasError="@categoryError" ErrorMessage="Select a category" />
+
+                <QDatePicker Label="Date" Required="true" Value="@occurredOn" ValueChanged="@OnDateChanged"
+                             Max="@DateTime.Today" HasError="@dateError" ErrorMessage="Choose the date it happened" />
+            </div>
+
+            @if (IsLateEntry)
+            {
+                <QCheckbox @bind-Value="lateAcknowledged"
+                           Label="@($"This happened more than {LateEntryDays} days ago, and the date is right.")"
+                           Required="true" />
+                @if (lateError)
+                {
+                    <p class="bl-field-error">Confirm the date, or change it.</p>
+                }
+            }
+
+            <QInput TValue="string" @bind-Value="description" Type="textarea" Rows="3" Label="What happened?" Required="true"
+                    MaxLength="2000" HasError="@descriptionError" ErrorMessage="Describe what happened (10-2000 characters)" />
+
+            @if (caseType == WelfareCaseType.Behavior)
+            {
+                <div class="bl-field">
+                    <span class="bl-label">How to record it</span>
+                    <div class="bl-seg" role="group" aria-label="How to record it">
+                        <QButton Text="One record for each student" Size="sm"
+                                 Variant="@(!oneIncident ? "primary" : "secondary")" OnClick="@(() => oneIncident = false)" />
+                        <QButton Text="One incident involving all of them" Size="sm"
+                                 Variant="@(oneIncident ? "primary" : "secondary")" OnClick="@(() => oneIncident = true)" />
+                    </div>
+                </div>
+            }
+        }
+        else
+        {
+            <div class="bl-confirm" role="alert">
+                <i class="bi bi-exclamation-circle"></i>
+                <span>@ConfirmSentence</span>
+            </div>
+        }
+
+        @if (!string.IsNullOrWhiteSpace(serverError))
+        {
+            <div class="bl-error" role="alert">
+                <i class="bi bi-x-octagon"></i>
+                <span>@serverError</span>
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        @if (confirming)
+        {
+            <QButton Text="Back" Variant="ghost" OnClick="@(() => { confirming = false; serverError = null; })" Disabled="@saving" />
+            <QButton Text="@ConfirmButtonText" Icon="check-lg" Variant="primary" OnClick="SubmitAsync" Loading="@saving" />
+        }
+        else
+        {
+            <QButton Text="Cancel" Variant="ghost" OnClick="CloseAsync" />
+            <QButton Text="Continue" Variant="primary" OnClick="Review"
+                     Disabled="@(Students.Count == 0 || Students.Count > WelfareBulkLimits.MaxStudents)" />
+        }
+    </FooterContent>
+</QModal>
+
+<style>
+    .bl-who { color: var(--qm-text-secondary); font-size: var(--qm-text-sm); margin-bottom: var(--qm-field-gap); }
+    .bl-field { margin-bottom: var(--qm-field-gap); }
+    .bl-label { display: block; font-size: var(--qm-text-sm); font-weight: 600; margin-bottom: 4px; }
+    .bl-req { color: var(--qm-danger); }
+    .bl-seg { display: flex; flex-wrap: wrap; gap: var(--q-row-gap); }
+    .bl-note { margin: 4px 0 0; color: var(--qm-text-muted); font-size: var(--qm-text-xs); }
+    .bl-field-error { margin: 2px 0 var(--qm-field-gap); color: var(--qm-danger); font-size: var(--qm-text-xs); }
+    .bl-confirm, .bl-error {
+        display: flex; align-items: flex-start; gap: 8px;
+        padding: 10px 12px; border-radius: var(--qm-radius-md); border: 1px solid var(--qm-border);
+    }
+    .bl-confirm { background: var(--qm-bg-card); }
+    .bl-error { margin-top: var(--qm-field-gap); color: var(--qm-danger); border-color: var(--qm-danger); }
+</style>
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
+    [Parameter] public Guid BranchId { get; set; }
+
+    /// <summary>The selected students. The host passes only what the reader can see ticked.</summary>
+    [Parameter] public IReadOnlyList<StudentDto> Students { get; set; } = Array.Empty<StudentDto>();
+
+    /// <summary>Raised after the server wrote the records; the dialog closes itself.</summary>
+    [Parameter] public EventCallback<BulkWelfareRecordResultDto> OnLogged { get; set; }
+
+    /// <summary>The server's own threshold (WelfareController.LateEntryThresholdDays).</summary>
+    private const int LateEntryDays = 14;
+
+    private List<WelfareCategoryDto> categories = new();
+    private Guid loadedFor;
+    private bool wasVisible;
+
+    private WelfareCaseType caseType = WelfareCaseType.Achievement;
+    private Guid categoryId;
+    private DateTime? occurredOn = DateTime.Today;
+    private string? description;
+    private bool oneIncident;
+    private bool lateAcknowledged;
+
+    private bool categoryError, descriptionError, dateError, lateError;
+    private bool confirming, saving;
+    private string? serverError;
+
+    private string HeaderTitle => $"Log a record for {Students.Count} student{(Students.Count == 1 ? "" : "s")}";
+
+    private string NamesPreview
+    {
+        get
+        {
+            const int shown = 3;
+            var names = Students.Take(shown).Select(s => s.FullName).ToList();
+            var more = Students.Count - names.Count;
+            return string.Join(", ", names) + (more > 0 ? $" + {more} more" : "");
+        }
+    }
+
+    private bool IsLateEntry => occurredOn is { } d && d.Date < DateTime.Today.AddDays(-LateEntryDays);
+
+    private string CaseLabel => caseType == WelfareCaseType.Behavior ? "Behaviour" : "Achievement";
+
+    private string ConfirmSentence
+    {
+        get
+        {
+            var date = QDateFormat.D(occurredOn ?? DateTime.Today);
+            var what = oneIncident && caseType == WelfareCaseType.Behavior
+                ? $"Write ONE Behaviour record involving all {Students.Count} students, dated {date}?"
+                : $"Write {Students.Count} {CaseLabel} record{(Students.Count == 1 ? "" : "s")} dated {date}?";
+            return what + " Records cannot be deleted; a mistake is annulled one by one.";
+        }
+    }
+
+    private string ConfirmButtonText => oneIncident && caseType == WelfareCaseType.Behavior
+        ? "Write 1 record"
+        : $"Write {Students.Count} record{(Students.Count == 1 ? "" : "s")}";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // A fresh form every time the dialog opens: yesterday's half-typed merit must not be sent to today's group.
+        if (Visible && !wasVisible) Reset();
+        wasVisible = Visible;
+
+        if (!Visible || BranchId == Guid.Empty || loadedFor == BranchId) return;
+        loadedFor = BranchId;
+        categories.Clear();
+
+        // The SAME call the roster's single quick-log makes, so the two forms offer the same categories.
+        try
+        {
+            var response = await Http.GetAsync($"api/v1/branches/{BranchId}/welfare/categories");
+            if (response.IsSuccessStatusCode)
+                categories = await response.Content.ReadFromJsonAsync<List<WelfareCategoryDto>>(JsonOptions) ?? new();
+            else
+            {
+                loadedFor = Guid.Empty;
+                serverError = await ApiErrorService.GetErrorMessageAsync(response, "The category list could not be loaded.");
+            }
+        }
+        catch (Exception ex)
+        {
+            loadedFor = Guid.Empty;
+            serverError = "The category list could not be loaded: " + ex.Message;
+        }
+    }
+
+    private void Reset()
+    {
+        caseType = WelfareCaseType.Achievement;
+        categoryId = Guid.Empty;
+        occurredOn = DateTime.Today;
+        description = null;
+        oneIncident = false;
+        lateAcknowledged = false;
+        categoryError = descriptionError = dateError = lateError = false;
+        confirming = saving = false;
+        serverError = null;
+    }
+
+    private void SelectCaseType(WelfareCaseType type)
+    {
+        if (caseType == type) return;
+        caseType = type;
+        categoryId = Guid.Empty;
+        if (type != WelfareCaseType.Behavior) oneIncident = false;
+    }
+
+    private void OnCategorySelected(Guid id)
+    {
+        categoryId = id;
+        categoryError = false;
+    }
+
+    private void OnDateChanged(DateTime? value)
+    {
+        occurredOn = value;
+        dateError = false;
+        lateAcknowledged = false;
+    }
+
+    /// <summary>The same client checks the single quick-log applies, then the confirmation.</summary>
+    private void Review()
+    {
+        serverError = null;
+        var text = (description ?? "").Trim();
+        categoryError = categoryId == Guid.Empty;
+        descriptionError = text.Length < 10 || text.Length > 2000;
+        dateError = occurredOn is null || occurredOn.Value.Date > DateTime.Today;
+        lateError = IsLateEntry && !lateAcknowledged;
+
+        if (Students.Count > WelfareBulkLimits.MaxStudents)
+        {
+            serverError = WelfareBulkLimits.CapMessage;
+            return;
+        }
+        if (categoryError || descriptionError || dateError || lateError) return;
+        confirming = true;
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (saving) return;
+        saving = true;
+        serverError = null;
+        try
+        {
+            var category = categories.FirstOrDefault(c => c.Id == categoryId);
+            var day = occurredOn!.Value.Date;
+            // Today keeps the time it was logged; an earlier day is recorded at midday, so no time zone moves it a day.
+            var occurredAt = day == DateTime.Today ? DateTime.Now : day.AddHours(12);
+
+            var request = new BulkWelfareRecordRequest
+            {
+                StudentIds = Students.Select(s => s.Id).Distinct().ToList(),
+                OneIncident = oneIncident && caseType == WelfareCaseType.Behavior,
+                Record = new CreateWelfareRecordRequest
+                {
+                    CategoryId = categoryId,
+                    CaseType = caseType,
+                    Tier = category?.DefaultTier ?? WelfareTier.Low,
+                    Points = category?.DefaultPoints,
+                    Description = (description ?? "").Trim(),
+                    OccurredAt = occurredAt
+                }
+            };
+
+            var result = await StudentApi.BulkCreateWelfareRecordsAsync(BranchId, request, acknowledgeLateEntry: IsLateEntry && lateAcknowledged);
+            await OnLogged.InvokeAsync(result);
+            await CloseAsync();
+        }
+        catch (Exception ex)
+        {
+            // The server's own words — a scope refusal, the cap, a late entry. Nothing was written.
+            serverError = ex.Message;
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private async Task OnVisibleChanged(bool value)
+    {
+        if (saving && !value) return; // a press half-way through a save must not hide its answer
+        await VisibleChanged.InvokeAsync(value);
+    }
+
+    private Task CloseAsync() => OnVisibleChanged(false);
+}

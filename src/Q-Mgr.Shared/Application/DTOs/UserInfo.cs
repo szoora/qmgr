@@ -6,6 +6,14 @@ public record UserInfo
     public string Username { get; init; } = string.Empty;
     public string Email { get; init; } = string.Empty;
     public string? FullName { get; init; }
+
+    /// <summary>
+    /// What a list of people is sorted on — the name in the organisation's chosen SORT order, which
+    /// may differ from how it is shown (PeopleNameSettingsDto.SortOrder). Built on the server by
+    /// PersonNames.SortKey; a list sorts on this and falls back to the full name when it is absent.
+    /// </summary>
+    public string? SortName { get; init; }
+
     public Guid RoleId { get; init; }
     public string RoleCode { get; init; } = string.Empty;
     public string RoleName { get; init; } = string.Empty;

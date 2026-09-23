@@ -63,9 +63,17 @@
             <div class="filter-item">
                 <label>Company<input type="text" @bind="filterCompany" placeholder="Any company" /></label>
             </div>
+            @if (gates.Count > 0)
+            {
+                <div class="filter-item" data-gate-filter>
+                    <QSelect TValue="string" TItem="VocabularyItemDto" @bind-Value="filterGate" Items="@gates"
+                             ValueSelector="@(g => g.Name)" TextSelector="@(g => g.IsActive ? g.Name : $"{g.Name} (retired)")"
+                             Label="Gate" Placeholder="All gates" AllowClear="true" />
+                </div>
+            }
             <div class="filter-item filter-checks">
-                <label class="inline-check"><input type="checkbox" @bind="filterWatchlistOnly" /> Watchlisted only</label>
-                <label class="inline-check"><input type="checkbox" @bind="filterRosterOnly" /> Visiting-day only</label>
+                <QCheckbox @bind-Value="filterWatchlistOnly" Label="Watchlisted only" />
+                <QCheckbox @bind-Value="filterRosterOnly" Label="Visiting-day only" />
             </div>
         </div>
 
@@ -75,9 +83,7 @@
             <div class="filter-actions">
                 @if (branchCount > 1)
                 {
-                    <label class="inline-check" title="Aggregate every branch in the organization">
-                        <input type="checkbox" checked="@orgWide" @onchange="OnScopeChanged" /> All branches
-                    </label>
+                    <QCheckbox Value="@orgWide" ValueChanged="@OnScopeChanged" Label="All branches" title="Aggregate every branch in the organization" />
                 }
                 <QButton Text="Apply" Icon="funnel-fill" Variant="primary" OnClick="@ReloadActiveTab" />
                 <QButton Text="Clear" Icon="x-lg" Variant="ghost" OnClick="@ClearFilters" />
@@ -126,6 +132,17 @@
         }
     }
 </div>
+
+<QModal @bind-Visible="showCheckOutModal" Title="Check Out Visitor" Size="sm">
+    <ChildContent>
+        <p>Check out <strong>@rowPendingCheckOut?.FullName</strong>.</p>
+        <VisitorGatePicker BranchId="@branchId" Gates="@gates" @bind-Value="checkOutGate" Leaving="true" ShowError="@checkOutGateError" />
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showCheckOutModal = false)" />
+        <QButton Text="Check Out" Icon="box-arrow-right" Variant="primary" OnClick="@SubmitCheckOut" />
+    </FooterContent>
+</QModal>
 
 @* ============================================================================================
    OVERVIEW
@@ -230,6 +247,63 @@
                 }
             </QCard>
         </div>
+
+        @* Visitors by gate (plan §10): who came in and left by each gate, who is still inside by the gate they came in,
+           and when each gate is busy — the staffing question before the next visiting day. Only hours with an arrival
+           get a column, so a gate that is quiet all afternoon does not print eighteen zeroes. *@
+        @if (report.Gates.Any())
+        {
+            var busyHours = Enumerable.Range(0, 24).Where(h => report.Gates.Any(g => g.ArrivalsByHour.Length > h && g.ArrivalsByHour[h] > 0)).ToList();
+            <QCard Title="Visitors by gate" Class="report-block" data-report-gates>
+                <table class="report-table">
+                    <thead>
+                        <tr><th>Gate</th><th class="num">In</th><th class="num">Out</th><th class="num">On site now</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var g in report.Gates)
+                        {
+                            <tr data-gate-row="@g.Gate">
+                                <td>@g.Gate</td>
+                                <td class="num">@g.Entries</td>
+                                <td class="num">@g.Exits</td>
+                                <td class="num">@g.OnSiteNow</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                @if (busyHours.Any())
+                {
+                    <h3 class="gate-hours-title">Arrivals by hour, per gate</h3>
+                    <div class="gate-hours-scroll">
+                        <table class="report-table" data-report-gate-hours>
+                            <thead>
+                                <tr>
+                                    <th>Gate</th>
+                                    @foreach (var h in busyHours)
+                                    {
+                                        <th class="num">@h.ToString("00"):00</th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var g in report.Gates)
+                                {
+                                    <tr>
+                                        <td>@g.Gate</td>
+                                        @foreach (var h in busyHours)
+                                        {
+                                            var n = g.ArrivalsByHour.Length > h ? g.ArrivalsByHour[h] : 0;
+                                            <td class="num">@(n == 0 ? "·" : n.ToString())</td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <p class="heat-legend muted">Times in @report.TimeZoneId</p>
+                }
+            </QCard>
+        }
 
         <div class="report-columns">
             <QCard Title="Most-visited hosts" Class="report-block">
@@ -580,7 +654,6 @@
         background: var(--qm-bg-card); color: var(--qm-text-primary); font-size: var(--qm-text-base); min-width: 130px;
     }
     .filter-checks { display: flex; flex-direction: column; gap: 4px; }
-    .inline-check { display: inline-flex; align-items: center; gap: 6px; font-size: var(--qm-text-base); color: var(--qm-text-primary); }
     .filter-actions { display: flex; align-items: center; flex-wrap: wrap; }
 
     .filter-item--range { flex: 1 1 100%; min-width: 0; }
@@ -630,6 +703,8 @@
     .heat-cell { flex: 1; min-width: 12px; height: 15px; border-radius: var(--qm-radius-sm); background: var(--qm-bg-secondary); }
     .heat-cell.on { background: var(--qm-primary); }
     .heat-legend { margin-top: 8px; }
+    .gate-hours-title { margin: 14px 0 6px; font-size: var(--qm-text-base); color: var(--qm-text-primary); }
+    .gate-hours-scroll { overflow-x: auto; }
 
     .all-clear { display: flex; gap: 12px; align-items: flex-start; padding: 6px 0; }
     .all-clear .q-icon { color: var(--qm-success); font-size: var(--qm-text-stat); }
@@ -719,6 +794,14 @@
     private bool filterWatchlistOnly;
     private bool filterRosterOnly;
 
+    // Gates (plan §10): the branch's list for the filter and the check-out picker.
+    private List<VocabularyItemDto> gates = new();
+    private string? filterGate;
+    private bool showCheckOutModal;
+    private VisitorExceptionDto? rowPendingCheckOut;
+    private string? checkOutGate;
+    private bool checkOutGateError;
+
     protected override async Task OnInitializedAsync()
     {
         if (!await PermissionService.HasPermissionAsync(Permissions.VisitorsView))
@@ -732,6 +815,7 @@
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
         branchCount = BranchState.BranchCount;
+        gates = await VisitorApi.GetGatesAsync(branchId);
 
         var user = await AuthService.GetCurrentUserAsync();
         if (user != null) organizationId = user.OrganizationId;
@@ -748,7 +832,8 @@
         HostName = string.IsNullOrWhiteSpace(filterHost) ? null : filterHost,
         Company = string.IsNullOrWhiteSpace(filterCompany) ? null : filterCompany,
         WatchlistOnly = filterWatchlistOnly,
-        RosterOnly = filterRosterOnly
+        RosterOnly = filterRosterOnly,
+        Gate = string.IsNullOrWhiteSpace(filterGate) ? null : filterGate
     };
 
     private string FilterSummary() => CurrentFilter().Describe();
@@ -793,9 +878,9 @@
         await ReloadActiveTab();
     }
 
-    private async Task OnScopeChanged(ChangeEventArgs e)
+    private async Task OnScopeChanged(bool on)
     {
-        orgWide = (bool)(e.Value ?? false);
+        orgWide = on;
 
         // Exceptions and compliance are branch-scoped: an overstay threshold and a consent
         // requirement are both branch settings, so aggregating them across branches would apply
@@ -818,6 +903,7 @@
         filterCompany = "";
         filterWatchlistOnly = false;
         filterRosterOnly = false;
+        filterGate = null;
         _ = ReloadActiveTab();
     }
 
@@ -860,13 +946,48 @@
         StateHasChanged();
     }
 
+    /// <summary>
+    /// Closing out a stale visit from the report. Where the branch has a choice of gate the check-out asks which one
+    /// (plan §10) — the same small dialog as the desk, set to this device's gate.
+    /// </summary>
     private async Task CheckOutFromException(VisitorExceptionDto row)
     {
-        var result = await VisitorApi.CheckOutAsync(branchId, row.VisitorId);
-        if (result == null)
+        if (VisitorGateRule.Active(gates).Count >= 2)
+        {
+            rowPendingCheckOut = row;
+            checkOutGate = null;
+            checkOutGateError = false;
+            showCheckOutModal = true;
+            return;
+        }
+        await CompleteCheckOutAsync(row, VisitorGateRule.Resolve(gates, null, leaving: true).Gate);
+    }
+
+    private async Task SubmitCheckOut()
+    {
+        if (rowPendingCheckOut == null) return;
+        if (VisitorGateRule.Problem(gates, checkOutGate, leaving: true) is { } gateProblem)
+        {
+            checkOutGateError = true;
+            NotificationService.Notify(ToastSeverity.Error, "Couldn't check out", gateProblem);
+            return;
+        }
+        showCheckOutModal = false;
+        var row = rowPendingCheckOut;
+        rowPendingCheckOut = null;
+        await CompleteCheckOutAsync(row, checkOutGate);
+    }
+
+    private async Task CompleteCheckOutAsync(VisitorExceptionDto row, string? gate)
+    {
+        try
+        {
+            await VisitorApi.CheckOutAsync(branchId, row.VisitorId, gate);
+        }
+        catch (InvalidOperationException ex)
         {
             NotificationService.Notify(ToastSeverity.Error, "Couldn't check out",
-                $"{row.FullName} is still recorded as on site. Nothing was changed.");
+                $"{row.FullName} is still recorded as on site. {ex.Message}");
             return;
         }
 
@@ -924,6 +1045,8 @@
     {
         this.branchId = branchId;
         branchCount = BranchState.BranchCount;
+        gates = await VisitorApi.GetGatesAsync(branchId);
+        filterGate = null;
         await ReloadActiveTab();
     }
 }

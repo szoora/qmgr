@@ -1,4 +1,5 @@
-// The Staff hub: one page, four tabs, one route.
+// The Staff hub: one page, six tabs, one route (Class teachers and Subject teachers folded in 2026-09-22).
+// Only the HUB's strip is counted: the first .q-tabs.
 //
 // Departments & Structure used to be its own sidebar entry AND its own route, with a Staff tab that
 // listed the same people the directory already listed. Two links and two lists for one thing. This
@@ -21,12 +22,12 @@ const check = (name, ok, detail = '') => {
 const t = await openTab();
 await t.viewport(1500, 900);
 await login(t, 'e2e.admin.ct@qmgr.local', 'E2eTeacher!2026');
-post('\n== Staff hub: one page, four tabs, one route ==');
+post('\n== Staff hub: one page, six tabs, one route ==');
 
-const tabNames = () => t.eval(`JSON.stringify([...document.querySelectorAll('.q-tabs button, .q-tabs [role=tab]')].map(b => b.innerText.trim()))`);
+const tabNames = () => t.eval(`JSON.stringify([...(document.querySelector('.q-tabs')?.querySelectorAll('button, [role=tab]') ?? [])].map(b => b.innerText.trim()))`);
 const errBar = () => t.eval(`(() => { const e=document.querySelector('#blazor-error-ui'); return (e?getComputedStyle(e).display!=='none':false) || document.body.innerText.includes('An unhandled error has occurred'); })()`);
 const clickTab = (label) => t.eval(`(() => {
-  const b = [...document.querySelectorAll('.q-tabs button, .q-tabs [role=tab]')].find(x => x.innerText.trim().toLowerCase() === ${JSON.stringify(label)}.toLowerCase());
+  const b = [...(document.querySelector('.q-tabs')?.querySelectorAll('button, [role=tab]') ?? [])].find(x => x.innerText.trim().toLowerCase() === ${JSON.stringify(label)}.toLowerCase());
   if (!b) return false; b.click(); return true;
 })()`);
 
@@ -35,7 +36,7 @@ await t.waitFor(`!!document.querySelector('.qm-main')`, 20000);
 await t.sleep(2500);
 
 const tabs = JSON.parse(await tabNames());
-check('the hub shows four tabs', tabs.length === 4, JSON.stringify(tabs));
+check('the hub shows six tabs', tabs.length === 6, JSON.stringify(tabs));
 for (const want of ['People', 'Departments', 'Coverage', 'Import']) {
   check(`tab "${want}" is present`, tabs.some(x => x.toLowerCase() === want.toLowerCase()), JSON.stringify(tabs));
 }

@@ -22,11 +22,11 @@
 <div class="admin-page">
 <QPageActions Embedded="@Embedded">
     <Title>
-        <h1>Subjects<QInfo Text="The subjects your school teaches. Subject teachers are assigned to classes on the Class Teachers page; the timetable and teaching-load reports read their names from here." Label="Subjects" /></h1>
+        <h1>Subjects</h1>
         <p class="subtitle">The subjects your school teaches. Subject teachers are assigned to classes on the Class Teachers page; the timetable and teaching-load reports read their names from here.</p>
     </Title>
     <Actions>
-        <QButton Text="Class Teachers" Icon="person-video3" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/students/class-teachers"))" />
+        <QButton Text="Class Teachers" Icon="person-video3" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/staff?tab=class-teachers"))" />
         <QButton Text="New subject" Icon="plus-lg" Variant="primary" OnClick="@(() => Open(null))" />
     </Actions>
 </QPageActions>
@@ -77,7 +77,8 @@
                         }
                     </tbody>
                 </table>
-                <QPager Count="@(Visible.Count)" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="subjects" />
+                <QPager Count="@(Visible.Count)" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="subjects"
+                    PageSizeChanged="@(n => { PageSize = n; pageIndex = 0; })" ItemLabel="subjects" />
             </div>
         </QCard>
         <p class="sj-note">A subject still taught in any class cannot be retired: end its assignments on the Class Teachers page first, or the timetable would keep placing a subject nobody can pick.</p>
@@ -148,10 +149,10 @@
     // ---- Paging (list-page sweep, plan Phase 2) --------------------------------------------
     // Every row here is a component subtree Blazor Server diffs and ships down the circuit, so
     // the page renders a page of them rather than the whole list.
-    private const int PageSize = 25;
+    private int PageSize = QPagerDefaults.Size;
     private int pageIndex;
-    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (Visible.Count - 1) / PageSize));
-    private IEnumerable<SubjectDto> Paged => Visible.Skip(SafePageIndex * PageSize).Take(PageSize);
+    private int SafePageIndex => QPaging.SafeIndex(pageIndex, Visible.Count, PageSize);
+    private IEnumerable<SubjectDto> Paged => QPaging.Page(Visible, SafePageIndex, PageSize);
 
     protected override async Task OnInitializedAsync()
     {

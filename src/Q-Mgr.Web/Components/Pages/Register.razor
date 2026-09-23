@@ -1,4 +1,6 @@
 @page "/register"
+@using QMgr.Domain.Identity
+@using System.Net.Http.Json
 @layout PublicLayout
 @rendermode @(new InteractiveServerRenderMode(prerender: false))
 @using System.Text.Json
@@ -10,23 +12,19 @@
 @inject NavigationManager Navigation
 @inject ILogger<Register> Logger
 @inject IAuthService AuthService
+@inject IPasswordRulesService PasswordRules
 
 <QPageTitle Text="Register Your Organization" />
 
-<div class="login-container">
+<div class="login-container" style="@Host.BrandingStyle">
     <AmbientBackground />
     <div class="login-card wide @(isSubmitting ? "loading" : "")">
         <div class="login-header">
-            <div class="logo-wrapper">
-                <div class="logo-circle">
-                    <QIcon Name="people-fill" Size="32" />
-                </div>
-            </div>
             @* ONE LINE under the heading, and the other door as a button below the form — the same
                shape on every auth page (Login, Register, Join). The paragraph that used to sit here
                said in four lines what the "Join Using Link" button says in three words. *@
-            <h1>Register your organisation</h1>
-            <p>@trialDays-day free trial</p>
+            <QBrandMark Heading="Register your organisation" FallbackIcon="people-fill"
+                        Tagline="@($"{trialDays}-day free trial")" />
         </div>
 
         @if (!string.IsNullOrEmpty(errorMessage))
@@ -342,7 +340,7 @@
                             <h4>Admin Account</h4>
                             <div class="summary-row">
                                 <span class="summary-label">Name:</span>
-                                <span class="summary-value">@formData.FirstName @formData.LastName</span>
+                                <span class="summary-value">@PersonName.Join(formData.FirstName, formData.LastName)</span>
                             </div>
                             <div class="summary-row">
                                 <span class="summary-label">Email:</span>
@@ -351,11 +349,8 @@
                         </div>
 
                         <div class="form-group terms-group">
-                            <label class="checkbox-wrapper">
-                                <input type="checkbox" @bind="formData.AcceptTerms" />
-                                <span class="checkbox-label">I agree to the <a href="/terms" target="_blank">Terms of Service</a>
-                                      and <a href="/privacy" target="_blank">Privacy Policy</a></span>
-                            </label>
+                            <QCheckbox @bind-Value="formData.AcceptTerms" Class="q-checkbox-row--top">I agree to the <a href="/terms" target="_blank">Terms of Service</a>
+                                      and <a href="/privacy" target="_blank">Privacy Policy</a></QCheckbox>
                         </div>
 
                         <div class="form-actions">
@@ -394,7 +389,8 @@
                 <span>•</span>
                 <a href="/support">Support</a>
             </div>
-            <PoweredBy />
+            @* The copyright, not the attribution line — see Login.razor. QCopyright reads the host itself. *@
+            <QCopyright Class="login-copyright" />
         </div>
     </div>
 </div>
@@ -652,12 +648,6 @@
         background: var(--qm-primary-light, rgba(122, 40, 71, 0.06));
     }
 
-    .module-card input[type="checkbox"] {
-        margin-top: 3px;
-        accent-color: var(--qm-primary);
-        flex-shrink: 0;
-    }
-
     .module-card-body {
         display: flex;
         flex-direction: column;
@@ -782,6 +772,24 @@
 </style>
 
 @code {
+    /// <summary>
+    /// What the SERVER will judge a password by, fetched rather than retyped. Three pages used to
+    /// hardcode three different minimums (12, 8 and 6) while the server enforced a fourth, so a
+    /// form could promise what the API then refused. The defaults on the record only stand for the
+    /// moment before the fetch lands.
+    /// </summary>
+    // The rules come from IPasswordRulesService — the ONE home. The copy that was here was
+    // byte-identical to the one in Profile and the one in SetPassword, and all three began life as
+    // a default record claiming twelve characters whether or not the fetch had landed.
+    private async Task LoadPasswordRulesAsync() => await PasswordRules.LoadAsync();
+
+    /// <summary>
+    /// Which host the browser arrived on, cascaded by App.razor. On a public page the branding comes
+    /// from the HOST and never from a session — there is nobody signed in to ask.
+    /// </summary>
+    [CascadingParameter] public QMgr.Web.Services.TenantHostContext Host { get; set; }
+        = QMgr.Web.Services.TenantHostContext.Platform;
+
     private RegisterFormData formData = new();
     private int currentStep = 1;
 
@@ -848,6 +856,7 @@
 
     protected override async Task OnInitializedAsync()
     {
+        await LoadPasswordRulesAsync();
         // A signed-in user has no business on the sign-up form (and a second org can't be
         // created from inside an existing session) — send them to the app, same as Login does.
         try
@@ -925,7 +934,7 @@
                !string.IsNullOrWhiteSpace(formData.LastName) &&
                !string.IsNullOrWhiteSpace(formData.Email) &&
                !string.IsNullOrWhiteSpace(formData.Password) &&
-               formData.Password.Length >= 8 &&
+               PasswordRules.MeetsLength(formData.Password) &&
                formData.Password == formData.ConfirmPassword;
     }
 

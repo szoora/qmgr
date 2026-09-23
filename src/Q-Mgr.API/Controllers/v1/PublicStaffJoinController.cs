@@ -356,8 +356,8 @@ public class PublicStaffJoinController : ControllerBase
             var approvers = await StaffLookups.UsersWithPermissionAsync(_db, orgId, Permissions.UsersApprove);
             var since = DateTime.UtcNow.AddHours(-12);
             var recentlyTold = await _db.Notifications.IgnoreQueryFilters().AsNoTracking()
-                .Where(n => n.OrganizationId == orgId && n.EventKey == NotificationEventKeys.StaffJoinRequests && n.CreatedAt >= since && n.UserId != null)
-                .Select(n => n.UserId!.Value).Distinct().ToListAsync();
+                .Where(n => n.OrganizationId == orgId && n.EventKey == NotificationEventKeys.StaffJoinRequests && n.CreatedAt >= since)
+                .Select(n => n.UserId).Distinct().ToListAsync();
 
             foreach (var approver in approvers.Except(recentlyTold))
             {

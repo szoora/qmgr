@@ -1,3 +1,4 @@
+using QMgr.API.Application.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -242,7 +243,7 @@ public class ReportsController : ControllerBase
                 c.CounterNumber,
                 c.DisplayName,
                 c.Status,
-                AssignedStaff = c.AssignedUser != null ? (c.AssignedUser.FirstName + " " + c.AssignedUser.LastName) : null,
+                AssignedStaff = c.AssignedUser != null ? PersonNames.Display(c.AssignedUser.OrganizationId, c.AssignedUser.FirstName, c.AssignedUser.LastName) : null,
                 ServiceTypes = c.CounterServiceTypes.Select(cst => cst.ServiceType!.Code).ToList()
             })
             .ToListAsync();
@@ -579,7 +580,7 @@ public class ReportsController : ControllerBase
                 c.CounterNumber,
                 c.DisplayName,
                 c.Status,
-                AssignedStaff = c.AssignedUser != null ? (c.AssignedUser.FirstName + " " + c.AssignedUser.LastName) : null,
+                AssignedStaff = c.AssignedUser != null ? PersonNames.Display(c.AssignedUser.OrganizationId, c.AssignedUser.FirstName, c.AssignedUser.LastName) : null,
                 ServiceTypes = c.CounterServiceTypes.Select(cst => cst.ServiceType!.Code).ToList()
             })
             .ToListAsync();

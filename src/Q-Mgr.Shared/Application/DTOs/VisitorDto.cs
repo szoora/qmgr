@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using QMgr.Domain.Enums;
 
 namespace QMgr.Application.DTOs;
@@ -38,6 +39,15 @@ public record VisitorDto
     public DateTime? CheckedInAt { get; init; }
     public DateTime? CheckedOutAt { get; init; }
     public DateTime CreatedAt { get; init; }
+
+    // Gates and who (plan TERM_PROGRAMME_CALENDAR_AND_GATES §10, 2026-09-23). The gate is the name it had that day;
+    // null on a visit recorded before gates existed means "not recorded", which is honest history.
+    public string? EntryGate { get; init; }
+    public string? ExitGate { get; init; }
+    public Guid? CheckedInByUserId { get; init; }
+    public string? CheckedInByName { get; init; }
+    public Guid? CheckedOutByUserId { get; init; }
+    public string? CheckedOutByName { get; init; }
 
     public string? Notes { get; init; }
 
@@ -148,6 +158,41 @@ public record CheckInVisitorRequest
     // action. It used to be two client calls (flag, then check in) — which cannot work now that a
     // watchlisted profile is blocked from checking in, since the first call would bar the second.
     public string? CardFlagReason { get; set; }
+
+    /// <summary>
+    /// The gate the visitor came in by (plan §10). Required when the branch has two or more active gates, filled in
+    /// when it has one, ignored when it has none. Must be one of the branch's ACTIVE gates, matched by name.
+    /// </summary>
+    [MaxLength(100)]
+    public string? Gate { get; set; }
+}
+
+/// <summary>Check-out, which now says by which gate and — from the caller — who saw the visitor out (plan §10, D12).</summary>
+public record CheckOutVisitorRequest
+{
+    [MaxLength(100)]
+    public string? Gate { get; set; }
+}
+
+/// <summary>
+/// The branch's gates, saved through their one writer. Renames are explicit (old → new), the vocabulary editor's
+/// rule: a diff cannot tell a rename from a delete plus an add. A rename changes future visits only.
+/// </summary>
+public record UpdateVisitorGatesRequest
+{
+    public List<VocabularyItemDto> Gates { get; set; } = new();
+    public Dictionary<string, string> Renames { get; set; } = new();
+}
+
+/// <summary>Visitors by gate, for the report and the visiting-day staffing question (plan §10).</summary>
+public record VisitorGateCountDto
+{
+    public string Gate { get; init; } = string.Empty;
+    public int Entries { get; init; }
+    public int Exits { get; init; }
+    public int OnSiteNow { get; init; }
+    /// <summary>Arrivals by local hour 0–23.</summary>
+    public int[] ArrivalsByHour { get; init; } = new int[24];
 }
 
 // Stored inside Branch.Settings under the "VisitingDay" key, alongside VisitorConsent and
@@ -238,6 +283,8 @@ public record EvacuationPersonDto
     public DateTime? CheckedInAt { get; init; }
     public VisitorType VisitorType { get; init; }
     public string? StudentName { get; init; }
+    /// <summary>The gate they came in by — the roll call is grouped on it (plan §10). Null: not recorded.</summary>
+    public string? EntryGate { get; init; }
 }
 
 // A group pass admits a crew under ONE badge and only tracks a headcount — individual members
@@ -373,6 +420,9 @@ public record VisitorScanRequest
 {
     public string Token { get; init; } = string.Empty;
     public string? Direction { get; init; } // "in" | "out" — required only for a pass token
+    /// <summary>The scanner's gate (plan §10). A visit badge scan is a check-out, so this is its exit gate.</summary>
+    [MaxLength(100)]
+    public string? Gate { get; init; }
 }
 
 public enum VisitorScanAction { CheckedIn, CheckedOut }

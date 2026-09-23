@@ -1,3 +1,4 @@
+using QMgr.API.Application.Services;
 using System.Globalization;
 using System.Text.Json;
 using Hangfire;
@@ -377,7 +378,16 @@ public class BatchController : ControllerBase
                 // Undoing a check-out puts the visitor back on site; the check-in time was never
                 // touched, so clearing the departure is the whole reversal.
                 var v = await _context.Visitors.FirstAsync(x => x.Id == id, ct);
+                // If the same person has since checked in again, this old visit stays closed: one visit per person may
+                // be on site (a partial unique index), and the newer visit is the true one.
+                var backOnSite = await _context.Visitors.AnyAsync(x => x.VisitorProfileId == v.VisitorProfileId && x.Id != v.Id
+                    && x.Status == VisitorStatus.CheckedIn && x.DeletedAt == null, ct);
+                if (backOnSite) break;
                 v.CheckedOutAt = null;
+                // The status goes back with the time (the forward path now sets both — 2026-09-23).
+                v.Status = VisitorStatus.CheckedIn;
+                v.CheckedOutByUserId = null;
+                v.ExitGate = null;
                 v.UpdatedAt = DateTime.UtcNow; break;
             }
         }
@@ -474,17 +484,20 @@ public class BatchController : ControllerBase
         _ => Permissions.SettingsView
     };
 
-    /// <summary>The same inline check StudentsController does — one query against the caller's role.</summary>
+    /// <summary>
+    /// Role AND posts, through <see cref="PostPermissionService.EffectiveCodesAsync"/> — the one home for that
+    /// union. It read the role alone until 2026-09-22, which made a derived permission behave differently here
+    /// from the attribute on the same endpoint.
+    /// </summary>
     private async Task<bool> HasPermissionAsync(string permissionCode)
     {
         var userId = CurrentUserId();
         if (!userId.HasValue) return false;
-
-        return await _context.Users
-            .Where(u => u.Id == userId.Value && u.IsActive)
-            .SelectMany(u => u.Role!.RolePermissions)
-            .AnyAsync(rp => rp.Permission!.Code == permissionCode);
+        _effectiveCodes ??= await PostPermissionService.EffectiveCodesAsync(_context, userId.Value);
+        return _effectiveCodes.Contains(permissionCode);
     }
+
+    private HashSet<string>? _effectiveCodes;
 
     private Guid? CurrentUserId()
     {

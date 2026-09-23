@@ -32,7 +32,7 @@
 <div class="admin-page">
     <QPageActions Embedded="@Embedded">
         <Title>
-            <h1>Staff Onboarding<QInfo Text="Getting staff signed in: who still has to, a new temporary password or invitation for anyone stuck, and the join link for people to ask for an account themselves." Label="Staff Onboarding" /></h1>
+            <h1>Staff Onboarding</h1>
             <p class="subtitle">Getting staff signed in: who still has to, a new temporary password or invitation for anyone stuck, and the join link for people to ask for an account themselves.</p>
         </Title>
         <Actions>
@@ -59,28 +59,69 @@
             }
             else
             {
-                <QStatRow>
-                    <QStatTile Value="@status.NotSignedIn.Count.ToString()" Label="Not signed in yet" Variant="info" />
-                    <QStatTile Value="@status.TemporaryPasswordExpired.Count.ToString()" Label="Temporary password expired" Variant="@(status.TemporaryPasswordExpired.Count > 0 ? "warning" : "secondary")" />
-                    <QStatTile Value="@(status.AcceptableUseNoticeId == null ? "—" : status.NotAcknowledged.Count.ToString())" Label="Acceptable-use not acknowledged" Variant="secondary" />
-                </QStatRow>
+                @* ONE LIST, ONE BAR (2026-09-23). This tab carried three stat tiles repeating the
+                   three lists' counts, a hand-rolled bulk strip and three tables of raw browser
+                   checkboxes. The counts live on QBulkBar's chips now - the same bar Users & Roles
+                   uses - and the chip decides which list is on screen, so select-all can only ever
+                   reach the rows the reader is looking at. *@
+                <QBulkBar Filters="@StatusFilters" ActiveFilter="@statusFilter" ActiveFilterChanged="@OnStatusFilterChanged"
+                          SearchPlaceholder="Search name, username or email"
+                          Search="@search" SearchChanged="@OnSearchChanged"
+                          ShowSelection="@canReissue"
+                          VisibleCount="@VisibleRows.Count" SelectedCount="@selected.Count"
+                          AllSelected="@AllVisibleSelected" AllSelectedChanged="@ToggleSelectAllVisible"
+                          ClearSelection="@(() => selected.Clear())"
+                          IdleHint="Tick people to give them a new temporary password or invitation">
+                    <Actions>
+                        @* Slips and SMS open the dialog because both hand out a PASSWORD and the
+                           administrator now has a choice to make about it. An invitation carries no
+                           password - it is a link to a page where the person chooses their own - so
+                           the dialog would have nothing to ask and it still fires directly. *@
+                        <QButton Text="Print slips" Icon="printer" Variant="secondary" Size="sm" OnClick="@(() => OpenReissue(StaffImportDeliveryMode.Slips))" Loading="@working" Disabled="@working"
+                                 Title="New temporary passwords, on printable slips" />
+                        <QButton Text="By SMS" Icon="phone" Variant="secondary" Size="sm" OnClick="@(() => OpenReissue(StaffImportDeliveryMode.Sms))" Disabled="@working"
+                                 Title="New temporary passwords, texted" />
+                        <QButton Text="Invitation" Icon="envelope" Variant="secondary" Size="sm" OnClick="@(() => ReissueAsync(StaffImportDeliveryMode.Invitation, null))" Disabled="@working"
+                                 Title="A new invitation link by email" />
+                    </Actions>
+                </QBulkBar>
 
-                @if (canReissue && selected.Count > 0)
+                <p class="ob-sub ob-help">@FilterHelp</p>
+
+                @if (VisibleRows.Count == 0)
                 {
-                    <div class="ob-bulk" role="region" aria-label="Re-issue selected">
-                        <span>@selected.Count selected</span>
-                        <QButton Text="New temporary passwords (slips)" Icon="printer" Variant="primary" Size="sm" OnClick="@(() => ReissueAsync(StaffImportDeliveryMode.Slips))" Loading="@working" Disabled="@working" />
-                        <QButton Text="By SMS" Icon="phone" Variant="secondary" Size="sm" OnClick="@(() => ReissueAsync(StaffImportDeliveryMode.Sms))" Disabled="@working" />
-                        <QButton Text="New invitation" Icon="envelope" Variant="secondary" Size="sm" OnClick="@(() => ReissueAsync(StaffImportDeliveryMode.Invitation))" Disabled="@working" />
-                        <QButton Text="Clear" Variant="ghost" Size="sm" OnClick="@(() => selected.Clear())" />
-                    </div>
+                    <QEmptyState Icon="check-circle" Title="@(string.IsNullOrWhiteSpace(search) ? "Nobody" : "No one matches")"
+                                 Text="@(string.IsNullOrWhiteSpace(search) ? null : "Clear the search.")" />
                 }
-
-                @StatusTable("Temporary password expired", "They cannot sign in until you issue a new temporary password or invitation.", status.TemporaryPasswordExpired, showExpiry: true)
-                @StatusTable("Not signed in yet", "Accounts nobody has signed in to. A temporary password or invitation may still be on its way.", status.NotSignedIn, showExpiry: true)
-                @if (status.AcceptableUseNoticeId != null)
+                else
                 {
-                    @StatusTable("Has not acknowledged the acceptable-use notice", "Signed in, but has not confirmed they have read it. It is on their portal checklist.", status.NotAcknowledged, showExpiry: false)
+                    <div class="table-wrap">
+                        <table class="data-table q-stack">
+                            <thead>
+                                <tr>
+                                    @if (canReissue) { <th class="ob-tick"></th> }
+                                    <th>Name</th><th>Username</th><th>Role</th><th>Added</th>@if (ShowAccess) { <th>Access</th> }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @* All above QPaging.VirtualizeAbove rows renders through <Virtualize>, so choosing All on a large list
+                                   never ships every row down the circuit at once (plan STUDENT_ROSTER_AND_LIST_STANDARD §1, L3). *@
+                                @if (PageSize == QPager.All && VisibleRows.Count > QPaging.VirtualizeAbove)
+                                {
+                                    <Virtualize Items="@VisibleRows" Context="r" ItemSize="52" SpacerElement="tr">@OnboardingRow(r)</Virtualize>
+                                }
+                                else
+                                {
+                                    @foreach (var r in PagedRows)
+                                    {
+                                        @OnboardingRow(r)
+                                    }
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <QPager Count="@VisibleRows.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(p => pageIndex = p)" PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="staff-onboarding"
+                    PageSizeChanged="@(n => { PageSize = n; pageIndex = 0; })" SelectedCount="@selected.Count" ItemLabel="people" />
                 }
             }
         }
@@ -164,6 +205,44 @@
     }
 </div>
 
+@* THE CHOICE, PUT ONCE, IN WORDS (2026-09-22). A school with 133 staff who have no email address
+   reads these out down a phone line, and ten random characters is where that goes wrong. So an
+   administrator may type one password for the whole group — but the default is still one each, and
+   the cost of the other is stated rather than buried, because it is a real one. *@
+<QModal Visible="@showReissue" Title="Re-issue access" Icon="key" OnClose="@(() => showReissue = false)">
+    <ChildContent>
+        <p class="ob-lede">
+            @selected.Count @(selected.Count == 1 ? "person" : "people") selected.
+            @(reissueMode == StaffImportDeliveryMode.Sms
+                ? "Each one is texted their password. Anyone with no phone number is listed afterwards so you can print their slip instead."
+                : "You will get a printable slip for each person. The passwords cannot be shown again once you close it.")
+        </p>
+
+        @* OFF is the safe answer, so off is the default and the checkbox is the deliberate act.
+           A pair of radio buttons would put the two on an equal footing, and they are not. *@
+        <QCheckbox @bind-Value="@sharedPassword" Label="Use the same password for everyone"
+                   Hint="Easier to read out to a room or down a phone line — which is the whole reason this exists, for the staff who have no email address. Leave it off and each person gets their own ten characters, which is safer." />
+
+        @if (sharedPassword)
+        {
+            <QInput Label="The password everyone gets" @bind-Value="@sharedPasswordText" Required="true"
+                    Hint="It has to pass the same rules a person's own password does, so it cannot be a common word, this school's name, or anyone's username. If it is refused, the reason says which."
+                    Placeholder="Type it as you will read it out" />
+            <p class="ob-warn">
+                <QIcon Name="exclamation-triangle" Size="14" />
+                <span>Until each of them signs in and chooses their own, everyone in this group can sign in as everyone else. Hand it out as close as you can to when people will actually use it.</span>
+            </p>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showReissue = false)" Disabled="@working" />
+        <QButton Text="@(reissueMode == StaffImportDeliveryMode.Sms ? "Send by SMS" : "Make the slips")" Icon="key"
+                 Variant="primary" Loading="@working"
+                 Disabled="@(working || (sharedPassword && string.IsNullOrWhiteSpace(sharedPasswordText)))"
+                 OnClick="@(() => ReissueAsync(reissueMode, sharedPassword ? sharedPasswordText : null))" />
+    </FooterContent>
+</QModal>
+
 @if (slips.Count > 0 && showSlips)
 {
     <TemporaryPasswordSlips Slips="@slips" OrganizationName="@organizationName" SignInAddress="@($"{Navigation.BaseUri}login")" OnClose="@CloseSlips" />
@@ -191,7 +270,15 @@
 <style>
     .ob-lede { font-size: var(--qm-text-base); color: var(--qm-text-secondary); margin: 0 0 10px; }
     .ob-sub { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
-    .ob-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; padding: 10px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); }
+    /* A warning, not a hint: it changes what somebody DOES with the password, so it stays on the
+       page rather than folding into a QInfo. ONE span holding the whole sentence — a flex row puts
+       every text run in its own column, which is how these end up ragged. */
+    .ob-warn { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 0; font-size: var(--qm-text-sm); color: var(--qm-warning); }
+    .ob-help { margin: 0 0 8px; }
+    .ob-tick { width: 34px; }
+    .ob-row--picked td { background: rgba(var(--qm-primary-rgb), .06); }
+    .ob-person { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .ob-person-text { display: flex; flex-direction: column; min-width: 0; }
     .ob-actions { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; margin-top: 10px; }
     .ob-actions > * { min-width: 0; }
     .ob-link { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin: 12px 0; padding: 12px; border: 1px solid var(--qm-warning); border-radius: var(--qm-radius-md); }
@@ -200,7 +287,6 @@
     .ob-link-actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .ob-qr { background: #fff; padding: 8px; border-radius: var(--qm-radius-sm); }
     .ob-save { margin-top: 14px; display: flex; justify-content: flex-end; }
-    .ob-table-title { margin: 18px 0 2px; font-size: var(--qm-text-md); }
     .ob-board-sheet { text-align: center; padding-top: 20mm; }
     .ob-board-sheet h1 { font-size: 22pt; margin: 0 0 8px; }
     .ob-board-qr { display: flex; justify-content: center; margin: 14mm 0 8mm; }
@@ -227,6 +313,11 @@
 
     private string activeTab = "status";
     private bool moduleMissing, canApprove, canReissue, working, showSlips, showNoticeboard;
+
+    /// <summary>The re-issue dialog: which delivery it was opened for, and the password choice.</summary>
+    private bool showReissue, sharedPassword;
+    private StaffImportDeliveryMode reissueMode = StaffImportDeliveryMode.Slips;
+    private string sharedPasswordText = string.Empty;
     private int pendingJoinRequests;
     private Guid branchId;
     private string organizationName = string.Empty;
@@ -287,7 +378,11 @@
         {
             status = await Onboarding.GetStatusAsync(branchId == Guid.Empty ? null : branchId);
             pendingJoinRequests = status.PendingJoinRequests;
-            selected.RemoveWhere(id => !status.NotSignedIn.Concat(status.TemporaryPasswordExpired).Concat(status.NotAcknowledged).Any(r => r.UserId == id));
+            // Open on the list that needs somebody: an expired password locks a person out outright.
+            if (!statusPicked) statusFilter = status.TemporaryPasswordExpired.Count > 0 ? "expired" : "notsignedin";
+            if (statusFilter == "notack" && status.AcceptableUseNoticeId == null) statusFilter = "notsignedin";
+            if (pageIndex * PageSize >= VisibleRows.Count) pageIndex = 0;
+            PruneSelection();
         }
         catch (InvalidOperationException ex) { Toast.Notify(ToastSeverity.Error, "Could not load onboarding status", ex.Message); }
     }
@@ -326,53 +421,6 @@
         catch { acknowledgementNotices = new(); }
     }
 
-    private RenderFragment StatusTable(string title, string help, List<OnboardingStatusRowDto> rows, bool showExpiry) => __builder =>
-    {
-        <h3 class="ob-table-title">@title</h3>
-        <p class="ob-sub">@help</p>
-        @if (rows.Count == 0)
-        {
-            <p class="ob-sub"><QIcon Name="check-circle" /> Nobody.</p>
-        }
-        else
-        {
-            <QCard NoPadding="true">
-                <div class="table-wrap">
-                    <table class="data-table q-stack">
-                        <thead>
-                            <tr>
-                                @if (canReissue)
-                                {
-                                    <th><input type="checkbox" aria-label="Select all" checked="@rows.All(r => selected.Contains(r.UserId))" @onchange="@(e => ToggleAll(rows, (bool)(e.Value ?? false)))" /></th>
-                                }
-                                <th>Name</th><th>Username</th><th>Role</th><th>Added</th>@if (showExpiry) { <th>Access</th> }
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var r in rows)
-                            {
-                                <tr>
-                                    @if (canReissue)
-                                    {
-                                        <td><input type="checkbox" aria-label="@($"Select {r.FullName}")" checked="@selected.Contains(r.UserId)" @onchange="@(e => Toggle(r.UserId, (bool)(e.Value ?? false)))" /></td>
-                                    }
-                                    <td>@r.FullName<br /><span class="ob-sub">@r.Email</span></td>
-                                    <td>@r.Username</td>
-                                    <td>@(r.RoleName ?? "—")</td>
-                                    <td>@QDateFormat.D(r.CreatedAt.ToLocalTime())</td>
-                                    @if (showExpiry)
-                                    {
-                                        <td>@AccessText(r)</td>
-                                    }
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
-                </div>
-            </QCard>
-        }
-    };
-
     private static string AccessText(OnboardingStatusRowDto r)
     {
         if (r.TemporaryPasswordExpired) return $"Temporary password expired {QDateFormat.DT(r.TemporaryPasswordExpiresAt?.ToLocalTime())}";
@@ -386,18 +434,117 @@
         if (on) selected.Add(id); else selected.Remove(id);
     }
 
-    private void ToggleAll(List<OnboardingStatusRowDto> rows, bool on)
+    // THE LIST ON SCREEN. A chip picks one of the three lists; the search narrows it. Select-all
+    // covers exactly these rows, and a filter or search change prunes the selection to them - the
+    // rule QBulkBar cannot enforce itself, because only this page knows what a row is.
+    private string statusFilter = "notsignedin";
+    private bool statusPicked;
+    private string search = string.Empty;
+    private int pageIndex;
+    private int PageSize = QPagerDefaults.Size;
+
+    private IReadOnlyList<QBulkBar.Filter> StatusFilters
     {
-        foreach (var r in rows) Toggle(r.UserId, on);
+        get
+        {
+            if (status == null) return Array.Empty<QBulkBar.Filter>();
+            var list = new List<QBulkBar.Filter>
+            {
+                new("expired", "Password expired", status.TemporaryPasswordExpired.Count),
+                new("notsignedin", "Not signed in yet", status.NotSignedIn.Count),
+            };
+            if (status.AcceptableUseNoticeId != null)
+                list.Add(new("notack", "Not acknowledged", status.NotAcknowledged.Count));
+            return list;
+        }
     }
 
-    private async Task ReissueAsync(StaffImportDeliveryMode mode)
+    private List<OnboardingStatusRowDto> FilterRows => status == null ? new() : statusFilter switch
+    {
+        "expired" => status.TemporaryPasswordExpired,
+        "notack" => status.NotAcknowledged,
+        _ => status.NotSignedIn,
+    };
+
+    private bool ShowAccess => statusFilter != "notack";
+
+    private string FilterHelp => statusFilter switch
+    {
+        "expired" => "They cannot sign in until you issue a new temporary password or invitation.",
+        "notack" => "Signed in, but has not confirmed they have read the acceptable-use notice. It is on their portal checklist.",
+        _ => "Accounts nobody has signed in to. A temporary password or invitation may still be on its way.",
+    };
+
+    private List<OnboardingStatusRowDto> VisibleRows
+    {
+        get
+        {
+            IEnumerable<OnboardingStatusRowDto> q = FilterRows;
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var term = search.Trim();
+                q = q.Where(r => r.FullName.Contains(term, StringComparison.OrdinalIgnoreCase)
+                              || r.Username.Contains(term, StringComparison.OrdinalIgnoreCase)
+                              || (r.Email ?? "").Contains(term, StringComparison.OrdinalIgnoreCase));
+            }
+            return q.OrderBy(r => r.SortName ?? r.FullName, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+    }
+
+    private List<OnboardingStatusRowDto> PagedRows => QPaging.Page(VisibleRows, pageIndex, PageSize).ToList();
+
+    private bool AllVisibleSelected => VisibleRows.Count > 0 && VisibleRows.All(r => selected.Contains(r.UserId));
+
+    private void ToggleSelectAllVisible(bool on)
+    {
+        foreach (var r in VisibleRows) Toggle(r.UserId, on);
+    }
+
+    private void PruneSelection()
+    {
+        var visible = VisibleRows.Select(r => r.UserId).ToHashSet();
+        selected.RemoveWhere(id => !visible.Contains(id));
+    }
+
+    private void OnStatusFilterChanged(string key)
+    {
+        statusPicked = true;
+        statusFilter = key;
+        pageIndex = 0;
+        PruneSelection();
+    }
+
+    private void OnSearchChanged(string term)
+    {
+        search = term;
+        pageIndex = 0;
+        PruneSelection();
+    }
+
+    private void OpenReissue(StaffImportDeliveryMode mode)
+    {
+        if (selected.Count == 0) return;
+        reissueMode = mode;
+        // A fresh choice every time. Remembering "the same password for everyone" across two
+        // re-issues is how a password meant for one afternoon's group gets handed to a second.
+        sharedPassword = false;
+        sharedPasswordText = string.Empty;
+        showReissue = true;
+    }
+
+    private async Task ReissueAsync(StaffImportDeliveryMode mode, string? chosenPassword)
     {
         if (selected.Count == 0) return;
         working = true;
         try
         {
-            var result = await Onboarding.ReissueAsync(new ReissueAccessRequest { UserIds = selected.ToList(), Mode = mode });
+            var result = await Onboarding.ReissueAsync(new ReissueAccessRequest
+            {
+                UserIds = selected.ToList(),
+                Mode = mode,
+                TemporaryPassword = string.IsNullOrWhiteSpace(chosenPassword) ? null : chosenPassword
+            });
+            showReissue = false;
             foreach (var m in result.Messages) Toast.Notify(ToastSeverity.Warning, "Re-issue", m);
             Toast.Notify(ToastSeverity.Success, $"Access re-issued for {result.Reissued} {(result.Reissued == 1 ? "person" : "people")}",
                 mode == StaffImportDeliveryMode.Invitation ? "Invitations sent." : "Print the slips now — the passwords cannot be shown again.");
@@ -497,4 +644,36 @@
         if (canApprove) await LoadSettingsAsync();
     }
 
+
+    /// <summary>One row, shared by the paged loop and the virtualised All so the two cannot drift.</summary>
+    private RenderFragment OnboardingRow(OnboardingStatusRowDto r) => __builder =>
+    {
+                                    <tr class="@(selected.Contains(r.UserId) ? "ob-row--picked" : "")">
+                                        @if (canReissue)
+                                        {
+                                            <td class="ob-tick">
+                                                @* No label: the name is in the next cell. The title carries it. *@
+                                                <span title="@($"Select {r.FullName}")">
+                                                    <QCheckbox Value="@selected.Contains(r.UserId)" ValueChanged="@(v => Toggle(r.UserId, v))" />
+                                                </span>
+                                            </td>
+                                        }
+                                        <td>
+                                            <div class="ob-person">
+                                                <QAvatar Name="@r.FullName" Title="@r.FullName" />
+                                                <div class="ob-person-text">
+                                                    <span>@r.FullName</span>
+                                                    <span class="cell-sub">@(string.IsNullOrWhiteSpace(r.Email) ? "No email address" : r.Email)</span>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td>@r.Username</td>
+                                        <td>@(r.RoleName ?? "—")</td>
+                                        <td>@QDateFormat.D(r.CreatedAt.ToLocalTime())</td>
+                                        @if (ShowAccess)
+                                        {
+                                            <td>@AccessText(r)</td>
+                                        }
+                                    </tr>
+    };
 }

@@ -126,6 +126,17 @@ public record JoinRequestDto
     public Guid UserId { get; init; }
     public string FirstName { get; init; } = string.Empty;
     public string LastName { get; init; } = string.Empty;
+
+    /// <summary>The name as this organisation writes it (PersonNames). Show this, never FirstName + LastName.</summary>
+    public string FullName { get; init; } = string.Empty;
+
+    /// <summary>
+    /// What a list of people is sorted on — the name in the organisation's chosen SORT order, which
+    /// may differ from how it is shown (PeopleNameSettingsDto.SortOrder). Built on the server by
+    /// PersonNames.SortKey; a list sorts on this and falls back to the full name when it is absent.
+    /// </summary>
+    public string? SortName { get; init; }
+
     public string Email { get; init; } = string.Empty;
     public string? Phone { get; init; }
     public string? EmployeeNumber { get; init; }
@@ -187,6 +198,13 @@ public record OnboardingStatusRowDto
 {
     public Guid UserId { get; init; }
     public string FullName { get; init; } = string.Empty;
+
+    /// <summary>
+    /// What a list of people is sorted on — the name in the organisation's chosen SORT order, which
+    /// may differ from how it is shown (PeopleNameSettingsDto.SortOrder). Built on the server by
+    /// PersonNames.SortKey; a list sorts on this and falls back to the full name when it is absent.
+    /// </summary>
+    public string? SortName { get; init; }
     public string Username { get; init; } = string.Empty;
     public string Email { get; init; } = string.Empty;
     public string? Phone { get; init; }
@@ -213,6 +231,22 @@ public record ReissueAccessRequest
 {
     public List<Guid> UserIds { get; set; } = new();
     public StaffImportDeliveryMode Mode { get; set; } = StaffImportDeliveryMode.Slips;
+
+    /// <summary>
+    /// ONE password for everybody in this re-issue, chosen by the administrator — or null, which is
+    /// the default and generates a different one per person.
+    ///
+    /// It exists because a school with 133 staff who have no email address hands these out down a
+    /// phone line and across a staff room, and ten random characters read aloud is where that goes
+    /// wrong. Google Workspace offers the same choice on an administrator's reset, for the same
+    /// reason and with the same forced change at first sign-in.
+    ///
+    /// It is NOT a weaker password: it passes the same policy and the same blocklist a person's own
+    /// password would, so "pass", "staff2026" and the school's own name are all refused. What it
+    /// gives up is UNIQUENESS — everyone in the batch shares it until they first sign in, and
+    /// MustChangePassword means that first sign-in can do nothing else.
+    /// </summary>
+    public string? TemporaryPassword { get; set; }
 }
 
 /// <summary>One printable slip. Returned once; the password is never stored readably and cannot be shown again.</summary>
@@ -221,6 +255,14 @@ public record TemporaryPasswordSlipDto
     public Guid? UserId { get; init; }
     public int? RowNumber { get; init; }
     public string FullName { get; init; } = string.Empty;
+
+    /// <summary>
+    /// What a list of people is sorted on — the name in the organisation's chosen SORT order, which
+    /// may differ from how it is shown (PeopleNameSettingsDto.SortOrder). Built on the server by
+    /// PersonNames.SortKey; a list sorts on this and falls back to the full name when it is absent.
+    /// </summary>
+    public string? SortName { get; init; }
+
     public string? Username { get; init; }
     public string Email { get; init; } = string.Empty;
     public string TemporaryPassword { get; init; } = string.Empty;

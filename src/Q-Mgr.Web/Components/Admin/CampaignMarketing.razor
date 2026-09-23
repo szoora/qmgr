@@ -19,7 +19,7 @@
             @* "Campaign Marketing" until 2026-09-19. The Signage hub has a Campaigns tab of
                its own, about what plays on a screen — two unrelated things under one word, one
                line apart in the sidebar. This one sends messages to people, so it says so. *@
-            <h1>Broadcasts<QInfo Text="Email, SMS and WhatsApp sent to your contacts — every message includes a working unsubscribe link" Label="Broadcasts" /></h1>
+            <h1>Broadcasts</h1>
             <p class="subtitle">Email, SMS and WhatsApp sent to your contacts — every message includes a working unsubscribe link</p>
         </div>
     </div>
@@ -140,7 +140,8 @@
                 <QButton Text="Add Contact" Icon="person-plus-fill" Variant="primary" OnClick="@OpenNewContactModal" />
             </PermissionGuard>
         </div>
-        <QPager Count="@(broadcasts.Count)" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="broadcasts" />
+        <QPager Count="@(broadcasts.Count)" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="broadcasts"
+                    PageSizeChanged="@(n => { PageSize = n; pageIndex = 0; })" ItemLabel="broadcasts" />
 
         @if (isLoadingContacts)
         {
@@ -311,10 +312,10 @@
     // ---- Paging (list-page sweep, plan Phase 2) --------------------------------------------
     // Every row here is a component subtree Blazor Server diffs and ships down the circuit, so
     // a page of them is drawn rather than the whole list.
-    private const int PageSize = 25;
+    private int PageSize = QPagerDefaults.Size;
     private int pageIndex;
-    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (broadcasts.Count() - 1) / PageSize));
-    private IEnumerable<BroadcastDto> PagedBroadcasts => broadcasts.Skip(SafePageIndex * PageSize).Take(PageSize);
+    private int SafePageIndex => QPaging.SafeIndex(pageIndex, broadcasts.Count(), PageSize);
+    private IEnumerable<BroadcastDto> PagedBroadcasts => QPaging.Page(broadcasts, SafePageIndex, PageSize);
     private List<ContactDto> contacts = new();
     private bool isLoadingBroadcasts = true;
     private bool isLoadingContacts = true;

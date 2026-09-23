@@ -183,34 +183,24 @@
                     <span class="results-select">
                         @if (CanBatch)
                         {
-                            <input type="checkbox" checked="@AllVisibleSelected"
-                                   @onchange="@(e => ToggleSelectAll((bool)(e.Value ?? false)))"
-                                   title="Select every record matching the current filters" />
+                            <QCheckbox Value="@AllVisibleSelected" ValueChanged="@ToggleSelectAll"
+                                       title="Select every record matching the current filters" aria-label="Select every record matching the current filters" />
                         }
                     </span>
                     <span>Student</span><span>Category</span><span>Tier</span><span>Status</span><span>Occurred</span><span>Reported By</span><span></span>
                 </div>
-                @foreach (var r in PagedSearchResults)
+                @* All above QPaging.VirtualizeAbove rows renders through <Virtualize>, so choosing All on a large list
+                   never ships every row down the circuit at once (plan STUDENT_ROSTER_AND_LIST_STANDARD §1, L3). *@
+                @if (PageSize == QPager.All && VisibleSearchResults.Count > QPaging.VirtualizeAbove)
                 {
-                    <div class="results-row">
-                        <span class="results-select">
-                            @if (CanBatch)
-                            {
-                                <input type="checkbox" checked="@selectedRecordIds.Contains(r.Id)"
-                                       @onchange="@(e => ToggleSelection(r.Id, (bool)(e.Value ?? false)))" />
-                            }
-                        </span>
-                        <span class="results-student">@r.StudentName</span>
-                        <span>@r.CategoryName</span>
-                        <span class="tier-badge tier-badge--@r.Tier.ToString().ToLowerInvariant()">@r.Tier</span>
-                        <QChip Text="@r.Status.ToString()" Size="sm" Color="@WelfareDisplay.StatusColor(r.Status)" Class="results-chip" />
-                        <span>@QDateFormat.D(r.OccurredAt.ToLocalTime())</span>
-                        <span>@r.ReportedByName</span>
-                        <span class="results-actions">
-                            <QButton Icon="eye-fill" Size="sm" Variant="ghost" Title="View timeline" OnClick="@(() => Navigation.NavigateTo($"/admin/students/{r.StudentId}/welfare"))" />
-                            <QButton Icon="printer-fill" Size="sm" Variant="ghost" Title="Print incident pack" OnClick="@(() => PrintRecord(r))" />
-                        </span>
-                    </div>
+                    <Virtualize Items="@VisibleSearchResults" Context="r" ItemSize="52" SpacerElement="div">@ResultRow(r)</Virtualize>
+                }
+                else
+                {
+                    @foreach (var r in PagedSearchResults)
+                    {
+                        @ResultRow(r)
+                    }
                 }
             </div>
 
@@ -221,7 +211,8 @@
                Select-all still reaches every record matching the filters, not just this page —
                that is what the header checkbox says it does, and the batch bar states the count. *@
             <QPager Count="@VisibleSearchResults.Count" PageSize="@PageSize" PageIndex="@SafePageIndex"
-                    PageIndexChanged="@(i => pageIndex = i)" ItemLabel="records" />
+                    PageIndexChanged="@(i => pageIndex = i)" PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="welfare-records"
+                    PageSizeChanged="@(n => { PageSize = n; pageIndex = 0; })" SelectedCount="@selectedRecordIds.Count" ItemLabel="records" />
         }
     }
 
@@ -284,7 +275,7 @@
             Every selected record's follow-up action moves to this person. Their existing owner is
             replaced — you'll see exactly which records change before anything is saved.
         </p>
-        <QSelect TValue="Guid?" TItem="StaffOption" Value="@assignTargetUserId" Items="@staffOptions"
+        <QSelect TValue="Guid?" TItem="StaffOption" Value="@assignTargetUserId" Items="@staffOptions" Sorted="true"
                  TextSelector="@(x => x.Name)" ValueSelector="@(x => (Guid?)x.Id)"
                  Label="Staff member" ValueChanged="@(v => assignTargetUserId = v)" />
     </ChildContent>
@@ -499,7 +490,6 @@
     .batch-menu .dropdown-item:hover, .batch-menu .dropdown-item:focus-visible { background: var(--qm-primary-light); }
     .batch-clear { margin-left: auto; background: none; border: none; padding: 2px 6px; cursor: pointer; font: inherit; font-size: var(--qm-text-base); color: var(--qm-text-muted); text-decoration: underline; }
     .results-select { display: flex; align-items: center; }
-    .results-select input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
 
     .results-row { display: grid; grid-template-columns: auto 1.3fr 1.3fr 0.8fr 1fr 1fr 1.2fr auto; gap: 10px; padding: 12px 16px; align-items: center; border-bottom: 1px solid var(--qm-border); font-size: var(--qm-text-base); }
     .results-row:last-child { border-bottom: none; }
@@ -555,10 +545,10 @@
     // A term of safeguarding records is thousands of rows, each one a row of chips and a button.
     // The batch bar above acts on the SELECTION, which only ever covers rows the reader can see —
     // so paging narrows what can be selected as well as what is drawn, which is the safe direction.
-    private const int PageSize = 50;
+    private int PageSize = QPagerDefaults.Size;
     private int pageIndex;
-    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (VisibleSearchResults.Count - 1) / PageSize));
-    private IEnumerable<WelfareRecordDto> PagedSearchResults => VisibleSearchResults.Skip(SafePageIndex * PageSize).Take(PageSize);
+    private int SafePageIndex => QPaging.SafeIndex(pageIndex, VisibleSearchResults.Count, PageSize);
+    private IEnumerable<WelfareRecordDto> PagedSearchResults => QPaging.Page(VisibleSearchResults, SafePageIndex, PageSize);
 
     private static bool IsOpen(WelfareRecordDto r) => r.Status != WelfareStatus.Resolved;
 
@@ -1222,4 +1212,27 @@
         await LoadSummary();
 if (activeTab == "search") await LoadSearch();
     }
+
+    /// <summary>One row, shared by the paged loop and the virtualised All so the two cannot drift.</summary>
+    private RenderFragment ResultRow(WelfareRecordDto r) => __builder =>
+    {
+                    <div class="results-row">
+                        <span class="results-select">
+                            @if (CanBatch)
+                            {
+                                <QCheckbox Value="@selectedRecordIds.Contains(r.Id)" ValueChanged="@(v => ToggleSelection(r.Id, v))" aria-label="Select this record" />
+                            }
+                        </span>
+                        <span class="results-student">@r.StudentName</span>
+                        <span>@r.CategoryName</span>
+                        <span class="tier-badge tier-badge--@r.Tier.ToString().ToLowerInvariant()">@r.Tier</span>
+                        <QChip Text="@r.Status.ToString()" Size="sm" Color="@WelfareDisplay.StatusColor(r.Status)" Class="results-chip" />
+                        <span>@QDateFormat.D(r.OccurredAt.ToLocalTime())</span>
+                        <span>@r.ReportedByName</span>
+                        <span class="results-actions">
+                            <QButton Icon="eye-fill" Size="sm" Variant="ghost" Title="View timeline" OnClick="@(() => Navigation.NavigateTo($"/admin/students/{r.StudentId}/welfare"))" />
+                            <QButton Icon="printer-fill" Size="sm" Variant="ghost" Title="Print incident pack" OnClick="@(() => PrintRecord(r))" />
+                        </span>
+                    </div>
+    };
 }

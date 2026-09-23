@@ -548,13 +548,20 @@ hdr("15.5 TIMETABLE — settings under the branch lock, drafts, placement, clash
     const mine = (await get(U.math2.token, `${B}/class-teachers/teaching`)).json ?? [];
     truthy("MY TEACHING: the second Maths teacher's Mathematics shows 1 period timetabled", mine.some((t) => t.subjectId === MATHS?.id && t.timetabledPeriodsPerWeek >= 1), JSON.stringify(mine));
 
-    // A replacement over the same dates archives the old version.
+    // A replacement over the same dates. SINCE 2026-09-22 IT HAS TO BE ASKED FOR: publishing used to
+    // archive every overlapping live version silently, and because every lesson query filters Published
+    // over today's date, that stops registers, teaching figures and My Day school-wide. Both halves are
+    // asserted, because the refusal is the half that protects a school and the replace is the half that
+    // lets a corrected version ship.
     const t3r = await mk("Today v2", { effectiveFrom: ymd(addDays(1)), effectiveTo: ymd(addDays(30)), copyFromTimetableId: t2?.id });
     const t3 = t3r.json?.timetable; if (t3?.id) drafts.push(t3.id);
     eq("COPY: a new draft copies the published version's lessons", t3r.json?.lessons?.length, 1);
-    const pub3 = await post(AD, `${T}/timetables/${t3?.id}/publish`, { acknowledgeSoftClashes: true, note: `E2E ${RUN}` });
+    const refused = await post(AD, `${T}/timetables/${t3?.id}/publish`, { acknowledgeSoftClashes: true, note: `E2E ${RUN}` });
+    eq("REPLACE: publishing over a LIVE version is refused unless asked for (409)", refused.json?.code, "WOULD_REPLACE_PUBLISHED");
+    eq("REPLACE: …and the live one is untouched by the refusal", (await get(AD, `${T}/timetables/${t2?.id}`)).json?.timetable?.status, "Published");
+    const pub3 = await post(AD, `${T}/timetables/${t3?.id}/publish`, { acknowledgeSoftClashes: true, note: `E2E ${RUN}`, replace: true });
     if (pub3.json?.timetable?.status === "Published") { published.push(t3.id); drafts.splice(drafts.indexOf(t3.id), 1); }
-    eq("REPLACE: publishing over overlapping dates archives the old version", (await get(AD, `${T}/timetables/${t2?.id}`)).json?.timetable?.status, "Archived");
+    eq("REPLACE: asking explicitly archives the old version", (await get(AD, `${T}/timetables/${t2?.id}`)).json?.timetable?.status, "Archived");
 
     // ---- The integrity sweep ----
     const probe = await trigger("staff-activity-attribution-purge");

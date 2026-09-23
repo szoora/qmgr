@@ -176,10 +176,17 @@ if (BRANCH) {
 
   // A notification: this is what puts a HANGFIRE JOB carrying an email address into the database,
   // in a schema the EF model knows nothing about. It is the residue a row-walking purge misses.
-  await call(AD, "POST", "/api/v1/notifications", {
-    title: `Purge check ${RUN}`, message: "Seeded so a background job exists.", type: "Info",
+  // Until 2026-09-23 this posted type "Info" — not a NotificationType — and was refused with 400 on
+  // every run, unchecked, so the purge's Hangfire half had never once had a job to remove. 20.2e now
+  // asserts it. It asks for more than in-app: an in-app-only notification queues nothing, and a new
+  // tenant's own settings may switch email off, so Push is asked for too. The address is unroutable.
+  const seeded = await call(AD, "POST", "/api/v1/notifications", {
+    title: `Purge check ${RUN}`, message: "Seeded so a background job exists.", type: "Custom",
     userId: me.json?.userId ?? me.json?.id,
+    channels: ["InApp", "Email", "Push"], email: `purge.${RUN}@qmgr.local`,
   });
+  ok("20.2e: a notification is sent, queueing a background job", seeded.status === 200 || seeded.status === 201,
+    `status ${seeded.status} ${seeded.text?.slice(0, 200)}`);
 
   // A service type and a counter: Core Queue's own derived tables.
   await call(AD, "POST", `/api/v1/branches/${BRANCH}/service-types`, { name: `Purge ${RUN}`, code: `P${RUN}`.slice(0, 8), prefix: "P" });
@@ -214,6 +221,9 @@ ok("20.3d: and a table that reaches the tenant only through a parent",
   tablesWithRows.some(t => ["Counter", "ServiceType", "BranchSettings", "WelfareNote", "RolePermission", "UserSession", "Token"].includes(t)),
   tablesWithRows.join(", "));
 console.log(`    ${before.json?.totalRows} row(s) across ${tablesWithRows.length} table(s); ${before.json?.files?.length ?? 0} file(s); ${before.json?.backgroundJobs ?? 0} background job(s)`);
+// The seeded notification queued a job carrying this tenant's id. A count of 0 here means the count itself is
+// broken — which it was until 2026-09-23 (LIKE on a jsonb column), making 20.6c below pass vacuously.
+ok("20.4b: the seeded background job is counted before the purge", (before.json?.backgroundJobs ?? 0) > 0, `${before.json?.backgroundJobs} counted`);
 
 // =====================================================================================
 hdr("20.4 A purge is the END of a lifecycle, not a shortcut through it");
@@ -247,6 +257,7 @@ ok("20.5b: the completeness check PASSED", purged.json?.verificationPassed === t
 ok("20.5c: it deleted rows across many tables",
   (purged.json?.totalRowsDeleted ?? 0) >= (before.json?.totalRows ?? 1), `${purged.json?.totalRowsDeleted} deleted, ${before.json?.totalRows} found`);
 console.log(`    ${purged.json?.totalRowsDeleted} row(s), ${purged.json?.filesDeleted} file(s), ${purged.json?.backgroundJobsRemoved} job(s), ${purged.json?.rowsRetained} retained, ${purged.json?.durationMs}ms`);
+ok("20.5b: the purge reports removing the tenant's background jobs", (purged.json?.backgroundJobsRemoved ?? 0) > 0, `${purged.json?.backgroundJobsRemoved} removed`);
 
 // A trial that never paid has NO financial record, so nothing is retained and the tenant goes
 // whole. That is the common case in this product, and the point of the two-lane design.

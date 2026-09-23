@@ -171,6 +171,10 @@ else
         </QCard>
     }
 
+    @* ---- Tier 3: asking a colleague, against the LIVE timetable ----------------------------- *@
+    @* Above the queue on purpose: the thing you do comes before the list of things you have done. *@
+    <LessonSwapCard BranchId="@BranchId" MeId="@meId" Changed="@LoadAsync" />
+
     @* ---- Tier 3: the queue ------------------------------------------------------------------ *@
     <QCard Title="@(context.CanDecideRequests ? "Requests" : "My requests")" Subtitle="@RequestsSubtitle" Icon="inbox" Class="portal-card">
         @if (!requests.Any())
@@ -188,6 +192,17 @@ else
                                 @r.Summary
                                 @if (!string.IsNullOrEmpty(r.Reason)) { <span class="cell-sub">@r.Reason</span> }
                                 @if (r.CounterpartAgreed == false) { <span class="cell-sub">Waiting for @r.CounterpartName to agree.</span> }
+                                @* WHAT IT WOULD DO TO EVERYBODY ELSE, before the button is pressed. A permanent swap
+                                   moves lessons, so it can leave a cohort with double Maths and no Physics that week —
+                                   which is the one thing the two teachers agreeing cannot see for themselves. *@
+                                @if (r.Blocked is { Length: > 0 })
+                                {
+                                    <span class="cell-sub ss-blocked"><i class="bi bi-x-octagon" aria-hidden="true"></i> @r.Blocked</span>
+                                }
+                                else if (r.DecisionWarnings.Any())
+                                {
+                                    <span class="cell-sub ss-warn"><i class="bi bi-exclamation-triangle" aria-hidden="true"></i> @string.Join(" · ", r.DecisionWarnings)</span>
+                                }
                             </td>
                             <td class="row-actions">
                                 @if (r.CanIDecide)
@@ -201,7 +216,10 @@ else
                                 }
                                 @if (r.CounterpartUserId == meId && r.CounterpartAgreed == false)
                                 {
-                                    <QButton Text="Agree to swap" Icon="arrow-left-right" Variant="secondary" Size="sm" OnClick="@(() => Agree(r))" />
+                                    @* The word follows what is being asked: nobody "agrees to a swap" when they are
+                                       being asked to take somebody's lesson for an afternoon. *@
+                                    <QButton Text="@(r.Kind == ConfigRequestKind.LessonCover ? "Agree to cover it" : "Agree to swap")"
+                                             Icon="arrow-left-right" Variant="secondary" Size="sm" OnClick="@(() => Agree(r))" />
                                 }
                             </td>
                         </tr>
@@ -240,6 +258,9 @@ else
 </QModal>
 
 <style>
+    /* What a decision would cost. Colour carries the difference between "look at this first" and "you cannot". */
+    .ss-warn { color: var(--qm-warning); }
+    .ss-blocked { color: var(--qm-danger); }
     .ss-grid { display: grid; grid-template-columns: repeat(var(--ss-days), minmax(0, 1fr)); gap: 8px; }
     .ss-day__label { font-size: var(--qm-text-xs); color: var(--qm-text-muted); text-align: center; padding-bottom: 4px; }
     .ss-slot {

@@ -54,7 +54,7 @@ public static class TimetableChecker
         var teachers = await db.Users.IgnoreQueryFilters().AsNoTracking()
             .Where(u => userIds.Contains(u.Id))
             .Select(u => new { u.Id, u.FirstName, u.LastName, u.Username, u.IsActive, u.OrganizationId })
-            .ToDictionaryAsync(u => u.Id, u => (Name: ($"{u.FirstName} {u.LastName}".Trim() is { Length: > 0 } n ? n : u.Username), Active: u.IsActive && u.OrganizationId == timetable.OrganizationId), ct);
+            .ToDictionaryAsync(u => u.Id, u => (Name: PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName, u.Username), Active: u.IsActive && u.OrganizationId == timetable.OrganizationId), ct);
 
         var subjects = await db.Subjects.IgnoreQueryFilters().AsNoTracking()
             .Where(s => s.OrganizationId == timetable.OrganizationId)

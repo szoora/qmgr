@@ -23,9 +23,19 @@ namespace QMgr.API.Controllers.v1;
 /// placing lessons with a live diagnosis, and publishing.
 ///
 /// Who reads what: a PUBLISHED or ARCHIVED timetable is operational and readable by every member of the branch
-/// (plan §13.5 — who teaches what, where, when). A DRAFT is work in progress and exists only for a timetable master
-/// (404 to anyone else). Every write needs <c>timetable.manage</c> AND an unscoped caller: publishing materialises
-/// lessons for the whole school in a background job, which cannot be row-scoped downstream (the standing rule).
+/// (plan §13.5 — who teaches what, where, when). A DRAFT is work in progress and exists only for somebody who may
+/// write one (404 to anyone else).
+///
+/// WHO WRITES IT CHANGED ON 2026-09-22, and the change is why most of the endpoints below carry no
+/// <c>[RequirePermission]</c> attribute. The rule is <c>TimetableAccess.MayWrite</c> — a named manager of THAT
+/// VERSION, or a holder of <c>timetable.manage</c> — because an attribute refuses before the handler runs and so
+/// cannot let an appointed timetable master who holds no permission through. <b>An endpoint added here that keeps
+/// the attribute silently excludes the very people the feature exists for.</b> A write by a permission holder who
+/// is not named is allowed, recorded as an override, and told to the named managers; see
+/// <see cref="Timetable.ManagerUserIds"/> for why the override stays rather than being refused.
+///
+/// A write still needs an UNSCOPED caller, unchanged: publishing materialises lessons for the whole school in a
+/// background job, which cannot be row-scoped downstream (the standing rule).
 ///
 /// Every edit of a timetable runs under <c>pg_advisory_xact_lock</c> on it, and a teacher double-booking is also a
 /// unique index — two masters placing at once cannot both win. Publishing locks the branch's timetables.
@@ -254,9 +264,12 @@ public class TimetableController : StaffPerformanceControllerBase
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
-        var canManage = await HasPermissionAsync(Permissions.TimetableManage);
+        var me = CurrentUserId();
+        var holds = await HasPermissionAsync(Permissions.TimetableManage);
         var query = Db.Timetables.AsNoTracking().Where(t => t.BranchId == branchId);
-        if (!canManage) query = query.Where(t => t.Status != TimetableStatus.Draft);
+        // A DRAFT belongs to whoever may write it, which since 2026-09-22 includes an appointed manager holding
+        // no permission at all. Filtering on the permission alone would hide a master's own draft from them.
+        if (!holds) query = query.Where(t => t.Status != TimetableStatus.Draft || t.ManagerUserIds.Contains(me));
         var rows = await query
             .OrderByDescending(t => t.Status == TimetableStatus.Published).ThenByDescending(t => t.EffectiveFrom).ThenByDescending(t => t.CreatedAt)
             .Select(t => new { Timetable = t, Count = t.Lessons.Count })
@@ -264,8 +277,9 @@ public class TimetableController : StaffPerformanceControllerBase
 
         var organizationId = await ResolveOrganizationIdAsync(branchId);
         var policy = await _policy.GetAsync(organizationId);
-        var names = await BuildNamesAsync(rows.Select(r => r.Timetable.PublishedByUserId));
-        return Ok(rows.Select(r => ToDto(r.Timetable, r.Count, policy, names)).ToList());
+        var names = await BuildNamesAsync(rows.SelectMany(r => r.Timetable.ManagerUserIds.Select(x => (Guid?)x).Append(r.Timetable.PublishedByUserId)));
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, await ZoneAsync(branchId)));
+        return Ok(rows.Select(r => ToDto(r.Timetable, r.Count, policy, names, me, holds, today)).ToList());
     }
 
     /// <summary>The published version in force on a branch-local date (default today), or 204.</summary>
@@ -292,11 +306,14 @@ public class TimetableController : StaffPerformanceControllerBase
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
-        var canManage = await HasPermissionAsync(Permissions.TimetableManage);
+        var me = CurrentUserId();
+        var holds = await HasPermissionAsync(Permissions.TimetableManage);
         var timetable = await Db.Timetables.AsNoTracking().FirstOrDefaultAsync(t => t.Id == id && t.BranchId == branchId);
-        if (timetable == null || (timetable.Status == TimetableStatus.Draft && !canManage)) return NotFoundProblem("Timetable not found");
+        // A draft is visible to whoever may write it — its appointed managers included, permission or not.
+        if (timetable == null || (timetable.Status == TimetableStatus.Draft && !TimetableAccess.MayWrite(timetable, me, holds)))
+            return NotFoundProblem("Timetable not found");
 
-        return Ok(await BuildDetailAsync(timetable, canManage));
+        return Ok(await BuildDetailAsync(timetable, TimetableAccess.MayWrite(timetable, me, holds)));
     }
 
     [HttpPost("timetables")]
@@ -337,10 +354,18 @@ public class TimetableController : StaffPerformanceControllerBase
         }
 
         var actor = CurrentUserId();
+
+        // Appointing the master(s) is part of creating the version, and only a permission holder reaches this
+        // endpoint at all. An explicit list wins; otherwise the version copied from passes its masters on.
+        var managers = (request.ManagerUserIds ?? source?.ManagerUserIds.ToList() ?? new List<Guid>())
+            .Where(x => x != Guid.Empty).Distinct().ToArray();
+        if (managers.Length > 0 && await RefuseUnknownManagersAsync(branchId, managers) is { } unknown) return unknown;
+
         var timetable = new Timetable
         {
             OrganizationId = organizationId, BranchId = branchId, Name = name, PeriodKey = period.Key,
-            CycleDays = cycleDays, EffectiveFrom = from, EffectiveTo = to, CreatedBy = actor
+            CycleDays = cycleDays, EffectiveFrom = from, EffectiveTo = to, CreatedBy = actor,
+            ManagerUserIds = managers
         };
         if (source != null)
         {
@@ -361,29 +386,153 @@ public class TimetableController : StaffPerformanceControllerBase
         await Db.SaveChangesAsync();
 
         await Activity.RecordAsync(ActivityActions.TimetableCreated, nameof(Timetable), timetable.Id, null,
-            $"Timetable draft '{timetable.Name}' created for {period.Name}{(source != null ? $", copied from '{source.Name}' ({timetable.Lessons.Count} lessons)" : "")}",
-            new { timetable.PeriodKey, timetable.CycleDays, CopiedFrom = source?.Id }, branchId, organizationId);
+            $"Timetable draft '{timetable.Name}' created for {period.Name}{(source != null ? $", copied from '{source.Name}' ({timetable.Lessons.Count} lessons)" : "")}{(managers.Length > 0 ? $", {managers.Length} appointed master(s)" : "")}",
+            new { timetable.PeriodKey, timetable.CycleDays, CopiedFrom = source?.Id, timetable.ManagerUserIds }, branchId, organizationId);
+
+        if (managers.Length > 0) await TellAppointedAsync(timetable, managers, appointed: true);
 
         return CreatedAtAction(nameof(GetTimetable), new { branchId, id = timetable.Id }, await BuildDetailAsync(timetable, canManage: true));
     }
 
-    /// <summary>Discard a draft. A published or archived version is history and is never deleted.</summary>
-    [HttpDelete("timetables/{id:guid}")]
-    [RequirePermission(Permissions.TimetableManage)]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
-    public async Task<IActionResult> DeleteDraft(Guid branchId, Guid id)
+    /// <summary>
+    /// Appoint the master(s) of one version, replacing whoever was named. Since 2026-09-22.
+    ///
+    /// <b>The permission alone opens this, and that is the asymmetry the whole feature rests on</b> — a named
+    /// manager may not add or remove managers, including themselves, or the appointment is self-serve and the
+    /// control is decoration. It carries no <c>[RequirePermission]</c> attribute for the opposite reason to the
+    /// write endpoints: the attribute would be correct here, and is spelled out in code so the two rules sit
+    /// side by side and neither can be mistaken for the other.
+    /// </summary>
+    [HttpPut("timetables/{id:guid}/managers")]
+    [ProducesResponseType(typeof(TimetableDetailDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> SetManagers(Guid branchId, Guid id, [FromBody] SetTimetableManagersRequest request)
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
+
+        // THE APPOINTMENT CHECK COMES FIRST, BEFORE THE SCOPE ONE, and the order is the whole message. An
+        // appointed master is almost always a teacher, whose role is StaffScope.SelfOnly — so testing the scope
+        // first told them "the timetable is built by an unscoped timetable master", which is true of somebody
+        // else's situation and says nothing about theirs. Found by e2e 26.1h. Give the reader the refusal that
+        // is about THEM.
+        if (!TimetableAccess.MayAppoint(await HasPermissionAsync(Permissions.TimetableManage)))
+            return StatusCode(StatusCodes.Status403Forbidden, new ProblemDetails
+            {
+                Title = "Appointing a timetable master needs the timetable permission",
+                Detail = "Being the appointed master of a timetable does not let you appoint another one. Ask an administrator.",
+                Status = StatusCodes.Status403Forbidden,
+                Extensions = { ["code"] = "CANNOT_APPOINT" }
+            });
+
         if (await RefuseScopedAsync() is { } refused) return refused;
 
         var timetable = await Db.Timetables.FirstOrDefaultAsync(t => t.Id == id && t.BranchId == branchId);
         if (timetable == null) return NotFoundProblem("Timetable not found");
+        if (timetable.Status == TimetableStatus.Archived)
+            return ConflictProblem("That timetable is history", "An archived version is never edited, so it needs no master.");
+
+        var wanted = request.UserIds.Where(x => x != Guid.Empty).Distinct().ToArray();
+        if (wanted.Length > 10) return BadRequestProblem("A timetable has at most ten appointed masters.");
+        if (wanted.Length > 0 && await RefuseUnknownManagersAsync(branchId, wanted) is { } unknown) return unknown;
+
+        var before = timetable.ManagerUserIds;
+        if (before.OrderBy(x => x).SequenceEqual(wanted.OrderBy(x => x)))
+            return Ok(await BuildDetailAsync(timetable, canManage: true));
+
+        timetable.ManagerUserIds = wanted;
+        timetable.UpdatedAt = DateTime.UtcNow;
+        await Db.SaveChangesAsync();
+
+        var names = await BuildNamesAsync(before.Concat(wanted).Distinct().Select(x => (Guid?)x));
+        await Activity.RecordAsync(ActivityActions.TimetableManagersSet, nameof(Timetable), timetable.Id, null,
+            wanted.Length == 0
+                ? $"'{timetable.Name}' has no appointed master; the timetable permission now opens it"
+                : $"'{timetable.Name}' is now managed by {string.Join(", ", wanted.Select(x => names[x]))}",
+            new { Before = before, After = wanted }, branchId, timetable.OrganizationId);
+
+        // Told in both directions: somebody appointed has work to do, and somebody removed needs to know their
+        // access went. Neither is a silent change to what a person may do.
+        await TellAppointedAsync(timetable, wanted.Except(before).ToArray(), appointed: true);
+        await TellAppointedAsync(timetable, before.Except(wanted).ToArray(), appointed: false);
+
+        return Ok(await BuildDetailAsync(timetable, canManage: true));
+    }
+
+    /// <summary>
+    /// A manager has to be an active member of THIS BRANCH. Naming somebody from another branch — or another
+    /// tenant — would hand them a write they could not otherwise reach, so it is refused by name rather than
+    /// stored and left to fail at the point they try to use it.
+    /// </summary>
+    private async Task<IActionResult?> RefuseUnknownManagersAsync(Guid branchId, IReadOnlyCollection<Guid> userIds)
+    {
+        // BranchStaff is the one home for "who belongs to this branch", and it matters here: somebody with no
+        // assigned branch belongs to every branch of the organization, so an id-and-branch test written by hand
+        // would refuse a perfectly valid appointment.
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+        var known = await StaffLookups.BranchStaff(Db, organizationId, branchId)
+            .Where(u => userIds.Contains(u.Id))
+            .Select(u => u.Id).ToListAsync();
+        var missing = userIds.Except(known).ToList();
+        return missing.Count == 0
+            ? null
+            : BadRequestProblem($"{missing.Count} of those people are not active staff of this branch.");
+    }
+
+    /// <summary>Tell somebody they have been appointed the master of a version, or that they no longer are.</summary>
+    private async Task TellAppointedAsync(Timetable timetable, IReadOnlyCollection<Guid> userIds, bool appointed)
+    {
+        foreach (var userId in userIds.Where(x => x != CurrentUserId()))
+        {
+            try
+            {
+                await _notifications.CreateInAppNotificationAsync(new CreateNotificationRequest
+                {
+                    UserId = userId,
+                    OrganizationId = timetable.OrganizationId,
+                    BranchId = timetable.BranchId,
+                    Title = appointed ? "You are the timetable master for a term" : "You no longer manage a timetable",
+                    Message = appointed
+                        ? $"You can now build and publish \"{timetable.Name}\"."
+                        : $"\"{timetable.Name}\" is managed by somebody else now.",
+                    Type = NotificationType.StaffPerformance,
+                    Priority = NotificationPriority.Normal,
+                    Channels = NotificationChannel.InApp | NotificationChannel.Email,
+                    EventKey = NotificationEventKeys.StaffTimetablePublished,
+                    ActionUrl = $"/admin/timetable?t={timetable.Id}",
+                    IconClass = "grid-3x3-gap"
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Appointment notice for timetable {TimetableId} could not reach {UserId}", timetable.Id, userId);
+            }
+        }
+    }
+
+    /// <summary>Discard a draft. A published or archived version is history and is never deleted.</summary>
+    [HttpDelete("timetables/{id:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> DeleteDraft(Guid branchId, Guid id)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var timetable = await Db.Timetables.FirstOrDefaultAsync(t => t.Id == id && t.BranchId == branchId);
+        if (timetable == null) return NotFoundProblem("Timetable not found");
+        var (problem, isOverride) = await GuardWriteAsync(timetable);
+        if (problem != null) return problem;
         if (timetable.Status != TimetableStatus.Draft) return ConflictProblem("Only a draft can be discarded", "A published or archived timetable is kept as history.");
 
+        var name = timetable.Name;
+        var snapshot = new Timetable { Id = id, Name = name, BranchId = branchId, OrganizationId = timetable.OrganizationId, ManagerUserIds = timetable.ManagerUserIds };
         Db.Timetables.Remove(timetable);
         await Db.SaveChangesAsync();
-        await Activity.RecordAsync(ActivityActions.TimetableArchived, nameof(Timetable), id, null, $"Timetable draft '{timetable.Name}' discarded", null, branchId, timetable.OrganizationId);
+        await Activity.RecordAsync(ActivityActions.TimetableArchived, nameof(Timetable), id, null, $"Timetable draft '{name}' discarded", null, branchId, snapshot.OrganizationId);
+        // Reported from the snapshot, because the row it is about no longer exists to read the managers off.
+        if (isOverride) await ReportOverrideAsync(snapshot, "A draft was discarded");
         return NoContent();
     }
 
@@ -392,15 +541,14 @@ public class TimetableController : StaffPerformanceControllerBase
     // =====================================================================================================
 
     [HttpPost("timetables/{id:guid}/lessons")]
-    [RequirePermission(Permissions.TimetableManage)]
     [ProducesResponseType(typeof(LessonChangeResultDto), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> PlaceLesson(Guid branchId, Guid id, [FromBody] PlaceLessonRequest request)
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
-        if (await RefuseScopedAsync() is { } refused) return refused;
 
         var teacherIds = request.TeacherUserIds.Where(t => t != Guid.Empty).Distinct().ToList();
         if (teacherIds.Count is 0 or > 4) return BadRequestProblem("A lesson has between one and four teachers.");
@@ -417,6 +565,9 @@ public class TimetableController : StaffPerformanceControllerBase
             await LockTimetableAsync(id);
             var timetable = await Db.Timetables.FirstOrDefaultAsync(t => t.Id == id && t.BranchId == branchId);
             if (timetable == null) { result = NotFoundProblem("Timetable not found"); return; }
+            // Ownership, inside the lock: an appointed master of THIS version, or the permission (2026-09-22).
+            var (refusal, isOverride) = await GuardWriteAsync(timetable);
+            if (refusal != null) { result = refusal; return; }
             if (timetable.Status != TimetableStatus.Draft) { result = NotDraftProblem(); return; }
 
             var settings = await _settings.ReadAsync(branchId);
@@ -475,6 +626,8 @@ public class TimetableController : StaffPerformanceControllerBase
                 $"Lesson placed in '{timetable.Name}': {string.Join(", ", resolvedClasses)} {subject.Code}, {TimetableCycle.CycleDayLabel(settings, timetable.CycleDays, request.CycleDay)} {request.PeriodKey}",
                 new { request.CycleDay, request.PeriodKey, Classes = resolvedClasses, SubjectId = subject.Id, Teachers = teacherIds, Room = room }, branchId, timetable.OrganizationId);
 
+            if (isOverride) await ReportOverrideAsync(timetable, "A lesson was placed");
+
             result = StatusCode(StatusCodes.Status201Created, await ChangeResultAsync(timetable, created.Select(c => c.Id)));
         });
         return result!;
@@ -482,14 +635,12 @@ public class TimetableController : StaffPerformanceControllerBase
 
     /// <summary>Move a lesson — all of its joint group — to another slot, and set its room.</summary>
     [HttpPut("timetables/{id:guid}/lessons/{lessonId:guid}")]
-    [RequirePermission(Permissions.TimetableManage)]
     [ProducesResponseType(typeof(LessonChangeResultDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
     public async Task<IActionResult> MoveLesson(Guid branchId, Guid id, Guid lessonId, [FromBody] MoveLessonRequest request)
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
-        if (await RefuseScopedAsync() is { } refused) return refused;
 
         IActionResult? result = null;
         var strategy = Db.Database.CreateExecutionStrategy();
@@ -500,6 +651,9 @@ public class TimetableController : StaffPerformanceControllerBase
             await LockTimetableAsync(id);
             var timetable = await Db.Timetables.FirstOrDefaultAsync(t => t.Id == id && t.BranchId == branchId);
             if (timetable == null) { result = NotFoundProblem("Timetable not found"); return; }
+            // Ownership, inside the lock: an appointed master of THIS version, or the permission (2026-09-22).
+            var (refusal, isOverride) = await GuardWriteAsync(timetable);
+            if (refusal != null) { result = refusal; return; }
             if (timetable.Status != TimetableStatus.Draft) { result = NotDraftProblem(); return; }
 
             var lesson = await Db.TimetableLessons.FirstOrDefaultAsync(l => l.Id == lessonId && l.TimetableId == id);
@@ -548,6 +702,8 @@ public class TimetableController : StaffPerformanceControllerBase
                 $"Lesson moved in '{timetable.Name}': {string.Join(", ", rows.Select(r => r.ClassName).Distinct())} from {from} to {TimetableCycle.CycleDayLabel(settings, timetable.CycleDays, request.CycleDay)} {periodKey}",
                 new { LessonIds = rows.Select(r => r.Id), request.CycleDay, request.PeriodKey, Room = room }, branchId, timetable.OrganizationId);
 
+            if (isOverride) await ReportOverrideAsync(timetable, "A lesson was moved");
+
             result = Ok(await ChangeResultAsync(timetable, rows.Select(r => r.Id)));
         });
         return result!;
@@ -555,13 +711,11 @@ public class TimetableController : StaffPerformanceControllerBase
 
     /// <summary>Remove a lesson and the rest of its joint group.</summary>
     [HttpDelete("timetables/{id:guid}/lessons/{lessonId:guid}")]
-    [RequirePermission(Permissions.TimetableManage)]
     [ProducesResponseType(typeof(LessonChangeResultDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> RemoveLesson(Guid branchId, Guid id, Guid lessonId)
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
-        if (await RefuseScopedAsync() is { } refused) return refused;
 
         IActionResult? result = null;
         var strategy = Db.Database.CreateExecutionStrategy();
@@ -572,6 +726,9 @@ public class TimetableController : StaffPerformanceControllerBase
             await LockTimetableAsync(id);
             var timetable = await Db.Timetables.FirstOrDefaultAsync(t => t.Id == id && t.BranchId == branchId);
             if (timetable == null) { result = NotFoundProblem("Timetable not found"); return; }
+            // Ownership, inside the lock: an appointed master of THIS version, or the permission (2026-09-22).
+            var (refusal, isOverride) = await GuardWriteAsync(timetable);
+            if (refusal != null) { result = refusal; return; }
             if (timetable.Status != TimetableStatus.Draft) { result = NotDraftProblem(); return; }
 
             var lesson = await Db.TimetableLessons.FirstOrDefaultAsync(l => l.Id == lessonId && l.TimetableId == id);
@@ -586,6 +743,8 @@ public class TimetableController : StaffPerformanceControllerBase
                 $"Lesson removed from '{timetable.Name}': {string.Join(", ", rows.Select(r => r.ClassName).Distinct())} {lesson.PeriodKey}",
                 new { LessonIds = rows.Select(r => r.Id), lesson.CycleDay, lesson.PeriodKey }, branchId, timetable.OrganizationId);
 
+            if (isOverride) await ReportOverrideAsync(timetable, "A lesson was removed");
+
             result = Ok(await ChangeResultAsync(timetable, Array.Empty<Guid>()));
         });
         return result!;
@@ -597,28 +756,37 @@ public class TimetableController : StaffPerformanceControllerBase
 
     /// <summary>
     /// Publish a draft. Refused while any hard clash remains (no override); soft clashes need acknowledging with a
-    /// note. Archives every other published version of the branch whose dates overlap, then tells each teacher with
-    /// lessons — a link, never the timetable itself.
+    /// note. Then tells each teacher with lessons — a link, never the timetable itself.
+    ///
+    /// <b>PUBLISHING OVER A LIVE VERSION REFUSES UNLESS <c>Replace</c> IS ASKED FOR (2026-09-22), and that is the
+    /// most consequential change in this file.</b> It used to archive every overlapping published version
+    /// SILENTLY — and because every lesson query filters on Published over today's date, archiving the live one
+    /// stops every lesson materialising: no registers, no teaching figures, no portal card, school-wide. The
+    /// archive was reported in the response, but nobody reading "published" expects the other one to have stopped.
+    ///
+    /// This also answers what the school means by "three timetables in a term": they cannot be three
+    /// <see cref="Timetable"/> rows, because only one may cover a date. General teaching is the timetable; exam
+    /// supervision is a series of Session duties, which is what <see cref="DutyKind.Session"/> has always been for.
     /// </summary>
     [HttpPost("timetables/{id:guid}/publish")]
-    [RequirePermission(Permissions.TimetableManage)]
     [ProducesResponseType(typeof(TimetableDetailDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Publish(Guid branchId, Guid id, [FromBody] PublishTimetableRequest request)
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
-        if (await RefuseScopedAsync() is { } refused) return refused;
 
         IActionResult? problem = null;
         Timetable? published = null;
         List<string> archivedNames = new();
         TimetableDiagnosisDto? diagnosis = null;
+        var publishWasOverride = false;
         var strategy = Db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {
             Db.ChangeTracker.Clear();
             archivedNames = new();
+            publishWasOverride = false;
             await using var tx = await Db.Database.BeginTransactionAsync();
             var branchLock = $"timetable-publish:{branchId}";
             await Db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtext({branchLock})::bigint)");
@@ -626,6 +794,9 @@ public class TimetableController : StaffPerformanceControllerBase
 
             var timetable = await Db.Timetables.Include(t => t.Lessons).FirstOrDefaultAsync(t => t.Id == id && t.BranchId == branchId);
             if (timetable == null) { problem = NotFoundProblem("Timetable not found"); return; }
+            var (refusal, isOverride) = await GuardWriteAsync(timetable);
+            if (refusal != null) { problem = refusal; return; }
+            publishWasOverride = isOverride;
             if (timetable.Status != TimetableStatus.Draft) { problem = NotDraftProblem(); return; }
             if (timetable.Lessons.Count == 0) { problem = BadRequestProblem("There are no lessons to publish."); return; }
 
@@ -661,6 +832,29 @@ public class TimetableController : StaffPerformanceControllerBase
             var overlapping = await Db.Timetables
                 .Where(t => t.BranchId == branchId && t.Id != id && t.Status == TimetableStatus.Published && t.EffectiveFrom <= timetable.EffectiveTo && t.EffectiveTo >= timetable.EffectiveFrom)
                 .ToListAsync();
+
+            // REFUSED UNLESS ASKED FOR. Archiving a live version stops every lesson in the school materialising,
+            // so it is never the default path — it names what it would replace and what the dates are, because a
+            // school publishing an exam timetable over its teaching one is usually asking for the wrong thing.
+            if (overlapping.Count > 0 && !request.Replace)
+            {
+                problem = Conflict(new ProblemDetails
+                {
+                    Title = "Another timetable is already live for these dates",
+                    Detail = string.Create(CultureInfo.InvariantCulture,
+                        $"{string.Join(", ", overlapping.Select(o => $"'{o.Name}' ({o.EffectiveFrom:dd MMM yyyy} to {o.EffectiveTo:dd MMM yyyy})"))} " +
+                        $"covers the same dates. Publishing over it stops its lessons, registers and teaching figures. " +
+                        $"Change these dates, or resubmit with replace=true to take it out of service deliberately."),
+                    Status = StatusCodes.Status409Conflict,
+                    Extensions =
+                    {
+                        ["code"] = "WOULD_REPLACE_PUBLISHED",
+                        ["replaces"] = overlapping.Select(o => new { o.Id, o.Name, o.EffectiveFrom, o.EffectiveTo }).ToList()
+                    }
+                });
+                return;
+            }
+
             foreach (var old in overlapping)
             {
                 old.Status = TimetableStatus.Archived;
@@ -719,6 +913,8 @@ public class TimetableController : StaffPerformanceControllerBase
             }
         }
 
+        if (publishWasOverride) await ReportOverrideAsync(timetableDone, "The timetable was published");
+
         // Lessons are materialised from the published version (plan §7.1): now, in the background, and nightly after.
         try { Hangfire.BackgroundJob.Enqueue<QMgr.Infrastructure.Jobs.LessonGenerationJob>(job => job.RunForBranchAsync(branchId)); }
         catch (Exception ex) { _logger.LogError(ex, "Could not enqueue lesson generation for branch {BranchId}; the nightly run will do it", branchId); }
@@ -726,23 +922,224 @@ public class TimetableController : StaffPerformanceControllerBase
     }
 
     [HttpPost("timetables/{id:guid}/archive")]
-    [RequirePermission(Permissions.TimetableManage)]
     [ProducesResponseType(typeof(TimetableDetailDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> Archive(Guid branchId, Guid id)
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
-        if (await RefuseScopedAsync() is { } refused) return refused;
 
         var timetable = await Db.Timetables.FirstOrDefaultAsync(t => t.Id == id && t.BranchId == branchId);
         if (timetable == null) return NotFoundProblem("Timetable not found");
+        var (refusal, isOverride) = await GuardWriteAsync(timetable);
+        if (refusal != null) return refusal;
         if (timetable.Status != TimetableStatus.Published) return ConflictProblem("Only a published timetable can be archived");
 
         timetable.Status = TimetableStatus.Archived;
         timetable.UpdatedAt = DateTime.UtcNow;
         await Db.SaveChangesAsync();
         await Activity.RecordAsync(ActivityActions.TimetableArchived, nameof(Timetable), id, null, $"Timetable '{timetable.Name}' archived", null, branchId, timetable.OrganizationId);
+        if (isOverride) await ReportOverrideAsync(timetable, "The timetable was archived");
         return await GetTimetable(branchId, id);
+    }
+
+    // =====================================================================================================
+    // Cover and cancellation: one-day departures from a published timetable (2026-09-22)
+    // =====================================================================================================
+
+    /// <summary>
+    /// Record cover, or cancel one lesson on one date. <b>The timetable master's own path</b>; the other way in
+    /// is a colleague's self-service request, which lands here through the same
+    /// <see cref="TimetableExceptions.Refuse"/> rules so the two cannot disagree.
+    ///
+    /// It is a one-day thing and it never edits the timetable: a published version stays immutable, and the
+    /// materialiser reads the exception when it makes the day's lesson duties. A PERMANENT change is a new draft
+    /// published over it, which is what <see cref="Publish"/> is for.
+    /// </summary>
+    [HttpPost("timetables/{id:guid}/exceptions")]
+    [ProducesResponseType(typeof(TimetableExceptionDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> CreateException(Guid branchId, Guid id, [FromBody] CreateLessonExceptionRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var timetable = await Db.Timetables.AsNoTracking().FirstOrDefaultAsync(t => t.Id == id && t.BranchId == branchId);
+        if (timetable == null) return NotFoundProblem("Timetable not found");
+        var (refusal, isOverride) = await GuardWriteAsync(timetable);
+        if (refusal != null) return refusal;
+
+        var lesson = await Db.TimetableLessons.AsNoTracking().FirstOrDefaultAsync(l => l.Id == request.TimetableLessonId && l.TimetableId == id);
+        if (lesson == null) return NotFoundProblem("Lesson not found");
+
+        var settings = await _settings.ReadAsync(branchId);
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, await ZoneAsync(branchId)));
+        if (TimetableExceptions.Refuse(timetable, lesson, request.Date, today, request.Kind, request.CoverUserId, settings) is { } why)
+            return BadRequestProblem("Cannot record that", why);
+
+        if (request.Kind == LessonExceptionKind.Cover
+            && await RefuseUnknownManagersAsync(branchId, new[] { request.CoverUserId!.Value }) != null)
+            return BadRequestProblem("That person is not active staff of this branch.");
+
+        var row = new TimetableLessonException
+        {
+            OrganizationId = timetable.OrganizationId, BranchId = branchId, TimetableId = id,
+            TimetableLessonId = lesson.Id, Date = request.Date, Kind = request.Kind,
+            CoverUserId = request.Kind == LessonExceptionKind.Cover ? request.CoverUserId : null,
+            Reason = string.IsNullOrWhiteSpace(request.Reason) ? null : request.Reason.Trim(),
+            CreatedByUserId = CurrentUserId(), CreatedBy = CurrentUserId()
+        };
+        Db.TimetableLessonExceptions.Add(row);
+        try
+        {
+            await Db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+        {
+            // ONE EXCEPTION PER LESSON PER DATE, and the index is the rule. Withdraw the first rather than
+            // stacking a second on it: two rows for one lesson on one date is something the materialiser would
+            // have to pick between, and picking silently is how a teacher turns up to a lesson somebody covered.
+            return ConflictProblem("Already arranged", "That lesson already has cover or a cancellation on that date. Withdraw it first.");
+        }
+
+        await Activity.RecordAsync(ActivityActions.TimetableExceptionSet, nameof(Timetable), id, null,
+            $"{(row.Kind == LessonExceptionKind.Cover ? "Cover" : "Cancellation")} recorded on '{timetable.Name}' for {lesson.ClassName} {lesson.PeriodKey}",
+            new { row.Date, row.Kind, row.CoverUserId, lesson.TeacherUserId, LessonId = lesson.Id }, branchId, timetable.OrganizationId);
+
+        await TellAboutCoverAsync(timetable, lesson, row, withdrawn: false);
+        if (isOverride) await ReportOverrideAsync(timetable, row.Kind == LessonExceptionKind.Cover ? "Cover was arranged" : "A lesson was cancelled");
+
+        // The duty may already exist inside the 14-day window, in which case it has to change hands now rather
+        // than at the nightly run — otherwise cover arranged today for tomorrow reaches nobody's My Day.
+        await RegenerateLessonsAsync(branchId);
+
+        var mapped = await MapExceptionsAsync(timetable, new List<TimetableLesson> { lesson }, settings, today);
+        return StatusCode(StatusCodes.Status201Created, mapped.FirstOrDefault(x => x.Id == row.Id));
+    }
+
+    /// <summary>
+    /// Undo one. The lesson goes back to its usual teacher and its usual place, and both people are told —
+    /// somebody who agreed to cover a lesson has to learn that they no longer are.
+    ///
+    /// Either teacher may withdraw it, as well as anybody who may write the version: the two of them arranged it
+    /// between themselves, so requiring an administrator to unpick it would send them back to the corridor.
+    /// </summary>
+    [HttpDelete("timetables/{id:guid}/exceptions/{exceptionId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> WithdrawException(Guid branchId, Guid id, Guid exceptionId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var timetable = await Db.Timetables.AsNoTracking().FirstOrDefaultAsync(t => t.Id == id && t.BranchId == branchId);
+        if (timetable == null) return NotFoundProblem("Timetable not found");
+
+        var row = await Db.TimetableLessonExceptions.FirstOrDefaultAsync(e => e.Id == exceptionId && e.TimetableId == id);
+        if (row == null) return NotFoundProblem("Not found");
+        var lesson = await Db.TimetableLessons.AsNoTracking().FirstOrDefaultAsync(l => l.Id == row.TimetableLessonId);
+        if (lesson == null) return NotFoundProblem("Not found");
+
+        var me = CurrentUserId();
+        var holds = await HasPermissionAsync(Permissions.TimetableManage);
+        var mayWithdraw = TimetableAccess.MayWrite(timetable, me, holds)
+                          || row.CreatedByUserId == me || row.CoverUserId == me || lesson.TeacherUserId == me;
+        if (!mayWithdraw) return NotFoundProblem("Not found");
+
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, await ZoneAsync(branchId)));
+        if (row.Date < today)
+            return ConflictProblem("That date has passed", "Cover that has already happened is history the register records. It is not withdrawn afterwards.");
+
+        Db.TimetableLessonExceptions.Remove(row);
+        await Db.SaveChangesAsync();
+
+        await Activity.RecordAsync(ActivityActions.TimetableExceptionWithdrawn, nameof(Timetable), id, null,
+            $"{(row.Kind == LessonExceptionKind.Cover ? "Cover" : "A cancellation")} withdrawn on '{timetable.Name}' for {lesson.ClassName} {lesson.PeriodKey}",
+            new { row.Date, row.Kind, row.CoverUserId, lesson.TeacherUserId }, branchId, timetable.OrganizationId);
+
+        await TellAboutCoverAsync(timetable, lesson, row, withdrawn: true);
+        await RegenerateLessonsAsync(branchId);
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Tell the teacher whose lesson it is, and the colleague taking it. Both directions, both ways round, and it
+    /// NEVER throws: the arrangement is committed, and failing a saved change because a notice did not send is
+    /// the worst available answer — the TryIssueVisitToken rule.
+    /// </summary>
+    private async Task TellAboutCoverAsync(Timetable timetable, TimetableLesson lesson, TimetableLessonException row, bool withdrawn)
+    {
+        var when = string.Create(CultureInfo.InvariantCulture, $"{row.Date:dd MMM yyyy}");
+        var what = $"{lesson.ClassName}, {lesson.PeriodKey}";
+        var recipients = new List<(Guid UserId, string Title, string Message)>();
+
+        if (row.Kind == LessonExceptionKind.Cover)
+        {
+            var names = await BuildNamesAsync(new Guid?[] { lesson.TeacherUserId, row.CoverUserId });
+            var coverName = row.CoverUserId is { } c && names[c] is { Length: > 0 } cn ? cn : "A colleague";
+            var teacherName = names[lesson.TeacherUserId] is { Length: > 0 } tn ? tn : "a colleague";
+
+            recipients.Add((lesson.TeacherUserId,
+                withdrawn ? "Cover for your lesson was withdrawn" : "Your lesson is covered",
+                withdrawn
+                    ? $"You are teaching {what} on {when} after all."
+                    : $"{coverName} is teaching {what} on {when}.{Because(row.Reason)}"));
+
+            if (row.CoverUserId is { } cover)
+                recipients.Add((cover,
+                    withdrawn ? "You are no longer covering a lesson" : "You are covering a lesson",
+                    withdrawn
+                        ? $"{teacherName}'s {what} on {when} is back with them."
+                        : $"You are teaching {teacherName}'s {what} on {when}. The register is yours for that lesson.{Because(row.Reason)}"));
+        }
+        else
+        {
+            recipients.Add((lesson.TeacherUserId,
+                withdrawn ? "A cancelled lesson is back on" : "A lesson was cancelled",
+                withdrawn
+                    ? $"{what} on {when} is on the timetable again."
+                    : $"{what} on {when} does not happen.{Because(row.Reason)}"));
+        }
+
+        foreach (var (userId, title, message) in recipients.Where(r => r.UserId != Guid.Empty))
+        {
+            try
+            {
+                await _notifications.CreateInAppNotificationAsync(new CreateNotificationRequest
+                {
+                    UserId = userId,
+                    OrganizationId = timetable.OrganizationId,
+                    BranchId = timetable.BranchId,
+                    Title = title,
+                    Message = message,
+                    Type = NotificationType.StaffPerformance,
+                    Priority = NotificationPriority.Normal,
+                    Channels = NotificationChannel.InApp | NotificationChannel.Email,
+                    EventKey = NotificationEventKeys.StaffLessonCover,
+                    ActionUrl = "/my-day",
+                    IconClass = "arrow-left-right"
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Cover notice for timetable {TimetableId} could not reach {UserId}", timetable.Id, userId);
+            }
+        }
+
+        static string Because(string? reason) => string.IsNullOrWhiteSpace(reason) ? "" : $" ({reason.Trim()})";
+    }
+
+    /// <summary>
+    /// Re-materialise the branch's lessons now, so cover inside the 14-day window changes hands on this request
+    /// rather than at the nightly run. Enqueued rather than awaited, and a failure to enqueue is logged and
+    /// swallowed: the nightly run is the backstop, exactly as publishing treats it.
+    /// </summary>
+    private Task RegenerateLessonsAsync(Guid branchId)
+    {
+        try { Hangfire.BackgroundJob.Enqueue<QMgr.Infrastructure.Jobs.LessonGenerationJob>(job => job.RunForBranchAsync(branchId)); }
+        catch (Exception ex) { _logger.LogError(ex, "Could not enqueue lesson generation for branch {BranchId}; the nightly run will do it", branchId); }
+        return Task.CompletedTask;
     }
 
     // =====================================================================================================
@@ -755,7 +1152,6 @@ public class TimetableController : StaffPerformanceControllerBase
     /// the background; the draft's diagnosis afterwards is the report of what is left to fix.
     /// </summary>
     [HttpPost("timetables/{id:guid}/import")]
-    [RequirePermission(Permissions.TimetableManage)]
     [ProducesResponseType(typeof(RosterImportJobDto), StatusCodes.Status202Accepted)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
@@ -763,10 +1159,11 @@ public class TimetableController : StaffPerformanceControllerBase
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
-        if (await RefuseScopedAsync() is { } refused) return refused;
 
         var timetable = await Db.Timetables.AsNoTracking().FirstOrDefaultAsync(t => t.Id == id && t.BranchId == branchId);
         if (timetable == null) return NotFoundProblem("Timetable not found");
+        var (importRefusal, importIsOverride) = await GuardWriteAsync(timetable);
+        if (importRefusal != null) return importRefusal;
         if (timetable.Status != TimetableStatus.Draft) return NotDraftProblem();
         if (request.Rows.Count == 0) return BadRequestProblem("The file has no lesson rows.");
         if (request.Rows.Count > 5000) return BadRequestProblem("A timetable file is at most 5,000 lesson rows.");
@@ -805,12 +1202,13 @@ public class TimetableController : StaffPerformanceControllerBase
             $"Timetable import into '{timetable.Name}' started: {request.Rows.Count} row(s){(request.ReplaceExisting ? ", replacing the draft's lessons" : "")}",
             new { Rows = request.Rows.Count, request.ReplaceExisting, request.SourceFileName, JobId = job.Id }, branchId, timetable.OrganizationId);
 
+        if (importIsOverride) await ReportOverrideAsync(timetable, "Lessons were imported");
+
         Hangfire.BackgroundJob.Enqueue<QMgr.Infrastructure.Jobs.RosterImportProcessorJob>(j => j.ProcessAsync(job.Id));
         return StatusCode(StatusCodes.Status202Accepted, StudentsController.MapToDto(job));
     }
 
     [HttpGet("import-jobs/{jobId:guid}")]
-    [RequirePermission(Permissions.TimetableManage)]
     [ProducesResponseType(typeof(RosterImportJobDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetImportJob(Guid branchId, Guid jobId)
     {
@@ -818,25 +1216,126 @@ public class TimetableController : StaffPerformanceControllerBase
         if (branchError != null) return branchError;
         if (!await StaffScope.IsUnscopedAsync()) return NotFoundProblem("Import not found");
         var job = await Db.RosterImportJobs.AsNoTracking().FirstOrDefaultAsync(j => j.Id == jobId && j.BranchId == branchId && j.Kind == RosterImportKind.Timetable);
-        return job == null ? NotFoundProblem("Import not found") : Ok(StudentsController.MapToDto(job));
+        if (job == null || await RefuseImportJobAsync(job)) return NotFoundProblem("Import not found");
+        return Ok(StudentsController.MapToDto(job));
     }
 
     [HttpGet("import-jobs/{jobId:guid}/entries")]
-    [RequirePermission(Permissions.TimetableManage)]
     [ProducesResponseType(typeof(List<RosterImportJobEntryDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetImportJobEntries(Guid branchId, Guid jobId, [FromQuery] int limit = 500)
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
         if (!await StaffScope.IsUnscopedAsync()) return NotFoundProblem("Import not found");
-        if (!await Db.RosterImportJobs.AnyAsync(j => j.Id == jobId && j.BranchId == branchId && j.Kind == RosterImportKind.Timetable)) return NotFoundProblem("Import not found");
+        var job = await Db.RosterImportJobs.AsNoTracking().FirstOrDefaultAsync(j => j.Id == jobId && j.BranchId == branchId && j.Kind == RosterImportKind.Timetable);
+        if (job == null || await RefuseImportJobAsync(job)) return NotFoundProblem("Import not found");
         var entries = await Db.RosterImportJobEntries.AsNoTracking().Where(e => e.RosterImportJobId == jobId).OrderBy(e => e.RowNumber).Take(Math.Clamp(limit, 1, 5000)).ToListAsync();
         return Ok(entries.Select(StudentsController.MapToDto).ToList());
     }
 
+    /// <summary>
+    /// True when this caller may not read a timetable import's progress. Since the write endpoints stopped
+    /// carrying <c>[RequirePermission]</c>, "unscoped" alone would have let any member of staff read another
+    /// import's rows — so it is the permission, OR having started the job, which is the same ownership rule the
+    /// welfare import log uses (<c>ApplyImportJobScopeAsync</c>). Ownership is what covers an appointed manager
+    /// who holds no permission: they started it, so they may watch it.
+    /// </summary>
+    private async Task<bool> RefuseImportJobAsync(RosterImportJob job)
+        => job.CreatedByUserId != CurrentUserId() && !await HasPermissionAsync(Permissions.TimetableManage);
+
     // =====================================================================================================
     // Helpers
     // =====================================================================================================
+
+    // =====================================================================================================
+    // Ownership (2026-09-22). TimetableAccess holds the rule; these two turn it into an HTTP answer.
+    // =====================================================================================================
+
+    /// <summary>
+    /// Refuses when this caller may not write the version, and says whether the write is an ADMINISTRATOR
+    /// OVERRIDE — a permission holder touching a version somebody else is named on. Every write endpoint calls
+    /// this in place of the <c>[RequirePermission]</c> attribute it used to carry, because the attribute cannot
+    /// let a named manager who holds no permission through.
+    ///
+    /// The refusal names who the version belongs to: "you cannot edit this" without saying whose it is sends
+    /// somebody to ask the wrong person.
+    /// </summary>
+    private async Task<(IActionResult? Problem, bool IsOverride)> GuardWriteAsync(Timetable timetable)
+    {
+        var me = CurrentUserId();
+        var holds = await HasPermissionAsync(Permissions.TimetableManage);
+        if (TimetableAccess.MayWrite(timetable, me, holds))
+        {
+            // THE SCOPE REFUSAL APPLIES TO A PERMISSION HOLDER AND NOT TO AN APPOINTED MASTER — see
+            // TimetableAccess.NeedsUnscopedStaffView. The seeded teacher role is StaffScope.SelfOnly, and a
+            // teacher is exactly who a school appoints, so testing the scope first would refuse the very person
+            // the appointment exists for.
+            if (TimetableAccess.NeedsUnscopedStaffView(timetable, me) && await RefuseScopedAsync() is { } scoped)
+                return (scoped, false);
+            return (null, TimetableAccess.IsOverride(timetable, me, holds));
+        }
+
+        var names = await BuildNamesAsync(timetable.ManagerUserIds.Select(x => (Guid?)x));
+        var detail = TimetableAccess.Refuse(timetable, me, holds,
+            timetable.ManagerUserIds.ToDictionary(x => x, x => names[x]));
+        return (StatusCode(StatusCodes.Status403Forbidden, new ProblemDetails
+        {
+            Title = "This timetable is not yours to change",
+            Detail = detail,
+            Status = StatusCodes.Status403Forbidden,
+            Extensions = { ["code"] = "NOT_TIMETABLE_MANAGER" }
+        }), false);
+    }
+
+    /// <summary>
+    /// Record the override and tell every named manager. Called AFTER the write has committed, and it never
+    /// throws: a change that has been saved must not be failed because the notice about it did not send — the
+    /// same call as VisitorsController.TryIssueVisitToken. The activity event is the durable half; the
+    /// notification is the courtesy.
+    /// </summary>
+    private async Task ReportOverrideAsync(Timetable timetable, string what)
+    {
+        var actor = CurrentUserId();
+        try
+        {
+            await Activity.RecordAsync(ActivityActions.TimetableOverridden, nameof(Timetable), timetable.Id, null,
+                $"{what} on '{timetable.Name}' by somebody who is not its appointed master",
+                new { timetable.ManagerUserIds, What = what }, timetable.BranchId, timetable.OrganizationId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not record the timetable override on {TimetableId}", timetable.Id);
+        }
+
+        var tell = TimetableAccess.TellAbout(timetable, actor);
+        if (tell.Count == 0) return;
+        var names = await BuildNamesAsync(new Guid?[] { actor });
+        var who = names[actor] is { Length: > 0 } n ? n : "An administrator";
+        foreach (var manager in tell)
+        {
+            try
+            {
+                await _notifications.CreateInAppNotificationAsync(new CreateNotificationRequest
+                {
+                    UserId = manager,
+                    OrganizationId = timetable.OrganizationId,
+                    BranchId = timetable.BranchId,
+                    Title = "Somebody else changed your timetable",
+                    Message = $"{who}: {what} on \"{timetable.Name}\".",
+                    Type = NotificationType.StaffPerformance,
+                    Priority = NotificationPriority.Normal,
+                    Channels = NotificationChannel.InApp | NotificationChannel.Email,
+                    EventKey = NotificationEventKeys.StaffTimetableOverride,
+                    ActionUrl = $"/admin/timetable?t={timetable.Id}",
+                    IconClass = "shield-exclamation"
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Override notice for timetable {TimetableId} could not reach {UserId}", timetable.Id, manager);
+            }
+        }
+    }
 
     /// <summary>A scoped caller cannot build the timetable: publishing is bulk work a job carries out for the whole school.</summary>
     private async Task<IActionResult?> RefuseScopedAsync()
@@ -923,15 +1422,74 @@ public class TimetableController : StaffPerformanceControllerBase
         var settings = await _settings.ReadAsync(timetable.BranchId);
         if (!canManage) settings.Unavailability = new();
         var policy = await _policy.GetAsync(timetable.OrganizationId);
-        var names = await BuildNamesAsync(new[] { timetable.PublishedByUserId });
+        var me = CurrentUserId();
+        var holds = await HasPermissionAsync(Permissions.TimetableManage);
+        var names = await BuildNamesAsync(timetable.ManagerUserIds.Select(x => (Guid?)x).Append(timetable.PublishedByUserId));
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, await ZoneAsync(timetable.BranchId)));
         return new TimetableDetailDto
         {
-            Timetable = ToDto(timetable, lessons.Count, policy, names),
+            Timetable = ToDto(timetable, lessons.Count, policy, names, me, holds, today),
             Settings = settings,
             Lessons = await MapLessonsAsync(timetable.OrganizationId, lessons),
             Diagnosis = canManage && timetable.Status != TimetableStatus.Archived ? await DiagnoseAsync(timetable, lessons) : null,
-            CanManage = canManage && await StaffScope.IsUnscopedAsync()
+            CanManage = canManage && await StaffScope.IsUnscopedAsync(),
+            // Cover and cancellations from today on. Only a published version can have any, and everyone who may
+            // read the version may read them: who is teaching a class on Thursday is operational information, the
+            // same argument that makes a published timetable readable by the whole branch.
+            Exceptions = timetable.Status == TimetableStatus.Published
+                ? await MapExceptionsAsync(timetable, lessons, settings, today)
+                : new()
         };
+    }
+
+    /// <summary>
+    /// The version's cover and cancellations from <paramref name="today"/> on. A past exception is history the
+    /// register already records, so the page does not carry it.
+    /// </summary>
+    private async Task<List<TimetableExceptionDto>> MapExceptionsAsync(Timetable timetable, List<TimetableLesson> lessons, TimetableSettingsDto settings, DateOnly today)
+    {
+        var rows = await Db.TimetableLessonExceptions.AsNoTracking()
+            .Where(e => e.TimetableId == timetable.Id && e.Date >= today)
+            .OrderBy(e => e.Date)
+            .ToListAsync();
+        if (rows.Count == 0) return new();
+
+        var byId = lessons.ToDictionary(l => l.Id);
+        var subjectIds = lessons.Select(l => l.SubjectId).Distinct().ToList();
+        var subjects = await Db.Subjects.AsNoTracking()
+            .Where(s => s.OrganizationId == timetable.OrganizationId && subjectIds.Contains(s.Id))
+            .ToDictionaryAsync(s => s.Id, s => s.Name);
+        var names = await BuildNamesAsync(rows.SelectMany(e => new[] { e.CoverUserId, (Guid?)e.CreatedByUserId })
+            .Concat(lessons.Select(l => (Guid?)l.TeacherUserId)));
+
+        var me = CurrentUserId();
+        var holds = await HasPermissionAsync(Permissions.TimetableManage);
+        var mayWrite = TimetableAccess.MayWrite(timetable, me, holds);
+
+        var result = new List<TimetableExceptionDto>(rows.Count);
+        foreach (var e in rows)
+        {
+            if (!byId.TryGetValue(e.TimetableLessonId, out var lesson)) continue;
+            var teacherName = names[lesson.TeacherUserId] is { Length: > 0 } tn ? tn : "A former member of staff";
+            var coverName = e.CoverUserId is { } c ? (names[c] is { Length: > 0 } cn ? cn : "A former member of staff") : null;
+            var subject = subjects.GetValueOrDefault(lesson.SubjectId);
+            var period = TimetableCycle.LessonPeriodOn(settings, timetable.CycleDays, lesson.CycleDay, lesson.PeriodKey);
+            var periodLabel = period == null ? lesson.PeriodKey : $"{period.Label} ({period.Start}–{period.End})";
+            result.Add(new TimetableExceptionDto
+            {
+                Id = e.Id, TimetableId = e.TimetableId, TimetableLessonId = e.TimetableLessonId, Date = e.Date, Kind = e.Kind,
+                CoverUserId = e.CoverUserId, CoverUserName = coverName,
+                TeacherUserId = lesson.TeacherUserId, TeacherName = teacherName,
+                CycleDay = lesson.CycleDay, PeriodKey = lesson.PeriodKey, ClassName = lesson.ClassName,
+                SubjectName = subject, Room = lesson.Room, Reason = e.Reason, SourceRequestId = e.SourceRequestId,
+                CreatedByName = names.Optional(e.CreatedByUserId), CreatedAt = e.CreatedAt,
+                // The two teachers may undo what they arranged; so may anybody who may write the version. A
+                // colleague who is neither reads it and nothing more.
+                CanIWithdraw = mayWrite || e.CreatedByUserId == me || e.CoverUserId == me || lesson.TeacherUserId == me,
+                Summary = TimetableExceptions.SummaryOf(e, teacherName, coverName, lesson.ClassName, subject, periodLabel)
+            });
+        }
+        return result;
     }
 
     private async Task<List<TimetableLessonDto>> MapLessonsAsync(Guid organizationId, List<TimetableLesson> lessons)
@@ -953,10 +1511,22 @@ public class TimetableController : StaffPerformanceControllerBase
             .ToList();
     }
 
-    private TimetableDto ToDto(Timetable t, int lessonCount, StaffPerformancePolicyDto policy, StaffPerformanceMapping.NameLookup names) => new()
+    /// <summary>
+    /// <paramref name="today"/> is the BRANCH-LOCAL date, and it is what turns a Published version past its last
+    /// day into <see cref="TimetableStatus.Expired"/>. Derived here rather than stored, so the label can never
+    /// disagree with the dates.
+    /// </summary>
+    private TimetableDto ToDto(Timetable t, int lessonCount, StaffPerformancePolicyDto policy, StaffPerformanceMapping.NameLookup names,
+        Guid me, bool holdsManage, DateOnly today) => new()
     {
         Id = t.Id, BranchId = t.BranchId, Name = t.Name, PeriodKey = t.PeriodKey, PeriodName = _policy.FindPeriod(policy, t.PeriodKey)?.Name,
-        CycleDays = t.CycleDays, Status = t.Status, PublishedAt = t.PublishedAt, PublishedByName = names.Optional(t.PublishedByUserId),
-        EffectiveFrom = t.EffectiveFrom, EffectiveTo = t.EffectiveTo, LessonCount = lessonCount, CreatedAt = t.CreatedAt
+        CycleDays = t.CycleDays, Status = t.StatusOn(today), PublishedAt = t.PublishedAt, PublishedByName = names.Optional(t.PublishedByUserId),
+        EffectiveFrom = t.EffectiveFrom, EffectiveTo = t.EffectiveTo, LessonCount = lessonCount, CreatedAt = t.CreatedAt,
+        ManagerUserIds = t.ManagerUserIds.ToList(),
+        ManagerNames = t.ManagerUserIds.Select(id => names[id] is { Length: > 0 } n ? n : "A former member of staff").ToList(),
+        IAmManager = TimetableAccess.IsManager(t, me),
+        CanIWrite = TimetableAccess.MayWrite(t, me, holdsManage),
+        WouldBeOverride = TimetableAccess.IsOverride(t, me, holdsManage),
+        CanIAppoint = TimetableAccess.MayAppoint(holdsManage)
     };
 }

@@ -24,7 +24,7 @@
 {
     <div class="page-header">
         <div class="header-content">
-            <h1>Activity Log<QInfo Text="Who did what to which record, from where — every write in the module plus sign-ins. Summaries are written at the actor's visibility, so a Restricted record's content never appears here." Label="Activity Log" /></h1>
+            <h1>Activity Log</h1>
             <p class="subtitle">Who did what to which record, from where — every write in the module plus sign-ins. Summaries are written at the actor's visibility, so a Restricted record's content never appears here.</p>
         </div>
     </div>
@@ -46,7 +46,8 @@
 
     @if (log != null && log.TotalCount > 0)
     {
-        <QPager Count="@log.TotalCount" PageSize="@pageSize" PageIndex="@pageIndex" PageIndexChanged="@OnPageChanged" ItemLabel="events" />
+        <QPager Count="@log.TotalCount" PageSize="@pageSize" PageIndex="@pageIndex" PageIndexChanged="@OnPageChanged" PageSizeOptions="@QPagerDefaults.Sizes" StorageKey="staff-activity"
+               PageSizeChanged="@(n => pageSize = n)" ItemLabel="events" />
         @if (!range.IsAllTime)
         {
             <p class="al-note">The date range is applied to the page in view; the count above is the API's total for the person and action filters.</p>
@@ -64,7 +65,8 @@
     /// the page title, the header band and the tabs.</summary>
     [Parameter] public bool Embedded { get; set; }
 
-    private const int pageSize = 50;
+    // SERVER-paged: the API caps a page at 200, so "All" is not offered — it would quietly be one page of 200.
+    private int pageSize = QPagerDefaults.Size;
 
     private Guid branchId;
     private bool isLoading = true, isExporting;
@@ -135,7 +137,7 @@
         branchId = BranchState.CurrentBranchId;
         TrackBranch();
 
-        try { directory = (await StaffApi.GetDirectoryAsync(branchId)).Items.OrderBy(m => m.FullName).ToList(); }
+        try { directory = (await StaffApi.GetDirectoryAsync(branchId)).Items.OrderBy(m => m.SortName ?? m.FullName).ToList(); }
         catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not load the directory", ex.Message); }
 
         await LoadAsync(resetPage: true);

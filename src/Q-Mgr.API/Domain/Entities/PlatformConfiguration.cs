@@ -79,18 +79,55 @@ public class SecuritySettings
     public MfaSettings Mfa { get; set; } = new();
 }
 
+/// <summary>
+/// What a password must be. EVERY field here is editable by a platform administrator in
+/// Platform Settings > Security; these are only the values a NEW install starts with.
+///
+/// <para><b>FOUR CHARACTERS IS A DELIBERATE PRODUCT DECISION (user, 2026-09-22), and it is well
+/// below what any standard recommends</b> — NIST SP 800-63B puts the floor at 8. It is recorded
+/// here rather than argued: the people typing these are school staff, many of whom have no email
+/// address and are handed a temporary password on a printed slip, and the product owner judged the
+/// friction of a long password to be the larger real-world risk. What protects the account in
+/// practice is the lockout below (five attempts, thirty minutes), which stops online guessing; the
+/// exposure a short password leaves is OFFLINE cracking if the password hashes ever leak, and
+/// BCrypt is the only thing standing in the way of that.</para>
+///
+/// <para><b>Composition rules follow NIST SP 800-63B, which is why they are off.</b> That
+/// guidance is explicit that composition rules — one capital, one digit, one symbol — should NOT be
+/// imposed: they push people towards predictable substitutions (Password1!), towards writing the
+/// result down, and towards reusing the one string that satisfied every site. Length plus a
+/// blocklist of known-breached and obvious passwords is what actually helps, and both are kept.</para>
+///
+/// <para>So: <b>4 characters, no composition rules, and the two checks that REFUSE a bad password
+/// rather than shaping a good one</b> — common passwords and the user's own name. Before 2026-09-22
+/// this was 12 characters plus all four composition rules, which is four more hoops for a member of
+/// staff with no email address who is being handed a temporary password on a printed slip.</para>
+///
+/// <para><b>An existing install keeps whatever it has.</b> These defaults are read only when the
+/// PlatformSettings row is first created — the seeder returns early once any row exists — so a
+/// server already running is unchanged and its administrator decides. That is deliberate: silently
+/// relaxing a live security policy on deploy would be the wrong thing to do even when the new value
+/// is better.</para>
+/// </summary>
 public class PasswordPolicySettings
 {
-    public int MinimumLength { get; set; } = 12;
+    public int MinimumLength { get; set; } = 4;
     public int MaximumLength { get; set; } = 128;
-    public bool RequireUppercase { get; set; } = true;
-    public bool RequireLowercase { get; set; } = true;
-    public bool RequireDigits { get; set; } = true;
-    public bool RequireSpecialCharacters { get; set; } = true;
+
+    // Off by default, per NIST SP 800-63B. Still available to any administrator whose own policy or
+    // insurer requires them.
+    public bool RequireUppercase { get; set; } = false;
+    public bool RequireLowercase { get; set; } = false;
+    public bool RequireDigits { get; set; } = false;
+    public bool RequireSpecialCharacters { get; set; } = false;
     public string AllowedSpecialCharacters { get; set; } = "!@#$%^&*()_+-=[]{}|;:,.<>?";
     public bool PreventCommonPasswords { get; set; } = true;
     public bool PreventUserInfoInPassword { get; set; } = true;
-    public int MinimumUniqueCharacters { get; set; } = 4;
+    // MUST NOT exceed MinimumLength, or the two rules contradict each other: at 4 and 4, every
+    // character of a 4-character password has to be distinct, so "1234" passes and "1122" does not
+    // — and the form would say "at least 4 characters" while the server refused one. That is the
+    // lying-form bug this file's siblings were just fixed for. 1 means "no such rule".
+    public int MinimumUniqueCharacters { get; set; } = 1;
     public bool EnablePasswordHistory { get; set; } = true;
     public int PasswordHistoryCount { get; set; } = 5;
     public bool EnablePasswordExpiry { get; set; } = false;

@@ -24,6 +24,17 @@ public static class RoleAssignmentGuard
         if (RoleCodes.IsSuperAdmin(target.Code))
             return "The platform administrator role cannot be assigned here.";
 
+        // THE ROLE'S PERMISSIONS, DELIBERATELY NOT PostPermissionService.EffectiveCodesAsync (2026-09-22).
+        //
+        // Every other in-code permission check in this codebase was moved onto the effective set — role plus
+        // posts — and this one must NOT be. A post grant is temporary and revocable: it lasts as long as the
+        // person is the class teacher of S4B or the head of Science. A ROLE grant is permanent and reaches
+        // everybody the role is given to.
+        //
+        // So if the effective set were used here, a class teacher whose post derives welfare.view could assign a
+        // role carrying welfare.view to anybody — minting a permanent, school-wide grant out of a temporary
+        // appointment over one class. That is privilege escalation through a post, and it is precisely the shape
+        // the 2026-09-18 escalation bug had. The guard asks what your ROLE holds, and nothing else.
         var actor = await db.Users.IgnoreQueryFilters().AsNoTracking()
             .Where(u => u.Id == actorUserId)
             .Select(u => new { RoleCode = u.Role.Code, Permissions = u.Role.RolePermissions.Select(rp => rp.Permission.Code).ToList() })

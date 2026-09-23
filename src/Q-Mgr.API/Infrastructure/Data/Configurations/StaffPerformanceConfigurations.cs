@@ -69,6 +69,8 @@ public class StaffDutyConfiguration : IEntityTypeConfiguration<StaffDuty>
         b.PrimitiveCollection(d => d.SupervisorUserIds).HasColumnType("uuid[]");
         b.Property(d => d.Acknowledgements).HasColumnType("jsonb").HasDefaultValueSql("'{}'::jsonb").IsRequired();
         b.HasIndex(d => d.SeriesId).HasFilter("\"SeriesId\" IS NOT NULL").HasDatabaseName("idx_staff_duties_series");
+        // Programme import (2026-09-23): the undo finds a batch's duties by this.
+        b.HasIndex(d => d.ImportJobId).HasFilter("\"ImportJobId\" IS NOT NULL").HasDatabaseName("idx_staff_duties_import_job");
         // Lessons (plan §7.1): materialisation is idempotent on one duty per timetable lesson per start, so the nightly
         // run and the run a publish enqueues can overlap without doubling a teacher's day.
         b.Property(d => d.ClassName).HasMaxLength(100);
@@ -326,7 +328,11 @@ public class TimetableConfiguration : IEntityTypeConfiguration<Timetable>
         b.Property(t => t.Name).HasMaxLength(100).IsRequired();
         b.Property(t => t.PeriodKey).HasMaxLength(20).IsRequired();
         b.PrimitiveCollection(t => t.ReportedIssueKeys).HasColumnType("text[]");
+        b.PrimitiveCollection(t => t.ManagerUserIds).HasColumnType("uuid[]");
         b.HasIndex(t => new { t.BranchId, t.Status }).HasDatabaseName("idx_timetables_branch_status");
+        // "Which versions am I the appointed master of?" — the portal asks it, and the expiry ladder asks it for
+        // every published version. A GIN index because the column is an array and the test is containment.
+        b.HasIndex(t => t.ManagerUserIds).HasMethod("gin").HasDatabaseName("idx_timetables_managers");
         // Published versions may not overlap in dates (plan §3.2). A btree index cannot express overlap and a gist
         // exclusion constraint needs an extension, so publish checks overlap under a per-branch advisory lock; this
         // index is the database's backstop for the commonest collision, two versions published from the same day.
@@ -361,6 +367,46 @@ public class TimetableLessonConfiguration : IEntityTypeConfiguration<TimetableLe
         b.HasIndex(l => l.TeacherUserId).HasDatabaseName("idx_timetable_lessons_teacher");
         b.HasIndex(l => l.GroupId).HasDatabaseName("idx_timetable_lessons_group");
         b.HasOne(l => l.Subject).WithMany().HasForeignKey(l => l.SubjectId).OnDelete(DeleteBehavior.Restrict);
+    }
+}
+
+/// <summary>
+/// One-day departures from a published timetable (2026-09-22). Two things here are load-bearing:
+///
+/// THE UNIQUE INDEX IS THE RULE, not a handler check. One exception per lesson per date, so a double press or
+/// two tabs produce one row and one clear refusal rather than two rows the materialiser has to reconcile —
+/// exactly the reasoning behind StaffConfigRequest's own dedupe index.
+///
+/// THE CHECK CONSTRAINT IS THE OTHER HALF OF THE ENUM. A Cover with nobody covering is a cancellation wearing
+/// the wrong label, and the materialiser would silently leave the lesson with its usual teacher; a Cancelled
+/// naming a coverer is a contradiction. The controller refuses both, and so does the database.
+///
+/// CASCADE FROM THE LESSON AND THE VERSION IS CORRECT HERE, unlike the retention rules elsewhere in this
+/// module: an exception against a lesson that no longer exists, or a version that was replaced, describes
+/// nothing. The record of who arranged it survives in the activity log, which is where that question is answered.
+/// </summary>
+public class TimetableLessonExceptionConfiguration : IEntityTypeConfiguration<TimetableLessonException>
+{
+    public void Configure(EntityTypeBuilder<TimetableLessonException> b)
+    {
+        b.ToTable("TimetableLessonExceptions", t => t.HasCheckConstraint(
+            "ck_timetable_lesson_exceptions_cover",
+            "(\"Kind\" = 0 AND \"CoverUserId\" IS NOT NULL) OR (\"Kind\" <> 0 AND \"CoverUserId\" IS NULL)"));
+        b.HasKey(e => e.Id);
+        b.Property(e => e.Reason).HasMaxLength(300);
+
+        b.HasIndex(e => new { e.TimetableLessonId, e.Date })
+            .IsUnique()
+            .HasDatabaseName("ux_timetable_lesson_exceptions_lesson_date");
+
+        // What the materialiser reads on every run: a branch's exceptions over the next fortnight.
+        b.HasIndex(e => new { e.BranchId, e.Date }).HasDatabaseName("idx_timetable_lesson_exceptions_branch_date");
+
+        // "Am I covering anything?" on the portal, and "who is covering my lessons".
+        b.HasIndex(e => e.CoverUserId).HasFilter("\"CoverUserId\" IS NOT NULL").HasDatabaseName("idx_timetable_lesson_exceptions_cover_user");
+
+        b.HasOne(e => e.Timetable).WithMany().HasForeignKey(e => e.TimetableId).OnDelete(DeleteBehavior.Cascade);
+        b.HasOne(e => e.Lesson).WithMany().HasForeignKey(e => e.TimetableLessonId).OnDelete(DeleteBehavior.Cascade);
     }
 }
 

@@ -72,9 +72,10 @@ public class StaffReportsController : ControllerBase
         if (RoleCodes.IsSuperAdmin(_tenantAccessor.TenantContext?.UserRole)) return true;
         var raw = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         if (!Guid.TryParse(raw, out var userId)) return false;
-        return await _context.Users.Where(u => u.Id == userId && u.IsActive)
-            .SelectMany(u => u.Role.RolePermissions)
-            .AnyAsync(rp => rp.Permission.Code == Permissions.StaffConfidentialView);
+        // Role AND posts, the one home for that union. Note staff.confidential.view is NOT in
+        // DepartmentHeadPost, so this correctly still answers false for a department head — the point is that it
+        // now asks the same question every other gate asks, rather than a narrower one of its own.
+        return (await PostPermissionService.EffectiveCodesAsync(_context, userId)).Contains(Permissions.StaffConfidentialView);
     }
 
     private async Task<Guid> ResolveOrganizationIdAsync(Guid branchId)

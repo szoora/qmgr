@@ -14,7 +14,7 @@ namespace QMgr.API.Application.Services;
 /// </summary>
 public static class StaffLookups
 {
-    /// <summary>userId → "First Last" (falls back to the username) for whichever ids are given. Nulls and Guid.Empty are ignored.</summary>
+    /// <summary>userId → the person's name in their organisation's order (falls back to the username) for whichever ids are given. Nulls and Guid.Empty are ignored.</summary>
     public static async Task<StaffPerformanceMapping.NameLookup> LoadNamesAsync(QMgrDbContext db, IEnumerable<Guid?> ids, CancellationToken ct = default)
     {
         var wanted = ids.Where(id => id.HasValue && id.Value != Guid.Empty).Select(id => id!.Value).Distinct().ToList();
@@ -22,12 +22,12 @@ public static class StaffLookups
 
         var rows = await db.Users.IgnoreQueryFilters().AsNoTracking()
             .Where(u => wanted.Contains(u.Id))
-            .Select(u => new { u.Id, u.FirstName, u.LastName, u.Username })
+            .Select(u => new { u.Id, u.OrganizationId, u.FirstName, u.LastName, u.Username })
             .ToListAsync(ct);
 
         return new StaffPerformanceMapping.NameLookup(rows.ToDictionary(
             r => r.Id,
-            r => $"{r.FirstName} {r.LastName}".Trim() is { Length: > 0 } n ? n : r.Username));
+            r => PersonNames.Display(r.OrganizationId, r.FirstName, r.LastName, r.Username)));
     }
 
     /// <summary>departmentId → name for every department of the organization (active or not — a retired department still names a person's history).</summary>
@@ -60,14 +60,14 @@ public static class StaffLookups
         return includeFormer ? q : q.Where(StaffEmployment.CurrentOn(DateOnly.FromDateTime(DateTime.UtcNow)));
     }
 
-    /// <summary>Active users of the organization whose role holds <paramref name="permissionCode"/>. Used for "the Approve holders" and "everyone with reports.view".</summary>
-    public static async Task<List<Guid>> UsersWithPermissionAsync(QMgrDbContext db, Guid organizationId, string permissionCode, CancellationToken ct = default)
-        => await db.Users.IgnoreQueryFilters().AsNoTracking()
-            .Where(u => u.OrganizationId == organizationId && u.IsActive
-                        && u.Role.Code != RoleCodes.SuperAdmin
-                        && u.Role.RolePermissions.Any(rp => rp.Permission.Code == permissionCode))
-            .Select(u => u.Id)
-            .ToListAsync(ct);
+    /// <summary>
+    /// Active users of the organization who hold <paramref name="permissionCode"/> — through their
+    /// role OR their post. Delegates to <see cref="NotificationAudience.HoldersAsync"/>, the one home;
+    /// until 2026-09-23 this read the role alone, so a head of department never heard about the
+    /// reports their post lets them read.
+    /// </summary>
+    public static Task<List<Guid>> UsersWithPermissionAsync(QMgrDbContext db, Guid organizationId, string permissionCode, CancellationToken ct = default, Guid? branchId = null)
+        => NotificationAudience.HoldersAsync(db, organizationId, permissionCode, ct, branchId);
 
     /// <summary>"Maths, Physics" for a user's DepartmentIds, or null when they are in none.</summary>
     public static string? DepartmentNames(Guid[]? departmentIds, IReadOnlyDictionary<Guid, string> names)

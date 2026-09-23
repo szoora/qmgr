@@ -94,10 +94,13 @@ else
             </div>
         </QCard>
 
-        @if (TotalPages > 1)
+        @* The pager stays once there is a size to choose: a reader who picked All must be able to pick 25 again. *@
+        @if (filteredInvoices.Any())
         {
             <QPager Count="@filteredInvoices.Count" PageSize="@pageSize"
-                    PageIndex="@(currentPage - 1)" PageIndexChanged="@(i => currentPage = i + 1)" ItemLabel="invoices" />
+                    PageIndex="@(currentPage - 1)" PageIndexChanged="@(i => currentPage = i + 1)"
+                    PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="invoices"
+                    PageSizeChanged="@(n => { pageSize = n; currentPage = 1; })" ItemLabel="invoices" />
         }
     }
     else if (invoices.Any())
@@ -539,8 +542,8 @@ else
 
     // Pagination
     private int currentPage = 1;
-    private int pageSize = 20;
-    private int TotalPages => (int)Math.Ceiling(filteredInvoices.Count / (double)pageSize);
+    private int pageSize = QPagerDefaults.Size;
+    private int TotalPages => pageSize == QPager.All ? 1 : (int)Math.Ceiling(filteredInvoices.Count / (double)pageSize);
 
     /// <summary>True when the Billing hub hosts this section (always, since 2026-09-19).</summary>
     [Parameter] public bool Embedded { get; set; }
@@ -759,10 +762,7 @@ else
 
     private List<InvoiceDto> GetPaginatedInvoices()
     {
-        return filteredInvoices
-            .Skip((currentPage - 1) * pageSize)
-            .Take(pageSize)
-            .ToList();
+        return QPaging.Page(filteredInvoices, currentPage - 1, pageSize).ToList();
     }
 
     private void SelectInvoice(InvoiceDto invoice)

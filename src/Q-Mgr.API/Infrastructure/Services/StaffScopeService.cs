@@ -1,3 +1,4 @@
+using QMgr.API.Application.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QMgr.Application.Tenant;
@@ -145,7 +146,11 @@ public class StaffScopeService : IStaffScopeService
     public async Task<IReadOnlyList<string>> GetScopedDepartmentNamesAsync()
     {
         if (_scopedDepartmentNames != null) return _scopedDepartmentNames;
-        if (await GetScopeAsync() != StaffDataScope.AssignedDepartments)
+        // An ORGANIZATION-scoped caller is not scoped to departments at all, so there is nothing to
+        // name. Everybody else who heads a department is scoped to it — see ComputeVisibleAsync:
+        // this no longer requires the ROLE to say AssignedDepartments, because since 2026-09-22 the
+        // POST is what grants the reach and the seeded head-of-department role is gone.
+        if (await GetScopeAsync() == StaffDataScope.Organization)
             return _scopedDepartmentNames = Array.Empty<string>();
 
         var ids = await GetHeadedDepartmentIdsAsync();
@@ -195,24 +200,37 @@ public class StaffScopeService : IStaffScopeService
         var visible = new HashSet<Guid>();
         if (me != Guid.Empty) visible.Add(me);
 
+        // THE DEPARTMENT POST GRANTS ITS OWN REACH, WHATEVER THE ROLE SAYS (plan §2.6).
+        // This used to sit inside `case AssignedDepartments:`, which read the ROLE — and only the
+        // seeded head-of-department role carried that value. Deleting that role (plan §5 decision 3)
+        // drops its holders onto `teacher` or `staff`, both SelfOnly, so a derived
+        // `staff.records.view` would have opened a Records page showing the caller and nobody else:
+        // a permission with no reach is a dud, and the mirror of the student-axis leak.
+        //
+        // It is unioned rather than switched on, so a DirectReports line manager who also heads a
+        // department sees both. FAIL CLOSED is unchanged: an empty list adds nobody.
+        if (headedDepartments.Count > 0 && scope != StaffDataScope.Organization)
+        {
+            var headed = headedDepartments.ToArray();
+            // Inactive staff INCLUDED, as inactive students are on the student axis: someone who has
+            // left still has a file, and a head's view of it must not silently differ.
+            var members = await db.Users
+                .AsNoTracking()
+                .Where(u => u.DepartmentIds != null && u.DepartmentIds.Any(id => headed.Contains(id)))
+                .Select(u => u.Id)
+                .ToListAsync(ct);
+            foreach (var id in members) visible.Add(id);
+        }
+
         switch (scope)
         {
             case StaffDataScope.AssignedDepartments:
-            {
-                // FAIL CLOSED: a head with no department sees nobody but themselves.
-                if (headedDepartments.Count == 0) break;
-
-                var deptArray = headedDepartments.ToArray();
-                // Inactive staff INCLUDED, as inactive students are on the student axis: someone
-                // who has left still has a file, and a head's view of it must not silently differ.
-                var ids = await db.Users
-                    .AsNoTracking()
-                    .Where(u => u.DepartmentIds != null && u.DepartmentIds.Any(id => deptArray.Contains(id)))
-                    .Select(u => u.Id)
-                    .ToListAsync(ct);
-                foreach (var id in ids) visible.Add(id);
+                // Handled by the department-post union above, which covers this and every other
+                // non-Organization scope. A second copy of that query here is exactly the drift this
+                // codebase keeps paying for, so the case is left declaring the intent and nothing
+                // more: for this scope the union IS the whole answer, and it still fails closed —
+                // a head with no department adds nobody and keeps only themselves.
                 break;
-            }
             case StaffDataScope.DirectReports:
             {
                 if (me == Guid.Empty) break;

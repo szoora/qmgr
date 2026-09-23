@@ -36,6 +36,39 @@ public class SecurityPolicyController : ControllerBase
     }
 
     /// <summary>
+    /// The password rules a form needs in order to STATE them — anonymous, because the people who
+    /// most need them are setting a password and are not signed in yet (a reset link, a join link,
+    /// a temporary password).
+    ///
+    /// <para><b>Why this is not a disclosure.</b> It returns the rules a user is about to be judged
+    /// against and nothing else: no lockout thresholds, no session policy, no history depth. Those
+    /// stay on the Platform Admin route below. A rule a form cannot state is a rule the user meets by
+    /// trial and error, which is worse for them and no harder for an attacker.</para>
+    ///
+    /// <para>It exists because every password form in this product hardcoded its own number, so the
+    /// set-password page said "At least 12 characters" whatever an administrator had configured —
+    /// and then the server refused, in different words, after the person had typed it twice.</para>
+    /// </summary>
+    [HttpGet("password-rules")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(QMgr.Application.DTOs.PasswordRulesDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetPasswordRules()
+    {
+        var policy = await _passwordValidationService.GetPasswordPolicyAsync();
+        return Ok(new QMgr.Application.DTOs.PasswordRulesDto
+        {
+            MinimumLength = policy.MinimumLength,
+            MaximumLength = policy.MaximumLength,
+            RequireUppercase = policy.RequireUppercase,
+            RequireLowercase = policy.RequireLowercase,
+            RequireDigits = policy.RequireDigits,
+            RequireSpecialCharacters = policy.RequireSpecialCharacters,
+            PreventCommonPasswords = policy.PreventCommonPasswords,
+            PreventUserInfoInPassword = policy.PreventUserInfoInPassword
+        });
+    }
+
+    /// <summary>
     /// Get current password policy (Platform Admin only)
     /// </summary>
     [HttpGet("password-policy")]
@@ -56,7 +89,8 @@ public class SecurityPolicyController : ControllerBase
     public async Task<IActionResult> UpdatePasswordPolicy([FromBody] PasswordPolicySettings policy)
     {
         // Validate policy settings
-        if (policy.MinimumLength < 6)
+        // Four, not six: the floor must admit the default. See PasswordPolicySettings.
+        if (policy.MinimumLength < 4)
         {
             return BadRequest(new ProblemDetails
             {

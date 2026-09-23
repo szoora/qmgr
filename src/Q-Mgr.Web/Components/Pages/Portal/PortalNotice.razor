@@ -62,9 +62,9 @@
                         <QChip Text="Acknowledgement required" Icon="hand-index" Variant="warning" />
                     }
                 }
-                @if (notice.AudienceStaffGroup.HasValue && notice.AudienceStaffGroup != StaffGroup.AllStaff)
+                @if (!string.IsNullOrWhiteSpace(notice.AudienceStaffGroup))
                 {
-                    <QChip Text="@(notice.AudienceStaffGroup == StaffGroup.TeachingStaff ? "Teaching staff" : "Support staff")" Icon="people" Variant="muted" />
+                    <QChip Text="@notice.AudienceStaffGroup" Icon="people" Variant="muted" />
                 }
             </div>
 

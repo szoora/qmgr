@@ -17,7 +17,9 @@ set -u
 cd "$(dirname "$0")/../.."
 
 # Pass/fail: each exits non-zero on a finding.
-GUARDS="css-token-check component-param-check style-leak-check section-actions-check suite-route-check route-audit list-page-audit purge-manifest-check"
+GUARDS="css-token-check component-param-check style-leak-check public-branding-check duplicate-prose-check section-actions-check suite-route-check route-audit list-page-audit purge-manifest-check notification-recipient-check name-format-check raw-checkbox-check"
+# 2026-09-23: every list page's QPager offers a page size (plan STUDENT_ROSTER_AND_LIST_STANDARD §4).
+GUARDS="$GUARDS pager-check"
 
 # Advisory: refusal-audit prints a shortlist for a human to read and says so itself — "a page WITH a
 # check still needs a human to ask whether it covers the refusal that matters". It has no pass state

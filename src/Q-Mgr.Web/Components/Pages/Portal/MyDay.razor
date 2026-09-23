@@ -4,6 +4,7 @@
 @using QMgr.Domain.Constants
 @using QMgr.Web.Services
 @using QMgr.Web.Components.Admin.Staff
+@using QMgr.Web.Components.Pages.Calendar
 @inject IStaffPerformanceApiService StaffApi
 @inject IToastService Toast
 @inject NavigationManager Navigation
@@ -46,6 +47,29 @@
                 <QIcon Name="hourglass-split" />
                 <span>Next: <strong>@nextLesson?.ClassName · @nextLesson?.SubjectName</strong> @(mins <= 0 ? "now" : mins < 60 ? $"in {mins} min" : $"at {QDateFormat.LocalT(next)}")@(string.IsNullOrEmpty(nextLesson?.Room) ? "" : $", {nextLesson!.Room}")</span>
             </div>
+        }
+
+        @if (day.Events.Any())
+        {
+            @* The school's events on this day (TERM_PROGRAMME_CALENDAR_AND_GATES §9). A whole-school
+               event on a teaching day does NOT cancel lessons (decision D6) — the note says so, so
+               nobody reads "Grand Mass" as a free afternoon. *@
+            <QCard Title="Events" Icon="calendar-week" Class="myday-card" id="myday-events">
+                @if (day.Lessons.Any() && day.Events.Any(e => e.ClassNames.Count == 0 && e.Audience.HasFlag(EventAudience.Staff)))
+                {
+                    <p class="myday-note"><QIcon Name="info-circle" Size="sm" /> <span>Lessons still run unless you are told otherwise.</span></p>
+                }
+                <ul class="myday-simple">
+                    @foreach (var e in day.Events.OrderBy(e => e.StartTime != null).ThenBy(e => e.StartTime))
+                    {
+                        <li class="myday-event">
+                            <strong>@e.Title</strong>
+                            <span>@CalendarDisplay.When(e)@(string.IsNullOrWhiteSpace(e.Location) ? "" : $" · {e.Location}")@(CalendarDisplay.Responsible(e) is { } who ? $" · {who}" : "")</span>
+                        </li>
+                    }
+                </ul>
+                <QButton Text="Calendar" Icon="calendar3" Variant="ghost" Size="sm" OnClick="@(() => Navigation.NavigateTo("/calendar"))" />
+            </QCard>
         }
 
         <QCard Title="Lessons" Icon="journal-bookmark" Subtitle="@LessonsSubtitle" Class="myday-card">
@@ -241,6 +265,7 @@
     .myday-simple { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: var(--qm-text-base); }
     .myday-simple li { display: flex; flex-direction: column; gap: 2px; }
     .myday-simple li span { color: var(--qm-text-secondary); font-size: var(--qm-text-sm); }
+    .myday-note { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
 </style>
 
 @code {

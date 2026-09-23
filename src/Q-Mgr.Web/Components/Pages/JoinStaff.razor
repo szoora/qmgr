@@ -6,6 +6,7 @@
 @using QMgr.Web.Components.Shared
 @attribute [AllowAnonymous]
 @inject IStaffOnboardingApiService Onboarding
+@inject IPasswordRulesService PasswordRules
 
 @*
     Staff self-registration (duty rota plan §12.4). The code in the link decides the organization — nothing
@@ -17,7 +18,7 @@
 
 <QPageTitle Text="Join your school" />
 
-<div class="login-container">
+<div class="login-container" style="@Host.BrandingStyle">
     <AmbientBackground />
     <div class="login-card join-card @(busy ? "loading" : "")">
         @if (loading)
@@ -27,9 +28,8 @@
         else if (info == null)
         {
             <div class="login-header">
-                <div class="logo-wrapper"><div class="logo-circle"><QIcon Name="link-45deg" Size="32" /></div></div>
-                <h1>This join link is not valid</h1>
-                <p>It may have expired or been replaced by a new one. Ask your school's administrator for the current link.</p>
+                <QBrandMark Heading="This join link is not valid" FallbackIcon="link-45deg"
+                            Tagline="It may have expired or been replaced by a new one. Ask your school's administrator for the current link." />
             </div>
             <a href="/login" class="btn-login"><QIcon Name="box-arrow-in-right" Size="18" /><span>I already have an account</span></a>
         }
@@ -43,9 +43,8 @@
         else
         {
             <div class="login-header">
-                <div class="logo-wrapper"><div class="logo-circle"><QIcon Name="person-plus-fill" Size="32" /></div></div>
-                <h1>Join @info.OrganizationName</h1>
-                <p>Ask for a staff account. An administrator will check your details and choose your role before you can sign in.</p>
+                <QBrandMark Heading="@($"Join {info.OrganizationName}")" FallbackIcon="person-plus-fill"
+                            Tagline="Ask for a staff account. An administrator will check your details and choose your role before you can sign in." />
             </div>
 
             @if (!string.IsNullOrEmpty(errorMessage))
@@ -126,9 +125,13 @@
                         <label for="password"><QIcon Name="lock-fill" Size="16" /><span>Choose a password</span><span class="req">*</span></label>
                         <input id="password" type="password" class="form-control @Invalid(nameof(form.Password))" autocomplete="new-password"
                                @bind="form.Password" @bind:event="oninput" @bind:after="@(() => Touch(nameof(form.Password)))"
-                               @onblur="@(() => Touch(nameof(form.Password)))" disabled="@busy" placeholder="At least @info.PasswordMinimumLength characters" />
+                               @onblur="@(() => Touch(nameof(form.Password)))" disabled="@busy" placeholder="@PasswordRules.Placeholder" />
                         @Problem(nameof(form.Password))
-                        <p class="join-hint">Avoid the school's name, your email and common words such as "staff".</p>
+                        @* The rules the server actually enforces, from the one home, rather than the
+                           minimum this page happened to be handed with its join info. That number is
+                           correct — PublicStaffJoinController reads the same policy — but a second
+                           wire path for one fact is how the numbers came to disagree everywhere else. *@
+                        <p class="join-hint">@PasswordRules.Summary</p>
                     </div>
                     <div class="form-group">
                         <label for="confirm"><QIcon Name="lock-fill" Size="16" /><span>Confirm password</span><span class="req">*</span></label>
@@ -154,7 +157,8 @@
             <div class="auth-doors">
                 <a href="/login" class="auth-door"><QIcon Name="box-arrow-in-right" Size="18" /><span>Sign In</span></a>
             </div>
-            <PoweredBy />
+            @* The copyright, not the attribution line — see Login.razor. QCopyright reads the host itself. *@
+            <QCopyright Class="login-copyright" />
         </div>
     </div>
 </div>
@@ -169,6 +173,13 @@
 </style>
 
 @code {
+    /// <summary>
+    /// Which host the browser arrived on, cascaded by App.razor. On a public page the branding comes
+    /// from the HOST and never from a session — there is nobody signed in to ask.
+    /// </summary>
+    [CascadingParameter] public QMgr.Web.Services.TenantHostContext Host { get; set; }
+        = QMgr.Web.Services.TenantHostContext.Platform;
+
     [Parameter] public string Code { get; set; } = string.Empty;
 
     private JoinLinkInfoDto? info;
@@ -203,8 +214,10 @@
             _ => "The code is six digits"
         },
         nameof(form.Password) => string.IsNullOrEmpty(form.Password) ? "Choose a password"
-            : form.Password.Length < (info?.PasswordMinimumLength ?? 8) ? $"At least {info?.PasswordMinimumLength ?? 8} characters"
-            : null,
+            // The "?? 8" this replaces was a number nothing anywhere enforced — invented for the
+            // case where the join info had not loaded, which is exactly when a form should say
+            // nothing rather than guess.
+            : PasswordRules.LengthProblem(form.Password),
         nameof(form.ConfirmPassword) => string.IsNullOrEmpty(form.ConfirmPassword) ? "Type the password again"
             : form.Password != form.ConfirmPassword ? "The passwords do not match"
             : null,
@@ -268,6 +281,8 @@
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
+        // The rules this page is about to state. Never throws and never invents a number.
+        await PasswordRules.LoadAsync();
         try { info = await Onboarding.GetJoinLinkAsync(Code); }
         catch (InvalidOperationException ex) { errorMessage = ex.Message; info = null; }
         catch (HttpRequestException) { info = null; }

@@ -451,8 +451,7 @@ public class StaffPerformanceJobs
                 var recipients = await StaffLookups.UsersWithPermissionAsync(_context, org.Id, Permissions.StaffReportsView);
                 if (recipients.Count == 0)
                 {
-                    policy.LastSummarySentAt = now;
-                    await _policy.SaveAsync(org.Id, policy);
+                    await _policy.MarkSummarySentAsync(org.Id, now);
                     continue;
                 }
 
@@ -503,8 +502,7 @@ public class StaffPerformanceJobs
                     }
                 }
 
-                policy.LastSummarySentAt = now;
-                await _policy.SaveAsync(org.Id, policy);
+                await _policy.MarkSummarySentAsync(org.Id, now);
                 sentOrgs++;
                 _logger.LogInformation("Monthly staff summary for organization {OrganizationId} sent to {Delivered}/{Total} recipient(s)", org.Id, delivered, recipients.Count);
             }
@@ -573,8 +571,8 @@ public class StaffPerformanceJobs
                 var candidates = flaggers.Concat(readers).Distinct().ToList();
                 var recipients = await StaffLookups.BranchStaff(_context, b.OrganizationId, b.BranchId).Where(u => candidates.Contains(u.Id)).Select(u => u.Id).ToListAsync();
                 var already = (await _context.Notifications.IgnoreQueryFilters().AsNoTracking()
-                    .Where(n => n.UserId != null && recipients.Contains(n.UserId.Value) && n.EventKey == NotificationEventKeys.StaffLessonAnalysis && n.CreatedAt >= weekStartUtc)
-                    .Select(n => n.UserId!.Value).ToListAsync()).ToHashSet();
+                    .Where(n => recipients.Contains(n.UserId) && n.EventKey == NotificationEventKeys.StaffLessonAnalysis && n.CreatedAt >= weekStartUtc)
+                    .Select(n => n.UserId).ToListAsync()).ToHashSet();
                 var departments = await StaffLookups.LoadDepartmentNamesAsync(_context, b.OrganizationId);
 
                 foreach (var userId in recipients.Where(r => !already.Contains(r)))

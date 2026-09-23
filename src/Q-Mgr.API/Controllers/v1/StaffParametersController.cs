@@ -119,7 +119,7 @@ public class StaffParametersController : StaffPerformanceControllerBase
             return BadRequestProblem("The kind of a parameter cannot change once records exist",
                 "Records have already been logged against this parameter. Retire it and create a new one instead.");
 
-        var before = new { parameter.Kind, parameter.Weight, parameter.DefaultPoints, parameter.MaxPointsPerEntry, parameter.MaxPointsPerPeriod, parameter.DefaultVisibility, parameter.AppliesTo };
+        var before = new { parameter.Kind, parameter.Weight, parameter.DefaultPoints, parameter.MaxPointsPerEntry, parameter.MaxPointsPerPeriod, parameter.DefaultVisibility, parameter.AppliesToGroup };
         StaffPerformanceMapping.Apply(parameter, request);
         parameter.UpdatedAt = DateTime.UtcNow;
         parameter.UpdatedBy = CurrentUserId();
@@ -127,7 +127,7 @@ public class StaffParametersController : StaffPerformanceControllerBase
 
         await Activity.RecordAsync(ActivityActions.ParameterSaved, nameof(PerformanceParameter), parameter.Id, null,
             $"Parameter '{parameter.Name}' updated",
-            new { Before = before, After = new { parameter.Kind, parameter.Weight, parameter.DefaultPoints, parameter.MaxPointsPerEntry, parameter.MaxPointsPerPeriod, parameter.DefaultVisibility, parameter.AppliesTo } });
+            new { Before = before, After = new { parameter.Kind, parameter.Weight, parameter.DefaultPoints, parameter.MaxPointsPerEntry, parameter.MaxPointsPerPeriod, parameter.DefaultVisibility, parameter.AppliesToGroup } });
 
         return Ok(StaffPerformanceMapping.ToDto(parameter));
     }
@@ -188,8 +188,8 @@ public class StaffParametersController : StaffPerformanceControllerBase
     {
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequestProblem("Parameter name is required");
-        if (!Enum.IsDefined(request.Kind) || !Enum.IsDefined(request.AppliesTo) || !Enum.IsDefined(request.DefaultVisibility))
-            return BadRequestProblem("Unrecognised kind, staff group or visibility");
+        if (!Enum.IsDefined(request.Kind) || !Enum.IsDefined(request.DefaultVisibility))
+            return BadRequestProblem("Unrecognised scoring method or visibility");
         if (request.Weight < 0)
             return BadRequestProblem("Weight cannot be negative", "Use 0 for a parameter that is evidence only and never scored.");
         if (request.MaxPointsPerEntry < 0 || request.MaxPointsPerPeriod is < 0)

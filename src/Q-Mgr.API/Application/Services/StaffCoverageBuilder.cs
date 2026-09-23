@@ -81,7 +81,7 @@ public static class StaffCoverageBuilder
 
         StaffMemberDto Member(User u) => StaffPerformanceMapping.ToDto(u, names, departmentNames);
 
-        var teaching = staff.Where(u => policy.GroupFor(u.Role?.Code) == StaffGroup.TeachingStaff).ToList();
+        var teaching = staff.Where(u => StaffGroups.Applies(StaffGroups.Teaching, u.Role?.StaffGroup ?? StaffGroups.Teaching)).ToList();
 
         return new StructureCoverageDto
         {

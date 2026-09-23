@@ -41,5 +41,12 @@ public enum RosterImportKind
     /// (duty rota plan §6.2, Phase 6). Every row is checked like a lesson placed by hand; the draft's own diagnosis then
     /// shows what the import left to fix. A fifth discriminator for the same reason as the others.
     /// </summary>
-    Timetable = 4
+    Timetable = 4,
+
+    /// <summary>
+    /// A term programme read from the school's own documents (plan TERM_PROGRAMME_CALENDAR_AND_GATES, 2026-09-23):
+    /// calendar events, staff meetings (Session duties) and duty rotas (Rota duties) confirmed together in one batch.
+    /// The job row is the batch's audit record and its undo handle; the rows it created carry its id.
+    /// </summary>
+    Programme = 5
 }

@@ -70,16 +70,17 @@ public class DocumentSharesController : ControllerBase
 
     // Permissions aren't JWT claims here (see PermissionAuthorizationHandler); resolved by role
     // lookup, the same shape ContentController and WelfareController use.
+    // Role AND posts, through PostPermissionService.EffectiveCodesAsync — the one home for that union.
     private async Task<bool> HasPermissionAsync(string code)
     {
         if (RoleCodes.IsSuperAdmin(_tenantAccessor.TenantContext?.UserRole)) return true;
         var userId = CurrentUserId();
         if (userId == Guid.Empty) return false;
-        return await _db.Users
-            .Where(u => u.Id == userId && u.IsActive)
-            .SelectMany(u => u.Role.RolePermissions)
-            .AnyAsync(rp => rp.Permission.Code == code);
+        _effectiveCodes ??= await PostPermissionService.EffectiveCodesAsync(_db, userId);
+        return _effectiveCodes.Contains(code);
     }
+
+    private HashSet<string>? _effectiveCodes;
 
     private async Task<DocumentSharingPolicyDto> PolicyForAsync(Guid organizationId)
     {

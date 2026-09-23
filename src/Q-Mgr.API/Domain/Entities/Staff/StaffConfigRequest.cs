@@ -73,6 +73,32 @@ public class StaffConfigRequest : BaseAuditableEntity
     /// </summary>
     public DateTime? CounterpartAgreedAt { get; set; }
 
+    /// <summary>
+    /// WHICH KIND OF CHANGE IS BEING ASKED FOR, and it decides how approving it is applied.
+    ///
+    /// Null on a <see cref="ConfigRequestKind.SlotSwap"/> means PERMANENT: the two teachers trade slots for
+    /// the rest of the version's life, applied by copying the published version into a new draft with the two
+    /// slots traded and publishing it over. That runs TimetableChecker, which is where the CLASS-side effect
+    /// neither teacher can see gets raised — two teachers can agree to trade Tuesday P3 for Thursday P5 and
+    /// leave a cohort with double Maths and no Physics that week.
+    ///
+    /// A date means ONE-OFF: applied as two <see cref="LessonExceptionKind.Cover"/> exceptions, each teacher
+    /// taking the other's lesson at its own time. A one-off cannot disturb a class, a room or a cohort's day,
+    /// because nothing moves — only who stands in front of it. Required on a
+    /// <see cref="ConfigRequestKind.LessonCover"/>, which is a one-day thing by definition.
+    ///
+    /// The date is the date of the ASKER's own lesson. The colleague's date is worked out from their cycle day
+    /// within the same cycle week, so the request carries one date rather than two that could disagree.
+    /// </summary>
+    public DateOnly? EffectiveOn { get; set; }
+
+    /// <summary>
+    /// LessonCover: the colleague asked to take it. A swap takes its counterpart from the lesson it names, so
+    /// this is the one kind that has to name a person — and it is copied into
+    /// <see cref="CounterpartUserId"/> so the agreement half needs no second rule.
+    /// </summary>
+    public Guid? CoverUserId { get; set; }
+
     // ---- The decision.
 
     public Guid? DecidedByUserId { get; set; }

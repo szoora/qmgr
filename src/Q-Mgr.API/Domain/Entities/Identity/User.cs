@@ -231,6 +231,15 @@ public class User : BaseAuditableEntity
     /// </summary>
     public string? PhotoUrl { get; set; }
 
+    /// <summary>
+    /// SHA-256 (hex) of the secret in the person's private calendar feed link (plan TERM_PROGRAMME_CALENDAR_AND_GATES §9).
+    /// The secret itself is shown once; replacing the link replaces the hash and the old link stops at once. Null = no feed.
+    /// </summary>
+    [System.ComponentModel.DataAnnotations.MaxLength(64)]
+    public string? CalendarFeedTokenHash { get; set; }
+
+    public DateTime? CalendarFeedCreatedAt { get; set; }
+
     #region Navigation Properties
 
     public virtual Organization.Organization? Organization { get; set; }
@@ -241,5 +250,9 @@ public class User : BaseAuditableEntity
 
     #endregion
 
-    public string FullName => $"{FirstName} {LastName}".Trim();
+    /// <summary>
+    /// The name as this person's organisation writes it — given name first, or surname first, by the
+    /// school's own choice (PersonNames, 2026-09-23). Not mapped; readable in a final projection only.
+    /// </summary>
+    public string FullName => QMgr.API.Application.Services.PersonNames.Display(OrganizationId, FirstName, LastName);
 }

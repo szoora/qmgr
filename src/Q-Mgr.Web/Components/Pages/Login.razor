@@ -106,12 +106,24 @@
                 <button type="button" class="btn-back" aria-label="Back to email entry" @onclick="@GoBackToEmail">
                     <QIcon Name="arrow-left" Size="20" />
                 </button>
-                @* A neutral person mark, not initials. The identify step returns no name — deliberately,
-                   since it answers anyone who types an address — and letters cut from the address read
-                   as nonsense ("E2" for e2e.admin.ct@…). *@
-                <div class="user-avatar" aria-hidden="true">
-                    <QIcon Name="person-fill" Size="28" />
-                </div>
+                @*
+                    THE SAME MARK AS STEP ONE (user report, 2026-09-22: "the initial login form is
+                    having maryhill logo, but the preceding forms have something else … the idea is
+                    to have a uniform predictable interface").
+
+                    This step drew its own 80px disc with a person glyph in it, so a school watched
+                    its crest turn into a generic silhouette between typing their name and typing
+                    their password — on the one screen where somebody is deciding whether this is
+                    really their school's site. QBrandMark is the one home for the mark and every
+                    other public page already used it; this was the last hand-rolled copy.
+
+                    ShowName is false because the name here is the ACCOUNT, rendered below.
+                    FallbackIcon keeps the old silhouette exactly where there is no tenant logo to
+                    show — the identify step returns no name, deliberately, since it answers anyone
+                    who types an address, and letters cut from the address read as nonsense ("E2"
+                    for e2e.admin.ct@…).
+                *@
+                <QBrandMark ShowName="false" FallbackIcon="person-fill" Class="login-header__mark" />
                 <h2 class="user-email">@identifyResponse?.Email</h2>
                 <div class="org-badge">
                     <QIcon Name="building-fill" Size="14" />
@@ -201,10 +213,27 @@
             actually serves them existed all along and was unreachable from here.
         *@
         <div class="login-footer">
-            @* Two buttons, an icon each. The sentences that named the two doors were the fix for
+            @* Buttons with an icon each. The sentences that named the two doors were the fix for
                "Create one"; once the doors are separate buttons the labels carry it. *@
             <div class="auth-doors">
                 <a href="/join" class="auth-door"><QIcon Name="link-45deg" Size="18" /><span>Join Using Link</span></a>
+                @*
+                    GET THE APP — a button ON THIS ROW, not a quiet link underneath it (user
+                    direction, 2026-09-22: "make it a button similar to join using link, and move
+                    it on same line").
+
+                    It was deliberately kept off this row until then, on the reasoning that these
+                    buttons answer "how do I get in" and a third pill would make downloading an app
+                    read as a way of signing in. Overruled, and the screen is the argument: on a
+                    tenant's own domain the register door is hidden, so the row held ONE button with
+                    a stray link floating under it — which reads as an unfinished footer rather than
+                    as two carefully separated ideas.
+
+                    It is on THIS page because the people who need the app are the people who cannot
+                    get in yet — and because on the ERP the download endpoints sat unreachable for a
+                    full day with nothing anywhere linking to them.
+                *@
+                <a href="/getapp" class="auth-door"><QIcon Name="phone" Size="18" /><span>Get mobile app</span></a>
                 @* HIDDEN on a tenant's own domain, and that is the point of the whole feature: the
                    domain is already attached to ONE organisation, so offering to create a second
                    one here is the duplicate-school mistake this page was just fixed for, with the
@@ -214,24 +243,6 @@
                 {
                     <a href="/register" class="auth-door"><QIcon Name="building-add" Size="18" /><span>Register Organisation</span></a>
                 }
-            </div>
-            @*
-                GET THE APP — deliberately NOT a third auth-door.
-
-                The two buttons above answer "how do I get in"; 2026-09-20's fix was precisely about
-                not conflating two different doors, and a third pill beside them would undo that by
-                making "download an app" look like a way of signing in. So it is its own quiet row,
-                which is also where the ERP puts it.
-
-                It is on THIS page because the people who need the app are the people who cannot get
-                in yet — and because on the ERP the download endpoints sat unreachable for a full day
-                with nothing anywhere linking to them.
-            *@
-            <div class="get-app-row">
-                <a href="/getapp" class="get-app-link">
-                    <QIcon Name="phone" Size="15" />
-                    <span>Get the mobile app</span>
-                </a>
             </div>
 
             <div class="footer-links">
@@ -243,7 +254,17 @@
             </div>
             @* The product's own sentence, not the module's: the queue is one of six things it does. *@
             <p class="powered-by">Queues, visitors, signage, welfare and secure documents &mdash; one system for the front office.</p>
-            <PoweredBy />
+            @*
+                THE COPYRIGHT, not "Powered by SACC Software" (user direction, 2026-09-22). The two
+                answer different questions and only one of them belongs at the foot of a page: whose
+                name the work is under — which is never hidden — rather than whether to show a
+                paid-for attribution line, which is.
+
+                No Owner: out here nobody is signed in, so the HOST is the only thing that can
+                identify a tenant, and QCopyright reads it itself. A school that has bought
+                attribution removal therefore sees its OWN name at the foot of its own sign-in page.
+            *@
+            <QCopyright Class="login-copyright" />
         </div>
     </div>
 
@@ -254,7 +275,13 @@
     /// <summary>The school's name on their own domain; a greeting on the platform's.</summary>
     private string SignInHeading => Host.IsTenantHost ? Host.AppName : "Welcome";
 
-    private string SignInTagline => $"Sign in to your {Host.AppName} account";
+    /// <summary>
+    /// NOTHING on a tenant's own domain (user report, 2026-09-22: "Sign in to your MARYHILL HIGH
+    /// SCHOOL account is redundant, remove"). The heading directly above it IS the school's name
+    /// there, so the card said it twice in one breath. On the platform host the heading is
+    /// "Welcome", which names nothing — so the line still carries the product and is not redundant.
+    /// </summary>
+    private string? SignInTagline => Host.IsTenantHost ? null : $"Sign in to your {Host.AppName} account";
 
     /// <summary>Which host this browser arrived on (see TenantHostContext). Platform by default.</summary>
     [CascadingParameter] public TenantHostContext Host { get; set; } = TenantHostContext.Platform;

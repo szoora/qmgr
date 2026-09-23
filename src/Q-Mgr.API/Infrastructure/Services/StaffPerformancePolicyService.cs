@@ -23,6 +23,13 @@ public interface IStaffPerformancePolicyService
     Task<StaffPerformancePolicyDto> GetAsync(Guid organizationId, CancellationToken cancellationToken = default);
     Task SaveAsync(Guid organizationId, StaffPerformancePolicyDto policy, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Stamps the monthly summary as sent, re-reading the policy under the organization-settings lock.
+    /// The sweep used to save back the WHOLE policy it had read at the start of its run, so an edit or a
+    /// period closure made meanwhile was overwritten by the job's stale copy.
+    /// </summary>
+    Task MarkSummarySentAsync(Guid organizationId, DateTime sentAtUtc, CancellationToken cancellationToken = default);
+
     /// <summary>The period containing <paramref name="date"/>, from the policy or derived.</summary>
     PerformancePeriodDto PeriodFor(StaffPerformancePolicyDto policy, DateOnly date);
 
@@ -44,8 +51,12 @@ public interface IStaffPerformancePolicyService
     /// <summary>The band a composite falls in, highest MinScore first.</summary>
     ScoreBandDto BandFor(StaffPerformancePolicyDto policy, decimal composite);
 
-    /// <summary>Teaching or support, from the role code. Support staff hold the support-staff role; everyone else teaches.</summary>
-    StaffGroup GroupFor(string? roleCode);
+    /// <summary>
+    /// Which staff group somebody is in, from their ROLE row (Role.StaffGroup), falling back to the
+    /// tenant's first active group. Was roleCode == "support-staff" ? Support : Teaching until
+    /// 2026-09-22 — see StaffGroups for why that made the bursar teaching staff.
+    /// </summary>
+    string? GroupFor(string? roleStaffGroup, StaffPerformancePolicyDto? policy = null);
 
     /// <summary>The Ugandan default set of parameters, seeded per tenant on first use.</summary>
     IReadOnlyList<SavePerformanceParameterRequest> DefaultParameters();
@@ -84,7 +95,7 @@ public class StaffPerformancePolicyService : IStaffPerformancePolicyService
 
     public StaffPerformancePolicyDto ReadPolicy(string? organizationSettingsJson)
     {
-        if (string.IsNullOrWhiteSpace(organizationSettingsJson)) return new StaffPerformancePolicyDto();
+        if (string.IsNullOrWhiteSpace(organizationSettingsJson)) return new StaffPerformancePolicyDto { StaffGroups = DefaultStaffGroups() };
         try
         {
             var root = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(organizationSettingsJson);
@@ -103,11 +114,21 @@ public class StaffPerformancePolicyService : IStaffPerformancePolicyService
                 policy.TeachingLoadNorms ??= new TeachingLoadNormsDto();
                 if (policy.LessonReminderMinutes is < 0 or > 120) policy.LessonReminderMinutes = 10;
                 if (string.IsNullOrWhiteSpace(policy.MyDayLocalTime)) policy.MyDayLocalTime = "06:30";
+                // Seeded on first read, the way StaffParameterDefaults seeds parameters: a blob
+                // written before 2026-09-22 carries no groups, and an empty list would leave every
+                // role resolving to nothing.
+                if (policy.StaffGroups == null || policy.StaffGroups.Count == 0)
+                    policy.StaffGroups = DefaultStaffGroups();
+                // The three scoring dials are clamped here as well as validated in the editor, so a
+                // blob written before they existed — or edited by hand — can never produce nonsense.
+                policy.LateCreditFraction = Math.Clamp(policy.LateCreditFraction, 0m, 1m);
+                policy.DefaultEntriesPerPeriod = Math.Max(1, policy.DefaultEntriesPerPeriod);
+                policy.NeutralScore = Math.Clamp(policy.NeutralScore, 0m, 100m);
                 return policy;
             }
         }
         catch (JsonException) { /* malformed settings blob — fall back to defaults */ }
-        return new StaffPerformancePolicyDto();
+        return new StaffPerformancePolicyDto { StaffGroups = DefaultStaffGroups() };
     }
 
     public string WritePolicy(string? organizationSettingsJson, StaffPerformancePolicyDto policy)
@@ -136,11 +157,24 @@ public class StaffPerformancePolicyService : IStaffPerformancePolicyService
 
     public async Task SaveAsync(Guid organizationId, StaffPerformancePolicyDto policy, CancellationToken cancellationToken = default)
     {
-        var org = await _db.Organizations.IgnoreQueryFilters().FirstOrDefaultAsync(o => o.Id == organizationId, cancellationToken)
-                  ?? throw new InvalidOperationException("Organization not found");
-        org.Settings = WritePolicy(org.Settings, policy);
-        await _db.SaveChangesAsync(cancellationToken);
+        // Through the one writer of Organization.Settings, so a save here can never drop a key
+        // another writer set at the same moment. Joins the editor's own transaction when it has one.
+        var found = await OrganizationSettingsLock.MutateAsync(_db, organizationId, org =>
+        {
+            org.Settings = WritePolicy(org.Settings, policy);
+            return true;
+        }, cancellationToken);
+        if (!found) throw new InvalidOperationException("Organization not found");
     }
+
+    public Task MarkSummarySentAsync(Guid organizationId, DateTime sentAtUtc, CancellationToken cancellationToken = default)
+        => OrganizationSettingsLock.MutateAsync(_db, organizationId, org =>
+        {
+            var policy = ReadPolicy(org.Settings);
+            policy.LastSummarySentAt = sentAtUtc;
+            org.Settings = WritePolicy(org.Settings, policy);
+            return true;
+        }, cancellationToken);
 
     public PerformancePeriodDto PeriodFor(StaffPerformancePolicyDto policy, DateOnly date)
     {
@@ -203,8 +237,28 @@ public class StaffPerformancePolicyService : IStaffPerformancePolicyService
         return bands.FirstOrDefault(b => composite >= b.MinScore) ?? bands.Last();
     }
 
-    public StaffGroup GroupFor(string? roleCode)
-        => RoleCodes.IsSupportStaff(roleCode) ? StaffGroup.SupportStaff : StaffGroup.TeachingStaff;
+    public string? GroupFor(string? roleStaffGroup, StaffPerformancePolicyDto? policy = null)
+    {
+        if (!string.IsNullOrWhiteSpace(roleStaffGroup)) return roleStaffGroup.Trim();
+
+        // A role with nothing set falls back to the tenant's FIRST active group rather than to a
+        // hard-coded "teaching": a school whose first group is Administration should not have its
+        // unassigned roles silently counted as teachers. Absent a policy, the seeded default.
+        var first = policy?.StaffGroups?.Where(g => g.IsActive).OrderBy(g => g.SortOrder)
+                                        .Select(g => g.Name).FirstOrDefault();
+        return first ?? StaffGroups.Teaching;
+    }
+
+    /// <summary>
+    /// The two groups every tenant starts with, seeded on first policy read the way
+    /// <c>StaffParameterDefaults</c> seeds parameters. They are exactly what the old enum resolved
+    /// to, so seeding them moves no score.
+    /// </summary>
+    public static List<VocabularyItemDto> DefaultStaffGroups() => new()
+    {
+        new VocabularyItemDto { Name = StaffGroups.Teaching, IsActive = true, SortOrder = 0 },
+        new VocabularyItemDto { Name = StaffGroups.Support, IsActive = true, SortOrder = 1 }
+    };
 
     public ReminderLadderDto LadderFor(StaffPerformancePolicyDto policy, ReminderSubject subject)
     {
@@ -231,23 +285,23 @@ public class StaffPerformancePolicyService : IStaffPerformancePolicyService
 
     public IReadOnlyList<SavePerformanceParameterRequest> DefaultParameters() => new List<SavePerformanceParameterRequest>
     {
-        new() { Name = "Lesson Attendance", Kind = ParameterKind.Attendance, AppliesTo = StaffGroup.TeachingStaff, DefaultPoints = 1, MaxPointsPerEntry = 1, Weight = 3, Purpose = "Collected from the lesson attendance register for cover planning and as appraisal evidence.", Color = "#7a2847", SortOrder = 1 },
-        new() { Name = "Lesson Recovery", Kind = ParameterKind.Contribution, AppliesTo = StaffGroup.TeachingStaff, DefaultPoints = 1, MaxPointsPerEntry = 1, Weight = 0, Purpose = "A lesson missed and later recovered, per the Lesson Recovery Schedule. Offsets a missed lesson; not scored on its own.", Color = "#8c2f52", SortOrder = 2 },
-        new() { Name = "Lesson Observation", Kind = ParameterKind.Observation, AppliesTo = StaffGroup.TeachingStaff, RatingScale = 4, Rubric = new() { "Poor — immediate remedial action", "Fair — meets some expectations", "Good — meets expectations", "Very Good — exceeds expectations" }, Weight = 3, DefaultVisibility = WelfareVisibility.Confidential, Purpose = "At least one observed lesson per term, with a meeting before and a feedback session after. Developmental first; appraisal evidence second.", Color = "#5a9c92", SortOrder = 3 },
-        new() { Name = "Exam Supervision", Kind = ParameterKind.Duty, AppliesTo = StaffGroup.TeachingStaff, DefaultPoints = 2, MaxPointsPerEntry = 2, Weight = 2, Purpose = "Invigilation duties carried out as rostered.", Color = "#c99a5b", SortOrder = 4 },
-        new() { Name = "Prep Supervision", Kind = ParameterKind.Duty, AppliesTo = StaffGroup.TeachingStaff, DefaultPoints = 1, MaxPointsPerEntry = 1, Weight = 1, Purpose = "Evening or weekend prep supervision as rostered.", Color = "#c2624f", SortOrder = 5 },
-        new() { Name = "Meeting Attendance", Kind = ParameterKind.Attendance, AppliesTo = StaffGroup.AllStaff, DefaultPoints = 1, MaxPointsPerEntry = 1, Weight = 1, Purpose = "Attendance at staff, departmental and committee meetings, from the register taken by the named recorder.", Color = "#3f8a80", SortOrder = 6 },
-        new() { Name = "Co-curricular Activity", Kind = ParameterKind.Contribution, AppliesTo = StaffGroup.AllStaff, DefaultPoints = 3, MaxPointsPerEntry = 5, MaxPointsPerPeriod = 30, Weight = 2, Purpose = "Clubs, sports, music, drama and other activities run or supported.", Color = "#a8783a", SortOrder = 7 },
-        new() { Name = "Records & Schemes of Work", Kind = ParameterKind.Contribution, AppliesTo = StaffGroup.TeachingStaff, DefaultPoints = 2, MaxPointsPerEntry = 5, MaxPointsPerPeriod = 20, Weight = 1, Purpose = "Schemes of work, lesson plans and mark books submitted on time and to standard.", Color = "#6e2340", SortOrder = 8 },
-        new() { Name = "Recognition", Kind = ParameterKind.Recognition, AppliesTo = StaffGroup.AllStaff, DefaultPoints = 1, MaxPointsPerEntry = 1, MaxPointsPerPeriod = 20, Weight = 1, Purpose = "Recognition from a colleague, within the monthly budget. Informational and unexpected by design.", Color = "#d1a35e", SortOrder = 9 },
-        new() { Name = "Professional Development", Kind = ParameterKind.Contribution, AppliesTo = StaffGroup.AllStaff, DefaultPoints = 2, MaxPointsPerEntry = 5, MaxPointsPerPeriod = 20, Weight = 1, Purpose = "Training, mentoring, subject symposiums and professional learning community work.", Color = "#5a9c92", SortOrder = 10 },
-        new() { Name = "Conduct", Kind = ParameterKind.Conduct, AppliesTo = StaffGroup.AllStaff, DefaultPoints = -2, MaxPointsPerEntry = 10, MaxPointsPerPeriod = 30, Weight = 1, DefaultVisibility = WelfareVisibility.Confidential, Purpose = "A conduct matter, recorded with the subject's right of reply.", Color = "#a3302a", SortOrder = 11 },
-        new() { Name = "Wellbeing", Kind = ParameterKind.Wellbeing, AppliesTo = StaffGroup.AllStaff, DefaultPoints = null, MaxPointsPerEntry = 0, Weight = 0, DefaultVisibility = WelfareVisibility.Confidential, Purpose = "A welfare-of-staff matter — a bereavement, a workload concern, a health matter. Recorded to support, never scored.", Color = "#8a7a81", SortOrder = 12 },
+        new() { Name = "Lesson Attendance", Kind = ParameterKind.Attendance, AppliesToGroup = StaffGroups.Teaching, DefaultPoints = 1, MaxPointsPerEntry = 1, Weight = 3, Purpose = "Collected from the lesson attendance register for cover planning and as appraisal evidence.", Color = "#7a2847", SortOrder = 1 },
+        new() { Name = "Lesson Recovery", Kind = ParameterKind.Contribution, AppliesToGroup = StaffGroups.Teaching, DefaultPoints = 1, MaxPointsPerEntry = 1, Weight = 0, Purpose = "A lesson missed and later recovered, per the Lesson Recovery Schedule. Offsets a missed lesson; not scored on its own.", Color = "#8c2f52", SortOrder = 2 },
+        new() { Name = "Lesson Observation", Kind = ParameterKind.Observation, AppliesToGroup = StaffGroups.Teaching, RatingScale = 4, Rubric = new() { "Poor — immediate remedial action", "Fair — meets some expectations", "Good — meets expectations", "Very Good — exceeds expectations" }, Weight = 3, DefaultVisibility = WelfareVisibility.Confidential, Purpose = "At least one observed lesson per term, with a meeting before and a feedback session after. Developmental first; appraisal evidence second.", Color = "#5a9c92", SortOrder = 3 },
+        new() { Name = "Exam Supervision", Kind = ParameterKind.Duty, AppliesToGroup = StaffGroups.Teaching, DefaultPoints = 2, MaxPointsPerEntry = 2, Weight = 2, Purpose = "Invigilation duties carried out as rostered.", Color = "#c99a5b", SortOrder = 4 },
+        new() { Name = "Prep Supervision", Kind = ParameterKind.Duty, AppliesToGroup = StaffGroups.Teaching, DefaultPoints = 1, MaxPointsPerEntry = 1, Weight = 1, Purpose = "Evening or weekend prep supervision as rostered.", Color = "#c2624f", SortOrder = 5 },
+        new() { Name = "Meeting Attendance", Kind = ParameterKind.Attendance, DefaultPoints = 1, MaxPointsPerEntry = 1, Weight = 1, Purpose = "Attendance at staff, departmental and committee meetings, from the register taken by the named recorder.", Color = "#3f8a80", SortOrder = 6 },
+        new() { Name = "Co-curricular Activity", Kind = ParameterKind.Contribution, DefaultPoints = 3, MaxPointsPerEntry = 5, MaxPointsPerPeriod = 30, Weight = 2, Purpose = "Clubs, sports, music, drama and other activities run or supported.", Color = "#a8783a", SortOrder = 7 },
+        new() { Name = "Records & Schemes of Work", Kind = ParameterKind.Contribution, AppliesToGroup = StaffGroups.Teaching, DefaultPoints = 2, MaxPointsPerEntry = 5, MaxPointsPerPeriod = 20, Weight = 1, Purpose = "Schemes of work, lesson plans and mark books submitted on time and to standard.", Color = "#6e2340", SortOrder = 8 },
+        new() { Name = "Recognition", Kind = ParameterKind.Recognition, DefaultPoints = 1, MaxPointsPerEntry = 1, MaxPointsPerPeriod = 20, Weight = 1, Purpose = "Recognition from a colleague, within the monthly budget. Informational and unexpected by design.", Color = "#d1a35e", SortOrder = 9 },
+        new() { Name = "Professional Development", Kind = ParameterKind.Contribution, DefaultPoints = 2, MaxPointsPerEntry = 5, MaxPointsPerPeriod = 20, Weight = 1, Purpose = "Training, mentoring, subject symposiums and professional learning community work.", Color = "#5a9c92", SortOrder = 10 },
+        new() { Name = "Conduct", Kind = ParameterKind.Conduct, DefaultPoints = -2, MaxPointsPerEntry = 10, MaxPointsPerPeriod = 30, Weight = 1, DefaultVisibility = WelfareVisibility.Confidential, Purpose = "A conduct matter, recorded with the subject's right of reply.", Color = "#a3302a", SortOrder = 11 },
+        new() { Name = "Wellbeing", Kind = ParameterKind.Wellbeing, DefaultPoints = null, MaxPointsPerEntry = 0, Weight = 0, DefaultVisibility = WelfareVisibility.Confidential, Purpose = "A welfare-of-staff matter — a bereavement, a workload concern, a health matter. Recorded to support, never scored.", Color = "#8a7a81", SortOrder = 12 },
         // Automatic credit (plan §6 item 5, decision 4). Inert until the policy switches SystemAwardsEnabled on,
         // and refused as a manual entry so nobody mistakes an automatic credit for a colleague's judgement.
-        new() { Name = StaffSystemAwards.WelfareRecordFiled, Kind = ParameterKind.Contribution, AppliesTo = StaffGroup.AllStaff, DefaultPoints = 1, MaxPointsPerEntry = 1, MaxPointsPerPeriod = 10, Weight = 1, IsSystemSource = true, Purpose = "Credited automatically when the staff member finalises a student welfare record. Pastoral work counts.", Color = "#5a9c92", SortOrder = 20 },
-        new() { Name = StaffSystemAwards.CustomerServed, Kind = ParameterKind.Contribution, AppliesTo = StaffGroup.AllStaff, DefaultPoints = 1, MaxPointsPerEntry = 1, MaxPointsPerPeriod = 20, Weight = 1, IsSystemSource = true, Purpose = "Credited automatically when the staff member completes service for a queue ticket.", Color = "#3f8a80", SortOrder = 21 },
-        new() { Name = StaffSystemAwards.VisitorHosted, Kind = ParameterKind.Contribution, AppliesTo = StaffGroup.AllStaff, DefaultPoints = 1, MaxPointsPerEntry = 1, MaxPointsPerPeriod = 10, Weight = 1, IsSystemSource = true, Purpose = "Credited automatically when a visitor the staff member hosts is checked in.", Color = "#a8783a", SortOrder = 22 },
-        new() { Name = StaffSystemAwards.PositiveFeedback, Kind = ParameterKind.Contribution, AppliesTo = StaffGroup.AllStaff, DefaultPoints = 1, MaxPointsPerEntry = 1, MaxPointsPerPeriod = 20, Weight = 1, IsSystemSource = true, Purpose = "Credited automatically when a customer the staff member served rates the service 4 or 5.", Color = "#d1a35e", SortOrder = 23 },
+        new() { Name = StaffSystemAwards.WelfareRecordFiled, Kind = ParameterKind.Contribution, DefaultPoints = 1, MaxPointsPerEntry = 1, MaxPointsPerPeriod = 10, Weight = 1, IsSystemSource = true, Purpose = "Credited automatically when the staff member finalises a student welfare record. Pastoral work counts.", Color = "#5a9c92", SortOrder = 20 },
+        new() { Name = StaffSystemAwards.CustomerServed, Kind = ParameterKind.Contribution, DefaultPoints = 1, MaxPointsPerEntry = 1, MaxPointsPerPeriod = 20, Weight = 1, IsSystemSource = true, Purpose = "Credited automatically when the staff member completes service for a queue ticket.", Color = "#3f8a80", SortOrder = 21 },
+        new() { Name = StaffSystemAwards.VisitorHosted, Kind = ParameterKind.Contribution, DefaultPoints = 1, MaxPointsPerEntry = 1, MaxPointsPerPeriod = 10, Weight = 1, IsSystemSource = true, Purpose = "Credited automatically when a visitor the staff member hosts is checked in.", Color = "#a8783a", SortOrder = 22 },
+        new() { Name = StaffSystemAwards.PositiveFeedback, Kind = ParameterKind.Contribution, DefaultPoints = 1, MaxPointsPerEntry = 1, MaxPointsPerPeriod = 20, Weight = 1, IsSystemSource = true, Purpose = "Credited automatically when a customer the staff member served rates the service 4 or 5.", Color = "#d1a35e", SortOrder = 23 },
     };
 }

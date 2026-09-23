@@ -99,6 +99,10 @@
                     <div class="link-preview">
                         <code>@GetSignageUrl()</code>
                     </div>
+                    @* The calendar's "Coming up" panel (2026-09-23): the school's PUBLIC events beside the playlist.
+                       A display has nobody to sign in, so it is switched on by the link itself (?events=1). *@
+                    <QSwitch @bind-Value="signageShowsEvents" Label="Show upcoming school events"
+                             Hint="Adds a Coming up panel listing the calendar's events marked Public." />
                 </div>
                 <div class="card-actions">
                     <QButton Text="Preview" Icon="eye" Variant="secondary" Size="sm" OnClick="@(() => PreviewLink(GetSignageUrl()))" />
@@ -372,7 +376,8 @@
     private string GetKioskUrl() => $"{GetBaseUrl()}/kiosk/branch/{selectedBranchId}";
     private string GetFeedbackUrl() => $"{GetBaseUrl()}/feedback?branch={selectedBranchId}";
     private string GetDisplayUrl() => $"{GetBaseUrl()}/display/{selectedBranchId}";
-    private string GetSignageUrl() => $"{GetBaseUrl()}/display/signage/{selectedBranchId}";
+    private bool signageShowsEvents;
+    private string GetSignageUrl() => $"{GetBaseUrl()}/display/signage/{selectedBranchId}{(signageShowsEvents ? "?events=1" : "")}";
 
     private void PreviewLink(string url)
     {

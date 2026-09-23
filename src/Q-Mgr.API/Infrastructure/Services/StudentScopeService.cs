@@ -1,3 +1,4 @@
+using QMgr.API.Application.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QMgr.Application.Interfaces;
@@ -162,14 +163,33 @@ public class StudentScopeService : IStudentScopeService
             return (_isUnscoped = isApiKey).Value;
         }
 
-        var scope = await _context.Users
+        var role = await _context.Users
             .AsNoTracking()
             .Where(u => u.Id == userId && u.IsActive)
-            .Select(u => (RoleDataScope?)u.Role.DataScope)
+            .Select(u => new
+            {
+                Scope = (RoleDataScope?)u.Role.DataScope,
+                Permissions = u.Role.RolePermissions.Select(rp => rp.Permission.Code).ToList()
+            })
             .FirstOrDefaultAsync();
 
         // A user row that cannot be found or is inactive resolves to null. FAIL CLOSED.
-        _isUnscoped = scope == RoleDataScope.Organization;
+        if (role?.Scope == null) return (_isUnscoped = false).Value;
+
+        // A POST GRANTS PERMISSIONS AND SCOPE AS A PAIR (plan §2.6, and the audit's most serious
+        // finding). This used to be a bare `scope == Organization`, which was correct only while a
+        // pastoral post granted no permission: three seeded roles are organization-scoped and two of
+        // them — support-staff and viewer — hold no welfare permission at all, so the MISSING
+        // PERMISSION was the only thing keeping a matron who is the class teacher of S4B from
+        // reading every child in the school. Deriving the permission removes exactly that lock, and
+        // no controller can catch it: ApplyAsync below returns the query whole for an unscoped
+        // caller, so all 29 guards in WelfareController are passed by construction.
+        //
+        // So: organization-wide only if the ROLE ITSELF reaches students. Where the welfare grant
+        // arrived with the post, it runs at the post's reach — the classes held. A Tenant Admin or
+        // Manager who also teaches a class keeps the school, because their role already granted it.
+        var posts = await PostPermissionService.GrantsForAsync(_context, userId);
+        _isUnscoped = PostPermissionService.IsUnscopedOnStudents(role.Scope.Value, role.Permissions, posts);
         return _isUnscoped.Value;
     }
 

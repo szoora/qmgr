@@ -170,11 +170,11 @@ public class StaffNoticesController : ControllerBase
         var readBy = (await _context.Notifications.AsNoTracking()
                 .Where(n => n.OrganizationId == organizationId
                             && n.EventKey == NotificationEventKeys.StaffNoticePublished
-                            && n.UserId != null && n.MetaData != null && n.MetaData.Contains(marker))
+                            && n.MetaData != null && n.MetaData.Contains(marker))
                 .Select(n => new { n.UserId, n.IsRead })
                 .ToListAsync())
             .Where(n => n.IsRead)
-            .Select(n => n.UserId!.Value)
+            .Select(n => n.UserId)
             .ToHashSet();
 
         var result = recipients
@@ -340,7 +340,7 @@ public class StaffNoticesController : ControllerBase
         notice.BodyHtml = body;
         notice.AudienceDepartmentIds = departments;
         notice.AudienceRoleCodes = roles;
-        notice.AudienceStaffGroup = request.AudienceStaffGroup == StaffGroup.AllStaff ? null : request.AudienceStaffGroup;
+        notice.AudienceStaffGroup = string.IsNullOrWhiteSpace(request.AudienceStaffGroup) ? null : request.AudienceStaffGroup.Trim();
         notice.PublishAt = DateTime.SpecifyKind(request.PublishAt == default ? DateTime.UtcNow : request.PublishAt, DateTimeKind.Utc);
         notice.ExpiresAt = request.ExpiresAt.HasValue ? DateTime.SpecifyKind(request.ExpiresAt.Value, DateTimeKind.Utc) : null;
         notice.IsPinned = request.IsPinned;

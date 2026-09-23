@@ -1,0 +1,392 @@
+@namespace QMgr.Web.Components.Admin.Staff
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@inject IStaffPerformanceApiService StaffApi
+@inject IAuthService AuthService
+
+@*
+    Logging ONE record for a group of staff (2026-09-23) — "everyone who ran the open day", "the department
+    missed the report deadline". Hosted by the Staff Directory's bulk bar. The staff twin of the welfare
+    BulkLogDialog, and the rules it shows are the server's own (StaffRecordsController.CreateRecordsBulk):
+      - Contribution or Conduct only, Standard only, never a draft — StaffBulkLimits says why, in the words
+        the server refuses with.
+      - The caller is LEFT OUT, and told so: nobody logs a record about themselves.
+      - People outside the parameter's staff group are counted, and the reader may leave them out; the
+        server refuses the whole batch otherwise.
+      - A CONFIRM step that states the consequence: a staff record cannot be deleted, so a mistake across
+        twelve colleagues is twelve annulments.
+    The server re-checks every person against the caller's staff scope; a refusal is shown here, in the dialog.
+*@
+
+<QModal Visible="@Visible" VisibleChanged="@OnVisibleChanged" Title="@HeaderTitle" Icon="journal-plus" Size="lg">
+    <ChildContent>
+        @if (isLoading)
+        {
+            <div class="sbl-loading"><QSpinner Size="md" /><span>Loading parameters...</span></div>
+        }
+        else
+        {
+            <div class="sbl-who">@NamesPreview</div>
+
+            @if (IncludesMe)
+            {
+                <div class="sbl-line sbl-self">
+                    <QIcon Name="person-dash" />
+                    <span>You are left out — nobody logs a record about themselves.</span>
+                </div>
+            }
+
+            @if (Recipients.Count > StaffBulkLimits.MaxPeople)
+            {
+                <div class="sbl-error" role="alert">
+                    <QIcon Name="exclamation-triangle" />
+                    <span>@StaffBulkLimits.CapMessage</span>
+                </div>
+            }
+            else if (!confirming)
+            {
+                <div class="form-group">
+                    <QSelect TValue="Guid?" TItem="PerformanceParameterDto" Value="@parameterId" ValueChanged="@OnParameterChanged"
+                             Items="@ApplicableParameters" Sorted="true"
+                             TextSelector="@(p => $"{p.Name} — {StaffDisplay.KindLabel(p.Kind)}")" ValueSelector="@(p => (Guid?)p.Id)"
+                             Label="Parameter" Required="true" Placeholder="What is being recorded"
+                             HasError="@parameterError" ErrorMessage="Choose a parameter."
+                             Hint="@StaffBulkLimits.KindRefusal" />
+                    @if (ApplicableParameters.Count == 0)
+                    {
+                        <small class="sbl-muted">No active contribution or conduct parameter applies to the people chosen.</small>
+                    }
+                </div>
+
+                @if (SelectedParameter != null && OutsideGroup.Count > 0)
+                {
+                    <div class="sbl-line sbl-outside">
+                        <QIcon Name="people" />
+                        <span>@OutsideGroup.Count of the @Others.Count people chosen @(OutsideGroup.Count == 1 ? "is" : "are") not in @SelectedParameter.AppliesToGroup, which this parameter applies to.</span>
+                    </div>
+                    <QCheckbox @bind-Value="leaveOutsideOut" Label="@LeaveOutLabel" />
+                    @if (outsideError)
+                    {
+                        <p class="sbl-field-error">Leave them out, or choose a parameter that applies to everybody.</p>
+                    }
+                }
+
+                @if (SelectedParameter != null)
+                {
+                    <div class="form-group">
+                        <QInput TValue="int?" @bind-Value="@pointsMagnitude" Type="number" Min="0" Max="@SelectedParameter.MaxPointsPerEntry.ToString()"
+                                Label="@(SelectedParameter.Kind == ParameterKind.Conduct ? "Points deducted, each" : "Points awarded, each")"
+                                HasError="@pointsError" ErrorMessage="@($"Between 0 and {SelectedParameter.MaxPointsPerEntry}.")" />
+                    </div>
+                }
+
+                <div class="form-group">
+                    <QInput TValue="string" @bind-Value="@description" Type="textarea" Rows="3" Label="What happened" Required="true" MaxLength="2000"
+                            Placeholder="Describe it plainly — every person chosen reads these words on their own file."
+                            HasError="@descriptionError" ErrorMessage="At least 10 characters." />
+                </div>
+
+                <div class="form-group">
+                    <div class="q-datetime-pair">
+                        <QDatePicker @bind-Value="@occurredAt" Label="When it happened" Required="true" Max="@DateTime.Now" HasError="@dateError" ErrorMessage="Choose when it happened." />
+                        <QDatePicker @bind-Value="@occurredAt" ShowTime="true" Label="Time" Required="true" />
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="sbl-confirm" role="alert">
+                    <QIcon Name="exclamation-circle" />
+                    <span>@ConfirmSentence</span>
+                </div>
+
+                @if (lateEntryDays.HasValue)
+                {
+                    @* Shown only after the API refused the date: the threshold is the tenant's policy, not a number the page guesses. *@
+                    <div class="sbl-line sbl-late">
+                        <QIcon Name="exclamation-triangle-fill" />
+                        <span>This date is more than @lateEntryDays days ago. Every record will say it was logged late. Go back and check the date, or confirm.</span>
+                        <QButton Text="Yes, log them as late entries" Icon="check-lg" Variant="secondary" Size="sm"
+                                 OnClick="@(() => SubmitAsync(acknowledgeLate: true))" Disabled="@saving" />
+                    </div>
+                }
+            }
+
+            @if (!string.IsNullOrWhiteSpace(serverError))
+            {
+                <div class="sbl-error" role="alert">
+                    <QIcon Name="x-octagon" />
+                    <span>@serverError</span>
+                </div>
+            }
+        }
+    </ChildContent>
+    <FooterContent>
+        @if (confirming)
+        {
+            <QButton Text="Back" Variant="ghost" OnClick="@Back" Disabled="@saving" />
+            <QButton Text="@ConfirmButtonText" Icon="check-lg" Variant="primary" OnClick="@(() => SubmitAsync(acknowledgeLate: false))" Loading="@saving" />
+        }
+        else
+        {
+            <QButton Text="Cancel" Variant="ghost" OnClick="CloseAsync" />
+            <QButton Text="Continue" Variant="primary" OnClick="Review"
+                     Disabled="@(isLoading || Others.Count == 0 || Recipients.Count > StaffBulkLimits.MaxPeople)" />
+        }
+    </FooterContent>
+</QModal>
+
+<style>
+    .sbl-loading { display: flex; align-items: center; gap: 10px; padding: 24px 0; color: var(--qm-text-muted); }
+    .sbl-who { color: var(--qm-text-secondary); font-size: var(--qm-text-sm); margin-bottom: var(--qm-field-gap); }
+    .sbl-muted { color: var(--qm-text-muted); font-size: var(--qm-text-sm); }
+    .sbl-field-error { margin: 2px 0 var(--qm-field-gap); color: var(--qm-danger); font-size: var(--qm-text-xs); }
+    .sbl-line, .sbl-confirm, .sbl-error {
+        display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px;
+        padding: 8px 12px; margin-bottom: var(--qm-field-gap);
+        border-radius: var(--qm-radius-md); border: 1px solid var(--qm-border);
+        font-size: var(--qm-text-base); color: var(--qm-text-secondary);
+    }
+    .sbl-line span, .sbl-confirm span, .sbl-error span { flex: 1 1 240px; min-width: 0; }
+    .sbl-outside, .sbl-late { border-left: 3px solid var(--qm-warning); }
+    .sbl-confirm { background: var(--qm-bg-card); color: var(--qm-text-primary); }
+    .sbl-error { margin-top: var(--qm-field-gap); color: var(--qm-danger); border-color: var(--qm-danger); }
+</style>
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
+    [Parameter] public Guid BranchId { get; set; }
+
+    /// <summary>The ticked people. The host passes only what the reader can see ticked.</summary>
+    [Parameter] public IReadOnlyList<StaffMemberDto> People { get; set; } = Array.Empty<StaffMemberDto>();
+
+    /// <summary>Raised after the server wrote the records; the dialog closes itself.</summary>
+    [Parameter] public EventCallback<BulkStaffRecordResultDto> OnLogged { get; set; }
+
+    private List<PerformanceParameterDto> allParameters = new();
+    private bool parametersLoaded, isLoading;
+    private Guid meId;
+    private bool wasVisible;
+
+    private Guid? parameterId;
+    private int? pointsMagnitude;
+    private string description = string.Empty;
+    private DateTime? occurredAt = DateTime.Now;
+    private bool leaveOutsideOut;
+    private int? lateEntryDays;
+
+    private bool parameterError, pointsError, descriptionError, dateError, outsideError;
+    private bool confirming, saving;
+    private string? serverError;
+
+    private bool IncludesMe => meId != Guid.Empty && People.Any(p => p.UserId == meId);
+
+    /// <summary>Everyone ticked except the reader.</summary>
+    private List<StaffMemberDto> Others => People.Where(p => p.UserId != meId).DistinctBy(p => p.UserId).ToList();
+
+    private PerformanceParameterDto? SelectedParameter => allParameters.FirstOrDefault(p => p.Id == parameterId);
+
+    /// <summary>The people the chosen parameter does NOT apply to — the server would refuse the batch for them.</summary>
+    private List<StaffMemberDto> OutsideGroup => SelectedParameter is { } p
+        ? Others.Where(m => !StaffGroups.Applies(p.AppliesToGroup, m.StaffGroup)).ToList()
+        : new List<StaffMemberDto>();
+
+    /// <summary>Who the records are written for: everyone else ticked, less those outside the group when the reader leaves them out.</summary>
+    private List<StaffMemberDto> Recipients
+    {
+        get
+        {
+            if (!leaveOutsideOut) return Others;
+            var outside = OutsideGroup.Select(m => m.UserId).ToHashSet();
+            return Others.Where(m => !outside.Contains(m.UserId)).ToList();
+        }
+    }
+
+    /// <summary>The kinds a group may take, active, logged by hand, Standard by default, and applying to at least one person chosen.</summary>
+    private List<PerformanceParameterDto> ApplicableParameters => allParameters
+        .Where(p => p.IsActive && !p.IsSystemSource && StaffBulkLimits.AllowsKind(p.Kind) && p.DefaultVisibility == WelfareVisibility.Standard)
+        .Where(p => Others.Any(m => StaffGroups.Applies(p.AppliesToGroup, m.StaffGroup)))
+        .ToList();
+
+    private string LeaveOutLabel => OutsideGroup.Count == 1
+        ? "Leave them out and log for the rest"
+        : $"Leave those {OutsideGroup.Count} out and log for the rest";
+
+    private string HeaderTitle => $"Log a record for {Recipients.Count} {(Recipients.Count == 1 ? "person" : "people")}";
+
+    private string NamesPreview
+    {
+        get
+        {
+            const int shown = 3;
+            var list = Recipients;
+            var names = list.Take(shown).Select(s => s.FullName).ToList();
+            var more = list.Count - names.Count;
+            return names.Count == 0 ? "Nobody else is ticked." : string.Join(", ", names) + (more > 0 ? $" + {more} more" : "");
+        }
+    }
+
+    private string ConfirmSentence
+    {
+        get
+        {
+            var n = Recipients.Count;
+            var kind = SelectedParameter is { } p ? StaffDisplay.KindLabel(p.Kind) : "staff";
+            return $"Write {n} {kind} record{(n == 1 ? "" : "s")} dated {QDateFormat.D(occurredAt ?? DateTime.Now)}? Staff records cannot be deleted; a mistake is annulled one by one.";
+        }
+    }
+
+    private string ConfirmButtonText => $"Write {Recipients.Count} record{(Recipients.Count == 1 ? "" : "s")}";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // A fresh form every time the dialog opens: yesterday's half-typed contribution must not reach today's group.
+        if (Visible && !wasVisible)
+        {
+            Reset();
+            wasVisible = true;
+            if (meId == Guid.Empty)
+            {
+                try { meId = (await AuthService.GetCurrentUserAsync())?.Id ?? Guid.Empty; }
+                catch { meId = Guid.Empty; }
+            }
+            if (!parametersLoaded) await LoadParametersAsync();
+        }
+        wasVisible = Visible;
+    }
+
+    /// <summary>The SAME call the single "Log record" form makes, so the two offer the same parameters.</summary>
+    private async Task LoadParametersAsync()
+    {
+        isLoading = true;
+        try
+        {
+            allParameters = await StaffApi.GetParametersAsync();
+            parametersLoaded = true;
+        }
+        catch (Exception ex)
+        {
+            serverError = "The parameter list could not be loaded: " + ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void Reset()
+    {
+        parameterId = null;
+        pointsMagnitude = null;
+        description = string.Empty;
+        occurredAt = DateTime.Now;
+        leaveOutsideOut = false;
+        lateEntryDays = null;
+        parameterError = pointsError = descriptionError = dateError = outsideError = false;
+        confirming = saving = false;
+        serverError = null;
+    }
+
+    private void OnParameterChanged(Guid? value)
+    {
+        parameterId = value;
+        parameterError = false;
+        leaveOutsideOut = false;
+        outsideError = false;
+        var p = SelectedParameter;
+        pointsMagnitude = p?.DefaultPoints is { } d ? Math.Abs(d) : null;
+    }
+
+    private void Back()
+    {
+        confirming = false;
+        lateEntryDays = null;
+        serverError = null;
+    }
+
+    /// <summary>The same client checks the single form applies, then the confirmation.</summary>
+    private void Review()
+    {
+        serverError = null;
+        var p = SelectedParameter;
+        parameterError = p == null;
+        descriptionError = description.Trim().Length < 10;
+        dateError = occurredAt is null || occurredAt.Value > DateTime.Now.AddDays(1);
+        pointsError = p != null && (pointsMagnitude == null || pointsMagnitude < 0 || pointsMagnitude > p.MaxPointsPerEntry);
+        outsideError = p != null && OutsideGroup.Count > 0 && !leaveOutsideOut;
+
+        if (parameterError || descriptionError || dateError || pointsError || outsideError) return;
+        if (Recipients.Count == 0)
+        {
+            serverError = StaffBulkLimits.OnlySelfRefusal;
+            return;
+        }
+        if (Recipients.Count > StaffBulkLimits.MaxPeople)
+        {
+            serverError = StaffBulkLimits.CapMessage;
+            return;
+        }
+        confirming = true;
+    }
+
+    private async Task SubmitAsync(bool acknowledgeLate)
+    {
+        if (saving) return;
+        var p = SelectedParameter;
+        if (p == null) { confirming = false; return; }
+
+        saving = true;
+        serverError = null;
+        try
+        {
+            var request = new BulkStaffRecordRequest
+            {
+                SubjectUserIds = Recipients.Select(m => m.UserId).ToList(),
+                Record = new CreateStaffRecordRequest
+                {
+                    ParameterId = p.Id,
+                    Description = description.Trim(),
+                    OccurredAt = (occurredAt ?? DateTime.Now).ToUniversalTime(),
+                    Visibility = WelfareVisibility.Standard,
+                    Outcome = DutyOutcome.NotApplicable,
+                    Points = p.Kind == ParameterKind.Conduct
+                        ? (pointsMagnitude.HasValue ? -Math.Abs(pointsMagnitude.Value) : null)
+                        : pointsMagnitude
+                }
+            };
+
+            var result = await StaffApi.BulkCreateStaffRecordsAsync(BranchId, request, acknowledgeLate);
+            lateEntryDays = null;
+            // The reader was never in the list sent, so the server cannot report them skipped — say so here.
+            if (IncludesMe && result.SkippedSelf.Count == 0)
+                result = result with { SkippedSelf = new List<Guid> { meId } };
+            await OnLogged.InvokeAsync(result);
+            saving = false;
+            await CloseAsync();
+        }
+        catch (LateEntryConfirmationRequiredException late)
+        {
+            // The API's own threshold; the banner offers the confirmed resubmit.
+            lateEntryDays = late.ThresholdDays;
+        }
+        catch (Exception ex)
+        {
+            // The server's own words — a scope refusal, the cap, a closed period. Nothing was written.
+            serverError = ex.Message;
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private async Task OnVisibleChanged(bool value)
+    {
+        if (saving && !value) return; // a press half-way through a save must not hide its answer
+        await VisibleChanged.InvokeAsync(value);
+    }
+
+    private Task CloseAsync() => OnVisibleChanged(false);
+}

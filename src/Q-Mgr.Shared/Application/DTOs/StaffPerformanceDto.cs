@@ -69,6 +69,14 @@ public record StaffMemberDto
 {
     public Guid UserId { get; init; }
     public string FullName { get; init; } = string.Empty;
+
+    /// <summary>
+    /// What a list of people is sorted on — the name in the organisation's chosen SORT order, which
+    /// may differ from how it is shown (PeopleNameSettingsDto.SortOrder). Built on the server by
+    /// PersonNames.SortKey; a list sorts on this and falls back to the full name when it is absent.
+    /// </summary>
+    public string? SortName { get; init; }
+
     public string Email { get; init; } = string.Empty;
     public string Username { get; init; } = string.Empty;
     public string RoleCode { get; init; } = string.Empty;
@@ -84,7 +92,7 @@ public record StaffMemberDto
     public List<string> DepartmentNames { get; init; } = new();
     public Guid? LineManagerUserId { get; init; }
     public string? LineManagerName { get; init; }
-    public StaffGroup StaffGroup { get; init; }
+    public string? StaffGroup { get; init; }
     public bool IsActive { get; init; }
     /// <summary>Filled on the directory: this period's band, or null when there is no evidence yet.</summary>
     public int? CurrentBand { get; init; }
@@ -126,7 +134,7 @@ public record PerformanceParameterDto
     public string Name { get; init; } = string.Empty;
     public string? Description { get; init; }
     public ParameterKind Kind { get; init; }
-    public StaffGroup AppliesTo { get; init; }
+    public string? AppliesToGroup { get; init; }
     public int? DefaultPoints { get; init; }
     public int MaxPointsPerEntry { get; init; }
     public int? MaxPointsPerPeriod { get; init; }
@@ -149,7 +157,7 @@ public record SavePerformanceParameterRequest
     [Required, MaxLength(120)] public string Name { get; set; } = string.Empty;
     [MaxLength(1000)] public string? Description { get; set; }
     public ParameterKind Kind { get; set; } = ParameterKind.Contribution;
-    public StaffGroup AppliesTo { get; set; } = StaffGroup.AllStaff;
+    public string? AppliesToGroup { get; set; }
     public int? DefaultPoints { get; set; }
     public int MaxPointsPerEntry { get; set; } = 10;
     public int? MaxPointsPerPeriod { get; set; }
@@ -235,6 +243,53 @@ public record CreateStaffRecordRequest
     /// <summary>Observations: recorded as a note on the record and used to schedule nothing else.</summary>
     public DateTime? PreObservationMeetingAt { get; set; }
     public DateTime? FeedbackSessionAt { get; set; }
+}
+
+/// <summary>
+/// The same Contribution or Conduct record for several members of staff at once — "everyone who ran the
+/// open day", "the whole department missed the deadline" (POST …/staff/records/bulk, 2026-09-23).
+/// <see cref="Record"/> carries everything but the person; its <c>SubjectUserId</c> is ignored.
+/// </summary>
+public record BulkStaffRecordRequest
+{
+    public List<Guid> SubjectUserIds { get; set; } = new();
+    [Required] public CreateStaffRecordRequest Record { get; set; } = new();
+}
+
+public record BulkStaffRecordResultDto
+{
+    /// <summary>Records written — one per person.</summary>
+    public int Created { get; init; }
+    public List<Guid> RecordIds { get; init; } = new();
+    /// <summary>Groups the batch on the staff activity log (one line, not forty).</summary>
+    public Guid BatchId { get; init; }
+    /// <summary>People told, after coalescing: each subject once, each supervisor once for the whole batch.</summary>
+    public int PeopleAlerted { get; init; }
+    /// <summary>The caller, when they were in the list: nobody logs a record about themselves in bulk.</summary>
+    public List<Guid> SkippedSelf { get; init; } = new();
+}
+
+/// <summary>
+/// The group log's limits and refusals, in ONE place so the dialog and the server say the same words —
+/// the staff twin of <see cref="WelfareBulkLimits"/>.
+/// </summary>
+public static class StaffBulkLimits
+{
+    /// <summary>At most this many people in one group log. Synchronous and one transaction, so it is capped.</summary>
+    public const int MaxPeople = 200;
+
+    public const string CapMessage = "A record can be logged for at most 200 people at a time. Select fewer and log the rest separately.";
+
+    public const string KindRefusal = "Only a contribution or a conduct record can be logged for a group. Attendance and duties come from registers, observations and wellbeing are about one person, and recognition has its own monthly allowance.";
+
+    public const string VisibilityRefusal = "A confidential or restricted record is logged for one person at a time.";
+
+    public const string DraftRefusal = "A record for a group cannot be saved as a draft.";
+
+    public const string OnlySelfRefusal = "Nobody logs a record about themselves. Choose at least one other person.";
+
+    /// <summary>The kinds a group log accepts. The dialog filters its parameter list by the same test.</summary>
+    public static bool AllowsKind(ParameterKind kind) => kind is ParameterKind.Contribution or ParameterKind.Conduct;
 }
 
 public record AddStaffNoteRequest
@@ -385,6 +440,14 @@ public record RegisterRowDto
 {
     public Guid UserId { get; init; }
     public string FullName { get; init; } = string.Empty;
+
+    /// <summary>
+    /// What a list of people is sorted on — the name in the organisation's chosen SORT order, which
+    /// may differ from how it is shown (PeopleNameSettingsDto.SortOrder). Built on the server by
+    /// PersonNames.SortKey; a list sorts on this and falls back to the full name when it is absent.
+    /// </summary>
+    public string? SortName { get; init; }
+
     /// <summary>Already signed. A register is read to recognise who is in the room.</summary>
     public string? PhotoUrl { get; init; }
     public string? JobTitle { get; init; }
@@ -429,7 +492,7 @@ public record StaffNoticeDto
     public string BodyHtml { get; init; } = string.Empty;
     public List<Guid>? AudienceDepartmentIds { get; init; }
     public List<string>? AudienceRoleCodes { get; init; }
-    public StaffGroup? AudienceStaffGroup { get; init; }
+    public string? AudienceStaffGroup { get; init; }
     public DateTime PublishAt { get; init; }
     public DateTime? ExpiresAt { get; init; }
     public bool IsPinned { get; init; }
@@ -459,7 +522,7 @@ public record SaveStaffNoticeRequest
     [Required] public string BodyHtml { get; set; } = string.Empty;
     public List<Guid>? AudienceDepartmentIds { get; set; }
     public List<string>? AudienceRoleCodes { get; set; }
-    public StaffGroup? AudienceStaffGroup { get; set; }
+    public string? AudienceStaffGroup { get; set; }
     public DateTime PublishAt { get; set; } = DateTime.UtcNow;
     public DateTime? ExpiresAt { get; set; }
     public bool IsPinned { get; set; }
@@ -483,6 +546,12 @@ public record PerformancePeriodDto
     public string Name { get; init; } = string.Empty;
     public DateOnly Start { get; init; }
     public DateOnly End { get; init; }
+
+    /// <summary>
+    /// The term's theme as the school writes it at the top of its programme ("Co-operation &amp; Dignity for Further
+    /// Holistic Excellence"). Shown on the calendar and the printed term programme; carries no behaviour.
+    /// </summary>
+    public string? Theme { get; init; }
 }
 
 public record ScoreBandDto
@@ -560,8 +629,60 @@ public record StaffPerformancePolicyDto
         new() { Rating = 2, Name = "Fair", MinScore = 45 },
         new() { Rating = 1, Name = "Poor", MinScore = 0 },
     };
+    /// <summary>
+    /// The staff groups this organization recognises — teaching, support, and whatever else it has
+    /// (boarding, administration, ancillary). A parameter or a notice may be restricted to one.
+    ///
+    /// <para><b>A vocabulary, not an enum</b>, for the reasons on <see cref="StaffGroups"/>. The same
+    /// <c>VocabularyItemDto</c> classes, houses, dormitories and rooms already use, so it brings
+    /// <c>IsActive</c> (retire, never delete — removing a group in use would silently widen every
+    /// parameter naming it to all staff) and <c>SortOrder</c> with it.</para>
+    ///
+    /// <para><b>Organization-scoped, unlike the branch vocabularies, and that is deliberate:</b>
+    /// <c>PerformanceParameter</c> is organization-scoped, so a branch-scoped list would let a
+    /// parameter name a group that exists on one branch and not the next — a person scoring
+    /// differently depending on which branch read them. This blob also already writes under
+    /// <c>WithPolicyLockAsync</c>, which <c>Branch.Settings</c> had to have bolted on.</para>
+    ///
+    /// <para>Empty means "not configured yet"; the reader seeds the two defaults.</para>
+    /// </summary>
+    public List<VocabularyItemDto> StaffGroups { get; set; } = new();
+
     /// <summary>The MET ceiling: no single parameter above this share of the composite.</summary>
     public int MaxParameterWeightPercent { get; set; } = 50;
+
+    // ---- The scoring dials (2026-09-22) ---------------------------------------------------------
+    //
+    // These three were hard-coded literals in StaffScoringService.ScoreParameter and are school
+    // policy, not arithmetic. They are the honest answer to "must every parameter feature be
+    // hard-coded?" — a school does NOT author a formula (a score that feeds an appraisal and an MoES
+    // return has to be explainable, and a bad expression fails silently), but it absolutely decides
+    // what a late arrival is worth. Defaults are exactly the previous literals, so no stored score
+    // moves when this ships.
+
+    /// <summary>
+    /// What a late arrival is worth against a present one, in an Attendance or Duty parameter:
+    /// <c>(present + Late×this + recovered) ÷ (present + late + absent)</c>.
+    ///
+    /// <para>0.5 was hard-coded. Some schools count three lates as an absence (≈0.67), some count
+    /// late as absent outright (0). Clamped to 0–1 by the reader: a late worth more than a present
+    /// would score somebody up for being late.</para>
+    /// </summary>
+    public decimal LateCreditFraction { get; set; } = 0.5m;
+
+    /// <summary>
+    /// How many entries a period a points parameter is assumed to attract when no
+    /// <c>MaxPointsPerPeriod</c> is set, used to derive the cap it is scored against.
+    /// <para>An invented "about ten a term" was hard-coded. Minimum 1.</para>
+    /// </summary>
+    public int DefaultEntriesPerPeriod { get; set; } = 10;
+
+    /// <summary>
+    /// Where a points parameter with evidence sits before that evidence pushes it either way —
+    /// <c>NeutralScore + (100 − NeutralScore) × clamped ÷ cap</c> in the positive direction.
+    /// <para>50 was hard-coded. Clamped to 0–100.</para>
+    /// </summary>
+    public decimal NeutralScore { get; set; } = 50m;
     public LeaderboardMode LeaderboardMode { get; set; } = LeaderboardMode.Private;
     public int LeaderboardTopN { get; set; } = 10;
     public int RecognitionMonthlyBudget { get; set; } = 5;
@@ -929,6 +1050,8 @@ public record StaffPortalDto
     public Guid BranchId { get; init; }
     public StaffScoreDto Score { get; init; } = new();
     public List<StaffDutyDto> ComingUp { get; init; } = new();
+    /// <summary>The next school events for the caller (same audience rule as My School Day), for "Coming up" beside the meetings.</summary>
+    public List<SchoolEventDto> UpcomingEvents { get; init; } = new();
     /// <summary>Rota slots I am on or supervise, under way or starting within a fortnight (plan §10 "On duty" card).</summary>
     public List<StaffDutyDto> OnDuty { get; init; } = new();
     /// <summary>My duty reports whose period has started and that are still mine to write: drafts and returned ones (plan §10).</summary>

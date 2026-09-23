@@ -41,7 +41,20 @@ public static class RoleCodes
     /// holder sees only students whose ClassName matches a live ClassTeacherAssignment of theirs.
     /// See StudentScopeService — the scope is enforced there, never by comparing against this code.
     /// </summary>
-    public const string ClassTeacher = "class-teacher";
+    /// <summary>
+    /// <b>RETIRED 2026-09-22 — no role row carries this code any more.</b> Kept only so the
+    /// migration that removed it, and anything reading historical data, still compiles.
+    ///
+    /// <para>It was deleted because it never did anything on its own: the role granted the
+    /// <i>scope</i> (AssignedClasses) and every welfare <i>permission</i> came from somewhere else,
+    /// so a holder with no ClassTeacherAssignment saw nothing and a holder with one was refused by
+    /// every welfare endpoint anyway. The POST grants the permissions now
+    /// (<c>PostPermissionService</c>), which is what the role was pretending to do.</para>
+    ///
+    /// <para><i>"What is the point in having them if they cannot be assigned? Redundant features
+    /// create more confusion"</i> — user decision, plan §5 decision 3.</para>
+    /// </summary>
+    public const string RetiredClassTeacher = "class-teacher";
 
     /// <summary>
     /// Viewer - Read-only access and customer self-service.
@@ -62,8 +75,12 @@ public static class RoleCodes
     /// <summary>Academic Assistant — timetabling and duties. Staff scope Organization; no appraisal sign-off, no confidential rung.</summary>
     public const string AcademicAssistant = "academic-assistant";
 
-    /// <summary>Head of Department — staff scope AssignedDepartments; first-line appraiser for the department's staff.</summary>
-    public const string HeadOfDepartment = "head-of-department";
+    /// <summary>
+    /// <b>RETIRED 2026-09-22</b>, for the same reason as <see cref="RetiredClassTeacher"/>: heading a
+    /// department is a POST, recorded on <c>Department.HeadUserId</c>, and that post now grants the
+    /// permissions and the staff scope together. The role granted the scope and no permission.
+    /// </summary>
+    public const string RetiredHeadOfDepartment = "head-of-department";
 
     /// <summary>Teacher — the portal and recognition; records only through named-recorder delegation on a duty.</summary>
     public const string Teacher = "teacher";
@@ -76,17 +93,22 @@ public static class RoleCodes
     ///
     /// ORDER IS LOAD-BEARING: <see cref="Rank"/> indexes into this array, so it is declared
     /// most-privileged first and <see cref="IsManagerOrAbove"/> is computed from array position
-    /// rather than from any stored level. ClassTeacher sits between Staff and Viewer deliberately —
-    /// placing it above Manager would silently hand every class teacher the manager-tier override
-    /// checks, including the visiting-day repeat check-in bypass in VisitorsController.CheckIn.
-    /// The five Staff Performance roles are placed below Manager for the same reason (user decision
+    /// rather than from any stored level. The Staff Performance roles sit below Manager deliberately:
+    /// placing one above would silently hand its holders the manager-tier override checks, including
+    /// the visiting-day repeat check-in bypass in VisitorsController.CheckIn (user decision
     /// 2026-09-16, plan §13 decision 1).
+    ///
+    /// <para><b>Removing class-teacher and head-of-department on 2026-09-22 shifted nothing</b>, and
+    /// that was checked rather than assumed: Rank is RELATIVE — IsManagerOrAbove is
+    /// <c>Rank(x) &lt;= Rank(Manager)</c> and RoleAssignmentGuard.IsAtOrBelow compares two ranks — and
+    /// both removed entries sat BELOW Manager, so no surviving role's answer changed. A future
+    /// removal needs the same check; a removal from above Manager would not be free.</para>
     /// </summary>
     public static readonly string[] All =
     {
         SuperAdmin, Admin, Manager,
-        DirectorOfStudies, AcademicAssistant, HeadOfDepartment,
-        Staff, ClassTeacher, Teacher, SupportStaff, Viewer
+        DirectorOfStudies, AcademicAssistant,
+        Staff, Teacher, SupportStaff, Viewer
     };
 
     /// <summary>The roles whose holders are support (non-teaching) staff, for PerformanceParameter.AppliesTo.</summary>
@@ -188,8 +210,7 @@ public static class RoleCodes
     /// </summary>
     public static string? ModuleFor(string? roleCode) => roleCode?.Trim().ToLowerInvariant() switch
     {
-        ClassTeacher or DirectorOfStudies or AcademicAssistant
-            or HeadOfDepartment or Teacher or SupportStaff => ModuleCodes.StudentWelfare,
+        DirectorOfStudies or AcademicAssistant or Teacher or SupportStaff => ModuleCodes.StudentWelfare,
         _ => null,
     };
 

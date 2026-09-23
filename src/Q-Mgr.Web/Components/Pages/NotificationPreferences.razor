@@ -3,6 +3,7 @@
 @inject IToastService NotificationService
 @inject NavigationManager Navigation
 @inject IAppInitializationService AppInit
+@inject IPermissionService PermissionService
 @using QMgr.Application.DTOs
 
 <QPageTitle Text="Notification Preferences" />
@@ -10,7 +11,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Notification Preferences<QInfo Text="How you are reached about each kind of event. The in-app bell is always on — it is the record that you were told, and a notification nobody can find later is worse than one nobody wanted." Label="Notification Preferences" /></h1>
+            <h1>Notification Preferences</h1>
             <p class="subtitle">
                 How you are reached about each kind of event. The in-app bell is always on — it is
                 the record that you were told, and a notification nobody can find later is worse
@@ -160,7 +161,14 @@
         loadFailed = false;
         try
         {
-            events = await NotificationApi.GetPreferenceEventsAsync();
+            // An event that is sent only to holders of a permission is offered only to them: a
+            // teacher shown "A payment for this school" would reasonably expect to receive one.
+            var all = await NotificationApi.GetPreferenceEventsAsync();
+            var shown = new List<NotificationEventDefinition>();
+            foreach (var ev in all)
+                if (string.IsNullOrEmpty(ev.Permission) || await PermissionService.HasPermissionAsync(ev.Permission))
+                    shown.Add(ev);
+            events = shown;
             prefs = await NotificationApi.GetPreferencesAsync();
         }
         catch (Exception ex)

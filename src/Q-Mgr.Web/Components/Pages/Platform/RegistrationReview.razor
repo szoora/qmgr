@@ -43,10 +43,7 @@
                     Icon="search" @bind-Value:after="@(() => LoadAttempts())" />
             <QSelect TValue="string" TItem="string" @bind-Value="decisionFilter" Items="@decisionOptions"
                      Placeholder="All decisions" @bind-Value:after="@(() => LoadAttempts())" />
-            <label class="pending-toggle">
-                <input type="checkbox" checked="@pendingOnly" @onchange="OnPendingOnlyChanged" />
-                <span>Only those awaiting a decision</span>
-            </label>
+            <QCheckbox Value="@pendingOnly" ValueChanged="@OnPendingOnlyChanged" Label="Only those awaiting a decision" />
         </div>
     </QCard>
 
@@ -170,7 +167,8 @@
                    the product has ever had; rendering it whole is a page nobody can use and a payload
                    nobody asked for. Bulk is waived deliberately: a refused sign-up is a lost customer
                    who cannot appeal (CLAUDE.md), so each one is a decision with a reason of its own. *@
-                <QPager Count="@attempts.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="attempts" />
+                <QPager Count="@attempts.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="registration-attempts"
+                    PageSizeChanged="@(n => { PageSize = n; pageIndex = 0; })" ItemLabel="attempts" />
             </div>
         </QCard>
     }
@@ -207,10 +205,8 @@
 
             @if (selected.OrganizationId.HasValue && reviewOutcome == nameof(RegistrationReviewOutcome.DuplicateRejected))
             {
-                <label class="suspend-toggle">
-                    <input type="checkbox" checked="@suspendOrganization" @onchange="OnSuspendChanged" />
-                    <span>Also suspend the account this sign-up created. It can be restored later.</span>
-                </label>
+                <QCheckbox Value="@suspendOrganization" ValueChanged="@OnSuspendChanged" Class="suspend-toggle"
+                           Label="Also suspend the account this sign-up created. It can be restored later." />
             }
         }
     </ChildContent>
@@ -254,16 +250,6 @@
         flex-wrap: wrap;
         gap: 1rem;
         align-items: center;
-    }
-
-    .pending-toggle,
-    .suspend-toggle {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        font-size: var(--qm-text-base);
-        color: var(--qm-text-secondary);
-        cursor: pointer;
     }
 
     .suspend-toggle {
@@ -342,11 +328,11 @@
 </style>
 
 @code {
-    private const int PageSize = 25;
+    private int PageSize = QPagerDefaults.Size;
     private int pageIndex;
 
-    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (attempts.Count - 1) / PageSize));
-    private IEnumerable<RegistrationAttemptDto> Paged => attempts.Skip(SafePageIndex * PageSize).Take(PageSize);
+    private int SafePageIndex => QPaging.SafeIndex(pageIndex, attempts.Count, PageSize);
+    private IEnumerable<RegistrationAttemptDto> Paged => QPaging.Page(attempts, SafePageIndex, PageSize);
 
     private bool isLoading = true;
     private bool hasError;
@@ -415,15 +401,15 @@
         }
     }
 
-    private async Task OnPendingOnlyChanged(ChangeEventArgs e)
+    private async Task OnPendingOnlyChanged(bool on)
     {
-        pendingOnly = e.Value is bool value && value;
+        pendingOnly = on;
         await LoadAttempts();
     }
 
-    private void OnSuspendChanged(ChangeEventArgs e)
+    private void OnSuspendChanged(bool on)
     {
-        suspendOrganization = e.Value is bool value && value;
+        suspendOrganization = on;
     }
 
     private void OpenReview(RegistrationAttemptDto attempt)

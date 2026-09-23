@@ -90,8 +90,18 @@
                          Variant="secondary" OnClick="@ToggleAll" />
             </div>
 
+            @* Grouped by the gate they came in by (plan §10): at an assembly point the marshal at each gate reads their
+               own list. A branch with no gates, or a roll call of visits from before gates, is one list as before. *@
+            @foreach (var gateGroup in PeopleByGate)
+            {
+                if (ShowGateHeads)
+                {
+                    <h3 class="evac-gate-head" data-evac-gate="@gateGroup.Key">
+                        <QIcon Name="signpost-split" /> @gateGroup.Key <span class="evac-gate-count">@gateGroup.Count()</span>
+                    </h3>
+                }
             <div class="evac-list">
-                @foreach (var person in report.People)
+                @foreach (var person in gateGroup)
                 {
                     var isSafe = safeIds.Contains(person.VisitorId);
                     <button type="button" class="evac-row @(isSafe ? "safe" : "")" @onclick="@(() => ToggleSafe(person.VisitorId))">
@@ -135,6 +145,7 @@
                     </button>
                 }
             </div>
+            }
         }
 
         @if (report.GroupPasses.Any())
@@ -195,6 +206,8 @@
     .evac-section-head h2 { margin: 0; font-size: var(--qm-text-xl); color: var(--qm-text-primary); }
 
     .evac-list { display: flex; flex-direction: column; gap: 10px; }
+    .evac-gate-head { display: flex; align-items: center; gap: 8px; margin: 16px 0 8px; font-size: var(--qm-text-lg); color: var(--qm-text-primary); }
+    .evac-gate-count { font-size: var(--qm-text-base); font-weight: 600; color: var(--qm-text-muted); }
 
     /* A whole row is the hit target — gloved hands, moving, on a phone. */
     .evac-row { display: flex; align-items: center; gap: 16px; width: 100%; text-align: left; cursor: pointer;
@@ -239,6 +252,20 @@
     private bool isEmailing;
 
     private bool AllAccountedFor => report != null && report.People.Count > 0 && safeIds.Count >= report.People.Count;
+
+    // ---- By gate (plan §10) ---------------------------------------------------------------------
+    private const string NoGateRecorded = "No gate recorded";
+
+    /// <summary>People on site grouped by the gate they came in by, named gates first, "No gate recorded" last.</summary>
+    private List<IGrouping<string, EvacuationPersonDto>> PeopleByGate =>
+        (report?.People ?? new List<EvacuationPersonDto>())
+            .GroupBy(p => string.IsNullOrWhiteSpace(p.EntryGate) ? NoGateRecorded : p.EntryGate!)
+            .OrderBy(g => g.Key == NoGateRecorded)
+            .ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    /// <summary>Headings only when somebody on site actually has a gate — otherwise it is one list, as it always was.</summary>
+    private bool ShowGateHeads => report?.People.Any(p => !string.IsNullOrWhiteSpace(p.EntryGate)) == true;
 
     protected override async Task OnInitializedAsync()
     {
@@ -299,7 +326,7 @@
     {
         if (report == null) return;
 
-        var rows = string.Join("", report.People.Select(p =>
+        var rows = string.Join("", PeopleByGate.SelectMany(g => g).Select(p =>
         {
             var marked = safeIds.Contains(p.VisitorId);
             var detail = string.Join(" &middot; ", new[]
@@ -307,6 +334,7 @@
                     p.Company,
                     string.IsNullOrWhiteSpace(p.HostName) ? null : $"Host: {p.HostName}",
                     string.IsNullOrWhiteSpace(p.StudentName) ? null : $"Visiting: {p.StudentName}",
+                    string.IsNullOrWhiteSpace(p.EntryGate) ? null : $"Came in by {p.EntryGate}",
                     p.Phone
                 }
                 .Where(s => !string.IsNullOrWhiteSpace(s))

@@ -2,8 +2,12 @@
 
 @* A click anywhere inside a <label> is re-dispatched to its control, so a QInfo button nested in
    this one would toggle the box. It is a SIBLING, in a row beside it — the same rule as QInput. *@
-<span class="q-field__label-row q-checkbox-row">
-<label class="q-checkbox @(Disabled ? "q-checkbox--disabled" : "") @(Value ? "q-checkbox--checked" : "") @Class">
+@* Class goes on the WRAPPER, not the label: the wrapper is the element a parent flex row lays
+   out, and every caller's Class is a layout rule (flex, margin). Putting it on the label meant
+   .q-bulkbar__all, .jr-pick and .notif-unread were all inert — three copies of "flex: 0 0 auto"
+   styling something that is not a flex item. *@
+<span class="q-field__label-row q-checkbox-row @Class">
+<label class="q-checkbox @(Disabled ? "q-checkbox--disabled" : "") @(Value ? "q-checkbox--checked" : "")">
     <input type="checkbox"
            class="q-checkbox__input"
            checked="@Value"

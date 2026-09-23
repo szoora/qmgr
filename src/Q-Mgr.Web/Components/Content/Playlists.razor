@@ -88,7 +88,8 @@
                 </QCard>
             }
         </div>
-        <QPager Count="@(FilteredPlaylists.Count())" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="playlists" />
+        <QPager Count="@(FilteredPlaylists.Count())" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="playlists"
+                    PageSizeChanged="@(n => { PageSize = n; pageIndex = 0; })" ItemLabel="playlists" />
     }
 </div>
 
@@ -327,10 +328,10 @@
     // ---- Paging (list-page sweep, plan Phase 2) --------------------------------------------
     // Every row here is a component subtree Blazor Server diffs and ships down the circuit, so
     // a page of them is drawn rather than the whole list.
-    private const int PageSize = 24;
+    private int PageSize = QPagerDefaults.Size;
     private int pageIndex;
-    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (FilteredPlaylists.Count() - 1) / PageSize));
-    private IEnumerable<PlaylistDto> PagedPlaylists => FilteredPlaylists.Skip(SafePageIndex * PageSize).Take(PageSize);
+    private int SafePageIndex => QPaging.SafeIndex(pageIndex, FilteredPlaylists.Count(), PageSize);
+    private IEnumerable<PlaylistDto> PagedPlaylists => QPaging.Page(FilteredPlaylists, SafePageIndex, PageSize);
 
     protected override async Task OnInitializedAsync()
     {

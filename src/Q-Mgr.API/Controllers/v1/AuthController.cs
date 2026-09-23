@@ -226,6 +226,9 @@ public class AuthController : ControllerBase
                 RefreshToken = string.Empty,
                 ExpiresIn = TemporaryPasswords.ChangeTokenMinutes * 60,
                 MustChangePassword = true,
+                // THE ONE HAND-BUILT UserInfo THAT IS CORRECT, and deliberately NOT BuildUserInfoWithPostsAsync:
+                // this token can only change the password, so it advertises NO permissions at all. Routing it
+                // through the builder would hand a full permission list to a session that cannot use one.
                 User = new UserInfo
                 {
                     Id = user.Id,
@@ -288,32 +291,16 @@ public class AuthController : ControllerBase
             $"{(string.IsNullOrWhiteSpace(user.FullName) ? user.Username : user.FullName)} signed in",
             organizationId: user.OrganizationId, branchId: user.AssignedBranchId, actorUserId: user.Id);
 
-        // Get user's permissions
-        var permissions = user.Role.RolePermissions
-            .Select(rp => rp.Permission.Code)
-            .ToList();
-
+        // ONE builder, so the role's permissions and the POST-derived ones cannot diverge between
+        // the five responses that carry a UserInfo. This was written out by hand here, which is why
+        // the derived welfare set reached the mobile handoff and the refresh and NOT the sign-in
+        // that every teacher actually uses — found by signing in as one, not by reading the code.
         return Ok(new LoginResponse
         {
             AccessToken = token,
             RefreshToken = refreshToken,
             ExpiresIn = expiryMinutes * 60,
-            User = new UserInfo
-            {
-                Id = user.Id,
-                Username = user.Username,
-                Email = user.Email ?? string.Empty,
-                FullName = user.FullName,
-                RoleId = user.RoleId,
-                RoleCode = user.Role.Code,
-                RoleName = user.Role.Name,
-                RoleColor = user.Role.Color,
-                OrganizationId = user.OrganizationId,
-                OrganizationName = user.Organization?.Name,
-                BranchId = user.AssignedBranchId,
-                    PhotoUrl = UploadLinks.Sign(user.PhotoUrl),
-                Permissions = permissions
-            }
+            User = await BuildUserInfoWithPostsAsync(user)
         });
     }
 
@@ -468,7 +455,7 @@ public class AuthController : ControllerBase
                 // is the only value whose hash was persisted, and anything else fails on next use.
                 RefreshToken = redeemed.RefreshToken ?? string.Empty,
                 ExpiresIn = deviceExpiry * 60,
-                User = BuildUserInfo(deviceUser)
+                User = await BuildUserInfoWithPostsAsync(deviceUser)
             });
         }
 
@@ -505,24 +492,9 @@ public class AuthController : ControllerBase
         return Ok(new LoginResponse
         {
             AccessToken = token,
-            RefreshToken = newRefreshToken,
             ExpiresIn = expiryMinutes * 60,
-            User = new UserInfo
-            {
-                Id = user.Id,
-                Username = user.Username,
-                Email = user.Email ?? string.Empty,
-                FullName = user.FullName,
-                RoleId = user.RoleId,
-                RoleCode = user.Role.Code,
-                RoleName = user.Role.Name,
-                RoleColor = user.Role.Color,
-                OrganizationId = user.OrganizationId,
-                OrganizationName = user.Organization?.Name,
-                BranchId = user.AssignedBranchId,
-                    PhotoUrl = UploadLinks.Sign(user.PhotoUrl),
-                Permissions = permissions
-            }
+            RefreshToken = newRefreshToken,
+            User = await BuildUserInfoWithPostsAsync(user)
         });
     }
 
@@ -554,26 +526,19 @@ public class AuthController : ControllerBase
             return Unauthorized(new { message = "User not found" });
         }
 
-        var permissions = user.Role.RolePermissions
-            .Select(rp => rp.Permission.Code)
-            .ToList();
-
-        return Ok(new UserInfo
-        {
-            Id = user.Id,
-            Username = user.Username,
-            Email = user.Email ?? string.Empty,
-            FullName = user.FullName,
-            RoleId = user.RoleId,
-            RoleCode = user.Role.Code,
-            RoleName = user.Role.Name,
-            RoleColor = user.Role.Color,
-            OrganizationId = user.OrganizationId,
-            OrganizationName = user.Organization?.Name,
-            BranchId = user.AssignedBranchId,
-                    PhotoUrl = UploadLinks.Sign(user.PhotoUrl),
-            Permissions = permissions
-        });
+        // THE POSTS, NOT JUST THE ROLE. This handler hand-built its own UserInfo from
+        // user.Role.RolePermissions and so was the ONE place out of six that never picked up derived post
+        // permissions (2026-09-22) — a class teacher or department head read back 4 permissions here where
+        // /auth/login correctly gave them 12.
+        //
+        // It matters because this is the REFRESH path: the browser persists UserInfo in localStorage, and
+        // AuthService.RefreshCurrentUserAsync re-reads it from here. So every `@if (HasPermission(…))` in the
+        // app silently lost the derived permissions on a refresh while the API gate went on honouring them —
+        // the UI disappearing from under somebody who could still make the calls.
+        //
+        // A sixth copy of this shape is how it happened at all. Never build a UserInfo by hand: call the
+        // builder.
+        return Ok(await BuildUserInfoWithPostsAsync(user));
     }
 
     /// <summary>
@@ -872,6 +837,48 @@ public class AuthController : ControllerBase
     /// <para>Anonymous because the whole point is that the caller holds no token yet; the code is
     /// the credential, and it was minted against a bearer token one hop ago.</para>
     /// </summary>
+    /// <summary>
+    /// The NAVIGATION half of the handoff: the app points its WebView here, and this sends the
+    /// browser on to the Blazor page that can actually establish the session.
+    ///
+    /// <para><b>Why this exists at all.</b> The shell was written against a cookie-authenticated web
+    /// UI, where navigating to this endpoint sets a cookie and redirects, and it therefore performs a
+    /// <b>GET</b>. Q-Mgr's web is Blazor Server with its session in <c>localStorage</c>, so the
+    /// redemption has to happen in the Web project and the endpoint below is a POST returning JSON.
+    /// Those two facts met on a real handset: the WebView issued
+    /// <c>GET /api/v1/auth/web-session?code=…</c>, ASP.NET answered <b>405 Method Not Allowed</b>,
+    /// and Android rendered <c>ERR_HTTP_RESPONSE_CODE_FAILURE</c> — a blank error page immediately
+    /// after a successful sign-in. Found on a device, 2026-09-22; no curl suite could have caught it,
+    /// because a suite posts the body the API documents.</para>
+    ///
+    /// <para><b>Fixed here rather than in the app, deliberately.</b> An installed APK cannot be
+    /// reissued to every handset that already has it, so the server meets the contract the shipped
+    /// binary uses. This redirect keeps working for any build of the app, old or new.</para>
+    ///
+    /// <para><b>It does NOT redeem.</b> The code is single-use and short-lived; consuming it here
+    /// would leave the Blazor page with nothing to redeem. This only forwards it.</para>
+    /// </summary>
+    [HttpGet("web-session")]
+    [ProducesResponseType(StatusCodes.Status302Found)]
+    public IActionResult WebSessionNavigate([FromQuery] string? code, [FromQuery] string? returnUrl)
+    {
+        // A missing code is somebody opening the URL by hand. Send them to sign in rather than to a
+        // page whose only job is to fail.
+        if (string.IsNullOrWhiteSpace(code))
+            return Redirect("/login");
+
+        // returnUrl is attacker-supplied on an anonymous endpoint, so only a LOCAL path is ever
+        // passed on: "//evil.example" and "https://evil.example" are both absolute to a browser.
+        // The Blazor page validates it again — this is the first of two, not the only one.
+        var target = !string.IsNullOrWhiteSpace(returnUrl)
+                     && returnUrl.StartsWith('/')
+                     && !returnUrl.StartsWith("//", StringComparison.Ordinal)
+            ? returnUrl
+            : "/";
+
+        return Redirect($"/mobile-session?code={Uri.EscapeDataString(code)}&returnUrl={Uri.EscapeDataString(target)}");
+    }
+
     [HttpPost("web-session")]
     [ProducesResponseType(typeof(LoginResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -911,7 +918,7 @@ public class AuthController : ControllerBase
             AccessToken = GenerateJwtToken(user, expiryMinutes),
             RefreshToken = webRefresh,
             ExpiresIn = expiryMinutes * 60,
-            User = BuildUserInfo(user)
+            User = await BuildUserInfoWithPostsAsync(user)
         });
     }
 
@@ -952,6 +959,27 @@ public class AuthController : ControllerBase
     /// <para><b>Signs the photo link</b>, which is what makes a picture appear at all: the link is
     /// gated and dies in an hour, so it is minted at the point the DTO reaches a caller.</para>
     /// </summary>
+    /// <summary>
+    /// <see cref="BuildUserInfo"/> plus what the person's POSTS grant.
+    ///
+    /// <para>This is the half the browser reads: <c>UserInfo.Permissions</c> is what every
+    /// <c>@if (HasPermission(...))</c> in the Web renders on, and it is PERSISTED in localStorage at
+    /// sign-in. If the API's gate derived a post's permissions and this did not, a class teacher
+    /// would be allowed through every endpoint and shown no button to reach them — which is the
+    /// original defect wearing the opposite face.</para>
+    /// </summary>
+    private async Task<UserInfo> BuildUserInfoWithPostsAsync(QMgr.Domain.Entities.Identity.User user)
+    {
+        var info = BuildUserInfo(user);
+        var posts = await PostPermissionService.GrantsForAsync(_dbContext, user.Id);
+        if (!posts.Any) return info;
+
+        var merged = new List<string>(info.Permissions);
+        foreach (var code in posts.Permissions)
+            if (!merged.Contains(code, StringComparer.OrdinalIgnoreCase)) merged.Add(code);
+        return info with { Permissions = merged };
+    }
+
     private static UserInfo BuildUserInfo(QMgr.Domain.Entities.Identity.User user) => new()
     {
         Id = user.Id,

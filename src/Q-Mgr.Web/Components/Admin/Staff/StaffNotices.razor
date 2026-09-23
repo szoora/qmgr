@@ -31,7 +31,7 @@
 <div class="admin-page notices-page">
 <QPageActions Embedded="@Embedded">
     <Title>
-        <h1>Staff notices<QInfo Text="Publish to the whole branch, a department, a role or a staff group; see who has read and who has acknowledged." Label="Staff notices" /></h1>
+        <h1>Staff notices</h1>
         <p class="subtitle">Publish to the whole branch, a department, a role or a staff group; see who has read and who has acknowledged.</p>
     </Title>
     <Actions>
@@ -129,7 +129,8 @@
                 </QCard>
             }
         </div>
-        <QPager Count="@Visible.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="notices" />
+        <QPager Count="@Visible.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="staff-notices"
+                    PageSizeChanged="@(n => { PageSize = n; pageIndex = 0; })" ItemLabel="notices" />
         }
     }
 </div>
@@ -172,8 +173,8 @@
         else if (audienceMode == "group")
         {
             <div class="form-group">
-                <QSelect TValue="StaffGroup?" TItem="GroupOption" @bind-Value="@formGroup" Items="@GroupOptions"
-                         TextSelector="@(g => g.Label)" ValueSelector="@(g => (StaffGroup?)g.Value)" Label="Staff group" Required="true"
+                <QSelect TValue="string" TItem="string" @bind-Value="@formGroup" Items="@GroupOptions" Sorted="true"
+                         TextSelector="@(g => g)" ValueSelector="@(g => g)" Label="Staff group" Required="true"
                          HasError="@formErrors.Contains("audience")" ErrorMessage="Choose a staff group" />
             </div>
         }
@@ -221,7 +222,7 @@
                 OnPicked="@(picked => { formAttachments = picked.Select(p => new AttachmentRef(p.Id, p.Name)).ToList(); })" />
 
 @* ---- Acknowledgements -------------------------------------------------------------------- *@
-<QModal @bind-Visible="showAcks" Title="@($"Who has read: {acksNotice?.Title}")" Icon="list-check" Size="lg">
+<QModal @bind-Visible="showAcks" Title="@($"Who has read: {acksNotice?.Title}")" Icon="list-check" Size="xl">
     <ChildContent>
         @if (acksLoading)
         {
@@ -329,7 +330,7 @@
     private Guid organizationId;
     private List<StaffNoticeDto> notices = new();
 
-    private const int PageSize = 20;
+    private int PageSize = QPagerDefaults.Size;
     private string search = string.Empty;
     private string filter = "all";
     private int pageIndex;
@@ -367,8 +368,8 @@
         }
     }
 
-    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (Visible.Count - 1) / PageSize));
-    private IEnumerable<StaffNoticeDto> Paged => Visible.Skip(SafePageIndex * PageSize).Take(PageSize);
+    private int SafePageIndex => QPaging.SafeIndex(pageIndex, Visible.Count, PageSize);
+    private IEnumerable<StaffNoticeDto> Paged => QPaging.Page(Visible, SafePageIndex, PageSize);
 
     private void SetFilter(string key) { filter = key; pageIndex = 0; }
     private void SetSearch(string value) { search = value ?? string.Empty; pageIndex = 0; }
@@ -384,7 +385,9 @@
     private string audienceMode = "branch";
     private List<Guid> formDepartments = new();
     private List<string> formRoles = new();
-    private StaffGroup? formGroup;
+    private string? formGroup;
+    /// <summary>The tenant policy, for the staff-group list the audience picker offers.</summary>
+    private StaffPerformancePolicyDto? policy;
     private DateTime? formPublishAt;
     private DateTime? formExpiresAt;
     private List<AttachmentRef> formAttachments = new();
@@ -400,7 +403,6 @@
     private StaffNoticeDto? withdrawTarget;
 
     private sealed record AudienceOption(string Key, string Label);
-    private sealed record GroupOption(StaffGroup Value, string Label);
     private sealed record RoleOption(string Code, string Name);
     private sealed record AttachmentRef(Guid Id, string Name);
     // Was a local four-field copy of the roles wire shape until 2026-09-19; RoleListDto in
@@ -414,11 +416,11 @@
         new("group", "A staff group (teaching or support)")
     };
 
-    private static readonly List<GroupOption> GroupOptions = new()
-    {
-        new(StaffGroup.TeachingStaff, "Teaching staff"),
-        new(StaffGroup.SupportStaff, "Support staff")
-    };
+    /// <summary>The tenant's own staff groups, from the policy — not a fixed pair. A notice that
+    /// names none goes to everybody, which is the "branch" audience mode above.</summary>
+    private List<string> GroupOptions =>
+        policy?.StaffGroups?.Where(g => g.IsActive).OrderBy(g => g.SortOrder).Select(g => g.Name).ToList()
+        ?? new List<string> { StaffGroups.Teaching, StaffGroups.Support };
 
     private static readonly List<ExportColumn<NoticeAcknowledgementDto>> AckColumns = new()
     {
@@ -488,10 +490,13 @@
         try
         {
             departments = (await StaffApi.GetDepartmentsAsync(branchId)).Where(d => d.IsActive).OrderBy(d => d.SortOrder).ThenBy(d => d.Name).ToList();
+            // The staff groups are the tenant's own now, so the audience picker reads them from the
+            // policy rather than offering a fixed teaching/support pair.
+            policy = await StaffApi.GetPolicyAsync();
         }
         catch (Exception ex)
         {
-            Toast.Notify(ToastSeverity.Error, "Could not load departments", ex.Message);
+            Toast.Notify(ToastSeverity.Error, "Could not load departments or staff groups", ex.Message);
         }
         try
         {
@@ -527,8 +532,8 @@
             var names = codes.Select(c => roles.FirstOrDefault(r => r.Code == c)?.Name ?? c).ToList();
             return "Roles: " + string.Join(", ", names);
         }
-        if (n.AudienceStaffGroup.HasValue && n.AudienceStaffGroup != StaffGroup.AllStaff)
-            return n.AudienceStaffGroup == StaffGroup.TeachingStaff ? "Teaching staff" : "Support staff";
+        if (!string.IsNullOrWhiteSpace(n.AudienceStaffGroup))
+            return n.AudienceStaffGroup;
         return "Everyone in the branch";
     }
 
@@ -564,8 +569,8 @@
         };
         formDepartments = n.AudienceDepartmentIds?.ToList() ?? new();
         formRoles = n.AudienceRoleCodes?.ToList() ?? new();
-        formGroup = n.AudienceStaffGroup is StaffGroup g && g != StaffGroup.AllStaff ? g : null;
-        audienceMode = formDepartments.Any() ? "departments" : formRoles.Any() ? "roles" : formGroup.HasValue ? "group" : "branch";
+        formGroup = string.IsNullOrWhiteSpace(n.AudienceStaffGroup) ? null : n.AudienceStaffGroup;
+        audienceMode = formDepartments.Any() ? "departments" : formRoles.Any() ? "roles" : !string.IsNullOrWhiteSpace(formGroup) ? "group" : "branch";
         formPublishAt = Local(n.PublishAt);
         formExpiresAt = n.ExpiresAt.HasValue ? Local(n.ExpiresAt.Value) : null;
         formAttachments = n.Attachments.Select(a => new AttachmentRef(a.MediaContentId, a.Name)).ToList();
@@ -583,7 +588,7 @@
         if (formExpiresAt.HasValue && formPublishAt.HasValue && formExpiresAt.Value.Date < formPublishAt.Value.Date) formErrors.Add("expires");
         if (audienceMode == "departments" && !formDepartments.Any()) formErrors.Add("audience");
         if (audienceMode == "roles" && !formRoles.Any()) formErrors.Add("audience");
-        if (audienceMode == "group" && !formGroup.HasValue) formErrors.Add("audience");
+        if (audienceMode == "group" && string.IsNullOrWhiteSpace(formGroup)) formErrors.Add("audience");
         if (formErrors.Any()) return;
 
         form.Title = form.Title.Trim();

@@ -63,6 +63,23 @@ public class Visitor : BaseEntity
     public DateTime? CheckedInAt { get; set; }
     public DateTime? CheckedOutAt { get; set; }
 
+    // ---- Gates and who (plan TERM_PROGRAMME_CALENDAR_AND_GATES §10, 2026-09-23) ------------------------------
+    // Until these, a visit recorded no gate AND no person: "who let this man in, and where?" had no answer. The gate
+    // is stored as the NAME it had that day (the StaffDuty.Location rule), so renaming a gate never rewrites history.
+    // Nulls on visits recorded before 2026-09-23 mean "not recorded" and are never backfilled.
+
+    [System.ComponentModel.DataAnnotations.MaxLength(100)]
+    public string? EntryGate { get; set; }
+
+    [System.ComponentModel.DataAnnotations.MaxLength(100)]
+    public string? ExitGate { get; set; }
+
+    /// <summary>The member of staff who admitted the visitor — the gate man, the receptionist, or the pass scanner's operator.</summary>
+    public Guid? CheckedInByUserId { get; set; }
+
+    /// <summary>The member of staff who saw the visitor out (decision D12).</summary>
+    public Guid? CheckedOutByUserId { get; set; }
+
     // Set the first time this visit's badge QR is successfully scanned. Checked independently of
     // Status in VisitorPassesController.ScanVisitBadge — Status already blocks a second scan in
     // the normal case, but this is a defense-in-depth marker that can never be un-set by anything

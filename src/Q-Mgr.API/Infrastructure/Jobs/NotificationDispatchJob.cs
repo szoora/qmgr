@@ -2,6 +2,8 @@ using Hangfire;
 using Hangfire.Server;
 using Microsoft.EntityFrameworkCore;
 using QMgr.Application.Interfaces;
+using QMgr.Application.DTOs;
+using QMgr.API.Application.Services;
 using QMgr.Domain.Entities.Notification;
 using QMgr.Infrastructure.Data;
 
@@ -242,42 +244,63 @@ public class NotificationDispatchJob
             _logger.LogWarning("Notification {NotificationId} failed {Channel}: {Reason}", notificationId, channel, result.Reason);
     }
 
+    /// <summary>How long one "delivery is failing" alert stands for its channel before another may be raised.</summary>
+    private static readonly TimeSpan DeliveryAlertQuietPeriod = TimeSpan.FromHours(6);
+
     /// <summary>
     /// Tells the organization's administrators that a channel is not working. Deliberately in-app
     /// only and deliberately keyed to nothing — emailing someone to say email is broken is a loop,
     /// and running it through the preference resolver would let the very person who needs to know
     /// have opted out of hearing it.
+    ///
+    /// <para><b>Reworked 2026-09-23.</b> It picked five administrators with no ordering (so a school
+    /// with six told a random five), read the role alone, and wrote rows straight into the table, so
+    /// nothing was pushed and no badge moved until somebody reloaded. It also QUOTED THE FAILED
+    /// NOTIFICATION'S TITLE — which is another person's notification, and can be a welfare or staff
+    /// record title an administrator holding notifications.manage has no business reading. It now
+    /// names the category and the masked address only, goes to every holder through the ordinary
+    /// service, and is raised once per channel per <see cref="DeliveryAlertQuietPeriod"/>: a relay
+    /// that is down fails every message, and one alert per failed message is how an alert gets ignored.</para>
     /// </summary>
     private async Task RaiseDeliveryAlertAsync(Notification notification, NotificationChannel channel, string recipient, string? reason)
     {
         try
         {
-            var admins = await _context.Users
-                .AsNoTracking()
-                .Where(u => u.OrganizationId == notification.OrganizationId && u.IsActive
-                            && u.Role.RolePermissions.Any(rp => rp.Permission.Code == Domain.Constants.Permissions.NotificationsManage))
-                .Select(u => u.Id)
-                .Take(5)
-                .ToListAsync();
+            var title = $"{channel} delivery is failing";
+            var category = NotificationEventKeys.All.FirstOrDefault(e => e.Key == notification.EventKey)?.Category ?? "general";
 
-            foreach (var adminId in admins)
+            var strategy = _context.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
             {
-                _context.Notifications.Add(new Notification
-                {
-                    UserId = adminId,
-                    OrganizationId = notification.OrganizationId,
-                    BranchId = notification.BranchId,
-                    Title = $"{channel} delivery is failing",
-                    Message = $"Could not deliver \"{notification.Title}\" to {Mask(recipient)} after {MaxAttempts} attempts. {reason}",
-                    Type = NotificationType.SystemAlert,
-                    Priority = NotificationPriority.High,
-                    IconClass = "exclamation-triangle",
-                    ActionUrl = "/admin/settings?tab=notifications",
-                    DeliveredVia = NotificationChannel.InApp
-                });
-            }
+                await using var tx = await _context.Database.BeginTransactionAsync();
 
-            await _context.SaveChangesAsync();
+                // One alert decision at a time per organization and channel: a relay outage fails a
+                // hundred jobs at once, and each would otherwise find "no alert yet" and raise its own.
+                var lockKey = $"delivery-alert:{notification.OrganizationId}:{channel}";
+                await _context.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtext({lockKey}))");
+
+                var since = DateTime.UtcNow - DeliveryAlertQuietPeriod;
+                var alreadyTold = await _context.Notifications.IgnoreQueryFilters().AsNoTracking()
+                    .AnyAsync(n => n.OrganizationId == notification.OrganizationId && n.Title == title && n.CreatedAt >= since);
+
+                if (!alreadyTold)
+                {
+                    var admins = await NotificationAudience.HoldersAsync(_context, notification.OrganizationId, Domain.Constants.Permissions.NotificationsManage);
+                    await _notificationService.NotifyManyAsync(admins, new CreateNotificationRequest
+                    {
+                        OrganizationId = notification.OrganizationId,
+                        Title = title,
+                        Message = $"A {category.ToLowerInvariant()} notification could not be delivered to {Mask(recipient)} after {MaxAttempts} attempts. {reason}",
+                        Type = NotificationType.SystemAlert,
+                        Priority = NotificationPriority.High,
+                        IconClass = "exclamation-triangle",
+                        ActionUrl = "/admin/settings?tab=notifications",
+                        Channels = NotificationChannel.InApp
+                    });
+                }
+
+                await tx.CommitAsync();
+            });
         }
         catch (Exception ex)
         {

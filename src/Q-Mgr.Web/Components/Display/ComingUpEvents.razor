@@ -1,0 +1,122 @@
+@using QMgr.Application.DTOs
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Pages.Calendar
+@implements IAsyncDisposable
+@inject ICalendarApiService CalendarApi
+
+@*
+    The signage "Coming up" zone (ZoneType.Events, plan TERM_PROGRAMME_CALENDAR_AND_GATES §9, decision D5):
+    the branch's upcoming PUBLIC events in large format, read anonymously and refreshed every ten minutes.
+
+    Only events whose audience includes Public reach it — the API decides that, not this component, so a
+    staff meeting can never appear on a screen in the foyer. A screen has nobody to read an error to: a
+    failed read keeps the last list and tries again at the next refresh.
+
+    Large-format by design: this sits outside the app shell's size scale, like every display screen.
+*@
+
+<section class="comingup @Class" aria-label="Coming up" id="coming-up-zone">
+    <h2 class="comingup__title">Coming up</h2>
+    @if (events == null)
+    {
+        <p class="comingup__none">Loading...</p>
+    }
+    else if (!events.Any())
+    {
+        <p class="comingup__none">Nothing planned in the next @Days days.</p>
+    }
+    else
+    {
+        <ol class="comingup__list">
+            @foreach (var e in events)
+            {
+                <li class="comingup__item">
+                    <div class="comingup__date">
+                        <span class="comingup__dow">@QDateFormat.Dy(e.StartsOn)</span>
+                        <span class="comingup__day">@e.StartsOn.Day</span>
+                        <span class="comingup__mon">@QDateFormat.Mon(e.StartsOn)</span>
+                    </div>
+                    <div class="comingup__main">
+                        <strong>@e.Title</strong>
+                        <span>
+                            @CalendarDisplay.When(e)@(e.EndsOn > e.StartsOn ? $" · until {QDateFormat.C(e.EndsOn)}" : "")@(string.IsNullOrWhiteSpace(e.Location) ? "" : $" · {e.Location}")
+                        </span>
+                    </div>
+                </li>
+            }
+        </ol>
+    }
+</section>
+
+<style>
+    .comingup { height: 100%; display: flex; flex-direction: column; gap: 16px; padding: 28px 24px; background: var(--qm-bg-card); color: var(--qm-text-primary); font-family: var(--qm-font-primary); overflow: hidden; }
+    .comingup__title { margin: 0; font-family: var(--qm-font-display); font-size: 34px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; }
+    .comingup__none { margin: 0; font-size: 22px; color: var(--qm-text-secondary); }
+    .comingup__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; min-height: 0; overflow: hidden; }
+    .comingup__item { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 18px; align-items: center; padding-bottom: 14px; border-bottom: 1px solid var(--qm-border); }
+    .comingup__date { display: flex; flex-direction: column; align-items: center; padding: 6px 0; border-radius: var(--qm-radius-lg); background: var(--qm-primary); color: var(--qm-text-on-primary); line-height: 1.1; }
+    .comingup__dow, .comingup__mon { font-size: 16px; text-transform: uppercase; letter-spacing: .06em; }
+    .comingup__day { font-size: 36px; font-weight: 700; font-family: var(--qm-font-display); }
+    .comingup__main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .comingup__main strong { font-size: 28px; line-height: 1.2; overflow-wrap: anywhere; }
+    .comingup__main span { font-size: 20px; color: var(--qm-text-secondary); }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public Guid BranchId { get; set; }
+    /// <summary>How far ahead to look.</summary>
+    [Parameter] public int Days { get; set; } = 14;
+    /// <summary>How many to show; a screen seen across a room holds six or eight lines, not twenty.</summary>
+    [Parameter] public int Take { get; set; } = 8;
+    [Parameter] public string? Class { get; set; }
+
+    private static readonly TimeSpan Refresh = TimeSpan.FromMinutes(10);
+
+    private List<SchoolEventDto>? events;
+    private PeriodicTimer? timer;
+    private CancellationTokenSource? cts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        cts = new CancellationTokenSource();
+        timer = new PeriodicTimer(Refresh);
+        _ = RefreshLoopAsync(cts.Token);
+    }
+
+    private async Task LoadAsync()
+    {
+        var fresh = await CalendarApi.GetUpcomingPublicAsync(BranchId, Days, Take);
+        if (fresh != null)
+        {
+            events = fresh;
+            return;
+        }
+        // A failed read keeps the last list, less anything that has since finished; the first failure
+        // with nothing shown yet reads as "nothing planned" rather than a spinner for ten minutes.
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        events = events?.Where(e => e.EndsOn >= today).ToList() ?? new List<SchoolEventDto>();
+    }
+
+    private async Task RefreshLoopAsync(CancellationToken token)
+    {
+        try
+        {
+            while (timer != null && await timer.WaitForNextTickAsync(token))
+            {
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        cts?.Cancel();
+        timer?.Dispose();
+        cts?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}

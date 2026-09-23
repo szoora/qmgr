@@ -1,0 +1,220 @@
+@page "/calendar/print"
+@layout QMgr.Web.Components.Layout.MinimalLayout
+@using QMgr.Application.DTOs
+@using QMgr.Web.Services
+@inject ICalendarApiService CalendarApi
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject IOrganizationApiService OrganizationApi
+@inject IAuthService AuthService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject IDocumentShareApiService DocShareApi
+@inject IToastService Toast
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+@*
+    The term programme on A4 (plan TERM_PROGRAMME_CALENDAR_AND_GATES §9): the school's events for a period,
+    grouped by week, Date · Time · Activity · Venue · Responsible — the shape a school already prints and
+    pins on the staffroom board. The title is the term's name and its theme when the period is a term.
+
+    Printing is the browser's job (CLAUDE.md "Printing is the browser's job"); "Publish to Library" renders
+    this same sheet through reportPublish.js, so the Library copy is what was on the screen.
+    ?from= and ?to= carry the period, so the link is shareable. Only the school's EVENTS are printed — a
+    person's own duties belong on their own timetable sheet, not on a programme everybody reads.
+*@
+
+<QPageTitle Text="Term programme" />
+
+<QPrintSheet SheetId="calp-sheet" Title="@DocTitle" Class="calp-sheet"
+             Ready="@(!isLoading && loadError == null)" BackText="Back to the calendar" OnBack="@(() => Navigation.NavigateTo("/calendar"))"
+             CanPublish="@canPublish" Publishing="@isPublishing" OnPublish="@PublishToLibrary" OnPrint="@Print" Disabled="@(isLoading || loadError != null)">
+    <ChildContent>
+        @if (range != null)
+        {
+            <header class="calp-head">
+                <div class="calp-head__brand">
+                    @if (!string.IsNullOrWhiteSpace(branding?.LogoUrl)) { <img class="calp-logo" src="@branding!.LogoUrl" alt="" /> }
+                    <div>
+                        <div class="calp-org">@OrganizationName</div>
+                        <div class="calp-doc">@(Term?.Name ?? "Programme")</div>
+                    </div>
+                </div>
+                <div class="calp-head__when">
+                    <strong>@QDateFormat.Range(from, to)</strong>
+                    @if (!string.IsNullOrWhiteSpace(Term?.Theme)) { <em>Theme: “@Term!.Theme”</em> }
+                </div>
+            </header>
+
+            @if (!Events.Any())
+            {
+                <p class="calp-muted" id="calp-empty">Nothing is on the calendar for this period.</p>
+            }
+            else
+            {
+                <table class="calp-table" id="calp-table">
+                    <thead>
+                        <tr><th class="calp-date">Date</th><th class="calp-time">Time</th><th>Activity</th><th>Venue</th><th>Responsible</th></tr>
+                    </thead>
+                    @foreach (var week in Events.GroupBy(e => CalendarDisplay.MondayOf(e.StartsOn)).OrderBy(g => g.Key))
+                    {
+                        <tbody>
+                            <tr class="calp-week"><th colspan="5">@WeekHeading(week.Key)</th></tr>
+                            @foreach (var e in CalendarDisplay.InDayOrder(week).OrderBy(e => e.StartsOn))
+                            {
+                                <tr>
+                                    <td>@QDateFormat.Dy(e.StartsOn) @QDateFormat.C(e.StartsOn)@(e.EndsOn > e.StartsOn ? $" – {QDateFormat.C(e.EndsOn)}" : "")</td>
+                                    <td>@CalendarDisplay.TimeCell(e)</td>
+                                    <td>@e.Title@(CalendarDisplay.Classes(e) is { } cls ? $" ({cls})" : "")</td>
+                                    <td>@(string.IsNullOrWhiteSpace(e.Location) ? "—" : e.Location)</td>
+                                    <td>@(CalendarDisplay.Responsible(e) ?? "—")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    }
+                </table>
+            }
+            <footer class="calp-foot">Printed @QDateFormat.DT(DateTime.Now)@(string.IsNullOrWhiteSpace(generatedBy) ? "" : $" by {generatedBy}"). Programmes change: the calendar in Q-Mgr is the current version.</footer>
+        }
+    </ChildContent>
+</QPrintSheet>
+
+@if (isLoading)
+{
+    <div class="calp-state no-print"><QSpinner Size="lg" /><span>Building the programme...</span></div>
+}
+else if (loadError != null)
+{
+    <div class="calp-state no-print"><QIcon Name="exclamation-triangle" /><span>@loadError</span></div>
+}
+
+<style>
+    .calp-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 80px 20px; color: var(--qm-text-muted); }
+    .calp-muted { color: #5b524d; }
+    .calp-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 12px; border-bottom: 2px solid #14110f; padding-bottom: 6px; margin-bottom: 8px; }
+    .calp-head__brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .calp-logo { height: 34px; width: auto; max-width: 120px; object-fit: contain; }
+    .calp-org { font-family: var(--qm-font-display, inherit); font-size: 13pt; font-weight: 700; line-height: 1.15; }
+    .calp-doc { font-size: 9pt; letter-spacing: .06em; text-transform: uppercase; color: #5b524d; }
+    .calp-head__when { display: flex; flex-direction: column; align-items: flex-end; font-size: 9pt; text-align: right; }
+    .calp-head__when strong { font-size: 11pt; font-family: var(--qm-font-display, inherit); }
+    .calp-table { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+    .calp-table th, .calp-table td { border: 1px solid #8a817c; padding: 3px 5px; text-align: left; vertical-align: top; }
+    .calp-table thead th { font-weight: 700; border-bottom: 2px solid #14110f; }
+    .calp-date { width: 22%; }
+    .calp-time { width: 13%; }
+    .calp-week th { font-weight: 700; font-style: italic; border-top: 2px solid #14110f; }
+    .calp-table tr { break-inside: avoid; }
+    .calp-foot { margin-top: 6px; font-size: 7.5pt; color: #5b524d; }
+    @@media screen and (max-width: 640px) {
+        .calp-sheet .calp-table { min-width: 560px; }
+        .calp-sheet { overflow-x: auto; }
+    }
+</style>
+
+@code {
+    [SupplyParameterFromQuery(Name = "from")] public string? FromQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "to")] public string? ToQuery { get; set; }
+
+    private Guid branchId, organizationId;
+    private bool isLoading = true, isPublishing, canPublish;
+    private string? loadError, generatedBy;
+    private DateOnly from, to;
+    private CalendarRangeDto? range;
+    private OrganizationBrandingDto? branding;
+
+    /// <summary>A printed programme longer than a term stops being a sheet anybody reads.</summary>
+    private const int MaxDays = 190;
+
+    private List<SchoolEventDto> Events => range?.Events
+        .Where(e => e.EndsOn >= from && e.StartsOn <= to)
+        .OrderBy(e => e.StartsOn).ThenBy(e => e.StartTime != null).ThenBy(e => e.StartTime, StringComparer.Ordinal)
+        .ToList() ?? new();
+
+    /// <summary>The term the period is, when it is (near enough) one — its name and theme head the sheet.</summary>
+    private PerformancePeriodDto? Term => range?.Terms
+        .OrderByDescending(t => Math.Min(t.End.DayNumber, to.DayNumber) - Math.Max(t.Start.DayNumber, from.DayNumber))
+        .FirstOrDefault(t => t.Start <= to && t.End >= from);
+
+    private string DocTitle => Term != null
+        ? $"{Term.Name} programme{(string.IsNullOrWhiteSpace(Term.Theme) ? "" : $" — {Term.Theme}")}"
+        : $"Programme {QDateFormat.Range(from, to)}";
+
+    private string OrganizationName => !string.IsNullOrWhiteSpace(branding?.BrandName) ? branding!.BrandName! : BranchState.CurrentBranchName ?? "Programme";
+
+    private string WeekHeading(DateOnly monday)
+    {
+        if (Term != null && monday >= CalendarDisplay.MondayOf(Term.Start))
+        {
+            var n = (monday.DayNumber - CalendarDisplay.MondayOf(Term.Start).DayNumber) / 7 + 1;
+            return $"Week {n} · {QDateFormat.C(monday)} – {QDateFormat.C(monday.AddDays(6))}";
+        }
+        return $"Week of {QDateFormat.C(monday)}";
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        from = CalendarDisplay.ParseIso(FromQuery) ?? new DateOnly(today.Year, today.Month, 1);
+        to = CalendarDisplay.ParseIso(ToQuery) ?? from.AddMonths(1).AddDays(-1);
+        if (to < from) (from, to) = (to, from);
+        if (to.DayNumber - from.DayNumber > MaxDays) to = from.AddDays(MaxDays);
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        try
+        {
+            var user = await AuthService.GetCurrentUserAsync();
+            generatedBy = user?.FullName;
+            organizationId = user?.OrganizationId ?? Guid.Empty;
+            canPublish = await ReportPublishing.CanPublishAsync(PermissionService, ModuleState, ModuleApi);
+            if (organizationId != Guid.Empty)
+            {
+                try { branding = await OrganizationApi.GetOrganizationBrandingAsync(organizationId); } catch { branding = null; }
+            }
+            if (branchId == Guid.Empty)
+            {
+                loadError = "Choose a branch in the app first; a programme belongs to a branch.";
+                return;
+            }
+            range = await CalendarApi.GetRangeAsync(branchId, from, to);
+        }
+        catch (Exception ex)
+        {
+            loadError = $"Couldn't build the programme: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task Print()
+    {
+        try { await JS.InvokeVoidAsync("window.print"); } catch { }
+    }
+
+    private async Task PublishToLibrary()
+    {
+        if (isPublishing || organizationId == Guid.Empty || range == null) return;
+        isPublishing = true;
+        try
+        {
+            await ReportPublishing.PublishAsync(new ReportPublishRequest
+            {
+                SheetElementId = "calp-sheet",
+                OrganizationId = organizationId,
+                FileName = $"term-programme-{CalendarDisplay.Iso(from)}.pdf",
+                DocumentName = $"{DocTitle} — {BranchState.CurrentBranchName}",
+                Summary = $"{QDateFormat.Range(from, to)}, {Events.Count} event(s). Generated {QDateFormat.D(DateTime.UtcNow)} by {generatedBy ?? "Q-Mgr"}.",
+                PublishedFrom = $"Calendar — {BranchState.CurrentBranchName}",
+                SubjectNoun = "programme",
+            }, JS, DocShareApi, Toast, Navigation);
+        }
+        finally
+        {
+            isPublishing = false;
+        }
+    }
+}

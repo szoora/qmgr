@@ -86,14 +86,33 @@
                 <div class="tt-version-meta">
                     <QChip Text="@StatusLabel(detail.Timetable.Status)" Variant="@StatusVariant(detail.Timetable.Status)" Size="sm" />
                     <span>@QDateFormat.Range(detail.Timetable.EffectiveFrom, detail.Timetable.EffectiveTo) · @detail.Timetable.CycleDays-day cycle · @detail.Lessons.Count lesson rows</span>
+                    @* WHOSE TIMETABLE IT IS, on the same line as what it is. An appointed master's version that
+                       looks identical to an unowned one is the whole feature made invisible. *@
+                    @if (detail.Timetable.ManagerNames.Any())
+                    {
+                        <QChip Text="@($"Master: {string.Join(", ", detail.Timetable.ManagerNames)}")" Icon="person-check" Variant="@(detail.Timetable.IAmManager ? "primary" : "muted")" Size="sm" />
+                    }
+                    @if (detail.Timetable.CanIAppoint)
+                    {
+                        <QButton Text="@(detail.Timetable.ManagerNames.Any() ? "Change master" : "Appoint a master")" Icon="person-gear" Variant="ghost" Size="sm" OnClick="@OpenAppoint" Disabled="@busy" />
+                    }
                 </div>
+                @* The override warning sits ABOVE the buttons, not in a toast after the fact: somebody about to
+                   edit a colleague's timetable should know before they touch it that the colleague will be told. *@
+                @if (detail.Timetable.WouldBeOverride)
+                {
+                    <div class="tt-override" role="note">
+                        <i class="bi bi-shield-exclamation" aria-hidden="true"></i>
+                        <span>This timetable is managed by @(string.Join(", ", detail.Timetable.ManagerNames)). You can change it, and they will be told that you did.</span>
+                    </div>
+                }
                 @if (detail.CanManage)
                 {
                     <div class="tt-version-actions">
                         @if (IsDraft)
                         {
                             <QButton Text="Import" Icon="upload" Variant="secondary" Size="sm" OnClick="@OpenImport" Disabled="@busy" />
-                            <QButton Text="Publish" Icon="send" Variant="primary" Size="sm" OnClick="@(() => PublishAsync(false))" Disabled="@busy" />
+                            <QButton Text="Publish" Icon="send" Variant="primary" Size="sm" OnClick="@(() => PublishAsync(false, false))" Disabled="@busy" />
                             <QButton Text="Discard draft" Icon="trash" Variant="ghost" Size="sm" OnClick="@(() => showDiscard = true)" Disabled="@busy" />
                         }
                         else if (detail.Timetable.Status == TimetableStatus.Published)
@@ -337,6 +356,48 @@
     </FooterContent>
 </QModal>
 
+@* ---- Appoint the timetable master ------------------------------------------------------------------ *@
+<QModal @bind-Visible="showAppoint" Title="Who builds this timetable" Icon="person-gear" Size="md">
+    <ChildContent>
+        <p>
+            An appointed master can build, publish and archive <strong>this version</strong> without holding the
+            timetable permission — and without being able to touch any other version.
+        </p>
+        <QMultiSelect TValue="Guid" TItem="StaffMemberDto" SelectedValues="@appointIds"
+                      SelectedValuesChanged="@(v => appointIds = v.ToList())"
+                      Items="@appointCandidates" ValueSelector="@(s => s.UserId)" TextSelector="@(s => s.FullName)"
+                      Label="Appointed master(s)" Sorted="true"
+                      Hint="Leave it empty for nobody in particular: the timetable permission then opens it, which is how every version behaved before masters existed. An appointed master cannot appoint another one — that stays with an administrator." />
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showAppoint = false)" />
+        <QButton Text="Save" Icon="check2" Variant="primary" OnClick="@SaveManagersAsync" Disabled="@busy" />
+    </FooterContent>
+</QModal>
+
+@* ---- Publishing over a live timetable -------------------------------------------------------------- *@
+<QModal @bind-Visible="showReplace" Title="Another timetable is already live" Icon="exclamation-triangle" Size="md">
+    <ChildContent>
+        <p>
+            @(replaceNames.Any()
+                ? $"{string.Join(", ", replaceNames)} covers the same dates."
+                : "Another published version covers the same dates.")
+        </p>
+        <p class="tt-replace-warning">
+            <i class="bi bi-exclamation-triangle" aria-hidden="true"></i>
+            <span>
+                Publishing this one takes it out of service. Its lessons stop being created, so registers, teaching
+                figures and every teacher's day come from this timetable instead. That is right when you are
+                replacing a corrected version; it is not right if the two are meant to run side by side.
+            </span>
+        </p>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showReplace = false)" />
+        <QButton Text="Replace it" Icon="send" Variant="danger" OnClick="@(() => PublishAsync(replaceAcknowledgeSoft, true))" Disabled="@busy" />
+    </FooterContent>
+</QModal>
+
 @* ---- Publish with soft clashes --------------------------------------------------------------------- *@
 <QModal @bind-Visible="showSoft" Title="Publish with soft clashes" Icon="exclamation-triangle" Size="md">
     <ChildContent>
@@ -351,7 +412,7 @@
     </ChildContent>
     <FooterContent>
         <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showSoft = false)" />
-        <QButton Text="Publish" Icon="send" Variant="primary" OnClick="@(() => PublishAsync(true))" Disabled="@(busy || string.IsNullOrWhiteSpace(publishNote))" />
+        <QButton Text="Publish" Icon="send" Variant="primary" OnClick="@(() => PublishAsync(true, false))" Disabled="@(busy || string.IsNullOrWhiteSpace(publishNote))" />
     </FooterContent>
 </QModal>
 
@@ -364,7 +425,7 @@
                 <strong>Day</strong>, <strong>Period</strong>, <strong>Class</strong>, <strong>Subject</strong>, <strong>Teacher</strong> and optionally <strong>Room</strong>.
                 Day is "Mon", "Monday", "Mon B" or the cycle-day number; Period is its key, label or start time; Subject its code or name;
                 Teacher an email, username or full name. The same teacher, subject and period for two classes becomes a joint lesson.</p>
-            <InputFile id="tt-import-file" OnChange="OnImportFile" accept=".csv,.xlsx,.xls,text/csv" />
+            <InputFile id="tt-import-file" OnChange="OnImportFile" accept="@ImportDocumentReading.Accept" />
             @if (importRows.Any())
             {
                 <p class="tt-import-count">@importRows.Count lesson row(s) read from @importFileName@(importProblems.Any() ? $" — {importProblems.Count} row(s) missing a Day, Period, Class, Subject or Teacher will be refused" : "").</p>
@@ -435,6 +496,17 @@
     .tt-version { min-width: 260px; flex: 1 1 260px; max-width: 420px; }
     .tt-version-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: var(--qm-text-base); color: var(--qm-text-secondary); }
     .tt-version-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+    /* The override notice. A flex row with ONE span holding the whole sentence — a flex row makes every text run
+       and every nested element its own column, which is a trap this project has already been caught by twice. */
+    .tt-override { display: flex; align-items: flex-start; gap: 8px; flex-basis: 100%;
+                   padding: 8px 10px; border-radius: var(--qm-radius-md);
+                   background: rgba(var(--qm-warning-rgb), 0.12); color: var(--qm-text-primary);
+                   font-size: var(--qm-text-sm); }
+    .tt-override > i { color: var(--qm-warning); flex: 0 0 auto; margin-top: 1px; }
+    .tt-replace-warning { display: flex; align-items: flex-start; gap: 8px;
+                          padding: 10px 12px; border-radius: var(--qm-radius-md);
+                          background: rgba(var(--qm-danger-rgb), 0.12); font-size: var(--qm-text-sm); }
+    .tt-replace-warning > i { color: var(--qm-danger); flex: 0 0 auto; margin-top: 2px; }
     .tt-key { min-width: 220px; flex: 0 1 280px; }
     .tt-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin-top: 12px; }
     @@media (min-width: 1200px) { .tt-layout--side { grid-template-columns: minmax(0, 1fr) 340px; } }
@@ -503,6 +575,10 @@
     [SupplyParameterFromQuery(Name = "key")] public string? QueryKey { get; set; }
 
     private bool isLoading = true, canManage, busy, issuesForViewOnly = true;
+    private bool showAppoint, showReplace, replaceAcknowledgeSoft;
+    private List<Guid> appointIds = new();
+    private List<StaffMemberDto> appointCandidates = new();
+    private List<string> replaceNames = new();
     private Guid branchId, me;
     private List<TimetableDto> versions = new();
     private TimetableDetailDto? detail;
@@ -825,8 +901,22 @@
     private static string Fmt(decimal d) => d == Math.Round(d) ? ((int)d).ToString() : d.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
 
     private static string VersionText(TimetableDto v) => $"{v.Name} — {StatusLabel(v.Status)}";
-    private static string StatusLabel(TimetableStatus s) => s switch { TimetableStatus.Draft => "Draft", TimetableStatus.Published => "Published", _ => "Archived" };
-    private static string StatusVariant(TimetableStatus s) => s switch { TimetableStatus.Draft => "info", TimetableStatus.Published => "success", _ => "muted" };
+    // Expired is DERIVED by the server from EffectiveTo, so the page never computes it — it only has to have a
+    // label for it, which is the whole point: the list used to show a dead version exactly as it showed the live one.
+    private static string StatusLabel(TimetableStatus s) => s switch
+    {
+        TimetableStatus.Draft => "Draft",
+        TimetableStatus.Published => "Published",
+        TimetableStatus.Expired => "Expired",
+        _ => "Archived"
+    };
+    private static string StatusVariant(TimetableStatus s) => s switch
+    {
+        TimetableStatus.Draft => "info",
+        TimetableStatus.Published => "success",
+        TimetableStatus.Expired => "warning",
+        _ => "muted"
+    };
 
     private IEnumerable<TimetableIssueDto> ShownIssues => (Diagnosis?.Issues ?? new()).Where(i => !issuesForViewOnly || IssueInView(i));
 
@@ -1041,17 +1131,33 @@
         finally { busy = false; }
     }
 
-    private async Task PublishAsync(bool acknowledge)
+    /// <summary>
+    /// <paramref name="replace"/> is the answer to "another version is already live for these dates". It is never
+    /// true on the first attempt: the server refuses, the page asks, and only then is it sent — because archiving
+    /// a live version stops every lesson in the school.
+    /// </summary>
+    private async Task PublishAsync(bool acknowledge, bool replace)
     {
         if (detail == null) return;
         busy = true;
         try
         {
-            detail = await StaffApi.PublishTimetableAsync(branchId, detail.Timetable.Id, new PublishTimetableRequest { AcknowledgeSoftClashes = acknowledge, Note = acknowledge ? publishNote : null });
+            detail = await StaffApi.PublishTimetableAsync(branchId, detail.Timetable.Id,
+                new PublishTimetableRequest { AcknowledgeSoftClashes = acknowledge, Note = acknowledge ? publishNote : null, Replace = replace });
             versions = await StaffApi.GetTimetablesAsync(branchId);
             showSoft = false;
+            showReplace = false;
             publishNote = null;
             Toast.Notify(ToastSeverity.Success, "Timetable published", "Every teacher with lessons has been told.");
+        }
+        catch (TimetableWouldReplaceException ex)
+        {
+            // A QUESTION, not a failure. The soft-clash note and the acknowledgement are kept so answering it does
+            // not throw away what was already typed.
+            replaceNames = ex.Replaces.ToList();
+            replaceAcknowledgeSoft = acknowledge;
+            showSoft = false;
+            showReplace = true;
         }
         catch (TimetableClashesException ex) when (!ex.Hard)
         {
@@ -1065,6 +1171,45 @@
             Toast.Notify(ToastSeverity.Error, "Not published", $"{ex.Count} hard clash(es) remain — they are listed under Checks.");
         }
         catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Not published", ex.Message); }
+        finally { busy = false; }
+    }
+
+    // ---- Ownership (2026-09-22) -----------------------------------------------------------------------------
+
+    private async Task OpenAppoint()
+    {
+        if (detail == null) return;
+        appointIds = detail.Timetable.ManagerUserIds.ToList();
+        showAppoint = true;
+        if (appointCandidates.Count > 0) return;
+        try
+        {
+            // Everybody on the branch, because a timetable master is not a role: it is a job the head gives to
+            // whoever does it, and on a school roll that is usually a teacher rather than an administrator.
+            appointCandidates = (await StaffApi.GetDirectoryAsync(branchId)).Items.ToList();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load staff", ex.Message);
+        }
+    }
+
+    private async Task SaveManagersAsync()
+    {
+        if (detail == null) return;
+        busy = true;
+        try
+        {
+            detail = await StaffApi.SetTimetableManagersAsync(branchId, detail.Timetable.Id, new SetTimetableManagersRequest { UserIds = appointIds });
+            versions = await StaffApi.GetTimetablesAsync(branchId);
+            showAppoint = false;
+            Toast.Notify(ToastSeverity.Success,
+                appointIds.Count == 0 ? "No master appointed" : "Timetable master saved",
+                appointIds.Count == 0
+                    ? "The timetable permission opens this version now."
+                    : "They can build and publish this version, and they have been told.");
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Not saved", ex.Message); }
         finally { busy = false; }
     }
 
@@ -1099,7 +1244,11 @@
         {
             if (e.File.Size > 5 * 1024 * 1024) { importError = "That file is over 5 MB; export only the lessons sheet."; return; }
             importFileName = e.File.Name;
-            var text = await JS.InvokeAsync<string>("rosterImport.sheetToCsv", "tt-import-file");
+            // A table in a Word document or a text PDF is read too (plan TERM_PROGRAMME §4); rows above its header go.
+            var text = QMgr.Application.Import.Documents.DocumentReader.IsDocumentName(e.File.Name)
+                ? await ImportDocumentReading.CsvFromHeaderAsync(JS, "tt-import-file", e.File.Name,
+                    cell => ImportAliases.Values.Any(a => a.Contains(new string(cell.Trim().ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray()))))
+                : await JS.InvokeAsync<string>("rosterImport.sheetToCsv", "tt-import-file");
             var lines = CsvText.Lines(text);
             if (lines.Count < 2) { importError = "The file needs a header row and at least one lesson."; return; }
             var header = CsvText.ParseLine(lines[0]).Select(h => new string(h.Trim().ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray())).ToList();

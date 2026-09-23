@@ -1,0 +1,322 @@
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@* =====================================================================================================
+   ASKING A COLLEAGUE — cover for one lesson, or a swap (2026-09-22).
+
+   THIS IS THE HALF THAT DID NOT EXIST. The swap machinery has been in the API since the self-service
+   feature shipped — ConfigRequestKind.SlotSwap, the colleague's agreement, a decider — and NOTHING in the
+   app ever posted MyLessonId or TheirLessonId. So the whole journey was reachable only by curl, which is
+   why nobody noticed that approving a mid-term swap refused with "there is no draft timetable to change".
+
+   IT WORKS OFF THE PUBLISHED TIMETABLE, NOT THE DRAFT, because that is when the conversation happens: before
+   term starts the master is still building, and there is nothing to swap. Names are shown here, unlike the
+   Tier 2 openings grid, because a published timetable is operational and readable by every member of the
+   branch — who teaches what, where and when — while a draft is work in progress.
+
+   TWO SHAPES, AND SAYING WHICH IS THE POINT:
+     * Cover    — one date, a colleague takes my lesson, nothing in return.
+     * Swap     — we trade. PERMANENT rewrites the timetable for the rest of term; ONE DATE is two covers.
+   Neither is applied until the colleague agrees AND a decider approves.
+   ===================================================================================================== *@
+
+@inject ISelfServiceApiService SelfService
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+
+<QCard Title="Ask a colleague" Subtitle="@Subtitle" Icon="arrow-left-right" Class="portal-card">
+    @if (loading)
+    {
+        <QSpinner />
+    }
+    else if (timetable == null)
+    {
+        <QEmptyState Icon="calendar-x" Title="No live timetable"
+                     Text="Cover and swaps are arranged against the published timetable. When one is in force your lessons appear here." />
+    }
+    else if (!myLessons.Any())
+    {
+        <QEmptyState Icon="calendar-week" Title="No lessons of yours"
+                     Text="You have no lessons on the timetable that is in force, so there is nothing to swap or hand over." />
+    }
+    else
+    {
+        <table class="data-table q-stack">
+            <thead>
+                <tr>
+                    <th>Lesson</th>
+                    <th>When</th>
+                    <th class="row-actions">&nbsp;</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var lesson in myLessons)
+                {
+                    <tr>
+                        <td>
+                            @lesson.ClassName @lesson.SubjectName
+                            @if (!string.IsNullOrEmpty(lesson.Room)) { <span class="cell-sub">@lesson.Room</span> }
+                        </td>
+                        <td>@DayLabel(lesson.CycleDay) · @lesson.PeriodKey</td>
+                        <td class="row-actions">
+                            <QButton Text="Ask for cover" Icon="person-raised-hand" Variant="secondary" Size="sm" OnClick="@(() => OpenCover(lesson))" />
+                            <QButton Text="Ask to swap" Icon="arrow-left-right" Variant="ghost" Size="sm" OnClick="@(() => OpenSwap(lesson))" />
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</QCard>
+
+@* ---- Ask for cover --------------------------------------------------------------------------------- *@
+<QModal @bind-Visible="showCover" Title="Ask a colleague to cover it" Icon="person-raised-hand" Size="md">
+    <ChildContent>
+        @if (chosen != null)
+        {
+            <p class="lsc-what">@chosen.ClassName @chosen.SubjectName · @DayLabel(chosen.CycleDay) @chosen.PeriodKey</p>
+        }
+        <div class="form-row">
+            <div class="form-group">
+                <QSelect TValue="Guid" TItem="TeacherOption" Value="@coverUserId" ValueChanged="@(v => coverUserId = v)"
+                         Items="@Colleagues" ValueSelector="@(t => t.UserId)" TextSelector="@(t => t.Name)" Sorted="true"
+                         Label="Who is covering it" Required="true"
+                         Hint="They have to agree before anybody can approve it. Covering a lesson gives them that lesson's register and nothing else — not the children's records." />
+            </div>
+            <div class="form-group">
+                <QDatePicker @bind-Value="coverDate" Label="Which day" Min="@Today" Max="@(timetable?.Timetable.EffectiveTo.ToDateTime(TimeOnly.MinValue))" Required="true" />
+            </div>
+        </div>
+        <QInput TValue="string" @bind-Value="reason" Type="textarea" Rows="2" MaxLength="500" Label="Why (they and the timetable master will see this)" />
+        @if (problem is { Length: > 0 }) { <p class="form-error">@problem</p> }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showCover = false)" />
+        <QButton Text="Send the request" Icon="send" Variant="primary" OnClick="@AskForCoverAsync" Disabled="@busy" />
+    </FooterContent>
+</QModal>
+
+@* ---- Ask to swap ----------------------------------------------------------------------------------- *@
+<QModal @bind-Visible="showSwap" Title="Ask to swap a lesson" Icon="arrow-left-right" Size="lg">
+    <ChildContent>
+        @if (chosen != null)
+        {
+            <p class="lsc-what">You give up @chosen.ClassName @chosen.SubjectName · @DayLabel(chosen.CycleDay) @chosen.PeriodKey</p>
+        }
+        <div class="form-row">
+            <div class="form-group form-group--wide">
+                <QSelect TValue="Guid" TItem="TimetableLessonDto" Value="@theirLessonId" ValueChanged="@(v => theirLessonId = v)"
+                         Items="@SwappableLessons" ValueSelector="@(l => l.Id)" TextSelector="@LessonLabel" Sorted="true"
+                         Label="And take" Required="true"
+                         Hint="Only single-teacher lessons are listed. A lesson taught jointly with somebody else has to be changed by the timetable master, because moving it moves more than two people." />
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <QSelect TValue="bool" TItem="(bool Value, string Label)" Value="@swapPermanent" ValueChanged="@(v => swapPermanent = v)"
+                         Items="@SwapScopeOptions" ValueSelector="@(o => o.Value)" TextSelector="@(o => o.Label)"
+                         Label="For how long"
+                         Hint="A permanent swap rewrites the timetable for the rest of the term, so the timetable master is shown what it would do to the classes involved before they approve it. One day is cover in both directions: nothing on the timetable moves." />
+            </div>
+            @if (!swapPermanent)
+            {
+                <div class="form-group">
+                    <QDatePicker @bind-Value="coverDate" Label="Which day (yours)" Min="@Today" Max="@(timetable?.Timetable.EffectiveTo.ToDateTime(TimeOnly.MinValue))" Required="true"
+                                 Hint="Their lesson's own day in the same week is worked out from this, so you only give one date." />
+                </div>
+            }
+        </div>
+        <QInput TValue="string" @bind-Value="reason" Type="textarea" Rows="2" MaxLength="500" Label="Why (they and the timetable master will see this)" />
+        @if (problem is { Length: > 0 }) { <p class="form-error">@problem</p> }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showSwap = false)" />
+        <QButton Text="Send the request" Icon="send" Variant="primary" OnClick="@AskForSwapAsync" Disabled="@busy" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .lsc-what { font-weight: 600; margin-bottom: var(--qm-field-gap); }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public Guid BranchId { get; set; }
+
+    /// <summary>The caller. Their own lessons are the only ones they may offer.</summary>
+    [Parameter, EditorRequired] public Guid MeId { get; set; }
+
+    /// <summary>Raised after a request is created, so the queue beside this card reloads.</summary>
+    [Parameter] public EventCallback Changed { get; set; }
+
+    private sealed record TeacherOption(Guid UserId, string Name);
+
+    private TimetableDetailDto? timetable;
+    private List<TimetableLessonDto> myLessons = new();
+    private bool loading = true, busy, showCover, showSwap, swapPermanent = true;
+    private TimetableLessonDto? chosen;
+    private Guid coverUserId, theirLessonId;
+    private DateTime? coverDate;
+    private string? reason, problem;
+
+    private static DateTime Today => DateTime.Today;
+
+    private string Subtitle => timetable == null
+        ? "Cover and swaps are arranged against the published timetable."
+        : $"{timetable.Timetable.Name} · {myLessons.Count} lesson(s) of yours";
+
+    private static readonly (bool Value, string Label)[] SwapScopeOptions =
+    {
+        (true, "Permanently — for the rest of the term"),
+        (false, "One day only")
+    };
+
+    /// <summary>
+    /// Everybody else teaching on this timetable. Drawn from the timetable rather than the staff directory, so
+    /// the list is people who actually teach — asking the bursar to cover a Physics lesson is not a real request.
+    /// </summary>
+    private IEnumerable<TeacherOption> Colleagues => timetable == null
+        ? Array.Empty<TeacherOption>()
+        : timetable.Lessons.Where(l => l.TeacherUserId != MeId)
+            .GroupBy(l => l.TeacherUserId)
+            .Select(g => new TeacherOption(g.Key, g.First().TeacherName))
+            .ToList();
+
+    /// <summary>
+    /// A colleague's lesson this one could be traded for. JOINT LESSONS ARE EXCLUDED, because the server refuses
+    /// them — moving a lesson two people teach together moves more than the two doing the asking — and a control
+    /// the server will refuse is worse than one that is not offered.
+    /// </summary>
+    private IEnumerable<TimetableLessonDto> SwappableLessons => timetable == null
+        ? Array.Empty<TimetableLessonDto>()
+        : timetable.Lessons.Where(l => l.TeacherUserId != MeId && l.GroupId == null).ToList();
+
+    private string LessonLabel(TimetableLessonDto l)
+        => $"{l.TeacherName} — {l.ClassName} {l.SubjectName}, {DayLabel(l.CycleDay)} {l.PeriodKey}";
+
+    private string DayLabel(int day) => timetable == null
+        ? $"Day {day}"
+        : TimetableCycle.CycleDayLabel(timetable.Settings, timetable.Timetable.CycleDays, day);
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        try
+        {
+            // 204 when nothing is in force today, which the client turns into null — the card then says so rather
+            // than rendering an empty table that reads as broken.
+            timetable = await StaffApi.GetCurrentTimetableAsync(BranchId);
+            myLessons = timetable?.Lessons
+                .Where(l => l.TeacherUserId == MeId && l.GroupId == null)
+                .OrderBy(l => l.CycleDay).ThenBy(l => l.PeriodKey)
+                .ToList() ?? new();
+        }
+        catch (Exception ex)
+        {
+            // A load that fails must SAY so. A silent empty list here is the "lookup fetch with no else" bug this
+            // codebase has already been caught by in three welfare forms.
+            Toast.Notify(ToastSeverity.Error, "Could not read the timetable", ex.Message);
+            timetable = null;
+            myLessons = new();
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private void OpenCover(TimetableLessonDto lesson)
+    {
+        chosen = lesson;
+        coverUserId = Guid.Empty;
+        coverDate = NextOccurrence(lesson);
+        reason = null;
+        problem = null;
+        showCover = true;
+    }
+
+    private void OpenSwap(TimetableLessonDto lesson)
+    {
+        chosen = lesson;
+        theirLessonId = Guid.Empty;
+        swapPermanent = true;
+        coverDate = NextOccurrence(lesson);
+        reason = null;
+        problem = null;
+        showSwap = true;
+    }
+
+    /// <summary>
+    /// The next date this lesson actually falls on, so the date field opens on something valid rather than on
+    /// today — which is usually the wrong cycle day and would be refused.
+    /// </summary>
+    private DateTime? NextOccurrence(TimetableLessonDto lesson)
+    {
+        if (timetable == null) return null;
+        var from = DateOnly.FromDateTime(DateTime.Today);
+        var to = timetable.Timetable.EffectiveTo;
+        for (var d = from; d <= to && d < from.AddDays(21); d = d.AddDays(1))
+            if (TimetableCycle.CycleDayOn(timetable.Settings, timetable.Timetable.CycleDays, timetable.Timetable.EffectiveFrom, d) == lesson.CycleDay)
+                return d.ToDateTime(TimeOnly.MinValue);
+        return null;
+    }
+
+    private async Task AskForCoverAsync()
+    {
+        if (chosen == null) return;
+        // THE CLIENT REFUSES WHAT THE SERVER REFUSES, in the same words, so a reader is never told after
+        // submitting what could have been said before it.
+        if (coverUserId == Guid.Empty) { problem = "Name the colleague you are asking."; return; }
+        if (coverDate == null) { problem = "Say which day you need it covered."; return; }
+
+        busy = true;
+        problem = null;
+        try
+        {
+            await SelfService.CreateRequestAsync(BranchId, new CreateConfigRequestRequest
+            {
+                Kind = ConfigRequestKind.LessonCover,
+                MyLessonId = chosen.Id,
+                CoverUserId = coverUserId,
+                EffectiveOn = DateOnly.FromDateTime(coverDate.Value),
+                Reason = reason
+            });
+            showCover = false;
+            Toast.Notify(ToastSeverity.Success, "Request sent", "They have been asked. Once they agree it goes to the timetable master.");
+            await Changed.InvokeAsync();
+        }
+        catch (Exception ex) { problem = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task AskForSwapAsync()
+    {
+        if (chosen == null) return;
+        if (theirLessonId == Guid.Empty) { problem = "Choose the lesson you would take."; return; }
+        if (!swapPermanent && coverDate == null) { problem = "Say which day, or ask for the swap to be permanent."; return; }
+
+        busy = true;
+        problem = null;
+        try
+        {
+            await SelfService.CreateRequestAsync(BranchId, new CreateConfigRequestRequest
+            {
+                Kind = ConfigRequestKind.SlotSwap,
+                MyLessonId = chosen.Id,
+                TheirLessonId = theirLessonId,
+                // Null IS the permanent case — see StaffConfigRequest.EffectiveOn. Sending a date for a permanent
+                // swap would quietly turn it into a one-off.
+                EffectiveOn = swapPermanent ? null : DateOnly.FromDateTime(coverDate!.Value),
+                Reason = reason
+            });
+            showSwap = false;
+            Toast.Notify(ToastSeverity.Success, "Request sent",
+                swapPermanent
+                    ? "They have been asked. Once they agree the timetable master decides, and they are shown what it would do to the classes involved."
+                    : "They have been asked. Once they agree the timetable master decides.");
+            await Changed.InvokeAsync();
+        }
+        catch (Exception ex) { problem = ex.Message; }
+        finally { busy = false; }
+    }
+}

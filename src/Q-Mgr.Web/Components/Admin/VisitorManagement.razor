@@ -22,7 +22,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Visitor Management<QInfo Text="Check in visitors, notify hosts, and keep a record of who's on site" Label="Visitor Management" /></h1>
+            <h1>Visitor Management</h1>
             <p class="subtitle">Check in visitors, notify hosts, and keep a record of who's on site</p>
         </div>
         <div class="header-actions">
@@ -41,6 +41,7 @@
             <PermissionGuard Permission="students.view">
             </PermissionGuard>
             <PermissionGuard Permission="visitors.manage">
+                <QButton Text="Gates" Icon="signpost-split" Variant="secondary" OnClick="@(() => showGatesEditor = true)" data-gate-action="open-editor" />
                 <QButton Text="Group Passes" Icon="people-fill" Variant="secondary" OnClick="@OpenPassesModal" />
                 <QButton Text="Audit Log" Icon="clock-history" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/visitors/audit"))" />
                 <QButton Icon="gear-fill" Variant="secondary" OnClick="@OpenSettingsModal" />
@@ -63,6 +64,18 @@
     }
 
     <QTabs Tabs="@(filterTabs.Select(t => new QTab(t.Key, t.Value)).ToList())" ActiveKey="@activeFilter" ActiveKeyChanged="@ApplyFilter" AriaLabel="Which visitors" />
+
+    @* Gate filter (plan §10): shown once the branch has gates. Came in OR left by the gate — the question a gate
+       man's supervisor asks is "who went through the lower gate today", in either direction. *@
+    @if (gates.Count > 0)
+    {
+        <QFilterBar>
+            <div class="visitor-gate-filter" data-gate-filter>
+                <QSelect TValue="string" TItem="string" Items="@GateFilterOptions" Value="@gateFilter" ValueChanged="@ApplyGateFilter"
+                         TextSelector="@(g => g == AllGates ? "All gates" : g)" Label="Gate" />
+            </div>
+        </QFilterBar>
+    }
 
     @if (isLoading)
     {
@@ -107,96 +120,22 @@
            every row here is a card with actions — a component subtree Blazor Server diffs and ships
            down the circuit. The page already has its own search and status filters above. *@
         <div class="visitor-list">
-            @foreach (var visitor in PagedVisitors)
+            @* All above QPaging.VirtualizeAbove rows renders through <Virtualize>, so choosing All on a large list
+               never ships every row down the circuit at once (plan STUDENT_ROSTER_AND_LIST_STANDARD §1, L3). *@
+            @if (PageSize == QPager.All && visitors.Count > QPaging.VirtualizeAbove)
             {
-                <div class="visitor-card @(visitor.IsWatchlisted ? "watchlisted" : "") status-@visitor.Status.ToString().ToLower()">
-                    @if (canCheckOut)
-                    {
-                        <input type="checkbox" class="visitor-select" checked="@selectedVisitIds.Contains(visitor.Id)"
-                               @onchange="@(e => ToggleVisitSelection(visitor.Id, (bool)(e.Value ?? false)))"
-                               aria-label="@($"Select {visitor.FullName}")" />
-                    }
-                    <div class="visitor-main">
-                        <div class="visitor-identity">
-                            <span class="badge-code">@visitor.BadgeCode</span>
-                            <span class="visitor-name">
-                                @visitor.FullName
-                                @if (visitor.IsWatchlisted)
-                                {
-                                    <WatchlistFlagIcon Name="@visitor.FullName" Reason="@visitor.WatchlistReason" FlaggedAt="@visitor.WatchlistAddedAt" />
-                                }
-                            </span>
-                            @if (!string.IsNullOrEmpty(visitor.Company))
-                            {
-                                <span class="visitor-company">@visitor.Company</span>
-                            }
-                            @if (visitor.TotalVisits > 1)
-                            {
-                                <span class="returning-badge" title="@($"{visitor.TotalVisits} total visits")">
-                                    <QIcon Name="arrow-repeat" /> Returning (@visitor.TotalVisits)
-                                </span>
-                            }
-                            @if (visitor.VisitsLast24Hours > 3)
-                            {
-                                <span class="frequency-flag" title="Unusually frequent — worth a second look">
-                                    <QIcon Name="exclamation-triangle" /> @visitor.VisitsLast24Hours visits/24h
-                                </span>
-                            }
-                        </div>
-                        <span class="status-badge">@visitor.Status</span>
-                    </div>
-
-                    <div class="visitor-details">
-                        <span class="detail-item"><QIcon Name="briefcase-fill" /> @visitor.Purpose</span>
-                        @if (!string.IsNullOrEmpty(visitor.HostName))
-                        {
-                            <span class="detail-item"><QIcon Name="person-fill" /> Host: @visitor.HostName</span>
-                        }
-                        @if (!string.IsNullOrEmpty(visitor.Phone))
-                        {
-                            <span class="detail-item"><QIcon Name="telephone-fill" /> @visitor.Phone</span>
-                        }
-                        @if (!string.IsNullOrEmpty(visitor.VehiclePlate))
-                        {
-                            <span class="detail-item"><QIcon Name="car-front-fill" /> @visitor.VehiclePlate</span>
-                        }
-                        @if (visitor.ScheduledAt.HasValue)
-                        {
-                            <span class="detail-item"><QIcon Name="calendar-event" /> Scheduled @QDateFormat.CDT(visitor.ScheduledAt.Value)</span>
-                        }
-                        @if (visitor.CheckedInAt.HasValue)
-                        {
-                            <span class="detail-item"><QIcon Name="box-arrow-in-right" /> In: @QDateFormat.T(visitor.CheckedInAt.Value)</span>
-                        }
-                        @if (visitor.CheckedOutAt.HasValue)
-                        {
-                            <span class="detail-item"><QIcon Name="box-arrow-right" /> Out: @QDateFormat.T(visitor.CheckedOutAt.Value)</span>
-                        }
-                    </div>
-
-                    <div class="visitor-actions">
-                        @if (visitor.Status == VisitorStatus.PreRegistered)
-                        {
-                            <PermissionGuard Permission="visitors.checkin">
-                                <QButton Text="Check In" Icon="box-arrow-in-right" Size="sm" Variant="primary" OnClick="@(() => OpenCheckInExistingModal(visitor))" />
-                            </PermissionGuard>
-                        }
-                        @if (visitor.Status == VisitorStatus.CheckedIn)
-                        {
-                            <PermissionGuard Permission="visitors.checkout">
-                                <QButton Text="Badge" Icon="qr-code" Size="sm" Variant="ghost" OnClick="@(() => ShowBadge(visitor))" />
-                                <QButton Text="Check Out" Icon="box-arrow-right" Size="sm" Variant="secondary" OnClick="@(() => CheckOut(visitor))" />
-                            </PermissionGuard>
-                        }
-                        <PermissionGuard Permission="visitors.manage">
-                            <QButton Text="@(visitor.IsWatchlisted ? "Unflag" : "Flag")" Icon="shield-exclamation" Size="sm" Variant="ghost" OnClick="@(() => RequestToggleWatchlist(visitor))" />
-                            <QButton Icon="trash" Size="sm" Variant="ghost" OnClick="@(() => RequestDeleteVisitor(visitor))" />
-                        </PermissionGuard>
-                    </div>
-                </div>
+                <Virtualize Items="@visitors" Context="visitor" ItemSize="120" SpacerElement="div">@VisitorCard(visitor)</Virtualize>
+            }
+            else
+            {
+                @foreach (var visitor in PagedVisitors)
+                {
+                    @VisitorCard(visitor)
+                }
             }
         </div>
-        <QPager Count="@visitors.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="visitors" />
+        <QPager Count="@visitors.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="visitors"
+                    PageSizeChanged="@(n => { PageSize = n; pageIndex = 0; })" SelectedCount="@selectedVisitIds.Count" ItemLabel="visitors" />
     }
 </div>
 
@@ -216,6 +155,7 @@
             <label>Host Name<input @bind="checkInModel.HostName" placeholder="Who are they visiting?" /></label>
             <label class="full-width">Notes<textarea @bind="checkInModel.Notes" rows="2"></textarea></label>
         </div>
+        <VisitorGatePicker BranchId="@branchId" Gates="@gates" @bind-Value="checkInModel.Gate" ShowError="@checkInGateError" />
         @RenderDuplicateWarning(p => ApplyProfileToCheckIn(p))
         @RenderPhotoCapture("checkin-photo", url => checkInModel.PhotoUrl = url, checkInModel.PhotoUrl)
         @if (consentRequired)
@@ -252,6 +192,7 @@
             <label>ID Number<input @bind="checkInExistingModel.IdNumber" placeholder="Passport / National ID" /></label>
             <label>Vehicle Plate<input @bind="checkInExistingModel.VehiclePlate" placeholder="KDA 123B" /></label>
         </div>
+        <VisitorGatePicker BranchId="@branchId" Gates="@gates" @bind-Value="checkInExistingModel.Gate" ShowError="@checkInExistingGateError" />
         @RenderPhotoCapture("checkin-existing-photo", url => checkInExistingModel.PhotoUrl = url, checkInExistingModel.PhotoUrl)
         @if (consentRequired)
         {
@@ -264,6 +205,21 @@
                  Disabled="@(consentRequired && !checkInExistingConsentGiven)" />
     </FooterContent>
 </QModal>
+
+@* Check-out asks for the gate only where there is a choice (plan §10, D12). With none or one it is a single press,
+   exactly as before; with two or more it opens here, already set to this device's gate. *@
+<QModal @bind-Visible="showCheckOutModal" Title="Check Out Visitor" Size="sm">
+    <ChildContent>
+        <p class="confirm-message">Check out <strong>@visitorPendingCheckOut?.FullName</strong>@(visitorPendingCheckOut?.EntryGate is { } inGate ? $" (came in by {inGate})" : "").</p>
+        <VisitorGatePicker BranchId="@branchId" Gates="@gates" @bind-Value="checkOutGate" Leaving="true" ShowError="@checkOutGateError" />
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showCheckOutModal = false)" />
+        <QButton Text="Check Out" Icon="box-arrow-right" Variant="primary" OnClick="@SubmitCheckOut" data-gate-action="checkout" />
+    </FooterContent>
+</QModal>
+
+<VisitorGatesEditor BranchId="@branchId" @bind-Visible="showGatesEditor" OnSaved="@OnGatesSaved" />
 
 <QModal @bind-Visible="showPreRegisterModal" Title="Pre-Register Visitor" Size="md">
     <ChildContent>
@@ -358,10 +314,7 @@
     <ChildContent>
         <div class="settings-section">
             <h3>Consent / NDA<QInfo Text="When enabled, every check-in requires the visitor (or the staff member on their behalf) to accept this statement before the visit can start." Label="Consent / NDA" /></h3>
-            <label class="settings-toggle">
-                <input type="checkbox" @bind="consentSettingsModel.Required" />
-                <span>Require consent at check-in</span>
-            </label>
+            <QCheckbox @bind-Value="consentSettingsModel.Required" Label="Require consent at check-in" Class="settings-toggle" />
             <label class="full-width-label">
                 Consent text
                 <textarea @bind="consentSettingsModel.Text" rows="3" disabled="@(!consentSettingsModel.Required)"></textarea>
@@ -379,10 +332,7 @@
                 Flag threshold (check-ins per day)
                 <input type="number" min="1" max="20" @bind="visitingDaySettingsModel.CardCheckInWarningThreshold" />
             </label>
-            <label class="settings-toggle">
-                <input type="checkbox" @bind="visitingDaySettingsModel.NotifyGuardianOnCheckIn" />
-                <span>Text the guardian to confirm their card was used at check-in</span>
-            </label>
+            <QCheckbox @bind-Value="visitingDaySettingsModel.NotifyGuardianOnCheckIn" Label="Text the guardian to confirm their card was used at check-in" Class="settings-toggle" />
         </div>
         <div class="settings-section">
             <h3>Data Retention</h3>
@@ -429,10 +379,7 @@
             {
                 <div class="subscription-row">
                     <div class="subscription-head">
-                        <label class="settings-toggle">
-                            <input type="checkbox" @bind="sub.Enabled" disabled="@(!canExportReports)" />
-                            <span>Enabled</span>
-                        </label>
+                        <QCheckbox @bind-Value="sub.Enabled" Disabled="@(!canExportReports)" Label="Enabled" Class="settings-toggle" />
                         <QButton Icon="trash" Size="sm" Variant="ghost" Disabled="@(!canExportReports)"
                                  OnClick="@(() => reportingSettingsModel.Subscriptions.Remove(sub))" />
                     </div>
@@ -582,7 +529,7 @@
     .onsite-hint { display: flex; align-items: center; gap: 8px; font-size: var(--qm-text-base); color: var(--qm-text-secondary); margin-bottom: 12px; }
     .onsite-hint .q-icon { color: var(--qm-text-muted); }
 
-    .visitor-select { width: 16px; height: 16px; cursor: pointer; margin-right: 12px; float: left; margin-top: 4px; }
+    .visitor-select { margin-right: 12px; float: left; margin-top: 2px; }
 
     .visitor-card { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 14px 18px; }
     .visitor-card.watchlisted { border-left-color: var(--qm-danger); }
@@ -600,6 +547,9 @@
 
     .visitor-details { display: flex; flex-wrap: wrap; gap: 14px; margin: 10px 0; font-size: var(--qm-text-base); color: var(--qm-text-muted); }
     .detail-item { display: inline-flex; align-items: center; gap: 5px; }
+    /* Gates (plan §10): where and by whom, under the card. */
+    .visitor-gate-trail { font-size: var(--qm-text-sm); color: var(--qm-text-muted); margin-top: 4px; }
+    .visitor-gate-filter { min-width: 200px; }
 
     .visitor-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
@@ -644,8 +594,7 @@
     .photo-live video { width: 220px; height: 165px; border-radius: var(--qm-radius-sm); background: #000; object-fit: cover; }
     .scanner-hidden-canvas { display: none; }
 
-    .consent-check { display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; font-size: var(--qm-text-base); color: var(--qm-text-muted); cursor: pointer; }
-    .consent-check input { margin-top: 3px; }
+    .consent-check { margin-top: 14px; }
 
     .visitor-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--qm-border); font-size: var(--qm-text-base); }
     .visitor-row:last-child { border-bottom: none; }
@@ -653,7 +602,7 @@
     .settings-section { margin-bottom: 20px; }
     .settings-section h3 { margin: 0 0 6px; font-size: var(--qm-text-md); color: var(--qm-text-primary); }
     .settings-hint { font-size: var(--qm-text-sm); color: var(--qm-text-muted); margin: 0 0 10px; }
-    .settings-toggle { display: flex; align-items: center; gap: 8px; font-size: var(--qm-text-base); color: var(--qm-text-primary); margin-bottom: 10px; cursor: pointer; }
+    .settings-toggle { margin-bottom: 10px; }
     .full-width-label { display: flex; flex-direction: column; gap: 6px; font-size: var(--qm-text-base); color: var(--qm-text-muted); }
     .full-width-label textarea { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: var(--qm-text-base); background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
 </style>
@@ -741,7 +690,11 @@
         new("Checked in", v => v.CheckedInAt?.ToLocalTime(), ExportType.Date, 18),
         new("Checked out", v => v.CheckedOutAt?.ToLocalTime(), ExportType.Date, 18),
         new("Vehicle", v => v.VehiclePlate, ExportType.Text, 12),
-        new("Watchlisted", v => v.IsWatchlisted, ExportType.Bool, 12)
+        new("Watchlisted", v => v.IsWatchlisted, ExportType.Bool, 12),
+        new("Entry gate", v => v.EntryGate, ExportType.Text, 16),
+        new("Exit gate", v => v.ExitGate, ExportType.Text, 16),
+        new("Admitted by", v => v.CheckedInByName, ExportType.Text, 22),
+        new("Seen out by", v => v.CheckedOutByName, ExportType.Text, 22)
     };
 
     /// <summary>The rows in the current view — the evacuation list, if that is what is on screen.</summary>
@@ -753,14 +706,47 @@
     // ---- Paging (list-page sweep, plan Phase 2) --------------------------------------------
     // Every row here is a component subtree Blazor Server diffs and ships down the circuit, so
     // the page renders a page of them rather than the whole list.
-    private const int PageSize = 25;
+    private int PageSize = QPagerDefaults.Size;
     private int pageIndex;
-    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (visitors.Count() - 1) / PageSize));
-    private IEnumerable<VisitorDto> PagedVisitors => visitors.Skip(SafePageIndex * PageSize).Take(PageSize);
+    private int SafePageIndex => QPaging.SafeIndex(pageIndex, visitors.Count(), PageSize);
+    private IEnumerable<VisitorDto> PagedVisitors => QPaging.Page(visitors, SafePageIndex, PageSize);
     private VisitorSummaryDto? summary;
     private bool isLoading = true;
     private Guid branchId;
     private string activeFilter = "all";
+
+    // ---- Gates (plan TERM_PROGRAMME_CALENDAR_AND_GATES §10) ------------------------------------
+    // The branch's list, active and retired. VisitorGatePicker decides what a dialog shows from it, and
+    // VisitorGateRule — the server's own rule — decides whether a press may post.
+    private List<VocabularyItemDto> gates = new();
+    private const string AllGates = "";
+    private string gateFilter = AllGates;
+    private bool showGatesEditor;
+    private bool checkInGateError;
+    private bool checkInExistingGateError;
+    private bool showCheckOutModal;
+    private VisitorDto? visitorPendingCheckOut;
+    private string? checkOutGate;
+    private bool checkOutGateError;
+
+    /// <summary>"All gates", then every gate the list names — retired ones too, since old visits carry them.</summary>
+    private List<string> GateFilterOptions =>
+        new[] { AllGates }.Concat(gates.OrderBy(g => g.SortOrder).Select(g => g.Name)).ToList();
+
+    private void ApplyGateFilter(string? gate)
+    {
+        gateFilter = gate ?? AllGates;
+        pageIndex = 0;
+        ApplyFilter(activeFilter);
+    }
+
+    private void OnGatesSaved(List<VocabularyItemDto> saved)
+    {
+        gates = saved;
+        if (gateFilter != AllGates && !gates.Any(g => VisitorGateRule.Key(g.Name) == VisitorGateRule.Key(gateFilter)))
+            gateFilter = AllGates;
+        ApplyFilter(activeFilter);
+    }
 
     private readonly Dictionary<string, string> filterTabs = new()
     {
@@ -902,6 +888,7 @@
 
         allVisitors = await VisitorApi.GetVisitorsAsync(branchId);
         summary = await VisitorApi.GetSummaryAsync(branchId);
+        gates = await VisitorApi.GetGatesAsync(branchId);
         ApplyFilter(activeFilter);
 
         isLoading = false;
@@ -917,12 +904,15 @@
             "watchlist" => allVisitors.Where(v => v.IsWatchlisted).ToList(),
             _ => allVisitors,
         };
+        if (VisitorGateRule.Key(gateFilter) is { } gateKey)
+            visitors = visitors.Where(v => VisitorGateRule.Key(v.EntryGate) == gateKey || VisitorGateRule.Key(v.ExitGate) == gateKey).ToList();
         StateHasChanged();
     }
 
     private void OpenCheckInModal()
     {
         checkInModel = new CheckInVisitorRequest();
+        checkInGateError = false;
         checkInSelectedProfile = null;
         checkInSelectedRoster = null;
         checkInConsentGiven = false;
@@ -1331,14 +1321,20 @@
 
     private RenderFragment RenderConsentCheckbox(bool given, Action<bool> onChange) => __builder =>
     {
-        <label class="consent-check">
-            <input type="checkbox" checked="@given" @onchange="@(e => onChange((bool)(e.Value ?? false)))" />
-            <span>@consentText</span>
-        </label>
+        <QCheckbox Value="@given" ValueChanged="@(v => onChange(v))" Label="@consentText" Class="consent-check q-checkbox-row--top" />
     };
 
     private async Task SubmitCheckIn()
     {
+        // The client refuses what the server refuses, in its words (VisitorGateRule), before anything is posted.
+        if (VisitorGateRule.Problem(gates, checkInModel.Gate) is { } gateProblem)
+        {
+            checkInGateError = true;
+            NotificationService.Notify(ToastSeverity.Error, "Cannot check in", gateProblem);
+            return;
+        }
+        checkInGateError = false;
+
         if (NeedsDuplicateConfirmation(checkInModel.VisitorProfileId))
         {
             duplicateApply = p => ApplyProfileToCheckIn(p);
@@ -1399,6 +1395,7 @@
     {
         visitorPendingCheckIn = visitor;
         checkInExistingModel = new CheckInVisitorRequest();
+        checkInExistingGateError = false;
         checkInExistingConsentGiven = false;
         showCheckInExistingModal = true;
     }
@@ -1456,6 +1453,14 @@
 
     private async Task SubmitCheckInExisting()
     {
+        if (VisitorGateRule.Problem(gates, checkInExistingModel.Gate) is { } gateProblem)
+        {
+            checkInExistingGateError = true;
+            NotificationService.Notify(ToastSeverity.Error, "Cannot check in", gateProblem);
+            return;
+        }
+        checkInExistingGateError = false;
+
         await StopPhotoCamera();
         showCheckInExistingModal = false;
         var visitor = visitorPendingCheckIn;
@@ -1476,17 +1481,48 @@
         }
     }
 
+    /// <summary>
+    /// One press where the branch has no choice of gate; the small dialog, set to this device's gate, where it has.
+    /// </summary>
     private async Task CheckOut(VisitorDto visitor)
     {
-        var result = await VisitorApi.CheckOutAsync(branchId, visitor.Id);
-        if (result != null)
+        if (VisitorGateRule.Active(gates).Count >= 2)
         {
+            visitorPendingCheckOut = visitor;
+            checkOutGate = null; // the picker fills this device's gate
+            checkOutGateError = false;
+            showCheckOutModal = true;
+            return;
+        }
+        await CompleteCheckOutAsync(visitor, VisitorGateRule.Resolve(gates, null, leaving: true).Gate);
+    }
+
+    private async Task SubmitCheckOut()
+    {
+        if (visitorPendingCheckOut == null) return;
+        if (VisitorGateRule.Problem(gates, checkOutGate, leaving: true) is { } gateProblem)
+        {
+            checkOutGateError = true;
+            NotificationService.Notify(ToastSeverity.Error, "Cannot check out", gateProblem);
+            return;
+        }
+        showCheckOutModal = false;
+        var visitor = visitorPendingCheckOut;
+        visitorPendingCheckOut = null;
+        await CompleteCheckOutAsync(visitor, checkOutGate);
+    }
+
+    private async Task CompleteCheckOutAsync(VisitorDto visitor, string? gate)
+    {
+        try
+        {
+            var result = await VisitorApi.CheckOutAsync(branchId, visitor.Id, gate);
             NotificationService.Notify(ToastSeverity.Success, "Success", $"{result.FullName} checked out");
             await LoadData();
         }
-        else
+        catch (InvalidOperationException ex)
         {
-            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to check out visitor");
+            NotificationService.Notify(ToastSeverity.Error, "Cannot check out", ex.Message);
         }
     }
 
@@ -1859,4 +1895,111 @@
         this.branchId = branchId;
         await LoadData();
     }
+
+    /// <summary>One row, shared by the paged loop and the virtualised All so the two cannot drift.</summary>
+    private RenderFragment VisitorCard(VisitorDto visitor) => __builder =>
+    {
+                <div class="visitor-card @(visitor.IsWatchlisted ? "watchlisted" : "") status-@visitor.Status.ToString().ToLower()">
+                    @if (canCheckOut)
+                    {
+                        <QCheckbox Class="visitor-select" Value="@selectedVisitIds.Contains(visitor.Id)"
+                                   ValueChanged="@(v => ToggleVisitSelection(visitor.Id, v))"
+                                   aria-label="@($"Select {visitor.FullName}")" />
+                    }
+                    <div class="visitor-main">
+                        <div class="visitor-identity">
+                            <span class="badge-code">@visitor.BadgeCode</span>
+                            <span class="visitor-name">
+                                @visitor.FullName
+                                @if (visitor.IsWatchlisted)
+                                {
+                                    <WatchlistFlagIcon Name="@visitor.FullName" Reason="@visitor.WatchlistReason" FlaggedAt="@visitor.WatchlistAddedAt" />
+                                }
+                            </span>
+                            @if (!string.IsNullOrEmpty(visitor.Company))
+                            {
+                                <span class="visitor-company">@visitor.Company</span>
+                            }
+                            @if (visitor.TotalVisits > 1)
+                            {
+                                <span class="returning-badge" title="@($"{visitor.TotalVisits} total visits")">
+                                    <QIcon Name="arrow-repeat" /> Returning (@visitor.TotalVisits)
+                                </span>
+                            }
+                            @if (visitor.VisitsLast24Hours > 3)
+                            {
+                                <span class="frequency-flag" title="Unusually frequent — worth a second look">
+                                    <QIcon Name="exclamation-triangle" /> @visitor.VisitsLast24Hours visits/24h
+                                </span>
+                            }
+                        </div>
+                        <span class="status-badge">@visitor.Status</span>
+                    </div>
+
+                    <div class="visitor-details">
+                        <span class="detail-item"><QIcon Name="briefcase-fill" /> @visitor.Purpose</span>
+                        @if (!string.IsNullOrEmpty(visitor.HostName))
+                        {
+                            <span class="detail-item"><QIcon Name="person-fill" /> Host: @visitor.HostName</span>
+                        }
+                        @if (!string.IsNullOrEmpty(visitor.Phone))
+                        {
+                            <span class="detail-item"><QIcon Name="telephone-fill" /> @visitor.Phone</span>
+                        }
+                        @if (!string.IsNullOrEmpty(visitor.VehiclePlate))
+                        {
+                            <span class="detail-item"><QIcon Name="car-front-fill" /> @visitor.VehiclePlate</span>
+                        }
+                        @if (visitor.ScheduledAt.HasValue)
+                        {
+                            <span class="detail-item"><QIcon Name="calendar-event" /> Scheduled @QDateFormat.CDT(visitor.ScheduledAt.Value)</span>
+                        }
+                        @if (visitor.CheckedInAt.HasValue)
+                        {
+                            <span class="detail-item"><QIcon Name="box-arrow-in-right" /> In: @QDateFormat.T(visitor.CheckedInAt.Value)</span>
+                        }
+                        @if (visitor.CheckedOutAt.HasValue)
+                        {
+                            <span class="detail-item"><QIcon Name="box-arrow-right" /> Out: @QDateFormat.T(visitor.CheckedOutAt.Value)</span>
+                        }
+                        @if (!string.IsNullOrEmpty(visitor.EntryGate))
+                        {
+                            <span class="detail-item" data-visitor-gate><QIcon Name="signpost-split" /> @visitor.EntryGate</span>
+                        }
+                    </div>
+                    @if (visitor.CheckedInAt.HasValue)
+                    {
+                        @* Who and where (plan §10, D12). "Not recorded" for a visit from before gates existed: honest history. *@
+                        <div class="visitor-gate-trail" data-visitor-trail>
+                            Entered at @(visitor.EntryGate ?? "gate not recorded"), @QDateFormat.T(visitor.CheckedInAt.Value),
+                            admitted by @(visitor.CheckedInByName ?? "not recorded")
+                            @if (visitor.CheckedOutAt.HasValue)
+                            {
+                                <span> · Left by @(visitor.ExitGate ?? "gate not recorded"), @QDateFormat.T(visitor.CheckedOutAt.Value),
+                                    seen out by @(visitor.CheckedOutByName ?? "not recorded")</span>
+                            }
+                        </div>
+                    }
+
+                    <div class="visitor-actions">
+                        @if (visitor.Status == VisitorStatus.PreRegistered)
+                        {
+                            <PermissionGuard Permission="visitors.checkin">
+                                <QButton Text="Check In" Icon="box-arrow-in-right" Size="sm" Variant="primary" OnClick="@(() => OpenCheckInExistingModal(visitor))" />
+                            </PermissionGuard>
+                        }
+                        @if (visitor.Status == VisitorStatus.CheckedIn)
+                        {
+                            <PermissionGuard Permission="visitors.checkout">
+                                <QButton Text="Badge" Icon="qr-code" Size="sm" Variant="ghost" OnClick="@(() => ShowBadge(visitor))" />
+                                <QButton Text="Check Out" Icon="box-arrow-right" Size="sm" Variant="secondary" OnClick="@(() => CheckOut(visitor))" />
+                            </PermissionGuard>
+                        }
+                        <PermissionGuard Permission="visitors.manage">
+                            <QButton Text="@(visitor.IsWatchlisted ? "Unflag" : "Flag")" Icon="shield-exclamation" Size="sm" Variant="ghost" OnClick="@(() => RequestToggleWatchlist(visitor))" />
+                            <QButton Icon="trash" Size="sm" Variant="ghost" OnClick="@(() => RequestDeleteVisitor(visitor))" />
+                        </PermissionGuard>
+                    </div>
+                </div>
+    };
 }

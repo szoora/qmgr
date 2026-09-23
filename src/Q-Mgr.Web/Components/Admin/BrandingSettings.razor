@@ -18,7 +18,7 @@
 <div class="admin-page">
     <QPageActions Embedded="@Embedded">
         <Title>
-            <h1>Branding Settings<QInfo Text="Customize the look of your public kiosk and display screens with your own logo and colors" Label="Branding Settings" /></h1>
+            <h1>Branding Settings</h1>
             <p class="subtitle">Customize the look of your public kiosk and display screens with your own logo and colors</p>
         </Title>
         <Actions>
@@ -68,9 +68,7 @@
         <div class="settings-container">
             <QCard Icon="toggle-on" Title="Enable White-Label Branding" Subtitle="Turn your custom branding on or off without losing your saved settings">
                 <div class="toggle-group">
-                    <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.WhitelabelEnabled" disabled="@(!settings.WhiteLabelEntitled)" />
-                    </div>
+                    <QSwitch @bind-Value="settings.WhitelabelEnabled" Disabled="@(!settings.WhiteLabelEntitled)" aria-label="White-labeling" />
                     <div class="toggle-info">
                         <span class="toggle-label">White-labeling @(settings.WhitelabelEnabled ? "on" : "off")</span>
                         <small>When off, every screen uses the standard Q-Mgr look whatever is set below.</small>
@@ -268,9 +266,7 @@
 
             <QCard Icon="megaphone-fill" Title="Display Banner" Subtitle="A scrolling message banner shown on Customer Display and Full-Screen Signage — opt-in, off by default">
                 <div class="toggle-group">
-                    <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" role="switch" @bind="banner.Enabled" />
-                    </div>
+                    <QSwitch @bind-Value="banner.Enabled" aria-label="Banner" />
                     <div class="toggle-info">
                         <span class="toggle-label">Banner @(banner.Enabled ? "enabled" : "disabled")</span>
                         <small>Shown on both /queue/display and /display/signage for this branch</small>

@@ -492,7 +492,7 @@
                 {
                     var members = (await StaffApi.GetDirectoryAsync(branchId)).Items;
                     people = new List<PersonOption> { new(null, "Nobody named") }
-                        .Concat(members.OrderBy(m => m.FullName, StringComparer.OrdinalIgnoreCase).Select(m => new PersonOption(m.UserId, m.FullName)))
+                        .Concat(members.OrderBy(m => m.SortName ?? m.FullName, StringComparer.OrdinalIgnoreCase).Select(m => new PersonOption(m.UserId, m.FullName)))
                         .ToList();
                 }
                 catch

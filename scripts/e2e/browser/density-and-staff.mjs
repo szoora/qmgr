@@ -37,7 +37,7 @@ const settle = async (route, ms = 2500) => {
 // ---------------------------------------------------------------- 1. the band
 post('\n== The page band is one row ==');
 
-for (const route of ['/admin/branches', '/admin/students/roster', '/admin/students/class-teachers', '/content/library']) {
+for (const route of ['/admin/branches', '/admin/students/roster', '/admin/staff?tab=class-teachers', '/content/library']) {
   await settle(route);
   const m = JSON.parse(await t.eval(`(() => {
     const h = document.querySelector('.qm-main .page-header');
@@ -71,7 +71,7 @@ for (const route of ['/admin/branches', '/admin/students/roster', '/admin/studen
 // ---------------------------------------------------------------- 2. QInfo
 post('\n== QInfo carries the explanation ==');
 
-await settle('/admin/students/class-teachers');
+await settle('/admin/staff?tab=class-teachers');
 const infoCount = Number(await t.eval(`document.querySelectorAll('.qm-main .q-info__btn').length`));
 check('the page offers a QInfo beside its title', infoCount >= 1, `${infoCount} found`);
 

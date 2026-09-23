@@ -1,3 +1,4 @@
+@using QMgr.Application
 @namespace QMgr.Web.Components.Shared.UI
 @typeparam TValue
 @typeparam TItem
@@ -256,13 +257,30 @@
     /// </summary>
     [Parameter] public string? Class { get; set; }
 
-    private IEnumerable<TItem>? FilteredItems => string.IsNullOrEmpty(filterText)
-        ? Items
-        : Items?.Where(item =>
+    /// <summary>
+    /// Sort the list alphabetically for display, numbers read as numbers
+    /// (<see cref="NaturalOrder"/>) so S2C comes before S10A. Opt-in for the reason given on
+    /// <c>QSelect.Sorted</c>: a list whose order carries meaning must not be re-sorted.
+    /// </summary>
+    [Parameter] public bool Sorted { get; set; }
+
+    private IEnumerable<TItem>? FilteredItems
+    {
+        get
         {
-            var text = TextSelector != null ? TextSelector(item) : item?.ToString();
-            return text?.Contains(filterText, StringComparison.OrdinalIgnoreCase) == true;
-        });
+            var items = string.IsNullOrEmpty(filterText)
+                ? Items
+                : Items?.Where(item =>
+                {
+                    var text = TextSelector != null ? TextSelector(item) : item?.ToString();
+                    return text?.Contains(filterText, StringComparison.OrdinalIgnoreCase) == true;
+                });
+
+            return Sorted ? items?.OrderBy(TextOf, NaturalOrder.Comparer) : items;
+        }
+    }
+
+    private string? TextOf(TItem item) => TextSelector != null ? TextSelector(item) : item?.ToString();
 
     private string GetIconClass(string icon)
     {

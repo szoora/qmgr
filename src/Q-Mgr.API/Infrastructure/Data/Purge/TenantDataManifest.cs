@@ -59,9 +59,12 @@ public static class TenantDataManifest
         // it carries a named member of staff and their words, so it goes when the tenant goes.
         ["StaffConfigRequest"] = TenantDataClass.TenantOwned,
         ["StaffNotice"] = TenantDataClass.TenantOwned,
+        // School calendar (2026-09-23): the school's own events and programme. Entirely the tenant's.
+        ["SchoolEvent"] = TenantDataClass.TenantOwned,
         ["StaffPerformanceRecord"] = TenantDataClass.TenantOwned,
         ["Subject"] = TenantDataClass.TenantOwned,
         ["Timetable"] = TenantDataClass.TenantOwned,
+        ["TimetableLessonException"] = TenantDataClass.TenantOwned,
         ["Visitor"] = TenantDataClass.TenantOwned,
         ["VisitorPass"] = TenantDataClass.TenantOwned,
         ["VisitorProfile"] = TenantDataClass.TenantOwned,

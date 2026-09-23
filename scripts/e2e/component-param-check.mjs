@@ -83,8 +83,13 @@ for (const f of files.filter(f => f.endsWith('.razor'))) {
       if (ch === '"' || ch === "'") {                       // an attribute value: read past it
         if (token) { attrs.push([token, i]); token = ''; }
         const q = ch;
+        const code = src[i + 1] === '@';   // "@expr…": a C# expression, whose calls may carry quotes of their own
         for (i++; i < src.length; i++) {
           if (src[i] === '@' && src[i + 1] === '(') { i = skipExpression(src, i + 1) - 1; continue; }
+          // An implicit expression's call — "@errors.Contains("audience")" — nests the attribute's own
+          // quote character inside its parentheses. Read the call whole, or its argument is taken for
+          // the next attribute's NAME (which is how "audience=" was once reported as a parameter).
+          if (code && src[i] === '(') { i = skipExpression(src, i) - 1; continue; }
           if (src[i] === q) break;
         }
         continue;
@@ -97,8 +102,15 @@ for (const f of files.filter(f => f.endsWith('.razor'))) {
     for (const [a, at] of attrs) {
       if (a.startsWith('@') && !a.startsWith('@bind-')) continue;          // @ref, @key, @onclick, @attributes
       const bare = a.replace(/^@bind-/, '').replace(/:(get|set|after|event)$/, '');
-      if (!/^[A-Z]/.test(bare)) continue;                                   // an html attribute, never a parameter
-      if (ALWAYS.has(bare) || c.params.has(bare) || c.params.has(bare + 'Changed')) continue;
+      // A LOWERCASE attribute is NOT safe on a component (fixed 2026-09-23). This used to skip it as
+      // "an html attribute, never a parameter" — but Blazor hands EVERY attribute on a component to it as
+      // a parameter, matched case-insensitively, and one that captures no unmatched values throws on its
+      // first render. `<QSelect id="...">` passed this guard and took the Settings page down with
+      // "does not have a property matching the name 'id'". So names are compared without case, and a
+      // lowercase one is checked like any other.
+      const lower = bare.toLowerCase();
+      const has = (n) => [...c.params].some((p) => p.toLowerCase() === n);
+      if ([...ALWAYS].some((p) => p.toLowerCase() === lower) || has(lower) || has(lower + 'changed')) continue;
       problems.push(`${f.replace(/\\/g, '/')}:${src.slice(0, at).split('\n').length}  <${name} ${bare}=...>  — ${name} has no ${bare} parameter`);
     }
   }

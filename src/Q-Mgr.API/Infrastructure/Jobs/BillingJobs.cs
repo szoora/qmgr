@@ -10,6 +10,8 @@ using QMgr.Infrastructure.Email;
 using QMgr.Domain.Enums;
 using QMgr.Infrastructure.Data;
 using QMgr.Infrastructure.Services.Billing;
+using QMgr.API.Application.Services;
+using QMgr.Application.DTOs;
 
 namespace QMgr.Infrastructure.Jobs;
 
@@ -178,16 +180,30 @@ public class BillingJobs
             .ToListAsync();
 
         var warned = 0;
+        var todayStart = now.Date;
         foreach (var om in expiringSoon)
         {
             try
             {
+                // CLAIM FIRST, then tell (2026-09-23). A retried or overlapping run of this job used
+                // to send the same reminder again; the conditional UPDATE lets exactly one run through
+                // per module per day. A send that then fails is not retried today — the ladder's rule:
+                // a missed reminder is better than a duplicated one to every administrator.
+                var claimed = await _dbContext.OrganizationModules
+                    .Where(x => x.Id == om.Id && (x.TrialReminderSentAt == null || x.TrialReminderSentAt < todayStart))
+                    .ExecuteUpdateAsync(u => u.SetProperty(x => x.TrialReminderSentAt, now));
+                if (claimed == 0) continue;
+
                 var daysLeft = Math.Max(1, (om.TrialEndsAt!.Value - now).Days);
                 var moduleName = om.Module?.Name ?? "a module";
 
-                await _notificationService.CreateInAppNotificationAsync(new CreateNotificationRequest
+                // To the people who can open Billing. This had no recipient, so every member of
+                // staff saw it — and the live push reached every tenant on the platform.
+                var audience = await NotificationAudience.HoldersAsync(_dbContext, om.OrganizationId, Permissions.BillingView);
+                await _notificationService.NotifyManyAsync(audience, new CreateNotificationRequest
                 {
                     OrganizationId = om.OrganizationId,
+                    EventKey = NotificationEventKeys.BillingTrial,
                     Title = $"{moduleName} trial ending soon",
                     Message = $"Your trial of {moduleName} ends in {daysLeft} day{(daysLeft == 1 ? "" : "s")}. Add a payment method from Billing to keep using it.",
                     Type = NotificationType.SystemAlert,
@@ -228,13 +244,19 @@ public class BillingJobs
         {
             try
             {
-                om.Status = OrganizationModuleStatus.PastDue;
-                _dbContext.OrganizationModules.Update(om);
+                // The lock and the notice happen once: whichever run moves the row off Trialing is
+                // the one that tells people. A second run, or a retry, finds nothing to claim.
+                var claimed = await _dbContext.OrganizationModules
+                    .Where(x => x.Id == om.Id && x.Status == OrganizationModuleStatus.Trialing)
+                    .ExecuteUpdateAsync(u => u.SetProperty(x => x.Status, OrganizationModuleStatus.PastDue));
+                if (claimed == 0) continue;
 
                 var moduleName = om.Module?.Name ?? "a module";
-                await _notificationService.CreateInAppNotificationAsync(new CreateNotificationRequest
+                var audience = await NotificationAudience.HoldersAsync(_dbContext, om.OrganizationId, Permissions.BillingView);
+                await _notificationService.NotifyManyAsync(audience, new CreateNotificationRequest
                 {
                     OrganizationId = om.OrganizationId,
+                    EventKey = NotificationEventKeys.BillingTrial,
                     Title = $"{moduleName} trial has ended",
                     Message = $"Your trial of {moduleName} has ended and is now locked. Add it back any time from Billing.",
                     Type = NotificationType.SystemAlert,

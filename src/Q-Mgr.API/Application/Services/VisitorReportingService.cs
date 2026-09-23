@@ -131,6 +131,14 @@ public sealed class VisitorReportingService : IVisitorReportingService
             query = query.Where(v => v.VisitorProfile!.Company != null && v.VisitorProfile.Company.ToLower().Contains(company));
         }
 
+        // Came in OR left by this gate (plan §10). A visit stores the gate's name as the list held it that day, and the
+        // filter is picked from that same list, so a case-insensitive match is the whole comparison.
+        if (!string.IsNullOrWhiteSpace(filter.Gate))
+        {
+            var gate = filter.Gate.Trim().ToLower();
+            query = query.Where(v => (v.EntryGate != null && v.EntryGate.ToLower() == gate) || (v.ExitGate != null && v.ExitGate.ToLower() == gate));
+        }
+
         return query;
     }
 
@@ -141,7 +149,8 @@ public sealed class VisitorReportingService : IVisitorReportingService
         VisitorStatus Status, VisitorType VisitorType,
         DateTime CreatedAt, DateTime? CheckedInAt, DateTime? CheckedOutAt, DateTime? ScheduledAt,
         DateTime? ConsentGivenAt, DateTime? InductionCompletedAt, string? InductionNotes,
-        string? WatchlistOverrideReason, string? WatchlistReason);
+        string? WatchlistOverrideReason, string? WatchlistReason,
+        string? EntryGate, string? ExitGate, Guid? CheckedInByUserId);
 
     private async Task<List<Row>> LoadRowsAsync(VisitorReportScope scope, DateTime startUtc, DateTime endUtc, VisitorReportFilter filter, CancellationToken ct)
     {
@@ -156,7 +165,8 @@ public sealed class VisitorReportingService : IVisitorReportingService
                 v.Status, v.VisitorType,
                 v.CreatedAt, v.CheckedInAt, v.CheckedOutAt, v.ScheduledAt,
                 v.ConsentGivenAt, v.VisitorProfile.InductionCompletedAt, v.VisitorProfile.InductionNotes,
-                v.WatchlistOverrideReason, v.VisitorProfile.WatchlistReason))
+                v.WatchlistOverrideReason, v.VisitorProfile.WatchlistReason,
+                v.EntryGate, v.ExitGate, v.CheckedInByUserId))
             .ToListAsync(ct);
     }
 
@@ -206,8 +216,50 @@ public sealed class VisitorReportingService : IVisitorReportingService
             FrequentVisitors = BuildFrequentVisitors(rows, 3),
             PreRegistration = BuildPreRegistrationOutcome(rows),
             Audience = await BuildAudienceAsync(scope, rows, startUtc, ct),
-            Branches = scope.BranchId.HasValue ? new() : await BuildBranchComparisonAsync(scope, startUtc, endUtc, filter, ct)
+            Branches = scope.BranchId.HasValue ? new() : await BuildBranchComparisonAsync(scope, startUtc, endUtc, filter, ct),
+            Gates = BuildGates(rows, zone)
         };
+    }
+
+    /// <summary>
+    /// Visitors by gate (plan §10): who came in by each, who left by each, who is still inside by the gate they came
+    /// in, and arrivals by local hour per gate — the question a school asks before its next visiting day ("how many
+    /// people do we need on the lower gate at 10?"). Visits that recorded no gate are one "Not recorded" row so the
+    /// columns still add up to the report's totals; when no visit in range carries a gate at all, the list is empty
+    /// rather than a single row that says nothing.
+    /// </summary>
+    private static List<VisitorGateCountDto> BuildGates(List<Row> rows, TimeZoneInfo zone)
+    {
+        if (!rows.Any(r => r.EntryGate != null || r.ExitGate != null)) return new();
+
+        static string Label(string? gate) => string.IsNullOrWhiteSpace(gate) ? VisitorReportDtoV2.NoGateLabel : gate;
+
+        var arrived = rows.Where(r => r.CheckedInAt.HasValue).ToList();
+        var left = rows.Where(r => r.CheckedOutAt.HasValue).ToList();
+        var names = arrived.Select(r => Label(r.EntryGate))
+            .Concat(left.Select(r => Label(r.ExitGate)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return names
+            .Select(name =>
+            {
+                var entries = arrived.Where(r => string.Equals(Label(r.EntryGate), name, StringComparison.OrdinalIgnoreCase)).ToList();
+                var byHour = new int[24];
+                foreach (var r in entries) byHour[ToLocal(r.CheckedInAt!.Value, zone).Hour]++;
+                return new VisitorGateCountDto
+                {
+                    Gate = name,
+                    Entries = entries.Count,
+                    Exits = left.Count(r => string.Equals(Label(r.ExitGate), name, StringComparison.OrdinalIgnoreCase)),
+                    OnSiteNow = entries.Count(r => r.Status == VisitorStatus.CheckedIn),
+                    ArrivalsByHour = byHour
+                };
+            })
+            .OrderBy(g => g.Gate == VisitorReportDtoV2.NoGateLabel)
+            .ThenByDescending(g => g.Entries)
+            .ThenBy(g => g.Gate, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     /// <summary>
@@ -428,7 +480,8 @@ public sealed class VisitorReportingService : IVisitorReportingService
                 v.Purpose, v.HostName, v.StudentId, v.StudentName, v.Status, v.VisitorType,
                 v.CreatedAt, v.CheckedInAt, v.CheckedOutAt, v.ScheduledAt, v.ConsentGivenAt,
                 v.VisitorProfile.InductionCompletedAt, v.VisitorProfile.InductionNotes,
-                v.WatchlistOverrideReason, v.VisitorProfile.WatchlistReason))
+                v.WatchlistOverrideReason, v.VisitorProfile.WatchlistReason,
+                v.EntryGate, v.ExitGate, v.CheckedInByUserId))
             .ToListAsync(ct);
 
         var rangeRows = await LoadRowsAsync(scope, startUtc, endUtc, filter, ct);
@@ -661,8 +714,10 @@ public sealed class VisitorReportingService : IVisitorReportingService
         var (_, _, startUtc, endUtc) = ResolveRange(filter, scope.TimeZoneId);
         var rows = await LoadRowsAsync(scope, startUtc, endUtc, filter, ct);
 
+        var admittedBy = await VisitorGates.StaffNamesAsync(_context, rows.Select(r => r.CheckedInByUserId));
+
         var csv = new System.Text.StringBuilder();
-        csv.AppendLine("Badge Code,Full Name,Phone,Email,Company,Type,Purpose,Host,Student,Status,Checked In,Checked Out,Dwell (min),Consent,Watchlisted,Override Reason");
+        csv.AppendLine("Badge Code,Full Name,Phone,Email,Company,Type,Purpose,Host,Student,Status,Checked In,Checked Out,Dwell (min),Consent,Watchlisted,Override Reason,Entry Gate,Exit Gate,Admitted By");
 
         foreach (var r in rows.OrderBy(r => r.CreatedAt))
         {
@@ -683,7 +738,9 @@ public sealed class VisitorReportingService : IVisitorReportingService
                 Csv(dwell),
                 Csv(r.ConsentGivenAt.HasValue ? "Yes" : "No"),
                 Csv(r.IsWatchlisted ? "Yes" : "No"),
-                Csv(r.WatchlistOverrideReason)
+                Csv(r.WatchlistOverrideReason),
+                Csv(r.EntryGate), Csv(r.ExitGate),
+                Csv(r.CheckedInByUserId is { } by ? admittedBy.GetValueOrDefault(by) : null)
             }));
         }
 

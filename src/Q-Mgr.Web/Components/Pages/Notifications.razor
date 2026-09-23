@@ -22,7 +22,7 @@
 <div class="admin-page notif-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Notifications<QInfo Text="Everything you have been told, newest first. The bell shows the latest twenty; this is all of them." Label="Notifications" /></h1>
+            <h1>Notifications</h1>
             <p class="subtitle">Everything you have been told, newest first. The bell shows the latest twenty; this is all of them.</p>
         </div>
         <div class="header-actions">
@@ -86,7 +86,8 @@
             @* QPager's own caption. A server-paged list only knows "there is more", not the total, so the
                caption would invent a figure there; it is shown whenever the count is real. *@
             <QPager Count="@PagerCount" PageSize="@PageSize" PageIndex="@(offset / PageSize)" PageIndexChanged="@(i => LoadPageAsync(i * PageSize))"
-                    ShowCaption="@(clientPaged || !hasMore)" ItemLabel="notifications" />
+                    ShowCaption="@(clientPaged || !hasMore)" PageSizeOptions="@QPagerDefaults.Sizes" StorageKey="notifications"
+                    PageSizeChanged="@(n => PageSize = n)" ItemLabel="notifications" />
             @if (!clientPaged && hasMore)
             {
                 <span class="notif-pager__more">More available on the next page</span>
@@ -130,7 +131,8 @@
 @code {
     private const string AllKey = "All";
     private const string OtherKey = "Other";
-    private const int PageSize = 50;
+    // SERVER-paged by offset (the API caps a page at 200), so "All" is not offered — it would quietly be one page.
+    private int PageSize = QPagerDefaults.Size;
 
     private bool isLoading = true;
     private bool unreadOnly;

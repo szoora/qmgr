@@ -461,19 +461,24 @@ public sealed class TenantPurgeService : ITenantPurgeService
     /// EF model knows nothing about any of it, so this is the one place the purge deliberately
     /// reaches outside the model.
     /// </summary>
+    /// <remarks>
+    /// <c>hangfire.job.arguments</c> is <c>jsonb</c>, so every match here is on <c>arguments::text</c>. Until
+    /// 2026-09-23 these statements applied LIKE to the jsonb itself, which PostgreSQL refuses (42883): every purge
+    /// logged an error, removed no job, and left each queued email's recipient and body in the database.
+    /// </remarks>
     private async Task<int> DeleteBackgroundJobsAsync(Guid organizationId, CancellationToken cancellationToken)
     {
         try
         {
             var pattern = $"%{organizationId}%";
             var removed = await ExecuteRawAsync(
-                "DELETE FROM hangfire.jobparameter WHERE jobid IN (SELECT id FROM hangfire.job WHERE arguments LIKE @p)", pattern, cancellationToken);
+                "DELETE FROM hangfire.jobparameter WHERE jobid IN (SELECT id FROM hangfire.job WHERE arguments::text LIKE @p)", pattern, cancellationToken);
             removed += await ExecuteRawAsync(
-                "DELETE FROM hangfire.state WHERE jobid IN (SELECT id FROM hangfire.job WHERE arguments LIKE @p)", pattern, cancellationToken);
+                "DELETE FROM hangfire.state WHERE jobid IN (SELECT id FROM hangfire.job WHERE arguments::text LIKE @p)", pattern, cancellationToken);
             removed += await ExecuteRawAsync(
-                "DELETE FROM hangfire.jobqueue WHERE jobid IN (SELECT id FROM hangfire.job WHERE arguments LIKE @p)", pattern, cancellationToken);
+                "DELETE FROM hangfire.jobqueue WHERE jobid IN (SELECT id FROM hangfire.job WHERE arguments::text LIKE @p)", pattern, cancellationToken);
             var jobs = await ExecuteRawAsync(
-                "DELETE FROM hangfire.job WHERE arguments LIKE @p", pattern, cancellationToken);
+                "DELETE FROM hangfire.job WHERE arguments::text LIKE @p", pattern, cancellationToken);
             return jobs;
         }
         catch (Exception ex)
@@ -490,15 +495,19 @@ public sealed class TenantPurgeService : ITenantPurgeService
         try
         {
             await using var command = _db.Database.GetDbConnection().CreateCommand();
-            command.CommandText = "SELECT COUNT(*) FROM hangfire.job WHERE arguments LIKE @p";
+            command.CommandText = "SELECT COUNT(*) FROM hangfire.job WHERE arguments::text LIKE @p";
             command.Parameters.Add(new NpgsqlParameter("p", $"%{organizationId}%"));
             if (command.Connection!.State != System.Data.ConnectionState.Open)
                 await command.Connection.OpenAsync(cancellationToken);
             return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken) ?? 0);
         }
-        catch
+        catch (Exception ex)
         {
-            return 0;
+            // -1, never 0: "the count failed" must not read as "nothing is left" (found 2026-09-23 — this query
+            // applied LIKE to a jsonb column, threw on every call, and reported 0 jobs for every tenant ever
+            // checked, so the suite's "no background jobs left" passed while jobs carrying emails remained).
+            _logger.LogError(ex, "Could not count Hangfire jobs for tenant {OrganizationId}", organizationId);
+            return -1;
         }
     }
 

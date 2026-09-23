@@ -14,7 +14,10 @@
 //   5. a staff number cannot be quietly reused inside one organization;
 //   6. the import creates them from a sheet with no email column at all;
 //   7. an invitation is still refused, because it has nowhere to go;
-//   8. an address can be added later, and still collides with somebody else's.
+//   8. an address can be added later, and still collides with somebody else's;
+//   9. AN ADMINISTRATOR CAN GIVE THEM A NEW PASSWORD — generated, or typed — which for these 133
+//      is the only way back in, since no reset link can reach them;
+//  10. and cannot do it to somebody who outranks them, which until 2026-09-22 they could.
 //
 //   API=http://127.0.0.1:5001 BRANCH=<guid> SA_USER=superadmin SA_PASS=admin node scripts/e2e/staff-no-email-e2e.mjs
 const API = process.env.API ?? 'http://127.0.0.1:5001';
@@ -166,6 +169,108 @@ try {
   });
   check('...and two people still cannot share one address', clashEmail.status >= 400,
     `${clashEmail.status} — a duplicate address was accepted`);
+
+  // ---- 9. an administrator issues a new password, generated or typed ----------------------------
+  // The path back in for anybody with no address. The endpoint existed from the start and NOTHING
+  // IN THE UI CALLED IT until 2026-09-22, so this had never been exercised either.
+  const resetTarget = created[0];
+
+  const generatedReset = await api(`/users/${resetTarget}/reset-password`, {
+    method: 'POST', body: JSON.stringify({ newPassword: '' }),
+  });
+  const genBody = generatedReset.ok ? await generatedReset.json() : await generatedReset.text();
+  check('an empty password is not an error — one is generated', generatedReset.ok,
+    `${generatedReset.status} ${String(genBody).slice(0, 160)}`);
+  const issued = genBody?.temporaryPassword;
+  check('...and it is handed back, once', typeof issued === 'string' && issued.length >= 8,
+    JSON.stringify(genBody ?? {}).slice(0, 160));
+  check('...with the moment it stops working', !!genBody?.expiresAt, JSON.stringify(genBody ?? {}).slice(0, 160));
+
+  // It has to actually WORK, and it has to be change-only. A reset that returns a password the
+  // person cannot sign in with is the worst answer this endpoint could give, and no assertion about
+  // the response shape would catch it.
+  const signedIn = await login(genBody?.username ?? '', issued ?? '');
+  check('...the person can sign in with it', signedIn.ok, `${signedIn.status}`);
+  check('...and is made to choose their own before anything else', signedIn.body?.mustChangePassword === true,
+    JSON.stringify(signedIn.body ?? {}).slice(0, 160));
+  check('...with no refresh token, so the session cannot be carried on',
+    !signedIn.body?.refreshToken, String(signedIn.body?.refreshToken ?? '').slice(0, 40));
+
+  // THE SET-PASSWORD PAGE MUST BE ABLE TO READ THE RULES IT IS ABOUT TO STATE (2026-09-22).
+  // PasswordChangeOnlyMiddleware runs BEFORE authorization, so [AllowAnonymous] on the endpoint
+  // counted for nothing: this token carries the change-only claim, the Web attaches it to every
+  // call, and the rules fetch came back 401. The page swallowed it and printed its own default —
+  // "At least 12 characters" — which is the exact sentence the endpoint exists to stop it printing,
+  // and is byte-identical to a correct render against a 12-character policy. Found in production;
+  // no build, code read or English assertion could have told the two apart.
+  //
+  // This is the assertion that can: the token that reaches that page must be able to read them.
+  const changeOnly = signedIn.body?.accessToken;
+  const rulesRes = await fetch(`${API}/api/v1/security-policy/password-rules`, {
+    headers: { Authorization: `Bearer ${changeOnly}` },
+  });
+  check('...and CAN read the password rules while holding only a change-only token',
+    rulesRes.status === 200, `${rulesRes.status} — the set-password page is showing its fallback`);
+
+  const rulesBody = rulesRes.status === 200 ? await rulesRes.json() : null;
+  check('...which state the CONFIGURED minimum rather than a number the page invented',
+    typeof rulesBody?.minimumLength === 'number' && rulesBody.minimumLength > 0,
+    JSON.stringify(rulesBody ?? {}).slice(0, 160));
+
+  // Everything else stays refused: allowing one anonymous read must not have opened the door.
+  const stillClosed = await fetch(`${API}/api/v1/users`, { headers: { Authorization: `Bearer ${changeOnly}` } });
+  check('...while every other endpoint is still refused to that token', stillClosed.status === 401,
+    `${stillClosed.status} — a change-only token reached the user list`);
+
+  // A TYPED password is the point of the feature: it is what an administrator reads down a phone.
+  const typed = `Kyambogo${run}#7`;
+  const typedReset = await api(`/users/${resetTarget}/reset-password`, {
+    method: 'POST', body: JSON.stringify({ newPassword: typed }),
+  });
+  check('an administrator may type the password instead', typedReset.ok,
+    `${typedReset.status} ${(await typedReset.clone().text()).slice(0, 160)}`);
+  const typedSignIn = await login(genBody?.username ?? '', typed);
+  check('...and that is the password that now works', typedSignIn.ok, `${typedSignIn.status}`);
+
+  // ...but NOT a weaker one. This is the whole answer to "can we just set them all to pass?".
+  const weak = await api(`/users/${resetTarget}/reset-password`, {
+    method: 'POST', body: JSON.stringify({ newPassword: 'pass' }),
+  });
+  check('...and "pass" is refused, as it would be from the person themselves', weak.status === 400,
+    `${weak.status} — a blocklisted password was accepted`);
+
+  // ---- 10. and never for somebody who outranks you ---------------------------------------------
+  // THE ESCALATION. Until 2026-09-22 this endpoint checked users.edit and the organization and
+  // nothing else, so a tenant Admin could reset a Platform Administrator's password and sign in as
+  // them — reaching every organization. RoleAssignmentGuard refuses it now, as Reissue always did.
+  // Section 13 of the shell suite makes the same point about POST /users: testing the guarded door
+  // says nothing about the door beside it.
+  const allRoles = Array.isArray(roles) ? roles : roles?.items ?? [];
+  const superRole = allRoles.find(r => r.code === 'super-admin');
+  const platformUsers = await (await api('/users?includeInactive=true')).json().catch(() => null);
+  const userRows = Array.isArray(platformUsers) ? platformUsers : platformUsers?.items ?? [];
+  const aboveMe = userRows.find(u => (u.roleCode ?? u.role) === 'super-admin');
+
+  if (!aboveMe) {
+    // Skipping honestly beats passing on a tenant that has nobody to test against.
+    check('SKIP: no higher-ranked account is visible to this administrator', true,
+      superRole ? 'the role exists but no holder is listed here' : 'super-admin is not listed to a tenant, which is itself correct');
+  } else {
+    const escalate = await api(`/users/${aboveMe.id}/reset-password`, {
+      method: 'POST', body: JSON.stringify({ newPassword: '' }),
+    });
+    check('an administrator cannot reset the password of somebody who outranks them',
+      escalate.status >= 400, `${escalate.status} — THE ACCOUNT WAS TAKEN OVER`);
+  }
+
+  // THE SELF-RESET IS DELIBERATELY NOT TESTED HERE, and that is worth writing down rather than
+  // leaving as a gap somebody fills later. The guard exempts a caller resetting their OWN password,
+  // because an administrator locked out of their own account is a case this endpoint exists for —
+  // but exercising it means changing this suite's own sign-in password and putting it back, and
+  // ADMIN_PASS ("E2eTeacher!2026") is refused by the blocklist as "teacher" plus a year. The restore
+  // would fail, the account would be left on a password nothing knows, and EVERY suite that signs in
+  // as this administrator would start failing for a reason none of them could report.
+
 } catch (e) {
   check('the suite ran to the end', false, e.message);
 } finally {

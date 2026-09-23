@@ -1,0 +1,200 @@
+@page "/platform/national-calendar"
+@using QMgr.Application.DTOs
+@using QMgr.Web.Services
+@inject IPermissionService PermissionService
+@inject ICalendarApiService CalendarApi
+@inject IToastService Toast
+@inject NavigationManager Navigation
+
+@*
+    The national calendar (plan TERM_PROGRAMME_CALENDAR_AND_GATES, decision D9): term dates, holidays,
+    examinations and public holidays, kept once a year by the platform administrator for every school.
+    REFERENCE ONLY — every school sees these as muted markers on its own calendar, and a programme import
+    that puts an event on a public holiday is WARNED, never refused. Nothing here changes a school's own
+    term dates; those are the school's policy periods.
+*@
+
+<QPageTitle Text="National calendar" />
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>National calendar<QInfo Label="National calendar" Text="Each year the Ministry of Education and Sports publishes the school term dates, and UNEB publishes the examination timetable. Enter them here, with public holidays, and every school's calendar shows them as reference. They warn; they never change a school's own dates." /></h1>
+            <p class="subtitle">Term dates, holidays and examinations, for every school's calendar.</p>
+        </div>
+        <div class="header-actions">
+            <QButton Text="Add date" Icon="plus-lg" Variant="secondary" OnClick="@AddRow" Disabled="@(calendar == null)" id="nat-add" />
+            <QButton Text="Save" Icon="check-lg" Variant="primary" Loading="@saving" OnClick="@SaveAsync" Disabled="@(calendar == null)" id="nat-save" />
+        </div>
+    </div>
+
+    @if (calendar == null)
+    {
+        <div class="nat-loading"><QSpinner Size="lg" /><span>Loading the national calendar...</span></div>
+    }
+    else
+    {
+        <QBulkBar Filters="@YearChips" ActiveFilter="@year" ActiveFilterChanged="@(k => year = k)"
+                  Search="@search" SearchChanged="@(s => search = s ?? string.Empty)" SearchPlaceholder="Search titles and sources" />
+
+        @if (!Visible.Any())
+        {
+            <QEmptyState Icon="calendar2-range" Title="@(rows.Any() ? "Nothing matches" : "No national dates yet")"
+                         Text="Start with the year's three terms from the Ministry of Education and Sports circular, then UNEB's examination dates and the public holidays.">
+                <Action><QButton Text="Add date" Icon="plus-lg" Variant="primary" OnClick="@AddRow" /></Action>
+            </QEmptyState>
+        }
+        else
+        {
+            <div class="nat-wrap">
+                <table class="data-table q-stack" id="nat-table">
+                    <thead>
+                        <tr><th>Title</th><th>Starts</th><th>Ends</th><th>Kind</th><th>Source</th><th class="row-actions"><span class="visually-hidden">Remove</span></th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in Visible)
+                        {
+                            var r = row;
+                            <tr>
+                                <td><QInput TValue="string" @bind-Value="@r.Title" MaxLength="200" aria-label="Title" Placeholder="Term I"
+                                            HasError="@(r.Problem != null && string.IsNullOrWhiteSpace(r.Title))" ErrorMessage="Give it a title" /></td>
+                                <td><QDatePicker @bind-Value="@r.Start" Placeholder="First day" /></td>
+                                <td><QDatePicker @bind-Value="@r.End" Min="@r.Start" Placeholder="Last day"
+                                                 HasError="@(r.Problem != null && r.End < r.Start)" ErrorMessage="Before the first day" /></td>
+                                <td><QInput TValue="string" @bind-Value="@r.Kind" MaxLength="60" List="nat-kinds" aria-label="Kind" Placeholder="Term" /></td>
+                                <td><QInput TValue="string" @bind-Value="@r.Source" MaxLength="300" aria-label="Source" Placeholder="MoES circular 2027" /></td>
+                                <td class="row-actions"><QButton Icon="trash" Variant="ghost" Size="sm" OnClick="@(() => rows.Remove(r))" aria-label="@($"Remove {r.Title}")" /></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                <datalist id="nat-kinds">
+                    @foreach (var k in Kinds) { <option value="@k"></option> }
+                </datalist>
+            </div>
+        }
+        @if (problem != null)
+        {
+            <p class="form-error" role="alert">@problem</p>
+        }
+    }
+</div>
+
+<style>
+    .nat-loading { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 48px 16px; color: var(--qm-text-muted); }
+    .nat-wrap { overflow-x: auto; }
+</style>
+
+@code {
+    private static readonly string[] Kinds = { "Term", "Holiday", "Examination", "Public holiday", "Mid-term break" };
+    private const string AllYears = "all";
+
+    private sealed class Row
+    {
+        public string Title { get; set; } = string.Empty;
+        public DateTime? Start { get; set; }
+        public DateTime? End { get; set; }
+        public string? Kind { get; set; }
+        public string? Source { get; set; }
+        public string? Problem { get; set; }
+    }
+
+    private NationalCalendarDto? calendar;
+    private List<Row> rows = new();
+    private string year = AllYears;
+    private string search = string.Empty;
+    private bool saving;
+    private string? problem;
+
+    private List<QBulkBar.Filter> YearChips
+    {
+        get
+        {
+            var chips = new List<QBulkBar.Filter> { new(AllYears, "All", rows.Count) };
+            foreach (var y in rows.Where(r => r.Start.HasValue).Select(r => r.Start!.Value.Year).Distinct().OrderBy(y => y))
+                chips.Add(new(y.ToString(), y.ToString(), rows.Count(r => r.Start?.Year == y)));
+            return chips;
+        }
+    }
+
+    /// <summary>A new row has no date yet and is always shown, or pressing Add under a year filter would appear to do nothing.</summary>
+    private List<Row> Visible => rows
+        .Where(r => year == AllYears || r.Start == null || r.Start.Value.Year.ToString() == year)
+        .Where(r => string.IsNullOrWhiteSpace(search)
+                    || r.Title.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase)
+                    || (r.Source ?? string.Empty).Contains(search.Trim(), StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.IsSuperAdminAsync())
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+        try
+        {
+            calendar = await CalendarApi.GetPlatformNationalAsync();
+            rows = calendar.Entries.OrderBy(e => e.StartsOn).Select(e => new Row
+            {
+                Title = e.Title,
+                Start = e.StartsOn.ToDateTime(TimeOnly.MinValue),
+                End = e.EndsOn.ToDateTime(TimeOnly.MinValue),
+                Kind = e.Kind,
+                Source = e.Source
+            }).ToList();
+        }
+        catch (Exception ex)
+        {
+            calendar = new NationalCalendarDto();
+            Toast.Notify(ToastSeverity.Error, "Could not load the national calendar", ex.Message);
+        }
+    }
+
+    private void AddRow()
+    {
+        search = string.Empty;
+        rows.Add(new Row { Source = rows.LastOrDefault()?.Source });
+    }
+
+    private async Task SaveAsync()
+    {
+        problem = null;
+        foreach (var r in rows) r.Problem = null;
+        var bad = rows.Where(r => string.IsNullOrWhiteSpace(r.Title) || r.Start == null || r.End == null || r.End < r.Start).ToList();
+        foreach (var r in bad) r.Problem = "incomplete";
+        if (bad.Any())
+        {
+            year = AllYears;
+            problem = $"{bad.Count} row(s) need a title, a first day and a last day on or after it.";
+            return;
+        }
+
+        var dto = new NationalCalendarDto
+        {
+            Entries = rows.OrderBy(r => r.Start).Select(r => new NationalCalendarEntryDto
+            {
+                Title = r.Title.Trim(),
+                StartsOn = DateOnly.FromDateTime(r.Start!.Value),
+                EndsOn = DateOnly.FromDateTime(r.End!.Value),
+                Kind = string.IsNullOrWhiteSpace(r.Kind) ? null : r.Kind.Trim(),
+                Source = string.IsNullOrWhiteSpace(r.Source) ? null : r.Source.Trim(),
+            }).ToList()
+        };
+
+        saving = true;
+        try
+        {
+            calendar = await CalendarApi.UpdatePlatformNationalAsync(dto);
+            Toast.Notify(ToastSeverity.Success, "National calendar saved", $"{dto.Entries.Count} date(s).");
+        }
+        catch (Exception ex)
+        {
+            problem = ex.Message;
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}

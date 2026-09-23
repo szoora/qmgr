@@ -53,7 +53,7 @@ public static class TeachingAssignments
         var key = ClassTeachersController.NormalizeClassName(match.Name);
         if (await db.ClassTeacherAssignments.IgnoreQueryFilters().AnyAsync(a => a.BranchId == branchId && a.EndedAt == null
                 && a.Role == ClassTeacherRole.SubjectTeacher && a.UserId == userId && a.SubjectId == subjectId && a.ClassName.Trim().ToLower() == key, ct))
-            return SubjectAssignResult.Conflict("Already assigned", $"{user.FirstName} {user.LastName} already teaches {subject.Name} in {match.Name}.");
+            return SubjectAssignResult.Conflict("Already assigned", $"{PersonNames.Display(user)} already teaches {subject.Name} in {match.Name}.");
 
         var assignment = new ClassTeacherAssignment
         {
@@ -76,7 +76,7 @@ public static class TeachingAssignments
         catch (DbUpdateException)
         {
             db.Entry(assignment).State = EntityState.Detached;
-            return SubjectAssignResult.Conflict("Already assigned", $"{user.FirstName} {user.LastName} already teaches {subject.Name} in {match.Name}.");
+            return SubjectAssignResult.Conflict("Already assigned", $"{PersonNames.Display(user)} already teaches {subject.Name} in {match.Name}.");
         }
         return SubjectAssignResult.Ok(assignment);
     }

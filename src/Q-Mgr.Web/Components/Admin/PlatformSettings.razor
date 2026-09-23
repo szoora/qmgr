@@ -768,9 +768,7 @@ else if (settings != null && settings.Any())
             <QButton Text="Add Origin" Icon="plus-lg" Variant="secondary" Size="sm" OnClick="@(() => editCors!.AllowedOrigins.Add(""))" />
         </div>
         <div class="settings-toggle-group">
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" @bind="editCors!.AllowCredentials" />
-            </div>
+            <QSwitch @bind-Value="editCors!.AllowCredentials" aria-label="Allow Credentials" />
             <div class="settings-toggle-info">
                 <span class="settings-toggle-label">Allow Credentials</span>
                 <small>Allow cookies and auth headers on cross-origin requests</small>
@@ -780,18 +778,14 @@ else if (settings != null && settings.Any())
 
     private RenderFragment RenderRateLimitForm() => @<div>
         <div class="settings-toggle-group">
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" @bind="editRateLimit!.EnableEndpointRateLimiting" />
-            </div>
+            <QSwitch @bind-Value="editRateLimit!.EnableEndpointRateLimiting" aria-label="Enable Rate Limiting" />
             <div class="settings-toggle-info">
                 <span class="settings-toggle-label">Enable Rate Limiting</span>
                 <small>Turn off to stop enforcing any of the rules below</small>
             </div>
         </div>
         <div class="settings-toggle-group">
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" @bind="editRateLimit!.StackBlockedRequests" />
-            </div>
+            <QSwitch @bind-Value="editRateLimit!.StackBlockedRequests" aria-label="Stack Blocked Requests" />
             <div class="settings-toggle-info">
                 <span class="settings-toggle-label">Stack Blocked Requests</span>
                 <small>Count requests blocked by one rule toward other rules too</small>
@@ -849,9 +843,7 @@ else if (settings != null && settings.Any())
             <small>One domain per line. These are flagged at sign-up on top of the list built into the app, so a new throwaway provider can be handled without a deploy.</small>
         </div>
         <div class="settings-toggle-group">
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" @bind="editSaas!.RequireEmailVerification" />
-            </div>
+            <QSwitch @bind-Value="editSaas!.RequireEmailVerification" aria-label="Require Email Verification" />
             <div class="settings-toggle-info">
                 <span class="settings-toggle-label">Require Email Verification</span>
                 <small>New organizations must confirm their email before signing in. When off, registrations are verified and provisioned immediately.</small>
@@ -861,9 +853,7 @@ else if (settings != null && settings.Any())
 
     private RenderFragment RenderStripeForm() => @<div>
         <div class="settings-toggle-group">
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" @bind="editStripe!.Enabled" />
-            </div>
+            <QSwitch @bind-Value="editStripe!.Enabled" aria-label="Stripe enabled" />
             <div class="settings-toggle-info">
                 <span class="settings-toggle-label">Enabled</span>
                 <small>When off, card payment collection is disabled platform-wide regardless of the fields below</small>
@@ -882,9 +872,7 @@ else if (settings != null && settings.Any())
             <QInput TValue="string" @bind-Value="editStripe!.WebhookSecret" Type="password" Placeholder="whsec_..." HelperText="Shown as dots once saved; leave the dots to keep the saved secret." />
         </div>
         <div class="settings-toggle-group">
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" @bind="editStripe!.TestMode" />
-            </div>
+            <QSwitch @bind-Value="editStripe!.TestMode" aria-label="Test Mode" />
             <div class="settings-toggle-info">
                 <span class="settings-toggle-label">Test Mode</span>
                 <small>Use Stripe's test environment — no real charges happen</small>
@@ -908,9 +896,7 @@ else if (settings != null && settings.Any())
             <QInput TValue="string" @bind-Value="editAds!.InternalAdsApiUrl" Placeholder="/api/v1/ads" />
         </div>
         <div class="settings-toggle-group">
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" @bind="editAds!.ShowAdsOnFreePlan" />
-            </div>
+            <QSwitch @bind-Value="editAds!.ShowAdsOnFreePlan" aria-label="Show Ads on Free Plan" />
             <div class="settings-toggle-info">
                 <span class="settings-toggle-label">Show Ads on Free Plan</span>
                 <small>Display ad content on signage for tenants who hold no paid module</small>
@@ -946,9 +932,7 @@ else if (settings != null && settings.Any())
             </div>
         </div>
         <div class="settings-toggle-group">
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" @bind="editEmail!.UseSsl" />
-            </div>
+            <QSwitch @bind-Value="editEmail!.UseSsl" aria-label="Use SSL" />
             <div class="settings-toggle-info">
                 <span class="settings-toggle-label">Use SSL</span>
                 <small>Encrypt the connection to the SMTP server</small>
@@ -976,27 +960,21 @@ else if (settings != null && settings.Any())
             </div>
         </div>
         <div class="settings-toggle-group">
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" @bind="editSecurity!.RequireUppercase" />
-            </div>
+            <QSwitch @bind-Value="editSecurity!.RequireUppercase" aria-label="Require Uppercase Letter" />
             <div class="settings-toggle-info">
                 <span class="settings-toggle-label">Require Uppercase Letter</span>
                 <small>Passwords must contain at least one uppercase letter</small>
             </div>
         </div>
         <div class="settings-toggle-group">
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" @bind="editSecurity!.RequireDigit" />
-            </div>
+            <QSwitch @bind-Value="editSecurity!.RequireDigit" aria-label="Require Digit" />
             <div class="settings-toggle-info">
                 <span class="settings-toggle-label">Require Digit</span>
                 <small>Passwords must contain at least one number</small>
             </div>
         </div>
         <div class="settings-toggle-group">
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" @bind="editSecurity!.RequireSpecialChar" />
-            </div>
+            <QSwitch @bind-Value="editSecurity!.RequireSpecialChar" aria-label="Require Special Character" />
             <div class="settings-toggle-info">
                 <span class="settings-toggle-label">Require Special Character</span>
                 <small>Passwords must contain at least one symbol</small>

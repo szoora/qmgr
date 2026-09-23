@@ -119,6 +119,12 @@ public class StaffLessonsController : StaffPerformanceControllerBase
         var hasTimetable = await Db.Timetables.AsNoTracking().AnyAsync(t => t.BranchId == branchId && t.Status == TimetableStatus.Published && t.EffectiveFrom <= day && t.EffectiveTo >= day);
         var welfareOwed = await Db.WelfareRecords.AsNoTracking().CountAsync(w => w.BranchId == branchId && w.AssignedToUserId == me && w.Status != WelfareStatus.Resolved && w.Status != WelfareStatus.Draft);
 
+        // School events on this day that are the caller's own (calendar plan §9): staff-audience, or theirs to run.
+        // PERSONAL — the calendar-keeper's "sees every event" override does not apply to their own day.
+        var myDepartments = await Db.Users.AsNoTracking().Where(u => u.Id == me).Select(u => u.DepartmentIds).FirstOrDefaultAsync() ?? Array.Empty<Guid>();
+        var dayEvents = await SchoolEventQueries.PersonalAsync(Db, organizationId, branchId, me, myDepartments, day, day,
+            await HasPermissionAsync(Permissions.CalendarManage), take: 30);
+
         return Ok(new MyDayDto
         {
             Date = day,
@@ -132,7 +138,8 @@ public class StaffLessonsController : StaffPerformanceControllerBase
                 .OrderByDescending(i => i.StartsAt).Take(20).ToList(),
             WelfareActionsOwed = welfareOwed,
             NextLessonStartsAt = todayItems.Where(i => i.Status == LessonStatus.Scheduled).Select(i => (DateTime?)i.StartsAt).FirstOrDefault(),
-            HasTimetable = hasTimetable
+            HasTimetable = hasTimetable,
+            Events = dayEvents
         });
     }
 

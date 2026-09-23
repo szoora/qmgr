@@ -374,7 +374,7 @@
             <div class="form-row">
                 <div class="form-group">
                     <QSelect TValue="Guid?" TItem="StaffOption" @bind-Value="@createModel.AssignedToUserId"
-                             Items="@staffOptions" TextSelector="@(x => x.Name)" ValueSelector="@(x => (Guid?)x.Id)"
+                             Items="@staffOptions" Sorted="true" TextSelector="@(x => x.Name)" ValueSelector="@(x => (Guid?)x.Id)"
                              Label="Owner" Required="true" Placeholder="Who is responsible"
                              HasError="@planOwnerError" ErrorMessage="A support plan needs an owner" />
                 </div>
@@ -497,7 +497,7 @@
         </div>
         <div class="form-row">
             <div class="form-group">
-                <QSelect TValue="Guid?" TItem="StaffOption" Value="@actionModel.AssignedToUserId" Items="@staffOptions"
+                <QSelect TValue="Guid?" TItem="StaffOption" Value="@actionModel.AssignedToUserId" Items="@staffOptions" Sorted="true"
                          TextSelector="@(x => x.Name)" ValueSelector="@(x => (Guid?)x.Id)" Label="Assign to" AllowClear="true"
                          ValueChanged="@(v => actionModel.AssignedToUserId = v)" />
             </div>

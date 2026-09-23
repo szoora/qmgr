@@ -1,3 +1,4 @@
+@using QMgr.Application
 @namespace QMgr.Web.Components.Shared.UI
 @typeparam TValue
 @typeparam TItem
@@ -135,15 +136,22 @@
         get
         {
             if (Items == null) return Enumerable.Empty<TItem>();
-            if (string.IsNullOrWhiteSpace(searchQuery) || Items.Count() <= SearchThreshold) return Items;
 
-            return Items.Where(item =>
+            var items = Items;
+            if (!string.IsNullOrWhiteSpace(searchQuery) && items.Count() > SearchThreshold)
             {
-                var text = TextSelector != null ? TextSelector(item) : item?.ToString();
-                return text != null && text.Contains(searchQuery, StringComparison.OrdinalIgnoreCase);
-            });
+                items = items.Where(item =>
+                {
+                    var text = TextSelector != null ? TextSelector(item) : item?.ToString();
+                    return text != null && text.Contains(searchQuery, StringComparison.OrdinalIgnoreCase);
+                });
+            }
+
+            return Sorted ? items.OrderBy(TextOf, NaturalOrder.Comparer) : items;
         }
     }
+
+    private string? TextOf(TItem item) => TextSelector != null ? TextSelector(item) : item?.ToString();
 
     /// <summary>
     /// Currently selected value
@@ -159,6 +167,18 @@
     /// Items to display in dropdown
     /// </summary>
     [Parameter] public IEnumerable<TItem>? Items { get; set; }
+
+    /// <summary>
+    /// Sort the list alphabetically for display, numbers read as numbers
+    /// (<see cref="NaturalOrder"/>) so S2C comes before S10A.
+    ///
+    /// <para><b>Opt-in, and deliberately so.</b> Plenty of lists here carry meaning in their order —
+    /// terms run in calendar order, performance bands run worst to best, a rota runs by day — and
+    /// sorting those alphabetically would be a bug, not a tidy-up. So the caller says when the order
+    /// is arbitrary. Pass it on any list of names a person scans to find one: classes, rooms,
+    /// subjects, departments, staff, service types.</para>
+    /// </summary>
+    [Parameter] public bool Sorted { get; set; }
 
     /// <summary>
     /// Function to extract value from item

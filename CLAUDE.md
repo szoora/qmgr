@@ -650,7 +650,24 @@ on every page. And **verifying a branch switch needs TWO branches whose data dif
 has one, welfare categories are organization-scoped and identical on both, so create a branch and use
 **students**, which are branch-scoped. The suite skips that check honestly when only one branch exists.
 
-**Sections 10 and 11 send REAL email** to `info@sacc.ug` (two messages per run) and clear the
+### THE EMAIL RETRIES CAN STARVE THE HANGFIRE QUEUE, AND THEN A SUITE FAILS FOR NO PRODUCT REASON (2026-09-22)
+
+Running the suites repeatedly in one sitting left **221 queued `NotificationDispatchJob.DispatchAsync`
+jobs and nothing else** — 43 of them in `Processing`, occupying every worker on SMTP timeouts to
+`@qmgr.local` addresses, with 161 scheduled retries behind them. Section 14's staff import then sat at
+`Pending` with `startedAt: null` until the suite's 120-second wait expired, and five assertions failed
+with nothing wrong in the code.
+
+CLAUDE.md already recorded that those mailbox failures are *correct* for a domain that does not exist.
+What it did not record is that they are **slow**, they **retry three times**, and enough of them will
+crowd out every other background job — which reads as a product bug in whichever suite happens to need
+one next. The give-away is a job row whose `StartedAt` is null: nothing has looked at it.
+
+    SELECT statename, invocationdata->>'Method', count(*) FROM hangfire.job GROUP BY 1,2 ORDER BY 3 DESC;
+    -- all Dispatch%? then clear the Scheduled/Enqueued/Failed ones and RESTART the API to free the
+    -- workers already blocked in Processing.
+
+**A real failure in that block looks identical to this**, so check the queue before believing one.
 tenant's own SMTP host so the platform fallback is what is under test. Set `E2E_MAILBOX` to send
 somewhere else. The `@qmgr.local` test accounts are unroutable on purpose, so the welfare-alert
 emails in section 6 fail at the relay with "Mailbox unavailable" — that is the correct answer for a
@@ -674,9 +691,9 @@ identifier: " with an empty name and returns 401.
 
 There are three doors and every check lives behind one of them:
 
-    bash scripts/e2e/class-teacher-e2e.sh   # the API suite, 20 sections, 7 Node suites inside it
-    bash scripts/e2e/guards.sh              # the 9 static guards — no server, seconds, run by rebuild.sh
-    node scripts/e2e/browser/all.mjs        # the 25 browser suites, against a local headless Chrome
+    bash scripts/e2e/class-teacher-e2e.sh   # the API suite, 28 sections, 15 Node suites inside it
+    bash scripts/e2e/guards.sh              # the 13 static guards — no server, seconds, run by rebuild.sh
+    node scripts/e2e/browser/all.mjs        # the 27 browser suites, against a local headless Chrome
 
 **A suite nothing calls reports nothing.** Sections 15, 17 and 18 each existed, each passed
 standalone, and were never called by the shell runner — so for weeks a "full run" under-reported by
@@ -2804,6 +2821,95 @@ The plan is `docs/plans/DUTY_ROTA_AND_TIMETABLE.md`; progress and the resume poi
     The toggle is deliberately NOT in the URL — `?key=` is the *selection*, which must be linkable; this is a
     preference about the same selection.
 
+### A timetable has an OWNER now, and publishing over a live one refuses (2026-09-22)
+
+Asked as *"is it not dangerous if many users have access to the time table? ... one of the teachers is
+appointed as time table master ... if the time table is opened to all administrators with a role, there
+is a possibility to abuse the feature"*. The plan is `docs/plans/TIMETABLE_OWNERSHIP.md`; §7 records what
+changed while building it.
+
+- **`TimetableAccess.MayWrite` is the one home**: `caller ∈ Timetable.ManagerUserIds || caller holds
+  timetable.manage`. Byte for byte the rule `StaffDuty.RecorderUserIds` has always had — the timetable
+  was the outlier. **Every write endpoint DROPPED its `[RequirePermission]` attribute** and calls
+  `GuardWriteAsync`, because an attribute refuses before the handler runs and cannot let an appointed
+  master through. **A new write endpoint that keeps the attribute silently excludes the people the
+  feature exists for.**
+- **THE STAFF-SCOPE REFUSAL DOES NOT APPLY TO AN APPOINTED MASTER** (`NeedsUnscopedStaffView`), and this
+  is what makes the feature reachable rather than theoretical: the seeded `teacher` role is
+  `StaffScope.SelfOnly`, and a teacher is exactly who a school appoints. The first cut 403'd the master
+  before ownership was consulted. **The appointment IS the unscoping** — an explicit per-object grant
+  made by somebody holding the permission. Delegation is not scope.
+- **Appointing is the permission holder's act alone.** A master may not add or remove masters, including
+  themselves, or the control is decoration. `SetManagers` checks that BEFORE the scope refusal, or a
+  teacher is told about somebody else's situation ("built by an unscoped timetable master") and nothing
+  about their own — found by e2e 26.1h.
+- **The administrator override STAYS and is never silent.** A school whose master leaves mid-term must
+  not be locked out of its own timetable; a system that can be bricked by one person's absence gets
+  worked around with a shared login. So a non-owner write writes `ActivityActions.TimetableOverridden`
+  and notifies every named manager, and the editor says so BEFORE the write (`WouldBeOverride`).
+- **PUBLISHING OVER A LIVE VERSION REFUSES UNLESS `Replace` IS ASKED FOR.** It used to archive every
+  overlapping published version silently — and because every lesson query filters Published over today's
+  date, that stops every lesson materialising school-wide: no registers, no teaching figures, no portal
+  card. 409 `WOULD_REPLACE_PUBLISHED`, naming what it would take out of service.
+- **"Three timetables in a term" cannot be three `Timetable` rows**, because only one may cover a date.
+  General teaching is the timetable; **exam supervision is a series of Session duties**, which is what
+  `DutyKind.Session` and the seeded Exam Supervision parameter have always been for. Grouping those
+  under a name and an owner is not built yet.
+- **`TimetableStatus.Expired` is DERIVED on read** (`Timetable.StatusOn`), never stored — the
+  `StaffEmploymentStatus` call. `ReminderSubject.TimetableExpiring` chases it on the existing ladder and
+  **skips a version that already has a successor published**.
+
+### A one-off swap is TWO COVERS; a permanent one is a RE-PUBLISH (2026-09-22)
+
+*"there are incidences where a staff member talks to another staff member for a possible switch of the
+times allocated on the time table."* The swap machinery existed and **could not do it**: the apply path
+called `CurrentDraftAsync`, so a mid-term swap — which is when that conversation happens — was accepted,
+agreed by the colleague, approved by a decider, and then refused with *"there is no draft timetable to
+change any more"*. Three people acted and the system refused last. And **nothing in the app ever posted
+`MyLessonId`**, so the journey was reachable only by curl, which is why nobody saw it.
+
+- **`TimetableLessonException` is a one-day departure: `Cover` or `Cancelled`, one per lesson per date.
+  There is deliberately NO `Moved`** — a one-off swap is two covers, each teacher taking the other's
+  lesson at its own time. A one-off does not change WHEN a class is taught, only who teaches it, so no
+  class, room or cohort can be disturbed and `TimetableChecker` has nothing to say about it.
+- **THE MATERIALISER RECONCILES ON `(TimetableLessonId, StartsAt)` AND A COVER CHANGES NEITHER.** Without
+  the explicit reassignment pass in `StaffLessons.MaterialiseAsync`, an existing duty is found, left
+  alone, and the cover silently does nothing for any lesson inside the 14-day window — which is most of
+  them. The pass keeps the duty's row (its reminder stage, its place in My Day); a duty somebody has
+  already flagged is never reassigned, because the register was taken. **An API assertion cannot see
+  this** — the row exists either way. It was checked by publishing a version covering today and reading
+  the duty back.
+- **A permanent swap is `ITimetableRepublishService`**: copy the published version into a draft, trade
+  the two SLOTS (never the teachers — that would move a class to somebody not assigned to it), run
+  `TimetableChecker`, publish over. **The date range is KEPT, not split at the swap date**, because
+  cycle day 1 is anchored on `EffectiveFrom` and moving it would shift every cycle day of an A/B
+  timetable.
+- **The decider sees what the two teachers cannot.** `PreviewSwapAsync` fills
+  `StaffConfigRequestDto.DecisionWarnings` — only issues the swap ITSELF introduces, because a published
+  timetable routinely carries acknowledged soft ones and listing those back makes every swap look as
+  though it broke something. That is why a decider is still in the loop for a mutual agreement.
+- **The decider rule is UNIFIED with the write rule.** They disagreed in both directions: an appointed
+  master could not decide a swap on their own timetable, and a permission holder could decide swaps on
+  one they had nothing to do with. A `ClassAssignment` carries no timetable and stays on the permission
+  alone — it grants Teaching-tier access to a class of children.
+- **Cover needs the colleague's agreement exactly as a swap does.** Nobody is volunteered to stand in
+  front of a class by somebody else.
+- **Future cover does NOT survive a permanent swap** (the exceptions cascade with the version). Carrying
+  them across by matching teacher, slot and class would be a guess, and a wrongly carried cover puts the
+  wrong person in front of a class.
+- Verified by **section 26 (`timetable-ownership-e2e.mjs`, 54 checks, 0 failed, run twice back to back)**.
+  It cost two fixture lessons worth keeping:
+  - **A lesson cannot be placed for a teacher with no `ClassTeacherAssignment` for that class and
+    subject** (`TeacherNotAssigned`, a hard clash, so publishing refuses). The suite seeds two and
+    removes them — and they GRANT Teaching-tier access to a class of children, so leaving them behind
+    would quietly widen what two accounts can see.
+  - **A SUITE THAT PUBLISHES A TIMETABLE MUST TAKE A UNIQUE DATE WINDOW AND ARCHIVE WHAT IT PUBLISHED.**
+    The first version used a fixed "today + 400", and the SECOND run failed four assertions against the
+    FIRST run's leftovers — and the refusal it produced read *exactly* like the product bug the section
+    exists to prove is fixed. A published version cannot be deleted by design, so a fixed window
+    guarantees a collision on every re-run. It now takes a random offset AND archives on cleanup.
+    Same class as *"a suite whose first assertion depends on the last run's tidiness will lie eventually"*.
+
 ### An opening default is not a rule about a tab somebody just pressed (2026-09-21)
 
 Reported from production as *"that class tab not working. previously default tab was class"*.
@@ -3084,6 +3190,18 @@ school that chose green got green buttons on wine hovers with wine tints behind 
   chrome. Nothing changes for an unbranded install, where the token IS that wine.
 - **A new `--qm-*` colour token must derive from an existing one or be genuinely theme-invariant.** A
   literal is the drift coming back, and it will not be visible until somebody rebrands.
+- **A PUBLIC PAGE MUST CARRY `style="@Host.BrandingStyle"` ON ITS `.login-container`, and
+  `scripts/e2e/public-branding-check.mjs` is the guard (2026-09-22).** Three of the nine did not —
+  `VerifyEmail` (which had a whole card of its own, `.verify-container`/`.verify-card`),
+  `ForgotPassword` and `JoinCode` — so a school clicking a verification or password-reset link from
+  its own domain met the shipped wine one click from its own crest. **Two of them cascaded
+  `TenantHostContext` and read it nowhere.** Nothing could see it: the build is clean, `QBrandMark`
+  still shows the school's LOGO so the page looks branded at a glance, and **`white-label-ui.mjs`
+  cannot reach it by construction** — that suite signs in and walks the SHELL, while a public page is
+  branded from the HOST, and on `127.0.0.1` no host resolves to a tenant by design
+  (`GetBrandingForHost` matches `Organization.CustomDomain` exactly), so a browser sweep of these
+  pages against a dev box would report the platform palette either way. The rule is a property of the
+  MARKUP, which is why the check is static and instant.
 
 ### Attribution removal is a HIGHER TIER, and it is THREE strings
 
@@ -3102,9 +3220,22 @@ school that chose green got green buttons on wine hovers with wine tints behind 
   module grants, and can only ever turn a flag ON — taking away what a module grants is a refund
   question, not a switch. **OFF is a removal, never a stored false.** The endpoint calls
   `InvalidateCacheAsync`, or the person who just granted it watches nothing happen for five minutes.
-- **THREE strings, one flag**: `<p class="powered-by">` on six public pages (now the `PoweredBy`
-  component), `MainLayout`'s footer, and `EmailTemplates`' own footer line. A tenant who pays and then
-  reads "Q-Mgr" at the foot of their own password-reset mail has not got what they bought.
+- **WHERE THE FLAG IS READ — and it is no longer a list of strings (rewritten 2026-09-22).** It was
+  three literals: `<p class="powered-by">` on the public pages, `MainLayout`'s footer and
+  `EmailTemplates`', the first of them behind a `PoweredBy` component that HID its line when the flag
+  was set. The public pages carry `QCopyright` now and **`PoweredBy` is deleted** — an entitled tenant
+  reads its OWN name at the foot of its sign-in page rather than reading nothing, which is the pattern
+  `SharedDocument` and `MainLayout` already used. The readers are `QCopyright` (the shell and the nine
+  public pages), `EmailTemplates`, `SharedDocument` and the mobile shell's `TenantInfoController`.
+  A tenant who pays and then reads "Q-Mgr" at the foot of their own password-reset mail has not got
+  what they bought.
+- **The catalogue's own description is the one place the old wording survives, and it is now wrong.**
+  The `white-label-plus` row in `ModuleCatalogDefaults` sells "Removes \"Powered by SACC Software\"
+  from your sign-in pages" and those pages no longer carry that string. Correcting it is a seeder edit
+  **and** a migration that rewrites only where the row still holds the value it shipped with — the
+  `FoldStaffPerformanceIntoWelfareModule` rule, because an administrator who has edited the row owns
+  it. Left open deliberately rather than half-done in the seeder, where an existing install would
+  never pick it up.
 - **`AttributionRemoved` defaults to FALSE**, unlike `WhiteLabelEntitled` beside it, and the asymmetry
   is deliberate: a dropped request would otherwise REMOVE the attribution. On the public pages the
   source is the HOST; in the shell and in email it is the ORGANISATION, because most tenants sign in
@@ -3411,11 +3542,9 @@ product sends was unreachable from the place people actually look.
   notification twice and the badge drifted upward for the life of the circuit. It now ignores an id
   already in the list and only counts an arrival that is actually unread.
 
-**Still open, and stated rather than fixed: an organization-wide notification (`Notification.UserId
-== null`) has ONE read flag for everybody.** `MarkAsReadAsync` lets any caller in the tenant set it
-and `MarkAllAsReadAsync` includes `n.UserId == null`, so one person reading it marks it read for the
-whole school. Nothing in the codebase creates one today — every sender names a user — so it is
-latent, but a per-person read state needs its own table and is not a change to make in passing.
+**CORRECTED 2026-09-23 — this said a recipient-less notification was "latent, nothing creates one
+today". Payments and module trials had been creating them all along, and a teacher read the school's
+failed payments. There is no such row any more; see "Every notification names ONE person" below.**
 
 ## A phone gets a navigation BAR, chosen from the person's own permissions (built 2026-09-22)
 
@@ -3477,10 +3606,23 @@ the year in** — Docs, a docs article, Privacy, Support and Terms all read
 "© 2026 SACC Software Limited" and would have gone on saying 2026 for ever. The shell had two
 branches of its own and `EmailTemplates` a ninth.
 
-- **`PoweredBy` and `QCopyright` answer different questions.** Whether to show "Powered by SACC
-  Software" is a paid entitlement and can be hidden; who the copyright belongs to is never hidden —
-  a document has to carry one.
+- **IT SWAPS THE NAME; IT NEVER HIDES THE LINE.** `PoweredBy` answered the other half — whether
+  "Powered by SACC Software" appears at all — and was **deleted on 2026-09-22**, once the nine public
+  pages moved onto this component and it had no callers left. A copyright is never hidden, because a
+  document has to carry one. The paid entitlement still decides, through the same
+  `AttributionRemoved` flag it always read: set, the line credits the TENANT; unset, it credits us.
+- **`Owner` falls back to the HOST, so a public page passes nothing.**
+  `<QCopyright Class="login-copyright" />` is the whole call on all nine: out there nobody is signed
+  in, so the host is the only thing that can name a tenant. Requiring every caller to pass `Owner`
+  would put one rule in nine places, and the one that forgot would credit US at the foot of a page the
+  tenant had paid to clear — with nothing looking broken. The SHELL still passes it explicitly,
+  because there the source is the ORGANISATION: most tenants sign in on the platform address and
+  should not need a domain of their own to get what they paid for.
 - **The year is `DateTime.Now`, never typed.**
+- **The words are "© 2026 SACC"** (user decision 2026-09-23) — the suite name, not "SACC Software
+  Limited". The line is a copyright notice, not a legal identification; Terms and Privacy keep the
+  full name because there it is the contracting party. `EmailTemplates` and the mobile sign-in
+  screen say the same.
 - **`Text` is the extension point for a privileged tenant's own wording.** Deliberately a parameter
   rather than a stored column: there is nothing to store until somebody may set it, and when they
   can, it is read once here and every surface follows.
@@ -3818,6 +3960,206 @@ route went on seeing it off. Section 21 signs in as a **tenant administrator** f
 the first version measured whatever the tenant happened to have, so one run that threw before its
 cleanup left the next run reporting a product bug that was not there.
 
+
+## Every notification names ONE person — there is no school-wide row (2026-09-23)
+
+Reported from Maryhill with a screenshot: a teacher onboarded that morning opened the bell and read
+*"The payment of UGX 120,000 for Communication did not go through."* The note above this one called a
+recipient-less notification "latent, nothing creates one today". **It was wrong, and had been for
+days:** `PaymentLedger.NotifyAsync` and both module-trial notices in `BillingJobs` built a
+`CreateNotificationRequest` with no `UserId`. Then three things made that a leak:
+
+- **Every reader took `UserId == null` as everybody's** — the bell, the count, the centre, Mark all read.
+- **The live push sent it through SignalR's `Clients.All`** — every signed-in browser on the PLATFORM,
+  every tenant. A payment failure at one school rang the bell at every other school with a page open,
+  and vanished on reload, which is why nobody reported that half.
+- **One read flag for the whole school**: the first teacher to clear the bell cleared the bursar's warning.
+
+**The rules now, and each is enforced rather than hoped for:**
+
+- **`CreateInAppNotificationAsync` THROWS without a recipient**, and `Notifications.UserId` is `NOT NULL`
+  (`20260923050333_NotificationsNameOneRecipient`, which deleted the 414 recipient-less rows on the dev
+  tenant rather than guess who they were for — user decision D1). Several people = **`NotifyManyAsync`**,
+  one row, one push and one preference decision each.
+- **`NotificationAudience.HoldersAsync(org, permission, branchId?)` is the ONE home for "who hears about
+  this"**: role AND post holders, active, not the platform account, employment not ended.
+  `StaffLookups.UsersWithPermissionAsync` delegates to it — it used to read the role alone, so a head of
+  department never received the `staff.reports.view` notices their post lets them read.
+- **Billing notices go to holders of `billing.view`** (D2) under `NotificationEventKeys.BillingPayment` /
+  `BillingTrial`. `NotificationEventDefinition.Permission` keeps those rows off a teacher's preferences
+  page — offering a switch for "a payment for this school" says such notices exist.
+- **There is no `SendToAllAsync` and no branch-wide notification push.** `SendToUserAsync` only. The
+  branch groups remain for the visitor board. The Web client also DROPS a push whose `UserId` is not the
+  signed-in person, and reconnects when the signed-in user changes on a circuit.
+- **Read, mark, delete and count match `UserId == caller`, full stop.** Mark-read and delete are single
+  conditional statements, so a colleague's row is simply not found — 404, same as a missing one.
+- **The unread-count push carries the moment counting began** (`UnreadCountUpdated(count, ticks)`), and
+  the client keeps the newest. Two notifications landing together could otherwise leave the badge one short.
+- **`POST api/v1/notifications` requires a recipient** (400), takes the organisation from the recipient's
+  own row, never the request, and answers 404 for a person in another tenant.
+- **The "delivery is failing" alert** goes to every `notifications.manage` holder through the ordinary
+  service (it wrote rows directly to five arbitrary administrators, so nothing was pushed), once per
+  channel per six hours under an advisory lock, and **names the failed notification's category, never its
+  title** — the title was another person's notification, and could be a welfare record's.
+- **Trial reminders are CLAIMED before they are sent** (`OrganizationModule.TrialReminderSentAt`, a
+  conditional UPDATE), and the trial-ended lock-out claims the status change the same way, so a retried
+  job cannot tell the same administrators twice. A payment notice was already once-only: `SettleAsync`
+  reaches `NotifyAsync` only on a real change of status, under the payment's own advisory lock.
+
+**`scripts/e2e/notification-recipient-check.mjs` is the guard** (in `guards.sh`; it reports all eight
+faults in the commit before this one). **Section 27 (`notification-routing-e2e.mjs`, 39 checks)** drives
+a refused purchase through the gateway stub and asks who heard — in the list, in the count, and LIVE, over
+a bare SignalR client — including a signed-in platform account in no tenant, which must hear nothing, and
+five settlements racing one payment. It borrows the two `e2e.teacher.s*` accounts (the dev tenant is over
+its user cap) and puts them back. **Not exercised live:** a head of department actually receiving a
+post-derived notice — every sender of one is a weekly or monthly sweep that needs a week of lesson data.
+
+## A school chooses how a name is written; `PersonNames` is the one home (2026-09-23)
+
+*"Why is the name display starting with first name? Is it a configuration? Where is the ui?"* It was not,
+and there was none: `User.FullName` and about seventy hand-written `$"{FirstName} {LastName}"` fixed the
+order in lists, notification text, emails, exports and error messages.
+
+- **`Organization.Settings["People"]` → `PeopleNameSettingsDto { DisplayOrder, SortOrder? }`**, read only
+  through `PersonNames` (API). **Default: given name first** (D4) — nothing moved until a school chose.
+  **`SortOrder` null = follow the display order** (D5); a school may show "Agatha Ayebare" and still file by surname.
+- **`PersonNames` has a static face** for the same reason as `UploadLinks`: names are written in static
+  mappers, EF projections and the `User.FullName` getter. `PersonNameSettingsCache` (a singleton,
+  attached in `Program.cs`) holds each organisation's choice for five minutes and is dropped on save.
+- **The server writes the name, not the browser**, so a screen, an export and an email agree. The Web
+  assembles one only in the staff import preview, through `IPeopleNamesService` + `PersonName.Join`.
+- **An EF projection selects the two halves and formats after materialisation**; a search matches
+  BOTH orders (`StaffRecordsController`, marked `// name-format: search`); a typed teacher name in a
+  timetable import matches either order through `PersonNames.Matches`.
+- **Person DTOs carry `SortName`** (`UserInfo`, `UserDto`, `StaffMemberDto`, `RegisterRowDto`,
+  `OnboardingStatusRowDto`, `TemporaryPasswordSlipDto`, `JoinRequestDto`), and every Web list of people
+  sorts on `SortName ?? FullName`. `JoinRequestDto` also gained a server-written `FullName`.
+- **Students are not affected** — one whole name, never split (a standing decision), so there is no order.
+- **The screen is Settings → General → People's names**, with a two-name preview; saved by the page's own
+  Save button through `PUT api/v1/organizations/{id}/people-names` (`settings.edit`).
+- **`scripts/e2e/name-format-check.mjs` fails the build on a new hand-written name** (it finds 59 in the
+  previous commit). Section 28 (`name-order-e2e.mjs`, 22 checks); the browser half is in `controls-and-names.mjs`.
+
+## `Organization.Settings` has ONE writer: `OrganizationSettingsLock.MutateAsync` (2026-09-23)
+
+Found while adding the `People` key. The 2026-09-18 audit made `organization-settings:{id}` "the one key
+they all share" — and **one writer took it**. The staff policy and staff onboarding kept a second key
+(`staff-policy:`), and **industry settings, feature overrides, visitor retention and the Stripe module
+billing key took no lock at all**, so any of them could silently drop another's key. The staff monthly
+summary saved back the WHOLE policy it had read at the start of its run, overwriting a closure made meanwhile.
+
+- **`MutateAsync(db, orgId, org => …)`**: takes the one lock, re-reads (reloading a tracked copy), mutates,
+  saves. Joins an open transaction; advisory locks are re-entrant, so the staff policy editor can hold it
+  around its own read-modify-write. **Change other organisation columns INSIDE the mutation** — the re-read
+  discards edits made before the call. **`WithKey(json, key, value)`** is the merge every writer hand-rolled.
+- `IStaffPerformancePolicyService.MarkSummarySentAsync` replaces the sweep's whole-policy save.
+- Section 28 races ten interleaved saves of two keys and checks both survive.
+
+## Every tick box is `QCheckbox`, every on/off setting is `QSwitch` (2026-09-23)
+
+*"The checkboxes look like plain bootstrap."* Sixty-five raw `<input type="checkbox">` across twenty-one
+files: forty Bootstrap `form-switch`es on eleven settings pages and twenty-five browser tick boxes.
+
+- **`QSwitch` is new** (`Components/Shared/UI/QSwitch.razor`): same parameters as `QCheckbox`, a real
+  `<input role="switch">`, the tenant's `--qm-primary` on the track. **A switch when flipping it changes the
+  setting; a tick box when it chooses** (rows to act on, an option in a form that is then submitted).
+- The forty converted switches carry the setting's visible label as `aria-label` — the Bootstrap ones had
+  no programmatic name at all.
+- **`QCheckbox` gained a keyboard focus ring** (it had none — the input is visually hidden) and a **24px
+  minimum target** (WCAG 2.2 SC 2.5.8), moved from the one page that had it. `q-checkbox-row--top` aligns
+  the box with the first line of a paragraph label.
+- A page's own `(ChangeEventArgs e)` handler for a checkbox became `(bool on)`, never a faked event.
+- **`scripts/e2e/raw-checkbox-check.mjs`** fails on any raw checkbox or `form-switch` outside the three
+  shared components. `controls-and-names.mjs` presses them with real mouse input on five pages.
+- **Radio buttons were not in this sweep**: Schedules still has three Bootstrap `form-check` radios.
+
+**`component-param-check.mjs` was blind to lowercase attributes, and that cost a broken page.** It
+skipped them as "an html attribute, never a parameter" — but Blazor hands EVERY attribute on a component
+to it as a parameter, case-insensitively, and one that captures no unmatched values throws on first
+render. `<QSelect id="…">` passed the build and the guard and left Settings stuck on "Loading settings…".
+It now checks lowercase names too, case-insensitively, and reads past an implicit expression's call —
+`"@errors.Contains("x")"` — whose nested quotes it used to take for the next attribute.
+
+## School calendar, the programme import and gates (built 2026-09-23)
+
+The plan is `docs/plans/TERM_PROGRAMME_CALENDAR_AND_GATES.md` (artifact linked at its top); decisions D1–D12
+were settled on the recommendations. **The five source documents live in `D:\QMGR\DATA` and carry staff phone
+numbers — they are never copied into this repository**; the suites read them through `E2E_DOCS_DIR` and skip
+without it.
+
+- **Events are `SchoolEvent`, never a kind of duty** (D1): a duty carries a `ParameterId` and every register,
+  reminder and scoring query assumes staff are marked on it. A meeting that is also an event is ONE row in each,
+  linked by `SchoolEvent.DutyId`. **Who sees an event has one home, `SchoolEventVisibility`**: a
+  `calendar.manage` holder sees all; anyone else sees Staff-audience events, events naming them, or naming one of
+  their departments. Students/Guardians audiences are stored and shown to nobody yet (D5). The personal feed and
+  My School Day use the personal rule, never the manager override.
+- **`calendar.manage` is in all three catalogues** (Manager, DoS, Academic Assistant; Admin by "all"). Reading
+  needs no code. The calendar is base product; importing meetings or rota slots additionally needs
+  `staff.duties.manage` and the Welfare & Performance module (D8).
+- **The feed is RFC 5545 written by hand (`IcsWriter`)** — CRLF, 75-octet folding without splitting UTF-8, §3.3.11
+  escaping, all-day `VALUE=DATE` with an EXCLUSIVE `DTEND`. The link is a 160-bit secret shown once; only its
+  SHA-256 is stored (`User.CalendarFeedTokenHash`), the document-share rule.
+- **Documents are read with no dependency.** `.docx` by `ZipArchive` + `XmlReader` honouring `gridSpan`/`vMerge`;
+  `.doc` by a hand-written [MS-CFB] + [MS-DOC] reader (piece table for text, PAPX `sprmPFTtp` for ROW ends — a
+  0x07 on a TTP paragraph ends a row, any other 0x07 a cell); PDFs by pdf.js runs in the browser; scans refused
+  (D3). The readers also feed the EXISTING `QImportPanel`, so staff and student imports take Word and PDF tables.
+- **The weekday is a check digit.** All 47 weekday+date pairs in the school's documents agree, which is how
+  "23rd–29th November 2025" is read as 2026 and SAID. A suggestion is only ever a one-edit date change that fills
+  a gap and creates no new problem (the real rota yields exactly one: Musiime Naomeh 02/11→02/12), and it is
+  offered, never applied.
+- **The server re-checks every import row**; preview and commit take the same body, so what the preview said is
+  what the commit does. Re-importing an unchanged document creates nothing (`SourceKey`). The batch is a
+  `RosterImportJob` of Kind `Programme`; undo removes what it created EXCEPT a duty whose register was taken.
+- **A question the reader must answer is asked where it arises, never only at submit.** A meeting whose
+  attendance resolves to nobody on the staff list was refused at "Check with the server" after the page had said
+  every question was answered — found by the browser suite on the dev tenant (whose staff are not Maryhill's).
+  It now counts against the Check button and offers "Import as an event only" on its own row.
+- **Gates**: `BranchVocabulariesDto.Gates`, ONE writer (`PUT …/visitors/gates`), `UpdateVocabularies` keeps them,
+  a used gate is retired never removed, and `VisitorGateRule` (Shared) is the one rule both sides run.
+  `Visitor.EntryGate/ExitGate` store the NAME it had that day; `CheckedInByUserId/CheckedOutByUserId` record who
+  — until 2026-09-23 a visit recorded no person at all.
+- **Bulk check-out never set `Status`** (found while building gates): `CheckedOutAt` was written and `Status`
+  stayed `CheckedIn`, so the visitor read as on site everywhere AND could never check in again (the partial unique
+  index allows one CheckedIn visit per profile). Fixed, and its undo leaves the old visit closed if the person has
+  since come back.
+- Verified: sections **29** (gates, 59), **30** (calendar, 107), **31** (programme import, 80 — the counts measured
+  from the real documents asserted by the product code); browser suites `visitor-gates` (22), `calendar-ui` (42),
+  `programme-import` (24 with `E2E_COMMIT=1`).
+
+## Every list pages through `QPager`, and the roster was never paged (built 2026-09-23)
+
+Plan `docs/plans/STUDENT_ROSTER_AND_LIST_STANDARD.md`; decisions L1–L7 settled on the recommendations.
+
+- **`QPager` is the one pager** and now takes `PageSizeOptions` (`QPagerDefaults.Sizes` 10/25/50/100), `AllowAll`
+  (`QPager.All == 0`), `PageSizeChanged`, `StorageKey` (remembered per list per browser), `SelectedCount`,
+  first/last and a page jump. `QPaging` is the page-side helper; **`Reset()` on every filter, search, size and
+  branch change**. "All" above `QPaging.VirtualizeAbove` (200) renders through `<Virtualize>` so it never freezes.
+  Server-paged lists (staff activity, staff records, notifications, tenants) get sizes but NO All — their API caps
+  a page at 200, so All would silently be one page. **`pager-check.mjs` fails a list page whose pager offers no size.**
+- **The list-page audit was fooled by `.Take(`.** It counted any `.Take(` as paging, and the roster's
+  `s.Flags.Take(3)` (the first three flag chips) made a page with NO paging pass the sweep. It now accepts only
+  `QPager`, `<Virtualize` or `QTimelinePaging`. A detector that matches a substring is measuring the source, not
+  the behaviour.
+- **`GET …/students` silently returned the first 100 by name** (default `limit=100`, clamp 500, and no caller ever
+  passed one). The roster showed 100 of Maryhill's 1,711 with nothing saying so, and the welfare timeline — which
+  finds its own student in that list — lost the guardians and the other-students picker for every child past the
+  hundredth. It returns the whole roll now (`WholeRoll` 10,000). **A list endpoint that truncates without saying
+  so is the bug; paging is the page's job.**
+- **The roster**: filters (class with counts via `ClassName.Key`, status, house, dormitory, guardian, flags) live
+  in the address; summary tiles apply their filter; `QBulkBar` replaced the hand-built bar; "Select all N
+  matching" is an explicit second press and every filter change prunes the selection; class teachers open on
+  their own classes (from `WelfareSummaryDto.ScopedToClasses` — a roster field would be cleaner).
+- **Bulk log (`POST …/welfare-records/bulk`)**: the single create's body is `BuildRecordAsync` +
+  `ResolveStudentForWriteAsync`, called by BOTH paths, so a rule added to one binds both. One transaction, cap
+  200, one out-of-scope student refuses the whole batch with the unknown-student wording. **Welfare case type is
+  never bulk** (L7). One incident = Behaviour only. Alerts are coalesced (`NotifyRecordsLoggedAsync`): one message
+  per recipient. No guardian messages (there is no per-category "tell guardians" setting; the single create never
+  messaged guardians either). The staff system award is credited once per batch, not per record.
+- **Tidy names** (`POST …/students/tidy-names`, students.manage, pastoral scope): `PersonName.FixShouting`, and a
+  name with ANY lower-case letter is skipped outright.
+- Verified: section **32** (bulk log + tidy names, 60/0), browser `pager` (40/0), `student-roster` (31/0 — it
+  seeds 60 scratch students and deactivates them; a list that fits on one page proves nothing about paging).
+
 ## Process note for future sessions
 
 Design/reference decisions like the one above must be written here (or somewhere durable) at the
@@ -3825,3 +4167,203 @@ time they're made, not left to survive only in conversation context — this fil
 before 2026-08-17 despite the Webster reference having been consulted earlier in that session,
 which is why the font-pairing decision survived (it made it into code) but its rationale and the
 broader template-selection work did not (nothing to point back to after context compaction).
+
+## A POST grants permissions AND scope, as a pair (built 2026-09-22)
+
+Making somebody the class teacher of S4B gave them the pastoral **scope** over S4B and not one
+pastoral **permission**: the assignment saved, the page showed them as responsible, the coverage
+warning stopped naming the class — and every welfare feature silently refused them, because
+`PermissionAuthorizationHandler.GetUserPermissionsAsync` is one query, `Users → Role →
+RolePermissions`, and nothing else contributed. Head of department had the identical defect on the
+staff axis. The plan is `docs/plans/DERIVED_POST_PERMISSIONS.md`.
+
+**`Application/Services/PostPermissionService.cs` is the one home**, a static class with declared
+constants (`PastoralClassPost`, `DepartmentHeadPost`). It is read by the API gate, by
+`AuthController.BuildUserInfoWithPostsAsync` (what the browser's `@if (HasPermission(…))` renders
+on) and by both scope services.
+
+- **IT RETURNS `PostGrants`, NOT A LIST OF CODES, AND THAT IS THE WHOLE POINT.** Deriving
+  permissions alone opens a **school-wide leak**: `support-staff` and `viewer` are
+  `DataScope: Organization` and hold no welfare permission, so the MISSING PERMISSION was the only
+  thing stopping a matron who is a class teacher reading every child in the school.
+  `StudentScopeService.ApplyAsync` begins `if (await IsUnscopedAsync()) return query;`, so an
+  organization-scoped caller passes **all 29 guards in `WelfareController`** by construction — the
+  controller is not the layer that can save you, and it was already doing everything right.
+- **The rule: the POST's scope applies to the POST's permissions; where the ROLE already grants the
+  permission, the ROLE's scope wins.** A Tenant Admin who also teaches a class keeps the school.
+  `PostPermissionService.IsUnscopedOnStudents` is the one home for that test.
+- It reads as a **narrowing** on the student axis (Organization → the classes held) and a
+  **widening** on the staff axis (SelfOnly → the departments headed), because the baselines differ.
+  `StaffScopeService.ComputeVisibleAsync` unions the headed departments **outside** the switch, so a
+  line manager who also heads a department sees both.
+- **Subject teachers grant NOTHING here.** `SubjectTeacher` already yields the Teaching tier;
+  deriving welfare from it would hand every teacher pastoral access to every class they teach.
+- **CACHING IT IS SAFE ONLY BECAUSE EVERY POST WRITE INVALIDATES IT.**
+  `IStaffProfileChangeNotifier.PostChangedAsync` is the one home; `ClassTeachersController` (assign,
+  assign subject, end) and `StaffStructureController` (department create and update) call it.
+  **The update passes BOTH SIDES — `before.HeadUserId` as well as the new one** — because the person
+  being REMOVED is the one who otherwise keeps access for five minutes.
+- **A new endpoint that assigns or ends a post and does not call the notifier is that window again.**
+
+### THERE WERE SIX READERS OF "WHAT MAY THIS PERSON DO", AND ONE KNEW ABOUT POSTS (2026-09-22)
+
+Found by e2e section 15 the same day the posts work shipped, and it is the more useful half of that
+story: deriving the permissions was the easy part, and **the permissions were then read in six places.**
+
+`PermissionAuthorizationHandler` was updated. The other five each wrote
+`SelectMany(u => u.Role.RolePermissions)` by hand and so ignored posts entirely:
+`StaffPerformanceControllerBase.HasPermissionAsync` (**73 call sites**), `BatchController`,
+`ClassTeachersController`, `ContentController`, `DocumentSharesController` — plus **`GET /auth/me`**,
+which hand-built its own `UserInfo`.
+
+- **The symptom was inconsistency, not a clean failure.** A derived permission passed an endpoint's
+  `[RequirePermission]` attribute and then FAILED the in-code check inside the same endpoint. So a class
+  teacher's or department head's access worked or did not depending on which style a given endpoint
+  used. `staff/reports/teaching` refused a department head outright (403 from `MayReadAsync`), and nine
+  section-15 assertions cascaded off that one call.
+- **`/auth/me` was the worst of the six because it is the REFRESH path.** The browser persists `UserInfo`
+  in localStorage and `AuthService.RefreshCurrentUserAsync` re-reads it from there, so every
+  `@if (HasPermission(…))` silently lost the derived permissions on a refresh while the API gate went on
+  honouring them — the UI vanishing from under somebody who could still make the calls. It returned 4
+  permissions where `/auth/login` returned 12.
+- **`PostPermissionService.EffectiveCodesAsync` is now the ONE home for the union**, and all six call it.
+  A controller memoises it per request; the authorization handler keeps the only cache over it (five
+  minutes, invalidated by `IStaffProfileChangeNotifier`). **Never write a role-permission query by hand.**
+- **The one hand-built `UserInfo` that is CORRECT** is the password-change-only login response, which
+  advertises no permissions on purpose. It is commented as such so a sweep does not "fix" it.
+- **The lesson for the next derived thing:** a new source of authority is not finished when the gate
+  honours it. Grep for every reader of the thing it derives — `RolePermissions`, `new UserInfo`, and any
+  local `HasPermissionAsync` — because the ones that are missed fail *inconsistently*, which is harder to
+  find than failing outright.
+
+**`class-teacher` and `head-of-department` are DELETED** (user decision: *"what is the point in
+having them if they cannot be assigned? redundant features create more confusion"*). `RoleCodes`
+keeps `RetiredClassTeacher`/`RetiredHeadOfDepartment` for the migration only; both are out of
+`All`. **Removing them shifted no ranks and that was checked, not assumed:** `Rank` is relative
+(`Rank(x) <= Rank(Manager)`) and both sat below Manager. The migration **reassigns holders to
+`teacher` — never `staff` or `support-staff`**, because those are `DataScope: Organization` and a
+derived welfare permission on one reads the whole school.
+
+**Anybody on the staff can hold a class now.** `UsersSetup.CanHoldAClass` replaced
+`IsClassTeacherRoleSelected`, and the two inline warnings on the assignment dialogs saying "this
+person's role is not Class Teacher, so this grants nothing" were **removed — they were true, and
+they described this defect**.
+
+### Class Teachers is a tab in Staff Directory, not a page
+
+`/admin/students/class-teachers` is **deleted, not aliased**. `/admin/staff` now carries
+**People · Class teachers · Subject teachers · Departments · Coverage · Import**.
+
+**The test that decided it: a screen that grants a person access belongs where the other access
+grants are.** Once the assignment confers the permissions, pressing *Assign a Class Teacher* is the
+same kind of act as setting a role, naming a department head or giving somebody a line manager —
+and filing the one that reaches children's safeguarding records elsewhere puts it where an
+administrator auditing *"who can read welfare records?"* would not look. The earlier reasoning
+("it is about children, so it is welfare") was wrong because **"what is it for" cannot separate this
+page from any other staff-assignment screen**.
+
+- `ClassTeachers.razor` is ONE component with `Embedded` + `EmbeddedTab`; `Pastoral` picks the half.
+  Two tabs rather than two components because both are the same class-centric grid over the same
+  coverage payload — splitting would duplicate the load, five dialogs and the fail-closed rules.
+- Gated on `classes.teachers.manage`, which is **neither a subset nor a superset** of
+  `staff.records.view` — hence its own `HubTabs.Section` entries.
+- `MainLayout`'s `CanViewWelfareSection` dropped `canManageClassTeachers`: a holder of that
+  permission alone now has nothing to open in the Student Welfare group.
+- Five callers were repointed, and **one was outside the pages** — `MobileNav.cs:143`.
+
+## A field that carries no BEHAVIOUR is data, not an enum (2026-09-22)
+
+Asked as *"is there a way not to hard code the parameter features?"*, answered with a test:
+
+> **Does a value carry behaviour?** No → taxonomy → a `VocabularyItemDto` in a JSON settings blob.
+> Yes → it names a code path → it stays an enum, and the honest fix is to say so in the UI.
+
+**`StaffGroup` failed it outright and is gone.** It was three values resolved by
+`roleCode == "support-staff" ? Support : Teaching`, so every custom role a school created — and
+`admin`, `manager`, `viewer` — counted as TEACHING staff; and since `RosterImportProcessorJob`
+defaults a missing role to `teacher`, an imported staff list arrived entirely teaching and the
+bursar, matron and driver were scored on Lesson Attendance. One set-membership test read it.
+
+- **`StaffGroups` (Shared) is the one home for the comparison** — `Applies(required, actual)` with
+  `Key()` folding case and punctuation, the `ClassName.Key` rule. **Null required = everybody**,
+  which retires `AllStaff`: "applies to everyone" is the absence of a restriction, not an entry
+  somebody could rename.
+- The list is `StaffPerformancePolicyDto.StaffGroups`, **organization-scoped, not branch** —
+  `PerformanceParameter` is organization-scoped, so a branch list would let a parameter name a group
+  that exists on one branch and not the next. That blob also already writes under
+  `WithPolicyLockAsync`, which `Branch.Settings` had to have bolted on.
+- **`Role.StaffGroup`** points a person at one, set in the role editor beside `DataScope` and
+  `StaffScope`. `PerformanceParameter.AppliesToGroup` and `StaffNotice.AudienceStaffGroup` are names.
+- **The migration ADDS, BACKFILLS, THEN DROPS.** EF scaffolded drop-then-add, which would have reset
+  every parameter to "all staff" silently — a Lesson Observation applying to the bursar, with
+  nothing anywhere saying so. Same class as `AddClassTeachersAndWelfareVisibility`.
+- **`User.EmploymentType` is the next candidate and is NOT yet converted**: nothing in the codebase
+  branches on its six values, and the MoES return separates government-paid from PTA-paid teachers
+  while both squash into *Contract*.
+
+**`GroupFor` TAKES THE ROLE'S GROUP, NOT ITS CODE — and three call sites went on passing the code
+(found 2026-09-22 by e2e section 14).** When `StaffGroup` stopped being an enum, the signature changed
+from a role code to the role's group, and `StaffScoringService` (both paths) plus
+`StaffStructureController` were not updated. So a teacher's group resolved to `"teacher"`,
+`StaffGroups.Applies("Teaching staff", "teacher")` was false, and **every parameter carrying a group
+silently vanished from every staff score and breakdown** — Lesson Attendance, Lesson Observation,
+Exam Supervision, Prep Supervision, Records & Schemes of Work, Lesson Recovery: the teaching half of the
+appraisal evidence. Nothing errored, no parameter was retired, the records were all there; the breakdown
+just came back short, and a signed appraisal froze the wrong score. The staff record also displayed
+`"teacher"` where it should read "Teaching staff".
+
+**The lesson, and it is the same one as the fourteen permission readers:** changing what a method TAKES
+is more dangerous than changing what it returns, because every wrong caller still compiles. `string?` to
+`string?` is the worst case. When a signature's MEANING changes, rename the parameter and grep every call
+site — and prefer a distinct type over a second `string?`.
+
+**RUNNING AN OLDER BUILD AGAINST A MIGRATED DATABASE RE-SEEDS WHAT A MIGRATION RETIRED (2026-09-22).**
+A worktree at the previous commit was started to get a "before" baseline, and its pre-retirement
+`Permissions.DefaultRoles` re-created the `class-teacher` and `head-of-department` global roles the
+retirement migration had deleted — rows with permissions, held by nobody, which the migration's own
+delete is guarded against removing a second time. The baseline run was worthless anyway: a forward
+migration is not backward compatible, so the old code crashed on the `StaffGroup` column it still read.
+**Do not reach for an old build to establish a baseline once migrations have been applied** — instrument
+the current one instead. If it has already happened, the retired rows need deleting by hand.
+
+**`ParameterKind` stays an enum, and the fix was the WORD.** Each value is a branch in
+`StaffScoringService.ScoreParameter` — a school adding "Kind: Punctuality" would get a parameter the
+server has no `case` for, scoring `null` silently — and it is read in **24 files**, deciding sign
+rules, which outcomes are offered and what may offset what. The field is labelled **"How it is
+scored"** now; the school already names the parameter itself.
+
+**The real rigidity was three magic numbers, now in the policy** (`LateCreditFraction` 0.5,
+`DefaultEntriesPerPeriod` 10, `NeutralScore` 50), clamped on read AND validated in the editor.
+**`Excused` stays out of the denominator and is not configurable** — the MoES rule that
+organisational factors are not a performance gap. **A tenant-authored formula is refused**: it fails
+silently, and a score feeding an appraisal has to be explainable to the person it is about.
+
+## A roster row is a name, a code and a class. The guardian is optional (2026-09-22)
+
+*"since when did guardian and email mandatory for student? the only mandatory fields are Name, code
+and class."* `RosterImportProcessorJob` refused any row without a guardian name AND a phone or
+email, so a school's own export — 1,711 children, most rows with no guardian contact — became 1,711
+failures. The requirement was never a property of a student: it was the guardian find-or-create
+written as a precondition.
+
+- Required: student name, student code (the upsert key), **class** — `Student.ClassName` is what
+  `IStudentScopeService` matches on, so a child imported without one is invisible to their own class
+  teacher.
+- **A PARTIAL guardian is the one shape still refused**, and it refuses the LINK, not the row: the
+  student imports and the message names which half was missing. A name with no contact, or a contact
+  with no name, would create an unreachable or nameless guardian nobody could later correct.
+
+## Sorting: `NaturalOrder` is the one home, and dropdowns opt IN (2026-09-22)
+
+*"sort this and similar lists, also in the shared dropdown / select component."*
+
+- **`Q-Mgr.Shared/Application/NaturalOrder.cs`** — digits compare as NUMBERS, so `S2C` comes before
+  `S10A`. An ordinal sort gives a school with ten forms S1, S10, S2, which reads as broken on
+  exactly the list a school builds first.
+- **`QSelect.Sorted` / `QMultiSelect.Sorted` are opt-in, deliberately.** Terms run in calendar
+  order, bands worst to best, a rota by day — sorting those would be a bug. The caller says when the
+  order is arbitrary.
+- **The vocabularies editor SORTS BY WRITING `SortOrder`, not by re-displaying.** That list has an
+  order the school owns (the up/down arrows set it, and it decides every class picker in the
+  product), so a display-only sort would make the arrows appear to do nothing. It is an action with
+  a Save behind it, undone by Cancel.

@@ -49,6 +49,7 @@ public class StaffSelfServiceController : StaffPerformanceControllerBase
     private readonly ITimetableSettingsService _settings;
     private readonly IStaffPerformancePolicyService _policy;
     private readonly INotificationService _notifications;
+    private readonly ITimetableRepublishService _republish;
     private readonly ILogger<StaffSelfServiceController> _logger;
 
     public StaffSelfServiceController(
@@ -59,12 +60,14 @@ public class StaffSelfServiceController : StaffPerformanceControllerBase
         ITimetableSettingsService settings,
         IStaffPerformancePolicyService policy,
         INotificationService notifications,
+        ITimetableRepublishService republish,
         ILogger<StaffSelfServiceController> logger)
         : base(db, tenantAccessor, staffScope, activity)
     {
         _settings = settings;
         _policy = policy;
         _notifications = notifications;
+        _republish = republish;
         _logger = logger;
     }
 
@@ -103,7 +106,11 @@ public class StaffSelfServiceController : StaffPerformanceControllerBase
         {
             BranchId = branchId,
             Policy = policy,
-            CanDecideRequests = await HasPermissionAsync(Permissions.TimetableManage),
+            // True when this caller can decide ANYTHING — the permission, or being the appointed master of some
+            // version of this branch. Per-request it is narrower (StaffConfigRequestDto.CanIDecide); this one only
+            // decides whether the queue is worth showing them at all.
+            CanDecideRequests = await HasPermissionAsync(Permissions.TimetableManage)
+                                || await Db.Timetables.AsNoTracking().AnyAsync(t => t.BranchId == branchId && t.ManagerUserIds.Contains(me)),
             MyClasses = assignments.Select(a => new MyTeachingAssignmentDto
             {
                 AssignmentId = a.Id,
@@ -432,14 +439,24 @@ public class StaffSelfServiceController : StaffPerformanceControllerBase
         if (await VerifyBranchOwnership(branchId) is { } branchError) return branchError;
 
         var me = CurrentUserId();
-        var canDecide = await HasPermissionAsync(Permissions.TimetableManage);
+        var holdsManage = await HasPermissionAsync(Permissions.TimetableManage);
+
+        // An appointed master reads the queue for the versions they manage, and their own requests besides. They
+        // do NOT read the whole branch's queue, which is the difference between being appointed to one timetable
+        // and holding the permission over all of them.
+        var mineToManage = holdsManage
+            ? new List<Guid>()
+            : await Db.Timetables.AsNoTracking().Where(t => t.BranchId == branchId && t.ManagerUserIds.Contains(me))
+                .Select(t => t.Id).ToListAsync();
 
         var q = Db.StaffConfigRequests.AsNoTracking().Where(r => r.BranchId == branchId);
-        if (!canDecide) q = q.Where(r => r.RequestedByUserId == me || r.CounterpartUserId == me);
+        if (!holdsManage)
+            q = q.Where(r => r.RequestedByUserId == me || r.CounterpartUserId == me
+                             || (r.TimetableId != null && mineToManage.Contains(r.TimetableId.Value)));
         if (openOnly) q = q.Where(r => r.State == ConfigRequestState.Pending);
 
         var rows = await q.OrderByDescending(r => r.RequestedAt).Take(200).ToListAsync();
-        return Ok(await MapRequestsAsync(rows, me, canDecide));
+        return Ok(await MapRequestsAsync(rows, me, holdsManage));
     }
 
     /// <summary>
@@ -500,6 +517,11 @@ public class StaffSelfServiceController : StaffPerformanceControllerBase
             row.ClassNameNormalized ?? "-",
             row.SubjectId?.ToString() ?? "-",
             row.TheirLessonId?.ToString() ?? "-",
+            // THE DATE IS PART OF WHAT A REQUEST IS ABOUT. Without it, a teacher who arranged cover for this
+            // Tuesday could not arrange it for the next one, and a one-off swap and a permanent one for the same
+            // pair of lessons would collide as duplicates of each other.
+            row.EffectiveOn?.ToString("yyyy-MM-dd") ?? "-",
+            row.CoverUserId?.ToString() ?? "-",
         });
 
         Db.StaffConfigRequests.Add(row);
@@ -538,13 +560,15 @@ public class StaffSelfServiceController : StaffPerformanceControllerBase
 
         var organizationId = await ResolveOrganizationIdAsync(branchId);
         var me = CurrentUserId();
-        var canDecide = await HasPermissionAsync(Permissions.TimetableManage);
 
         var row = await Db.StaffConfigRequests.FirstOrDefaultAsync(r => r.Id == id && r.BranchId == branchId);
+        // The permission is enough to SEE the queue; deciding a particular request is narrower — see below.
+        var holdsManage = await HasPermissionAsync(Permissions.TimetableManage);
         // 404 rather than 403 for a request this caller may not see at all — the rule every other
         // per-subject route in this module follows, because a 403 confirms the row exists.
-        if (row == null || (!canDecide && row.RequestedByUserId != me)) return NotFoundProblem("Request not found");
+        if (row == null || (!holdsManage && row.RequestedByUserId != me && row.CounterpartUserId != me)) return NotFoundProblem("Request not found");
 
+        var canDecide = await MayDecideAsync(row);
         if (StaffSelfService.RefuseDecision(row, me, canDecide) is { } refusal)
             return BadRequestProblem("Cannot decide", refusal);
 
@@ -608,11 +632,15 @@ public class StaffSelfServiceController : StaffPerformanceControllerBase
     }
 
     /// <summary>
-    /// The colleague's half of a swap.
+    /// The colleague's half of a swap, or of a cover request.
     ///
     /// A DECIDER MAY NOT MOVE A TEACHER'S LESSON WITHOUT THAT TEACHER HAVING AGREED. Automating the
     /// corridor negotiation would not replace it, it would take it away from the people having it —
-    /// so a swap stays un-decidable until the other teacher says yes here.
+    /// so a swap stays un-decidable until the other teacher says yes here, and cover is on exactly the
+    /// same footing: nobody is volunteered to stand in front of a class by somebody else.
+    ///
+    /// The route takes the request id and nothing else. The colleague is <c>CounterpartUserId</c>, read from the
+    /// row rather than the body, so this cannot be used to agree on somebody else's behalf.
     /// </summary>
     [HttpPost("requests/{id:guid}/agree")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
@@ -627,6 +655,33 @@ public class StaffSelfServiceController : StaffPerformanceControllerBase
 
         row.CounterpartAgreedAt = DateTime.UtcNow;
         await Db.SaveChangesAsync();
+
+        // The asker hears back, because until now the only signal that a colleague had agreed was the queue
+        // screen changing shape, and the person waiting is not the person looking at it.
+        try
+        {
+            var names = await Db.Users.IgnoreQueryFilters().AsNoTracking().Where(u => u.Id == me)
+                .Select(u => PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName)).FirstOrDefaultAsync();
+            await _notifications.CreateInAppNotificationAsync(new CreateNotificationRequest
+            {
+                UserId = row.RequestedByUserId,
+                OrganizationId = row.OrganizationId,
+                BranchId = branchId,
+                Title = row.Kind == ConfigRequestKind.LessonCover ? "A colleague agreed to cover your lesson" : "A colleague agreed to your swap",
+                Message = $"{(string.IsNullOrWhiteSpace(names) ? "Your colleague" : names)} has agreed. It is with the timetable master now.",
+                Type = NotificationType.StaffPerformance,
+                Priority = NotificationPriority.Normal,
+                Channels = NotificationChannel.InApp,
+                EventKey = NotificationEventKeys.StaffLessonCover,
+                ActionUrl = "/portal?tab=teaching",
+                IconClass = "check2"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Agreement notice for request {RequestId} could not be sent", row.Id);
+        }
+
         return NoContent();
     }
 
@@ -671,16 +726,101 @@ public class StaffSelfServiceController : StaffPerformanceControllerBase
                     .FirstOrDefaultAsync(l => l.Id == request.TheirLessonId);
                 if (theirs == null || theirs.Timetable.BranchId != branchId) return "That lesson could not be found.";
                 if (theirs.TeacherUserId == me) return "Both lessons are yours — move one instead of asking for a swap.";
+                if (mine.TimetableId != theirs.TimetableId) return "Those two lessons are on different timetables.";
+                if (mine.GroupId != null || theirs.GroupId != null)
+                    return "One of those is a joint lesson, taught with somebody else. Ask the timetable master to change it.";
 
                 row.CounterpartUserId = theirs.TeacherUserId;
                 row.TimetableId = mine.TimetableId;
                 row.CycleDay = theirs.CycleDay;
                 row.PeriodKey = theirs.PeriodKey;
-                return null;
+                // A ONE-OFF swap names the date of the asker's own lesson; a permanent one names none. The date is
+                // checked against the timetable and the cycle here, so the two teachers cannot agree to something
+                // that was never going to be applicable.
+                return await RefuseOneOffAsync(branchId, row, mine, request.EffectiveOn, oneOffRequired: false);
+
+            case ConfigRequestKind.LessonCover:
+                if (request.MyLessonId == null) return "Name the lesson you need covered.";
+                if (request.CoverUserId == null || request.CoverUserId == Guid.Empty) return "Name the colleague you are asking.";
+                if (request.CoverUserId == me) return "That is already your lesson.";
+                var toCover = await Db.TimetableLessons.Include(l => l.Timetable)
+                    .FirstOrDefaultAsync(l => l.Id == request.MyLessonId && l.TeacherUserId == me);
+                if (toCover == null || toCover.Timetable.BranchId != branchId) return "That lesson is not one of yours.";
+                if (toCover.GroupId != null)
+                    return "That is a joint lesson, taught with somebody else. Ask the timetable master to arrange cover.";
+                // BranchStaff, not a hand-written branch test: somebody with no assigned branch belongs to every
+                // branch of the organization, and refusing them would refuse a real colleague.
+                if (!await StaffLookups.BranchStaff(Db, row.OrganizationId, branchId).AnyAsync(u => u.Id == request.CoverUserId))
+                    return "That person is not active staff of this branch.";
+
+                row.CoverUserId = request.CoverUserId;
+                // The colleague being asked IS the counterpart, so the agreement half needs no second rule: the
+                // same endpoint, the same index, the same "waiting on me" list on their portal.
+                row.CounterpartUserId = request.CoverUserId;
+                row.TimetableId = toCover.TimetableId;
+                row.CycleDay = toCover.CycleDay;
+                row.PeriodKey = toCover.PeriodKey;
+                row.ClassName = toCover.ClassName;
+                row.ClassNameNormalized = toCover.ClassNameNormalized;
+                row.SubjectId = toCover.SubjectId;
+                return await RefuseOneOffAsync(branchId, row, toCover, request.EffectiveOn, oneOffRequired: true);
 
             default:
                 return "That is not something that can be asked for.";
         }
+    }
+
+    /// <summary>
+    /// WHO MAY DECIDE THIS REQUEST — the permission, OR being an appointed master of the timetable it is about
+    /// (2026-09-22). Unified with <see cref="TimetableAccess.MayWrite"/> on purpose, because deciding a request
+    /// IS a write to that timetable, and the two rules disagreeing produced a real hole in both directions:
+    ///
+    ///   * an appointed timetable master holding no permission could not decide a swap on their OWN timetable,
+    ///     which is precisely the job they were appointed to do;
+    ///   * a permission holder who owns a different version could decide swaps on one they have nothing to do with.
+    ///
+    /// A ClassAssignment has no timetable, so it stays on the permission alone. That is right rather than a gap: it
+    /// grants Teaching-tier access to a class of children, which is not a timetable master's decision to make.
+    /// </summary>
+    private async Task<bool> MayDecideAsync(StaffConfigRequest row)
+    {
+        var holds = await HasPermissionAsync(Permissions.TimetableManage);
+        if (holds) return true;
+        if (row.TimetableId is not { } timetableId) return false;
+        var timetable = await Db.Timetables.AsNoTracking().FirstOrDefaultAsync(t => t.Id == timetableId);
+        return timetable != null && TimetableAccess.IsManager(timetable, CurrentUserId());
+    }
+
+    /// <summary>
+    /// The date half of a one-off request. Null return means it may be asked for.
+    ///
+    /// THE PREVIEW AND THE APPLY RUN THE SAME RULES. Everything here is <see cref="TimetableExceptions.Refuse"/>,
+    /// which is also what the master's own cover endpoint calls and what the approval calls — a row the request
+    /// step accepted and the approval then refuses in different words is the worst answer this can give.
+    /// </summary>
+    private async Task<string?> RefuseOneOffAsync(Guid branchId, StaffConfigRequest row, TimetableLesson lesson, DateOnly? effectiveOn, bool oneOffRequired)
+    {
+        if (effectiveOn == null)
+        {
+            if (oneOffRequired) return "Say which day you need it covered.";
+            // A permanent swap. It rewrites the timetable for the rest of its life, so it only makes sense against
+            // a version that is live or still being built.
+            if (lesson.Timetable.Status == TimetableStatus.Archived)
+                return "That timetable is history. A swap on it would change nothing.";
+            return null;
+        }
+
+        row.EffectiveOn = effectiveOn;
+
+        // A one-off is a dated exception, and an exception only exists against a PUBLISHED version — a draft is
+        // changed by editing it, which is what a permanent swap does.
+        if (lesson.Timetable.Status != TimetableStatus.Published)
+            return "That timetable is not published yet, so there is no single day to change. Ask for the swap to be permanent instead.";
+
+        var settings = await _settings.ReadAsync(branchId);
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, await ZoneAsync(branchId)));
+        return TimetableExceptions.Refuse(lesson.Timetable, lesson, effectiveOn.Value, today,
+            LessonExceptionKind.Cover, row.CoverUserId ?? row.CounterpartUserId, settings);
     }
 
     /// <summary>
@@ -748,40 +888,140 @@ public class StaffSelfServiceController : StaffPerformanceControllerBase
             return null;
         }
 
+        // A ONE-OFF: two covers for a swap, one for a cover request. Nothing moves, so no class, room or cohort
+        // can be disturbed and TimetableChecker has nothing to say about it.
+        if (StaffSelfService.IsOneOff(row))
+            return await ApplyOneOffAsync(branchId, organizationId, row, deciderId);
+
         if (row.Kind == ConfigRequestKind.SlotSwap)
-        {
-            var timetable = await CurrentDraftAsync(branchId, tracking: true);
-            if (timetable == null) return "There is no draft timetable to change any more.";
-
-            await LockTimetableAsync(timetable.Id);
-            var mine = await Db.TimetableLessons.FirstOrDefaultAsync(l => l.Id == row.MyLessonId);
-            var theirs = await Db.TimetableLessons.FirstOrDefaultAsync(l => l.Id == row.TheirLessonId);
-            if (mine == null || theirs == null) return "One of those lessons has already been changed.";
-            if (mine.GroupId != null || theirs.GroupId != null) return "One of those is a joint lesson and cannot be swapped here.";
-
-            // Swap the SLOTS, not the teachers: each keeps their class and subject and changes when
-            // they teach it. Swapping the teachers instead would move a class to a teacher who is not
-            // assigned to it, which is a data-access change wearing a timetable change's clothes.
-            (mine.CycleDay, theirs.CycleDay) = (theirs.CycleDay, mine.CycleDay);
-            (mine.PeriodKey, theirs.PeriodKey) = (theirs.PeriodKey, mine.PeriodKey);
-
-            try { await Db.SaveChangesAsync(); }
-            catch (DbUpdateException ex) when (IsUniqueViolation(ex)) { return "That swap would double-book somebody now."; }
-            row.ResultLessonId = mine.Id;
-            return null;
-        }
+            return await ApplyPermanentSwapAsync(branchId, organizationId, row, deciderId);
 
         return "That request cannot be applied.";
     }
 
-    private async Task<List<StaffConfigRequestDto>> MapRequestsAsync(IReadOnlyCollection<StaffConfigRequest> rows, Guid me, bool canDecide)
+    /// <summary>
+    /// A ONE-OFF swap or a cover: dated <see cref="TimetableLessonException"/> rows against the PUBLISHED version.
+    ///
+    /// A one-off swap is TWO COVERS, each teacher taking the other's lesson at its own time, and the colleague's
+    /// date is derived from their cycle day within the same cycle week — which is what lets the request carry one
+    /// date rather than two that could disagree.
+    /// </summary>
+    private async Task<string?> ApplyOneOffAsync(Guid branchId, Guid organizationId, StaffConfigRequest row, Guid deciderId)
+    {
+        if (row.EffectiveOn is not { } myDate) return "That request has no date to apply.";
+
+        var mine = await Db.TimetableLessons.Include(l => l.Timetable).AsNoTracking().FirstOrDefaultAsync(l => l.Id == row.MyLessonId);
+        if (mine == null) return "That lesson has already been changed.";
+        var timetable = mine.Timetable;
+        if (timetable.Status != TimetableStatus.Published) return "That timetable is no longer the published one.";
+
+        var settings = await _settings.ReadAsync(branchId);
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, await ZoneAsync(branchId)));
+
+        // Who takes the asker's lesson: the colleague, either way round.
+        var counterpart = row.CoverUserId ?? row.CounterpartUserId;
+        if (counterpart == null) return "That request names nobody to cover it.";
+
+        var writes = new List<(TimetableLesson Lesson, DateOnly Date, Guid Cover)> { (mine, myDate, counterpart.Value) };
+
+        if (row.Kind == ConfigRequestKind.SlotSwap)
+        {
+            var theirs = await Db.TimetableLessons.AsNoTracking().FirstOrDefaultAsync(l => l.Id == row.TheirLessonId);
+            if (theirs == null) return "One of those lessons has already been changed.";
+            var theirDate = TimetableExceptions.SameCycleDateFor(settings, timetable.CycleDays, timetable.EffectiveFrom, myDate, theirs.CycleDay);
+            if (theirDate == null) return "The other lesson's day does not fall in the same week.";
+            // The other half. The asker takes the colleague's lesson on the colleague's own date.
+            writes.Add((theirs, theirDate.Value, row.RequestedByUserId));
+        }
+
+        foreach (var (lesson, date, cover) in writes)
+            if (TimetableExceptions.Refuse(timetable, lesson, date, today, LessonExceptionKind.Cover, cover, settings) is { } why)
+                return why;
+
+        await LockTimetableAsync(timetable.Id);
+        foreach (var (lesson, date, cover) in writes)
+        {
+            Db.TimetableLessonExceptions.Add(new TimetableLessonException
+            {
+                OrganizationId = organizationId, BranchId = branchId, TimetableId = timetable.Id,
+                TimetableLessonId = lesson.Id, Date = date, Kind = LessonExceptionKind.Cover, CoverUserId = cover,
+                Reason = row.Reason, SourceRequestId = row.Id, CreatedByUserId = deciderId, CreatedBy = deciderId
+            });
+        }
+
+        try { await Db.SaveChangesAsync(); }
+        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+        {
+            return "One of those lessons already has cover on that date.";
+        }
+
+        row.ResultLessonId = mine.Id;
+        // The duty may already exist inside the fortnight window, so it has to change hands now rather than at the
+        // nightly run — otherwise cover approved today for tomorrow reaches nobody's My Day.
+        try { Hangfire.BackgroundJob.Enqueue<QMgr.Infrastructure.Jobs.LessonGenerationJob>(job => job.RunForBranchAsync(branchId)); }
+        catch (Exception ex) { _logger.LogError(ex, "Could not enqueue lesson generation for branch {BranchId} after cover", branchId); }
+        return null;
+    }
+
+    /// <summary>
+    /// A PERMANENT swap: the two teachers trade slots for the rest of the version's life.
+    ///
+    /// ON A DRAFT it is an edit, exactly as it always was. ON A PUBLISHED VERSION it is a RE-PUBLISH — a new draft
+    /// copied from it with the two slots traded, then published over it — because a published version is immutable
+    /// by design and "a change to it is a new draft published over it" is this module's own rule. That path is also
+    /// the only one that runs <see cref="TimetableChecker"/>, which is where the CLASS-side effect neither teacher
+    /// can see gets raised: two teachers can agree to trade Tuesday P3 for Thursday P5 and leave a cohort with
+    /// double Maths and no Physics that week.
+    ///
+    /// THE DATE RANGE IS KEPT, NOT SPLIT AT THE SWAP DATE, and that is deliberate: cycle day 1 is anchored on
+    /// <c>EffectiveFrom</c>, so moving it would shift every cycle day of an A/B timetable. The archived version
+    /// stays as the record of what the timetable said before.
+    /// </summary>
+    private async Task<string?> ApplyPermanentSwapAsync(Guid branchId, Guid organizationId, StaffConfigRequest row, Guid deciderId)
+    {
+        var mine = await Db.TimetableLessons.Include(l => l.Timetable).AsNoTracking().FirstOrDefaultAsync(l => l.Id == row.MyLessonId);
+        var theirs = await Db.TimetableLessons.AsNoTracking().FirstOrDefaultAsync(l => l.Id == row.TheirLessonId);
+        if (mine == null || theirs == null) return "One of those lessons has already been changed.";
+        if (mine.GroupId != null || theirs.GroupId != null) return "One of those is a joint lesson and cannot be swapped here.";
+        var source = mine.Timetable;
+
+        if (source.Status == TimetableStatus.Draft)
+        {
+            await LockTimetableAsync(source.Id);
+            var a = await Db.TimetableLessons.FirstOrDefaultAsync(l => l.Id == mine.Id);
+            var b = await Db.TimetableLessons.FirstOrDefaultAsync(l => l.Id == theirs.Id);
+            if (a == null || b == null) return "One of those lessons has already been changed.";
+
+            // Swap the SLOTS, not the teachers: each keeps their class and subject and changes when they teach it.
+            // Swapping the teachers instead would move a class to a teacher who is not assigned to it, which is a
+            // data-access change wearing a timetable change's clothes.
+            (a.CycleDay, b.CycleDay) = (b.CycleDay, a.CycleDay);
+            (a.PeriodKey, b.PeriodKey) = (b.PeriodKey, a.PeriodKey);
+
+            try { await Db.SaveChangesAsync(); }
+            catch (DbUpdateException ex) when (IsUniqueViolation(ex)) { return "That swap would double-book somebody now."; }
+            row.ResultLessonId = a.Id;
+            return null;
+        }
+
+        if (source.Status != TimetableStatus.Published)
+            return "That timetable is history now, so a permanent swap on it would change nothing.";
+
+        var result = await _republish.SwapAndRepublishAsync(source.Id, mine.Id, theirs.Id, deciderId,
+            $"Swap approved from a staff request: {mine.ClassName} {mine.PeriodKey} and {theirs.ClassName} {theirs.PeriodKey}");
+        if (result.Refusal != null) return result.Refusal;
+        row.ResultLessonId = result.MyNewLessonId;
+        return null;
+    }
+
+    private async Task<List<StaffConfigRequestDto>> MapRequestsAsync(IReadOnlyCollection<StaffConfigRequest> rows, Guid me, bool holdsManage)
     {
         if (rows.Count == 0) return new();
 
         var userIds = rows.SelectMany(r => new[] { (Guid?)r.RequestedByUserId, r.CounterpartUserId, r.DecidedByUserId })
             .Where(x => x != null).Select(x => x!.Value).Distinct().ToList();
         var names = await Db.Users.IgnoreQueryFilters().AsNoTracking().Where(u => userIds.Contains(u.Id))
-            .ToDictionaryAsync(u => u.Id, u => (u.FirstName + " " + u.LastName).Trim());
+            .ToDictionaryAsync(u => u.Id, u => PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName));
 
         var subjectIds = rows.Where(r => r.SubjectId != null).Select(r => r.SubjectId!.Value).Distinct().ToList();
         var subjects = await Db.Subjects.AsNoTracking().Where(s => subjectIds.Contains(s.Id))
@@ -790,11 +1030,37 @@ public class StaffSelfServiceController : StaffPerformanceControllerBase
         var settings = await _settings.ReadAsync(rows.First().BranchId);
         var cycleDays = TimetableCycle.CycleDayCount(settings);
 
+        // WHICH OF THESE MAY I DECIDE — per row, not per caller, since 2026-09-22. An appointed master decides
+        // requests about THEIR OWN version and nobody else's, so the answer differs row by row and the client's
+        // button has to follow the server's rule exactly or a decider is offered one that then refuses.
+        var timetableIds = rows.Where(r => r.TimetableId != null).Select(r => r.TimetableId!.Value).Distinct().ToList();
+        var managedByMe = holdsManage || timetableIds.Count == 0
+            ? new HashSet<Guid>()
+            : (await Db.Timetables.AsNoTracking()
+                .Where(t => timetableIds.Contains(t.Id) && t.ManagerUserIds.Contains(me))
+                .Select(t => t.Id).ToListAsync()).ToHashSet();
+
+        // What a permanent swap would do to anybody other than the two teachers. Computed only for a pending one
+        // a reader may actually decide: it runs the clash checker, so doing it for every historic row on the queue
+        // screen would be a query storm for information nobody can act on.
+        var previews = new Dictionary<Guid, SwapPreview>();
+        foreach (var r in rows.Where(r => r.State == ConfigRequestState.Pending
+                                          && r.Kind == ConfigRequestKind.SlotSwap && r.EffectiveOn == null
+                                          && r.TimetableId != null && r.MyLessonId != null && r.TheirLessonId != null
+                                          && (holdsManage || managedByMe.Contains(r.TimetableId!.Value))))
+        {
+            previews[r.Id] = await _republish.PreviewSwapAsync(r.TimetableId!.Value, r.MyLessonId!.Value, r.TheirLessonId!.Value);
+        }
+
         return rows.Select(r =>
         {
             var requester = names.GetValueOrDefault(r.RequestedByUserId) ?? "A member of staff";
             var subject = r.SubjectId != null ? subjects.GetValueOrDefault(r.SubjectId.Value) : null;
             var dayLabel = r.CycleDay is { } d ? TimetableCycle.CycleDayLabel(settings, cycleDays, d) : null;
+            var preview = previews.GetValueOrDefault(r.Id);
+            // A ClassAssignment carries no timetable, so it stays on the permission alone: it grants Teaching-tier
+            // access to a class of children, which is not a timetable master's decision to make.
+            var canDecide = holdsManage || (r.TimetableId is { } tid && managedByMe.Contains(tid));
 
             return new StaffConfigRequestDto
             {
@@ -820,10 +1086,15 @@ public class StaffSelfServiceController : StaffPerformanceControllerBase
                 DecidedByName = r.DecidedByUserId is { } dd ? names.GetValueOrDefault(dd) : null,
                 DecidedAt = r.DecidedAt,
                 DecisionReason = r.DecisionReason,
+                EffectiveOn = r.EffectiveOn,
+                IsOneOff = StaffSelfService.IsOneOff(r),
+                DecisionWarnings = preview?.Warnings ?? new(),
+                Blocked = preview?.Blocked,
                 // The self-approval rule reaches the CLIENT too, so a decider never sees a Decide
                 // button on their own request and then has it refused. The server still refuses it.
                 CanIDecide = canDecide && r.State == ConfigRequestState.Pending && r.RequestedByUserId != me
-                             && (r.Kind != ConfigRequestKind.SlotSwap || r.CounterpartAgreedAt != null),
+                             && (!StaffSelfService.NeedsCounterpart(r.Kind) || r.CounterpartAgreedAt != null)
+                             && preview?.Blocked == null,
                 CanIWithdraw = r.State == ConfigRequestState.Pending && r.RequestedByUserId == me,
             };
         }).ToList();
@@ -843,13 +1114,39 @@ public class StaffSelfServiceController : StaffPerformanceControllerBase
                 await _notifications.CreateInAppNotificationAsync(new CreateNotificationRequest
                 {
                     UserId = counterpart,
-                    Title = "A colleague has asked to swap a lesson",
+                    Title = row.Kind == ConfigRequestKind.LessonCover
+                        ? "A colleague has asked you to cover a lesson"
+                        : "A colleague has asked to swap a lesson",
                     Message = "Open My Workspace to agree or decline.",
                     Type = NotificationType.StaffPerformance,
                     ActionUrl = "/portal?tab=teaching",
                     OrganizationId = organizationId,
                     BranchId = branchId,
+                    EventKey = NotificationEventKeys.StaffLessonCover,
                 });
+            }
+
+            // THE APPOINTED MASTER OF THE VERSION HEARS ABOUT IT, because they are now a decider and a queue
+            // whose decider is never told is a queue that sits. Permission holders are deliberately NOT mailed
+            // one notification per request — that is the digest the reminder ladder owns, and the plan's rule.
+            if (row.TimetableId is { } timetableId)
+            {
+                var managers = await Db.Timetables.AsNoTracking().Where(t => t.Id == timetableId)
+                    .Select(t => t.ManagerUserIds).FirstOrDefaultAsync() ?? Array.Empty<Guid>();
+                foreach (var manager in managers.Where(x => x != me && x != row.CounterpartUserId))
+                {
+                    await _notifications.CreateInAppNotificationAsync(new CreateNotificationRequest
+                    {
+                        UserId = manager,
+                        Title = "A request is waiting on your timetable",
+                        Message = "Open My Workspace to approve or refuse it.",
+                        Type = NotificationType.StaffPerformance,
+                        ActionUrl = "/portal?tab=teaching",
+                        OrganizationId = organizationId,
+                        BranchId = branchId,
+                        EventKey = NotificationEventKeys.StaffLessonCover,
+                    });
+                }
             }
         }
         catch (Exception ex)
@@ -927,7 +1224,7 @@ public class StaffSelfServiceController : StaffPerformanceControllerBase
         var teacherIds = lessons.Select(l => l.TeacherUserId).Distinct().ToList();
         var names = showsNames
             ? await Db.Users.IgnoreQueryFilters().AsNoTracking().Where(u => teacherIds.Contains(u.Id))
-                .ToDictionaryAsync(u => u.Id, u => (u.FirstName + " " + u.LastName).Trim())
+                .ToDictionaryAsync(u => u.Id, u => PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName))
             : new Dictionary<Guid, string>();
 
         var subjectIds = lessons.Select(l => l.SubjectId).Append(assignment.SubjectId ?? Guid.Empty).Distinct().ToList();
@@ -957,6 +1254,13 @@ public class StaffSelfServiceController : StaffPerformanceControllerBase
         var lockKey = $"timetable:{id}";
         return Db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtext({lockKey})::bigint)");
     }
+
+    /// <summary>
+    /// The branch's own time zone. A one-off is dated in the SCHOOL's local day, not the server's — "cover my
+    /// Thursday" is a school's Thursday, and on a UTC server in Kampala the two differ for three hours a day.
+    /// </summary>
+    private async Task<TimeZoneInfo> ZoneAsync(Guid branchId)
+        => AppointmentScheduling.ResolveTimeZone(await Db.Branches.AsNoTracking().Where(b => b.Id == branchId).Select(b => b.Timezone).FirstOrDefaultAsync());
 
     private static bool IsUniqueViolation(DbUpdateException ex)
         => ex.InnerException is Npgsql.PostgresException { SqlState: "23505" };

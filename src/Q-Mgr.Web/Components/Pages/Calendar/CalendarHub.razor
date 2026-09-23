@@ -1,0 +1,89 @@
+@page "/calendar"
+@using QMgr.Web.Services
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+
+@*
+    The school calendar (plan TERM_PROGRAMME_CALENDAR_AND_GATES §9, 2026-09-23). Base product (D8): every
+    signed-in member of a tenant reads it, so there is no module gate and no ModuleRouteMap entry. The
+    Import and Settings tabs need calendar.manage; the Calendar tab needs nothing beyond being signed in.
+
+    The sections have no @page — see CLAUDE.md, "A hub owns the route; its sections own nothing". The hub
+    owns ?tab=; the Calendar section keeps its own view and date in ?view= and ?date=, never ?tab=.
+*@
+
+<QPageTitle Text="Calendar" />
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Calendar<QInfo Text="The school's term: its events and programme, your own meetings and duties, and the national dates for reference." Label="Calendar" /></h1>
+            <p class="subtitle">The term's events, your duties, and the national dates.</p>
+        </div>
+        <div class="header-actions">
+            @* The open section's own buttons land here — see QPageActions. *@
+            <SectionOutlet SectionId="QPageActions.Id" />
+        </div>
+    </div>
+
+    @if (tabs.Count > 1)
+    {
+        <QTabs Tabs="@tabs" @bind-ActiveKey="@hubTab" IdPrefix="cal" AriaLabel="Calendar sections" />
+    }
+
+    @if (hubTab == ImportTab)
+    {
+        <QMgr.Web.Components.Admin.Calendar.ProgrammeImport Embedded="true" />
+    }
+    else if (hubTab == SettingsTab)
+    {
+        <CalendarSettings Embedded="true" />
+    }
+    else if (hubTab == CalendarTab)
+    {
+        <CalendarView Embedded="true" />
+    }
+</div>
+
+@code {
+    private const string CalendarTab = "calendar";
+    private const string ImportTab = "import";
+    private const string SettingsTab = "settings";
+
+    /// <summary>
+    /// Calendar passes an empty anyOf and is always shown — reading the calendar is being on the staff.
+    /// A tenant without calendar.manage therefore sees one tab, and the strip is not drawn for one tab.
+    /// </summary>
+    private static readonly HubTabs.Section[] Sections =
+    {
+        new(new QTab(CalendarTab, "Calendar", "calendar3")),
+        new(new QTab(ImportTab, "Import", "file-earmark-arrow-up"), Permissions.CalendarManage),
+        new(new QTab(SettingsTab, "Settings", "sliders"), Permissions.CalendarManage),
+    };
+
+    private IReadOnlyList<QTab> tabs = Array.Empty<QTab>();
+    private string hubTab = CalendarTab;
+
+    [SupplyParameterFromQuery(Name = "tab")] public string? TabParam { get; set; }
+
+    /// <summary>The last ?tab= this hub acted on — see HubTabs.FollowQuery.</summary>
+    private string? appliedTab;
+
+    protected override async Task OnInitializedAsync()
+    {
+        tabs = await HubTabs.VisibleAsync(PermissionService, null, Sections);
+        if (tabs.Count == 0)
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        hubTab = HubTabs.Resolve(tabs, TabParam);
+        appliedTab = TabParam;
+    }
+
+    protected override void OnParametersSet()
+    {
+        HubTabs.FollowQuery(tabs, TabParam, ref appliedTab, ref hubTab);
+    }
+}

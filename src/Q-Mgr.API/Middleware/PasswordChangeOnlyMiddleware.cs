@@ -40,6 +40,18 @@ public class PasswordChangeOnlyMiddleware
     {
         var path = request.Path.Value?.TrimEnd('/') ?? string.Empty;
         return (HttpMethods.IsPut(request.Method) && path.Equals("/api/v1/profile/password", StringComparison.OrdinalIgnoreCase))
-            || (HttpMethods.IsPost(request.Method) && path.Equals("/api/v1/auth/logout", StringComparison.OrdinalIgnoreCase));
+            || (HttpMethods.IsPost(request.Method) && path.Equals("/api/v1/auth/logout", StringComparison.OrdinalIgnoreCase))
+            // THE RULES THE PAGE IS ABOUT TO BE JUDGED BY (added 2026-09-22, found in production).
+            //
+            // This middleware runs BEFORE authorization, so [AllowAnonymous] on the endpoint counts
+            // for nothing here: the browser is holding a change-only token, the token is attached to
+            // every call this app makes, and the rules fetch was refused 401. The set-password page
+            // swallowed that and fell back to its own default — "At least 12 characters" — which is
+            // exactly the sentence this endpoint was built to stop it printing. The feature was
+            // written, wired and deployed, and could never once have worked.
+            //
+            // Allowing it discloses nothing: the endpoint is anonymous, so a browser with no token
+            // at all can already read it. Refusing it only blinded the one page that needed it.
+            || (HttpMethods.IsGet(request.Method) && path.Equals("/api/v1/security-policy/password-rules", StringComparison.OrdinalIgnoreCase));
     }
 }

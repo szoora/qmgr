@@ -174,15 +174,12 @@
                 <div class="form-group">
                     <QInput TValue="int" @bind-Value="form.TrialDays" Label="Trial length (days)" Type="number" Min="0" Max="365" />
                 </div>
-                <label class="editor-toggle">
-                    <input type="checkbox" checked="@form.ApplyToExistingSubscribers" @onchange="OnApplyToExistingChanged" />
-                    <span>
+                <QCheckbox Value="@form.ApplyToExistingSubscribers" ValueChanged="@OnApplyToExistingChanged" Class="editor-toggle q-checkbox-row--top">
                         <strong>Apply to existing subscribers.</strong> Leave this off and a change
                         reaches new purchases only; everyone already holding the module keeps the
                         price they agreed to. Tick it to move them onto the new price as well —
                         which is also the only way a price cut reaches them.
-                    </span>
-                </label>
+                </QCheckbox>
                 @if (annualIsWorseThanMonthly)
                 {
                     <div class="editor-hint">
@@ -225,18 +222,12 @@
 
             <div class="editor-section">
                 <h5>Availability</h5>
-                <label class="editor-toggle">
-                    <input type="checkbox" checked="@form.IsActive" @onchange="OnActiveChanged" />
-                    <span>
+                <QCheckbox Value="@form.IsActive" ValueChanged="@OnActiveChanged" Class="editor-toggle q-checkbox-row--top">
                         <strong>Live.</strong> Switch off to retire the module: it disappears from the
                         marketplace and the sign-up wizard. Organizations already holding it keep their
                         access.
-                    </span>
-                </label>
-                <label class="editor-toggle">
-                    <input type="checkbox" checked="@form.IsPublic" @onchange="OnPublicChanged" />
-                    <span><strong>Publicly listed.</strong></span>
-                </label>
+                </QCheckbox>
+                <QCheckbox Value="@form.IsPublic" ValueChanged="@OnPublicChanged" Class="editor-toggle"><strong>Publicly listed.</strong></QCheckbox>
             </div>
         }
     </ChildContent>
@@ -400,16 +391,7 @@
         margin-top: 0.5rem;
     }
 
-    .editor-toggle {
-        display: flex;
-        gap: 0.6rem;
-        align-items: flex-start;
-        margin-bottom: 0.75rem;
-        font-size: var(--qm-text-base);
-        line-height: 1.5;
-        color: var(--qm-text-secondary);
-        cursor: pointer;
-    }
+    .editor-toggle { margin-bottom: 0.75rem; }
 
     .editor-toggle strong { color: var(--qm-text-primary); }
 
@@ -473,19 +455,19 @@
         showEditor = true;
     }
 
-    private void OnActiveChanged(ChangeEventArgs e)
+    private void OnActiveChanged(bool on)
     {
-        if (form != null) form.IsActive = e.Value is bool value && value;
+        if (form != null) form.IsActive = on;
     }
 
-    private void OnPublicChanged(ChangeEventArgs e)
+    private void OnPublicChanged(bool on)
     {
-        if (form != null) form.IsPublic = e.Value is bool value && value;
+        if (form != null) form.IsPublic = on;
     }
 
-    private void OnApplyToExistingChanged(ChangeEventArgs e)
+    private void OnApplyToExistingChanged(bool on)
     {
-        if (form != null) form.ApplyToExistingSubscribers = e.Value is bool value && value;
+        if (form != null) form.ApplyToExistingSubscribers = on;
     }
 
     private async Task Save()

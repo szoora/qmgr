@@ -435,9 +435,19 @@ public class NotificationService : INotificationService
 
     public async Task<Notification> CreateInAppNotificationAsync(CreateNotificationRequest request, CancellationToken cancellationToken = default)
     {
+        // EVERY NOTIFICATION NAMES ONE PERSON (2026-09-23). A row with no recipient was read by the
+        // whole tenant and pushed to the whole PLATFORM — a teacher read the school's failed payments,
+        // and so did every other school with a page open. A message several people need goes through
+        // NotifyManyAsync with an audience from NotificationAudience. This is a programming error, not
+        // a runtime state, so it throws rather than quietly dropping the message.
+        if (request.UserId is not { } recipient || recipient == Guid.Empty)
+            throw new ArgumentException(
+                "A notification must name its recipient. Use NotifyManyAsync with NotificationAudience for several people.",
+                nameof(request));
+
         var notification = new Notification
         {
-            UserId = request.UserId,
+            UserId = recipient,
             TokenId = request.TokenId,
             BranchId = request.BranchId,
             OrganizationId = request.OrganizationId,
@@ -457,21 +467,10 @@ public class NotificationService : INotificationService
         _context.Notifications.Add(notification);
         await _context.SaveChangesAsync(cancellationToken);
 
-        // Send real-time notification via SignalR
-        if (request.UserId.HasValue)
-        {
-            await _hubService.SendToUserAsync(request.UserId.Value, notification);
-            var unreadCount = await GetUnreadCountAsync(request.UserId.Value, request.OrganizationId, cancellationToken);
-            await _hubService.NotifyUnreadCountAsync(request.UserId.Value, unreadCount);
-        }
-        else if (request.BranchId.HasValue)
-        {
-            await _hubService.SendToBranchAsync(request.BranchId.Value, notification);
-        }
-        else
-        {
-            await _hubService.SendToAllAsync(notification);
-        }
+        // Real-time: to this person's own group and nobody else's. There is no branch-wide or
+        // platform-wide push for a notification any more; see INotificationHubService.
+        await _hubService.SendToUserAsync(recipient, notification);
+        await PushUnreadCountAsync(recipient, request.OrganizationId, cancellationToken);
 
         // ── Out-of-band channels ────────────────────────────────────────────────────────────
         //
@@ -520,13 +519,9 @@ public class NotificationService : INotificationService
         // person has signed in on, and which handsets those are is a server-side lookup rather than
         // something a caller can be asked to supply. UserDeviceSession is where they live.
         //
-        // An organisation-wide notification (UserId == null) is deliberately NOT pushed. There is no
-        // recipient to resolve devices for, and fanning one out to every handset in the tenant is a
-        // different feature with a different cost — it would also be read on a lock screen by
-        // whoever is holding the phone.
-        if (channels.HasFlag(NotificationChannel.Push) && request.UserId.HasValue)
+        if (channels.HasFlag(NotificationChannel.Push))
         {
-            EnqueuePushDispatch(notification.Id, request.OrganizationId, request.UserId.Value,
+            EnqueuePushDispatch(notification.Id, request.OrganizationId, recipient,
                                 request.Title, request.Message, request.ActionUrl);
             notification.DeliveredVia |= NotificationChannel.Push;
         }
@@ -631,7 +626,9 @@ public class NotificationService : INotificationService
     {
         var query = _context.Notifications
             .Where(n => n.OrganizationId == organizationId)
-            .Where(n => n.UserId == userId || n.UserId == null)
+            // The caller's OWN rows. `|| n.UserId == null` used to be here, and it is the line that let
+            // a teacher read the school's payment failures. Never put it back.
+            .Where(n => n.UserId == userId)
             .Where(n => n.ExpiresAt == null || n.ExpiresAt > DateTime.UtcNow)
             .AsNoTracking();
 
@@ -660,29 +657,28 @@ public class NotificationService : INotificationService
     {
         return await _context.Notifications
             .Where(n => n.OrganizationId == organizationId)
-            .Where(n => (n.UserId == userId || n.UserId == null) && !n.IsRead)
+            .Where(n => n.UserId == userId && !n.IsRead)
             .Where(n => n.ExpiresAt == null || n.ExpiresAt > DateTime.UtcNow)
             .CountAsync(cancellationToken);
     }
 
     public async Task<bool> MarkAsReadAsync(Guid notificationId, Guid callerId, Guid organizationId, CancellationToken cancellationToken = default)
     {
-        var notification = await _context.Notifications.FindAsync(new object[] { notificationId }, cancellationToken);
-        if (notification == null || notification.OrganizationId != organizationId || (notification.UserId.HasValue && notification.UserId != callerId))
-            return false;
+        // Matched on the caller as well as the id, so a row that is not theirs is simply not found —
+        // the same 404 whether it belongs to a colleague or does not exist. A conditional UPDATE
+        // rather than read-then-save: two tabs marking the same row at once cannot overwrite ReadAt.
+        var mine = await _context.Notifications
+            .AnyAsync(n => n.Id == notificationId && n.OrganizationId == organizationId && n.UserId == callerId, cancellationToken);
+        if (!mine) return false;
 
-        if (!notification.IsRead)
-        {
-            notification.IsRead = true;
-            notification.ReadAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync(cancellationToken);
+        var changed = await _context.Notifications
+            .Where(n => n.Id == notificationId && n.UserId == callerId && !n.IsRead)
+            .ExecuteUpdateAsync(u => u
+                .SetProperty(n => n.IsRead, true)
+                .SetProperty(n => n.ReadAt, DateTime.UtcNow), cancellationToken);
 
-            if (notification.UserId.HasValue)
-            {
-                var unreadCount = await GetUnreadCountAsync(notification.UserId.Value, organizationId, cancellationToken);
-                await _hubService.NotifyUnreadCountAsync(notification.UserId.Value, unreadCount);
-            }
-        }
+        if (changed > 0)
+            await PushUnreadCountAsync(callerId, organizationId, cancellationToken);
 
         return true;
     }
@@ -694,7 +690,7 @@ public class NotificationService : INotificationService
     {
         var query = _context.Notifications
             .Where(n => n.OrganizationId == organizationId)
-            .Where(n => (n.UserId == userId || n.UserId == null) && !n.IsRead);
+            .Where(n => n.UserId == userId && !n.IsRead);
 
         if (!string.IsNullOrWhiteSpace(eventKey))
         {
@@ -707,21 +703,53 @@ public class NotificationService : INotificationService
                 .SetProperty(n => n.IsRead, true)
                 .SetProperty(n => n.ReadAt, DateTime.UtcNow), cancellationToken);
 
-        // Recounted rather than assumed zero: with a key, other groups are still unread.
-        var remaining = string.IsNullOrWhiteSpace(eventKey) ? 0 : await GetUnreadCountAsync(userId, organizationId, cancellationToken);
-        await _hubService.NotifyUnreadCountAsync(userId, remaining);
-        return remaining;
+        // Recounted rather than assumed zero: with a key other groups are still unread, and without
+        // one a notification can have landed between the UPDATE and now.
+        return await PushUnreadCountAsync(userId, organizationId, cancellationToken);
     }
 
     public async Task<bool> DeleteNotificationAsync(Guid notificationId, Guid callerId, Guid organizationId, CancellationToken cancellationToken = default)
     {
-        var notification = await _context.Notifications.FindAsync(new object[] { notificationId }, cancellationToken);
-        if (notification == null || notification.OrganizationId != organizationId || (notification.UserId.HasValue && notification.UserId != callerId))
-            return false;
+        var deleted = await _context.Notifications
+            .Where(n => n.Id == notificationId && n.OrganizationId == organizationId && n.UserId == callerId)
+            .ExecuteDeleteAsync(cancellationToken);
+        if (deleted == 0) return false;
 
-        _context.Notifications.Remove(notification);
-        await _context.SaveChangesAsync(cancellationToken);
+        await PushUnreadCountAsync(callerId, organizationId, cancellationToken);
         return true;
+    }
+
+    public async Task<int> NotifyManyAsync(IEnumerable<Guid> recipients, CreateNotificationRequest template, CancellationToken cancellationToken = default)
+    {
+        var sent = 0;
+        foreach (var userId in recipients.Where(id => id != Guid.Empty).Distinct())
+        {
+            // One person failing (a push that throws, a preference row that will not read) must not
+            // stop the rest of the list hearing about it.
+            try
+            {
+                await CreateInAppNotificationAsync(template.For(userId), cancellationToken);
+                sent++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Notification {Title} to {UserId} failed", template.Title, userId);
+            }
+        }
+        return sent;
+    }
+
+    /// <summary>
+    /// Counts and pushes, stamping the count with the moment counting BEGAN. Anything committed
+    /// before then is in it, so a count stamped later is at least as current — which is what lets
+    /// the client keep the newest and drop an older one that arrives late.
+    /// </summary>
+    private async Task<int> PushUnreadCountAsync(Guid userId, Guid organizationId, CancellationToken cancellationToken)
+    {
+        var countedAt = DateTime.UtcNow;
+        var count = await GetUnreadCountAsync(userId, organizationId, cancellationToken);
+        await _hubService.NotifyUnreadCountAsync(userId, count, countedAt);
+        return count;
     }
 
     public async Task CleanupOldNotificationsAsync(int retentionDays, CancellationToken cancellationToken = default)

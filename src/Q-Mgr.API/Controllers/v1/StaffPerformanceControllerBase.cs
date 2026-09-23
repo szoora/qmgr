@@ -103,9 +103,19 @@ public abstract class StaffPerformanceControllerBase : ControllerBase
     // ---- Permissions and visibility ------------------------------------------------------------
 
     /// <summary>
-    /// Permissions are not JWT claims in this app (see PermissionAuthorizationHandler); they are
-    /// resolved by role lookup. Memoised per request because the visibility ceiling is read on
-    /// essentially every action.
+    /// Permissions are not JWT claims in this app (see PermissionAuthorizationHandler); they are resolved by
+    /// lookup. Memoised per request because the visibility ceiling is read on essentially every action.
+    ///
+    /// <para><b>IT MUST GO THROUGH <see cref="PostPermissionService.EffectiveCodesAsync"/>, which is the ONE
+    /// home for the role-plus-posts union.</b> Until 2026-09-22 this queried <c>u.Role.RolePermissions</c>
+    /// directly and so ignored derived post permissions entirely — while the <c>[RequirePermission]</c>
+    /// attribute on the very same endpoint honoured them. So a class teacher's or department head's derived
+    /// access worked or failed depending on which style a given endpoint used, and the teaching reports
+    /// refused a department head outright (403 on `staff/reports/teaching`, found by e2e section 15).
+    /// There are 73 call sites behind this method; a hand-written role query here is that bug again.</para>
+    ///
+    /// <para>The whole SET is fetched once rather than one code at a time: the post lookup costs two queries,
+    /// and paying that per code across 73 call sites would be worse than the bug.</para>
     /// </summary>
     protected async Task<bool> HasPermissionAsync(string code)
     {
@@ -113,12 +123,14 @@ public abstract class StaffPerformanceControllerBase : ControllerBase
         if (_permissionCache.TryGetValue(code, out var cached)) return cached;
 
         var userId = CurrentUserId();
-        var has = userId != Guid.Empty && await Db.Users
-            .Where(u => u.Id == userId && u.IsActive)
-            .SelectMany(u => u.Role.RolePermissions)
-            .AnyAsync(rp => rp.Permission.Code == code);
-        return _permissionCache[code] = has;
+        if (userId == Guid.Empty) return _permissionCache[code] = false;
+
+        _effectiveCodes ??= await PostPermissionService.EffectiveCodesAsync(Db, userId);
+        return _permissionCache[code] = _effectiveCodes.Contains(code);
     }
+
+    /// <summary>The caller's effective set, resolved at most once per request.</summary>
+    private HashSet<string>? _effectiveCodes;
 
     protected Task<bool> CanViewConfidentialAsync() => HasPermissionAsync(Permissions.StaffConfidentialView);
     protected Task<bool> CanViewRestrictedAsync() => HasPermissionAsync(Permissions.StaffRestrictedView);

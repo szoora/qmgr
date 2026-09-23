@@ -103,7 +103,7 @@ public static class EmailTemplates
         // and still reads it at the foot of their own password-reset mail.
         var attribution = who.AttributionRemoved
             ? $"&copy; {DateTime.UtcNow.Year} {WebUtility.HtmlEncode(who.Name)}"
-            : $"&copy; {DateTime.UtcNow.Year} {AppName} &middot; Front Office";
+            : $"&copy; {DateTime.UtcNow.Year} SACC";   // as QCopyright on the web and the app
 
         return $@"<!DOCTYPE html>
 <html>

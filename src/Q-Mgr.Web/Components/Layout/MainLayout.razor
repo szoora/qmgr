@@ -1,3 +1,4 @@
+@using QMgr.Application.Branding
 @inherits LayoutComponentBase
 @implements IAsyncDisposable
 @using System.Text.Json
@@ -45,9 +46,7 @@
             {
                 <img src="/images/icon-512.svg" alt="@(TenantHost?.AppName ?? "Q-Mgr")" class="loading-logo" />
             }
-            <div class="spinner-border loading-spinner mt-3" role="status">
-                <span class="visually-hidden">Loading...</span>
-            </div>
+            <QSpinner Class="loading-spinner mt-3" />
             <p class="loading-text mt-2">Initializing...</p>
         </div>
         <style>
@@ -174,6 +173,19 @@ else
                     </li>
                 }
 
+                @* The school calendar (TERM_PROGRAMME_CALENDAR_AND_GATES §9). Base product (D8): every signed-in
+                   member of a tenant reads it, so there is no module gate and no permission. A platform account
+                   sees it once it has picked an organization's branch, since a calendar belongs to a branch. *@
+                @if (!isSuperAdmin || BranchState.CurrentBranchId != Guid.Empty)
+                {
+                    <li class="nav-item">
+                        <a href="calendar" @onclick="CollapseSidebarOnMobile" class="nav-link @(IsActive("/calendar") ? "active" : "")">
+                            <i class="bi bi-calendar3"></i>
+                            <span>Calendar</span>
+                        </a>
+                    </li>
+                }
+
                 <!-- Queue Management -->
                 @if ((canViewQueue || canManageQueue) && HasModule(ModuleCodes.CoreQueue))
                 {
@@ -230,10 +242,6 @@ else
                             @if (canViewStudents)
                             {
                                 <li><a href="admin/students/roster" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/students/roster") ? "active" : "")"><i class="bi bi-people-fill"></i>Students</a></li>
-                            }
-                            @if (canManageClassTeachers)
-                            {
-                                <li><a href="admin/students/class-teachers" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/students/class-teachers") ? "active" : "")"><i class="bi bi-person-video3"></i>Class Teachers</a></li>
                             }
                             @* Defining the school's welfare taxonomy is an administrator's job, not
                                a form tutor's. This was gated on welfare.view — which every welfare
@@ -463,6 +471,7 @@ else
                             <li><a href="platform/registration-review" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/platform/registration-review") ? "active" : "")"><i class="bi bi-person-badge"></i>Registration Review</a></li>
                             <li><a href="platform/module-catalog" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/platform/module-catalog") ? "active" : "")"><i class="bi bi-grid-3x3-gap"></i>Module Catalog</a></li>
                             <li><a href="platform/payments" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/platform/payments") ? "active" : "")"><i class="bi bi-cash-coin"></i>Payments</a></li>
+                            <li><a href="platform/national-calendar" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/platform/national-calendar") ? "active" : "")"><i class="bi bi-calendar2-range"></i>National Calendar</a></li>
                             <li><a href="admin/platform-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/platform-settings") ? "active" : "")"><i class="bi bi-gear"></i>Platform Settings</a></li>
                             <li><a href="admin/platform-spotify" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/platform-spotify") ? "active" : "")"><i class="bi bi-spotify"></i>Spotify Integration</a></li>
                             <li><a href="admin/docs" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/docs") ? "active" : "")"><i class="bi bi-journal-richtext"></i>Docs Management</a></li>
@@ -495,13 +504,17 @@ else
 
         <!-- Footer -->
         <footer class="qm-footer">
-            @* The SECOND attribution string, and it has to move with the first: a tenant who paid
-               to take "Powered by SACC Software" off their sign-in page and still reads "Q-Mgr" at
-               the foot of every screen afterwards has not got what they bought. Same flag, same
-               server-side resolution — see PoweredBy. *@
-            @* QCopyright is the one home for this line — the shell had two branches of it, five
-               legal pages had a literal with the YEAR TYPED IN, and email had a ninth. The source
-               here is the ORGANISATION rather than the host, for the reason PoweredBy gives. *@
+            @* QCopyright is the ONE home for this line — the shell had two branches of it, five
+               legal pages had a literal with the YEAR TYPED IN, and email had a ninth.
+
+               The attribution has to move with the sign-in page's: a tenant who paid to take our
+               name off there and still reads "Q-Mgr" at the foot of every screen afterwards has not
+               got what they bought. Same flag, same server-side resolution.
+
+               The source HERE is the ORGANISATION rather than the host, and that is the difference
+               from the public pages: most tenants sign in on the platform address, and should not
+               need a domain of their own to get what they paid for. Out there nobody is signed in,
+               so the host is all there is to go on. *@
             <QCopyright Owner="@ShellAppName" Attributed="@shellBranding.AttributionRemoved"
                         Suffix="@(shellBranding.AttributionRemoved ? null : "Q-Mgr Front Office")" />
             <div class="footer-links">
@@ -1290,8 +1303,11 @@ else
     private bool ShowReportsVisitors => canViewReports && canViewVisitors && ModuleAllows("/reports/visitors");
     private bool CanViewReportsSection => ShowReportsOverview || ShowReportsQueue || ShowReportsVisitors;
 
+    // classes.teachers.manage is no longer in this OR: Class Teachers moved into the Staff Directory
+    // hub on 2026-09-22, so a holder of that permission alone has nothing to open in this group and
+    // would be shown an empty Student Welfare section.
     private bool CanViewWelfareSection => HasModule(ModuleCodes.StudentWelfare)
-        && (canViewStudents || canManageClassTeachers || canManageWelfareCategories || canViewWelfare || canViewWelfareReports);
+        && (canViewStudents || canManageWelfareCategories || canViewWelfare || canViewWelfareReports);
 
     private async Task ConnectToNotificationHub(Guid userId)
     {

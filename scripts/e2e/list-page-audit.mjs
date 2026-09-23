@@ -78,15 +78,21 @@ const OUT_OF_SCOPE = {
   'Admin/Staff/StaffStructure.razor': 'departments and the reporting tree of one branch',
   'Admin/ClassTeachers.razor': "one row per CLASS, so a school's thirty; the coverage warnings above it are the way in",
   'Pages/Portal/Portal.razor': "one person's own workspace, bounded by their own record",
+  'Pages/Calendar/CalendarView.razor': 'a MONTH GRID and a term agenda, bounded by the period and navigated rather than scrolled; category chips and a search filter it, and an event is edited one at a time',
+  'Pages/Calendar/CalendarSettings.razor': "a settings form: the school's own calendar categories, about eight",
+  'Admin/Calendar/ProgrammeImport.razor': "an import WIZARD over one term's documents: its tables are a preview of what is about to be written, bounded by the term, and the day-by-day agenda already steps with 'Show more days'; the import history grows by a few jobs a term. Paging a preview would hide the rows somebody is being asked to confirm (ruled out 2026-09-23, when the scale detector stopped accepting .Take)",
+  'Pages/GetApp.razor': 'the mobile app download page; its one loop is the earlier releases, a handful, each a download link rather than a record',
+  'Pages/Platform/NationalCalendar.razor': 'a year of national dates — three terms, the holidays and UNEB — edited in place; year chips and a search filter it',
 };
 
 /** Pages that have been through the sweep. `waive` = faults that are decisions, with the reason. */
 const DONE = {
   'Admin/Staff/StaffRegister.razor': { waive: [], why: 'the page the sweep came from' },
-  'Admin/StudentRoster.razor': { waive: [], why: 'already had bulk, search and paging before the sweep — the control that showed the detector was measuring the right thing' },
+  'Admin/StudentRoster.razor': { waive: [], why: 'the page this detector got WRONG: it passed on s.Flags.Take(3) while drawing every student (1,711 at Maryhill) with no paging. It fails scale until the roster rework (plan STUDENT_ROSTER_AND_LIST_STANDARD §2) puts it on QPager, and must hold at zero after' },
   'Admin/VisitorAuditLog.razor': { waive: ['bulk'], why: 'a deletion log is read-only; a selection would have nothing to apply' },
   'Admin/Staff/StaffDirectory.razor': { waive: ['bulk'], why: 'role, permission and deactivation changes live in Users & Roles by decision (2026-09-19); the directory is deliberately narrower' },
   'Admin/Onboarding/JoinRequests.razor': { waive: [], why: 'bulk approve applies one role and branch to the ticked people and names any the guard refuses' },
+  'Admin/Onboarding/StaffOnboardingPage.razor': { waive: [], why: 'one list under QBulkBar - the chips pick expired, not signed in or not acknowledged, and re-issue applies to the ticked (2026-09-23)' },
   'Admin/WelfareOpenActions.razor': { waive: ['bulk'], why: 'closing a welfare follow-up is a decision per child with its own record; a bulk resolve would be the sweep inventing a safeguarding action' },
   'Admin/ExpectedVisitors.razor': { waive: ['bulk'], why: 'the action here is checking ONE person in at the desk' },
   'Admin/Staff/StaffNotices.razor': { waive: ['bulk'], why: 'a notice is written, published and retired one at a time; the acknowledgement work is inside a notice' },
@@ -136,7 +142,11 @@ for (const file of files) {
 
   const width = /max-width:\s*\d+px/.test(s) && /margin:\s*0 auto/.test(s);
   const bulk = !/QBulkBar[\s\S]{0,600}ShowSelection="@?true|QBulkBar[\s\S]{0,600}ShowSelection="@\w|QBatchDialog|ApplyToSelected|selectedIds|selected\.(Add|Contains|Count)/.test(s);
-  const scale = !/<Virtualize|QPager|QTimelinePaging|pageSize|PageSize|Take\(/.test(s);
+  // Only the three real mechanisms count (plan STUDENT_ROSTER_AND_LIST_STANDARD §4). It used to accept any
+  // `pageSize`, `PageSize` or `.Take(`, and the student roster passed on `s.Flags.Take(3)` — three chips in
+  // a row — while drawing all 1,711 students. A detector that accepts a word near the right idea is how
+  // that hid.
+  const scale = !/<QPager\b|<Virtualize\b|QTimelinePaging/.test(s);
   const search = !/QBulkBar|QFilterBar|placeholder="Search|Placeholder="Search|searchTerm|search\b/i.test(s);
   // A CARD-PER-ITEM grid, and only that. Any auto-fit grid looks alike in CSS — a row of stat
   // tiles, a form grid, an hours editor, a colour palette — so the class has to be shown to be

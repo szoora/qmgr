@@ -65,6 +65,16 @@ public interface IStudentApiService
     Task<ClassColorSettingsDto?> UpdateClassColorsAsync(Guid branchId, ClassColorSettingsDto request);
 
     Task<PrintLetterheadDto?> GetPrintLetterheadAsync(Guid branchId);
+
+    /// <summary>
+    /// One Achievement or Behaviour record for a group of students (POST …/welfare-records/bulk). THROWS with the
+    /// server's own message on any refusal — a scope refusal, the 200 cap, a welfare concern, a late entry — so the
+    /// dialog can show it. <paramref name="acknowledgeLateEntry"/> is the same confirmation the single create takes.
+    /// </summary>
+    Task<BulkWelfareRecordResultDto> BulkCreateWelfareRecordsAsync(Guid branchId, BulkWelfareRecordRequest request, bool acknowledgeLateEntry = false);
+
+    /// <summary>"Tidy names out of capitals" (POST …/students/tidy-names). Preview writes nothing. Throws with the server's message.</summary>
+    Task<TidyStudentNamesResultDto> TidyStudentNamesAsync(Guid branchId, TidyStudentNamesRequest request);
 }
 
 /// <summary>A downloaded SAR export — the JSON bytes plus the server-suggested filename (from Content-Disposition), so the browser download keeps the "student-{code}-data-export.json" name the API chose.</summary>
@@ -313,6 +323,21 @@ public class StudentApiService : IStudentApiService
         var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/students/import-jobs/precheck", request, _jsonOptions);
         if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
         return (await response.Content.ReadFromJsonAsync<RosterImportPrecheckDto>(_jsonOptions))!;
+    }
+
+    public async Task<BulkWelfareRecordResultDto> BulkCreateWelfareRecordsAsync(Guid branchId, BulkWelfareRecordRequest request, bool acknowledgeLateEntry = false)
+    {
+        var url = $"api/v1/branches/{branchId}/welfare-records/bulk" + (acknowledgeLateEntry ? "?acknowledgeLateEntry=true" : "");
+        var response = await _httpClient.PostAsJsonAsync(url, request, _jsonOptions);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return (await response.Content.ReadFromJsonAsync<BulkWelfareRecordResultDto>(_jsonOptions))!;
+    }
+
+    public async Task<TidyStudentNamesResultDto> TidyStudentNamesAsync(Guid branchId, TidyStudentNamesRequest request)
+    {
+        var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/students/tidy-names", request, _jsonOptions);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return (await response.Content.ReadFromJsonAsync<TidyStudentNamesResultDto>(_jsonOptions))!;
     }
 
     public async Task<RosterImportJobDto> StartWelfareImportAsync(Guid branchId, StartWelfareImportRequest request)

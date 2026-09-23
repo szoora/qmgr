@@ -18,15 +18,36 @@ import path from 'node:path';
 
 const WEB = process.env.WEB ?? 'http://127.0.0.1:5003';
 const API = process.env.API ?? 'http://127.0.0.1:5001';
-const CDP = 'http://127.0.0.1:9333';
+// CDP_PORT IS HONOURED HERE TOO, not only inside cdp.mjs (fixed 2026-09-22). That file documents
+// "set CDP_PORT to drive a HEADED Chrome instead — same suites, same assertions, visible on screen,
+// which is how a run is demonstrated" — and every suite obeyed it while THIS runner's readiness check
+// stayed hardcoded on 9333. So the documented way to watch a run could not be reached through the one
+// command that runs everything: it refused at the preflight, naming a headless Chrome nobody had asked
+// for. The same shape as a suite nothing calls.
+const CDP_PORT = process.env.CDP_PORT ?? '9333';
+const CDP = `http://127.0.0.1:${CDP_PORT}`;
+const HEADED = CDP_PORT !== '9333';
 
 // Pass/fail. Each prints "N passed, M failed" and exits non-zero on a failure.
 const SUITES = [
   'action-location', 'billing-hub', 'branding-live', 'daterange-check', 'density-and-staff', 'empty-state-check',
-  'getapp-page', 'hub-nav', 'import-classes', 'import-reimport', 'import-wizard', 'list-sweep', 'localization', 'minutes-ui', 'mobile-nav', 'mobile-readiness', 'notification-bell', 'payments-ui', 'portal-tabs', 'profile-photo', 'register-and-duty-sheet',
+  'getapp-page', 'hub-nav', 'import-classes', 'import-reimport', 'import-wizard', 'list-sweep', 'localization', 'minutes-ui', 'mobile-nav', 'mobile-readiness', 'notification-bell', 'onboarding-status', 'controls-and-names', 'payments-ui', 'portal-tabs', 'profile-photo', 'register-and-duty-sheet',
   'registration-doors', 'roles-and-branch-ui', 'rooms-ui', 'select-verify', 'staff-bulk', 'staff-hub',   'staff-nav-hubs', 'timetable-print', 'timetable-views', 'type-audit', 'type-sweep-all', 'uniform-check',
   'white-label-ui',
 ];
+// The school calendar (TERM_PROGRAMME_CALENDAR_AND_GATES §9), wired in the same commit that creates it.
+SUITES.push('calendar-ui');
+// Gates at visitor check-in (TERM_PROGRAMME_CALENDAR_AND_GATES §10), wired in the same commit that creates it.
+SUITES.push('visitor-gates');
+// The term programme import (TERM_PROGRAMME_CALENDAR_AND_GATES §4-§8), wired in the same commit that creates it.
+// It SKIPS without E2E_DOCS_DIR (the school's documents are never in this repository).
+SUITES.push('programme-import');
+// The pager's page size, first/last, All and a remembered size (STUDENT_ROSTER_AND_LIST_STANDARD §1), wired in the same commit.
+SUITES.push('pager');
+// The student roster: filters in the address, page size and All, the bulk bar (STUDENT_ROSTER_AND_LIST_STANDARD §2), wired in the same commit that creates it.
+SUITES.push('student-roster');
+// Logging one record for a group of staff from the Staff Directory (the API half is section 33), wired in the same commit that creates it.
+SUITES.push('staff-bulk-log');
 
 // Measurement, not assertion: density-check runs an A/B in one page load, furniture-check tallies
 // the space a page spends before any data. Neither has a pass state, so failing the run on one
@@ -47,9 +68,12 @@ async function up(url, what, hint) {
   return false;
 }
 
-const ok = (await up(`${CDP}/json/version`, 'Headless Chrome',
-    '"/c/Program Files/Google/Chrome/Application/chrome.exe" --headless=new --remote-debugging-port=9333 \\n' +
-    '    --user-data-dir="$(cygpath -w "$TEMP/cdp/profile")" --no-first-run about:blank &'))
+const ok = (await up(`${CDP}/json/version`, HEADED ? `Chrome on CDP port ${CDP_PORT}` : 'Headless Chrome',
+    HEADED
+      ? `"/c/Program Files/Google/Chrome/Application/chrome.exe" --remote-debugging-port=${CDP_PORT} \\\n` +
+        '    --user-data-dir="$(cygpath -w "$TEMP/cdp/headed")" --no-first-run about:blank &   # no --headless: visible'
+      : '"/c/Program Files/Google/Chrome/Application/chrome.exe" --headless=new --remote-debugging-port=9333 \\n' +
+        '    --user-data-dir="$(cygpath -w "$TEMP/cdp/profile")" --no-first-run about:blank &'))
   & (await up(`${WEB}/login`, 'Q-Mgr.Web',
     'ApiBaseUrl="http://127.0.0.1:5001" dotnet run --project src/Q-Mgr.Web/Q-Mgr.Web.csproj --urls "http://127.0.0.1:5003" --no-build'))
   & (await up(`${API}/api/v1/health`, 'Q-Mgr.API',

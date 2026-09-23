@@ -1,0 +1,1310 @@
+@* No @page: the Import SECTION of the Calendar hub at /calendar?tab=import. *@
+@using System.Globalization
+@using System.Text.Json
+@using QMgr.Application.DTOs
+@using QMgr.Application.Import.Documents
+@using QMgr.Application.Import.Programme
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@inherits BranchAwareComponentBase
+@inject IProgrammeImportApiService ImportApi
+@inject IJSRuntime JS
+@inject IToastService Toast
+
+@*
+    The term programme import (plan TERM_PROGRAMME_CALENDAR_AND_GATES §4–§8). A school's own Word, PDF and Excel
+    documents — the activities of the term, the beginning-of-term programme, the schedule of meetings, the staff
+    duty rota and the administrators' weekly rota — become calendar events, staff meetings with registers and rota
+    slots, in five steps: choose the files, see how each table was read, answer what must be decided, check with
+    the server, and confirm once.
+
+    Everything up to the last press happens here. The readers and parsers are the Shared ones (one home each);
+    the SERVER re-checks every row it is sent and is the only thing that writes. The page refuses first what the
+    server would refuse — a meeting with no time, a rota row with nobody matched, a row with no date — so the one
+    confirmation never comes back as a wall of refusals.
+*@
+
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1>Import the term programme</h1>
+    </Title>
+    <Actions>
+        @if (stage != Stage.Choose && stage != Stage.Done)
+        {
+            <QButton Text="Start again" Icon="arrow-counterclockwise" Variant="ghost" OnClick="@Reset" id="pi-restart" />
+        }
+        <QButton Text="Import history" Icon="clock-history" Variant="secondary" OnClick="@OpenHistoryAsync" Disabled="@(branchId == Guid.Empty)" id="pi-history" />
+    </Actions>
+</QPageActions>
+
+@if (branchId == Guid.Empty)
+{
+    <QEmptyState Icon="building" Title="No branch selected" Text="Choose a branch from the header first." />
+}
+else if (loadError != null)
+{
+    <QEmptyState Icon="exclamation-triangle" Title="Import not available" Text="@loadError" />
+}
+else if (ctx == null)
+{
+    <div class="pi-loading"><QSpinner Size="lg" /><span>Loading the staff list...</span></div>
+}
+else
+{
+    <ol class="pi-steps" aria-label="Import steps">
+        <li class="@StepClass(Stage.Choose)"><span>1</span> Choose files</li>
+        <li class="@StepClass(Stage.Understand)"><span>2</span> How they were read</li>
+        <li class="@StepClass(Stage.Check)"><span>3</span> Check</li>
+        <li class="@StepClass(Stage.Confirm)"><span>4</span> Confirm</li>
+        <li class="@StepClass(Stage.Done)"><span>5</span> Done</li>
+    </ol>
+
+    @if (!ctx.CanImportDuties && ctx.DutiesRefusal != null)
+    {
+        <p class="pi-note" id="pi-duties-refusal"><QIcon Name="info-circle" /> <span>@ctx.DutiesRefusal</span></p>
+    }
+
+    @* ---------------- 1. Choose files ---------------- *@
+    @if (stage == Stage.Choose)
+    {
+        <QCard Title="Choose the documents" Icon="file-earmark-arrow-up"
+               Hint="Choose every document at once, so the checks can compare them: a date two documents disagree on, the same event in both, a person written two ways.">
+            <label class="pi-drop" for="@InputId">
+                <QIcon Name="files" />
+                <span class="pi-drop-main">Choose the term's documents</span>
+                <span class="pi-drop-sub">.docx, .doc, text .pdf, .xlsx, .xls or .csv — read here; nothing is saved until the last step</span>
+            </label>
+            <InputFile id="@InputId" OnChange="OnFilesChosen" multiple accept=".docx,.doc,.pdf,.xlsx,.xls,.csv" class="pi-file" />
+            @if (reading)
+            {
+                <div class="pi-loading"><QSpinner Size="sm" /><span>Reading @readingName...</span></div>
+            }
+        </QCard>
+    }
+
+    @* ---------------- 2. How each table was read ---------------- *@
+    @if (stage == Stage.Understand)
+    {
+        @foreach (var file in files)
+        {
+            <QCard Class="pi-file-card" Title="@file.FileName" Icon="@FileIcon(file)" Subtitle="@FileSubtitle(file)">
+                @if (file.Refusal != null)
+                {
+                    <p class="pi-refusal" role="alert">@file.Refusal</p>
+                }
+                else if (file.Tables.Count == 0)
+                {
+                    <p class="pi-refusal">No table was found in this document.</p>
+                }
+                else
+                {
+                    @foreach (var table in file.Tables)
+                    {
+                        <div class="pi-table" data-file="@file.FileName" data-kind="@table.Kind">
+                            <div class="pi-table-head">
+                                <strong>Table @(table.TableIndex + 1)</strong>
+                                <span class="pi-muted">@table.DataRows rows</span>
+                                <div class="pi-kind">
+                                    <QSelect TValue="ProgrammeTableKind" TItem="KindOption" Items="@KindOptions" Value="@table.Kind"
+                                             ValueChanged="@(k => OnKindChangedAsync(file, table, k))" ValueSelector="@(o => o.Kind)" TextSelector="@(o => o.Label)" />
+                                </div>
+                                <QChip Text="@($"{Math.Round(table.Confidence * 100)}% sure")" Variant="@(table.Confidence >= 0.75 ? "success" : table.Confidence >= 0.5 ? "warning" : "danger")" Size="sm" />
+                            </div>
+                            <ul class="pi-reasons">
+                                @foreach (var reason in table.Reasons) { <li>@reason</li> }
+                            </ul>
+                            @if (table.HeaderRow >= 0 && table.Kind is not (ProgrammeTableKind.Ignore or ProgrammeTableKind.Unknown))
+                            {
+                                <div class="pi-columns">
+                                    @for (var c = 0; c < table.Headers.Count; c++)
+                                    {
+                                        var col = c;
+                                        if (string.IsNullOrWhiteSpace(table.Headers[col])) { continue; }
+                                        <div class="pi-column">
+                                            <span class="pi-column-name">@table.Headers[col]</span>
+                                            <QSelect TValue="ProgrammeColumnRole" TItem="RoleOption" Items="@RoleOptions" Value="@table.Roles[col]"
+                                                     ValueChanged="@(r => OnRoleChangedAsync(file, table, col, r))" ValueSelector="@(o => o.Role)" TextSelector="@(o => o.Label)" />
+                                        </div>
+                                    }
+                                </div>
+                                <p class="pi-muted">@TableSummary(file, table)</p>
+                            }
+                        </div>
+                    }
+                    @if (file.Notes.Count > 0)
+                    {
+                        <ul class="pi-reasons">@foreach (var n in file.Notes) { <li>@n</li> }</ul>
+                    }
+                }
+            </QCard>
+        }
+        <div class="form-actions">
+            <QButton Text="Back" Variant="ghost" OnClick="@Reset" />
+            <QButton Text="Continue" Icon="arrow-right" Variant="primary" OnClick="@GoToCheck" Disabled="@(!files.Any(f => f.Candidates.Count > 0))" id="pi-continue" />
+        </div>
+    }
+
+    @* ---------------- 3. Check ---------------- *@
+    @if (stage == Stage.Check && checks != null)
+    {
+        <QStatRow>
+            <QStatTile Label="Events" Value="@EventRows().Count().ToString(CultureInfo.InvariantCulture)" Icon="calendar-event" />
+            <QStatTile Label="Meetings" Value="@MeetingRows().Count().ToString(CultureInfo.InvariantCulture)" Icon="people" />
+            <QStatTile Label="Rota slots" Value="@RotaRows().Count().ToString(CultureInfo.InvariantCulture)" Icon="shield-check" />
+            <QStatTile Label="Must decide" Value="@OpenMustDecide.ToString(CultureInfo.InvariantCulture)" Icon="exclamation-diamond" Variant="@(OpenMustDecide > 0 ? "warning" : "default")" />
+        </QStatRow>
+
+        <QCard Title="Must decide" Icon="exclamation-diamond" Class="pi-section" id="pi-must-decide"
+               Hint="Nothing is imported until each of these has an answer. Every answer is yours; the page never picks.">
+            @if (OpenMustDecide == 0)
+            {
+                <p class="pi-muted">Nothing left to decide.</p>
+            }
+            <ul class="pi-issues">
+                @foreach (var q in personQuestions.Where(q => !q.Answered))
+                {
+                    <li class="pi-issue" data-kind="NameQuestion" data-person="@q.Written">
+                        <div class="pi-issue-text"><strong>Who is "@q.Written"?</strong> <span>@q.Match.Reason (@q.Slots @(q.Slots == 1 ? "slot" : "slots"))</span></div>
+                        <div class="pi-issue-actions">
+                            <QSelect TValue="Guid" TItem="StaffCandidate" Items="@PeopleFor(q)" Value="@q.Chosen" Placeholder="Choose the person" Sorted="false"
+                                     ValueChanged="@(id => q.Chosen = id)" ValueSelector="@(p => p.UserId)" TextSelector="@(p => p.FullName)" />
+                            <QButton Text="Confirm" Size="sm" Variant="primary" Disabled="@(q.Chosen == Guid.Empty)" OnClick="@(() => AnswerPerson(q))" />
+                            <QButton Text="Leave out" Size="sm" Variant="ghost" OnClick="@(() => SkipPerson(q))" />
+                        </div>
+                    </li>
+                }
+                @foreach (var issue in checks.MustDecide.Where(i => !i.Resolved))
+                {
+                    <li class="pi-issue" data-kind="@issue.Kind" data-date="@(issue.Date?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))">
+                        <div class="pi-issue-text">@issue.Message</div>
+                        <div class="pi-issue-actions">
+                            @switch (issue.Kind)
+                            {
+                                case ProgrammeIssueKind.Conflict:
+                                case ProgrammeIssueKind.WeekdayMismatch:
+                                    @foreach (var option in issue.Options)
+                                    {
+                                        var d = option;
+                                        <QButton Text="@($"Use {QDateFormat.D(d)}")" Size="sm" Variant="secondary" OnClick="@(() => ChooseDate(issue, d))" />
+                                    }
+                                    break;
+                                case ProgrammeIssueKind.RotaGap:
+                                    @if (issue.SuggestTo is { } to && issue.SuggestCandidateId != null)
+                                    {
+                                        <QButton Text="@($"Use {to.ToString("dd/MM", CultureInfo.InvariantCulture)}")" Size="sm" Variant="primary" OnClick="@(() => ApplySuggestion(issue))" Class="pi-use-suggestion" />
+                                    }
+                                    <QSelect TValue="Guid" TItem="StaffCandidate" Items="@ctx.People" Value="@Guid.Empty" Placeholder="Put somebody on" Sorted="true"
+                                             ValueChanged="@(id => FillGap(issue, id))" ValueSelector="@(p => p.UserId)" TextSelector="@(p => p.FullName)" />
+                                    <QButton Text="Leave the gap" Size="sm" Variant="ghost" OnClick="@(() => Acknowledge(issue))" />
+                                    break;
+                                case ProgrammeIssueKind.Undated:
+                                    <QDatePicker Value="@((DateTime?)null)" ValueChanged="@(v => DateUndated(issue, v))" Placeholder="Choose the date" />
+                                    <QButton Text="Leave it out" Size="sm" Variant="ghost" OnClick="@(() => LeaveOut(issue))" />
+                                    break;
+                                case ProgrammeIssueKind.NoTime:
+                                    <QButton Text="Import as an event" Size="sm" Variant="secondary" OnClick="@(() => MeetingAsEvent(issue))" />
+                                    break;
+                                default:
+                                    <QButton Text="Understood" Size="sm" Variant="ghost" OnClick="@(() => Acknowledge(issue))" />
+                                    break;
+                            }
+                        </div>
+                    </li>
+                }
+            </ul>
+        </QCard>
+
+        @if (checks.Suggestions.Any(s => !s.Resolved))
+        {
+            <QCard Title="Suggestions" Icon="lightbulb" Class="pi-section" id="pi-suggestions" Hint="A one-edit change that fixes a problem and creates none. Offered, never applied without a press.">
+                <ul class="pi-issues">
+                    @foreach (var s in checks.Suggestions.Where(s => !s.Resolved))
+                    {
+                        <li class="pi-issue" data-kind="DateSuggestion">
+                            <div class="pi-issue-text">@s.Message</div>
+                            <div class="pi-issue-actions">
+                                <QButton Text="@($"Use {s.SuggestTo?.ToString("dd/MM", CultureInfo.InvariantCulture)}")" Size="sm" Variant="primary" OnClick="@(() => ApplySuggestion(s))" />
+                            </div>
+                        </li>
+                    }
+                </ul>
+            </QCard>
+        }
+
+        @if (MeetingRowsAll().Any())
+        {
+            <QCard Title="Who each meeting expects" Icon="people" Class="pi-section" id="pi-meetings"
+                   Hint="A meeting with a register expects named people. One whose attendance cannot be read from its title is imported as a calendar event until you say who is expected.">
+                <table class="data-table q-stack">
+                    <thead><tr><th>Meeting</th><th>When</th><th>Expected</th></tr></thead>
+                    <tbody>
+                        @foreach (var m in MeetingRowsAll())
+                        {
+                            <tr>
+                                <td>@m.Title</td>
+                                <td>@When(m)</td>
+                                <td>
+                                    <div class="pi-attendance">
+                                        <QSelect TValue="MeetingAttendance" TItem="AttendanceOption" Items="@AttendanceOptions(m)" Value="@m.Attendance"
+                                                 ValueChanged="@(a => SetAttendance(m, a))" ValueSelector="@(o => o.Value)" TextSelector="@(o => o.Label)" Disabled="@(!ctx.CanImportDuties)" />
+                                        @if (m.Attendance == MeetingAttendance.RoleHolders)
+                                        {
+                                            <QSelect TValue="string" TItem="string" Items="@roles" Value="@m.AttendanceRole"
+                                                     ValueChanged="@(r => { m.AttendanceRole = r; })" ValueSelector="@(r => r)" TextSelector="@(r => r)" />
+                                            <span class="pi-muted">@(ExpectedFor(m)?.Count ?? 0) people</span>
+                                        }
+                                    </div>
+                                    @if (ExpectsNobody(m))
+                                    {
+                                        @* Refused at submit before 2026-09-23 while the page said every question was answered; it is a
+                                           question, so it is asked here and counts against "Check with the server". *@
+                                        <div class="pi-attendance-empty" role="alert">
+                                            <span>Nobody on the staff list matches this. Choose who is expected, or:</span>
+                                            <QButton Text="Import as an event only" Size="sm" Variant="secondary"
+                                                     OnClick="@(() => SetAttendance(m, MeetingAttendance.EventOnly))" />
+                                        </div>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </QCard>
+        }
+
+        @if (checks.Warnings.Any() || checks.Merged.Any())
+        {
+            <QCard Title="Warnings and merges" Icon="info-circle" Class="pi-section" id="pi-warnings">
+                <ul class="pi-issues pi-issues--plain">
+                    @foreach (var w in checks.Warnings) { <li data-kind="@w.Kind">@w.Message</li> }
+                    @foreach (var m in checks.Merged) { <li data-kind="Merged"><QChip Text="Merged" Size="sm" Variant="info" /> @m.Message</li> }
+                </ul>
+            </QCard>
+        }
+
+        @if (termFromDocs != null)
+        {
+            <QCard Title="Term dates" Icon="calendar-range" Class="pi-section" Hint="The term the documents describe. Setting it here changes the school's term dates for everything that uses them — scoring periods included.">
+                <QCheckbox @bind-Value="@setTerm" Label="@TermLabel()" />
+            </QCard>
+        }
+
+        <div class="pi-previews">
+            <QCard Title="The term, day by day" Icon="calendar3" Class="pi-section" id="pi-agenda">
+                @if (!AgendaDays().Any())
+                {
+                    <p class="pi-muted">Nothing dated yet.</p>
+                }
+                @foreach (var day in AgendaDays().Take(agendaDays))
+                {
+                    <div class="pi-day">
+                        <div class="pi-day-date">@QDateFormat.D(day.Key)</div>
+                        <ul>
+                            @foreach (var c in day.OrderBy(c => c.StartTime ?? ""))
+                            {
+                                <li><span class="pi-time">@(c.StartTime ?? "All day")</span> @c.Title <QChip Text="@KindLabel(c)" Size="sm" Variant="@(c.Kind == ProgrammeRowKind.Meeting && c.Attendance != MeetingAttendance.EventOnly ? "primary" : "muted")" /></li>
+                            }
+                        </ul>
+                    </div>
+                }
+                @if (AgendaDays().Count() > agendaDays)
+                {
+                    <QButton Text="Show more days" Variant="ghost" Size="sm" OnClick="@(() => agendaDays += 30)" />
+                }
+            </QCard>
+
+            <QCard Title="Each person's duties" Icon="person-lines-fill" Class="pi-section" id="pi-per-person">
+                @if (!PerPerson().Any())
+                {
+                    <p class="pi-muted">No rota in these documents.</p>
+                }
+                <ul class="pi-people">
+                    @foreach (var p in PerPerson())
+                    {
+                        <li data-person="@p.Name"><strong>@p.Name</strong> <span>@p.Text</span></li>
+                    }
+                </ul>
+            </QCard>
+        </div>
+
+        <div class="form-actions">
+            <QButton Text="Back" Variant="ghost" OnClick="@(() => stage = Stage.Understand)" />
+            <QButton Text="Check with the server" Icon="arrow-right" Variant="primary" Loading="@working" Disabled="@(OpenMustDecide > 0 || working)" OnClick="@PreviewAsync" id="pi-preview" />
+            @if (OpenMustDecide > 0)
+            {
+                <span class="pi-muted">Answer the @OpenMustDecide @(OpenMustDecide == 1 ? "item" : "items") above first.</span>
+            }
+        </div>
+    }
+
+    @* ---------------- 4. Confirm ---------------- *@
+    @if (stage == Stage.Confirm && preview != null)
+    {
+        <QCard Title="Confirm" Icon="check2-square" Class="pi-section" id="pi-confirm">
+            <p class="pi-sentence" id="pi-confirm-sentence">@ConfirmSentence(preview)</p>
+            @if (preview.PeopleNotified > 0)
+            {
+                @* A school may load next term's programme weeks ahead and announce it later; the rota and the
+                   reminders work either way — this only decides the one message each person gets now. *@
+                <QSwitch @bind-Value="notifyPeople" Label="Tell each person their dates now" Class="pi-notify"
+                         Hint="One message per person listing all their new duties. Off: nobody is told until you tell them; reminders still run." />
+            }
+            @if (preview.Rows.Any(r => r.Outcome == ProgrammeRowOutcome.Refused))
+            {
+                <h3 class="pi-sub">Refused by the server</h3>
+                <ul class="pi-issues pi-issues--plain">
+                    @foreach (var r in preview.Rows.Where(r => r.Outcome == ProgrammeRowOutcome.Refused)) { <li>@RowLabel(r): @r.Reason</li> }
+                </ul>
+            }
+            @if (preview.Rows.Any(r => r.Outcome == ProgrammeRowOutcome.Update))
+            {
+                <h3 class="pi-sub">Will change</h3>
+                <ul class="pi-issues pi-issues--plain">
+                    @foreach (var r in preview.Rows.Where(r => r.Outcome == ProgrammeRowOutcome.Update)) { <li>@RowLabel(r): @string.Join(", ", r.Changes)</li> }
+                </ul>
+            }
+            @if (preview.Rows.Any(r => r.Warnings.Count > 0))
+            {
+                <h3 class="pi-sub">Warnings</h3>
+                <ul class="pi-issues pi-issues--plain">
+                    @foreach (var r in preview.Rows.Where(r => r.Warnings.Count > 0).Take(80)) { <li>@RowLabel(r): @string.Join(" ", r.Warnings)</li> }
+                </ul>
+            }
+            <div class="form-actions">
+                <QButton Text="Back" Variant="ghost" OnClick="@(() => stage = Stage.Check)" Disabled="@working" />
+                <QButton Text="@ImportButtonText" Icon="check-lg" Variant="primary" Loading="@working" Disabled="@(working || NothingToWrite(preview))" OnClick="@CommitAsync" id="pi-commit" />
+            </div>
+        </QCard>
+    }
+
+    @* ---------------- 5. Done ---------------- *@
+    @if (stage == Stage.Done && committed != null)
+    {
+        <QCard Title="Imported" Icon="check-circle" Class="pi-section" id="pi-done">
+            <p class="pi-sentence">@DoneSentence(committed)</p>
+            <div class="form-actions">
+                <QButton Text="Open the calendar" Icon="calendar3" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/calendar?tab=calendar"))" />
+                <QButton Text="Open the rota" Icon="calendar-week" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/staff/duties?tab=rota"))" />
+                @if (committed.JobId is { } jobId)
+                {
+                    <QButton Text="Undo this import" Icon="arrow-counterclockwise" Variant="danger" OnClick="@(() => AskUndo(jobId))" id="pi-undo" />
+                }
+                <QButton Text="Import more" Variant="ghost" OnClick="@Reset" />
+            </div>
+        </QCard>
+    }
+}
+
+<QModal Visible="@historyOpen" VisibleChanged="@(v => historyOpen = v)" Title="Import history" Icon="clock-history" Size="lg">
+    @if (jobs == null)
+    {
+        <div class="pi-loading"><QSpinner Size="sm" /><span>Loading...</span></div>
+    }
+    else if (jobs.Count == 0)
+    {
+        <QEmptyState Icon="clock-history" Title="No imports yet" />
+    }
+    else
+    {
+        <table class="data-table q-stack" id="pi-jobs">
+            <thead><tr><th>When</th><th>Files</th><th class="num">Events</th><th class="num">Meetings</th><th class="num">Rota</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var j in jobs)
+                {
+                    <tr class="@(j.Undone ? "row-muted" : "")">
+                        <td>@QDateFormat.DT(j.CreatedAt.ToLocalTime())<div class="cell-sub">@j.CreatedByName</div></td>
+                        <td>@string.Join(", ", j.SourceFiles)</td>
+                        <td class="num">@j.EventsCreated</td>
+                        <td class="num">@j.MeetingsCreated</td>
+                        <td class="num">@j.RotaSlotsCreated</td>
+                        <td class="row-actions">
+                            @if (j.Undone)
+                            {
+                                <QChip Text="@($"Undone {QDateFormat.D(j.UndoneAt?.ToLocalTime())}")" Size="sm" Variant="muted" />
+                            }
+                            else
+                            {
+                                <QButton Text="Undo" Size="sm" Variant="ghost" OnClick="@(() => AskUndo(j.Id))" />
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</QModal>
+
+<QModal Visible="@(undoJobId != null)" VisibleChanged="@(v => { if (!v) undoJobId = null; })" Title="Undo this import?" Icon="arrow-counterclockwise">
+    <ChildContent>
+        <p>Its events are removed and its meetings and rota slots cancelled. A meeting or slot whose register has been taken is kept — a register is history.</p>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Keep it" Variant="ghost" OnClick="@(() => undoJobId = null)" />
+        <QButton Text="Undo the import" Variant="danger" Loading="@working" OnClick="@UndoAsync" id="pi-undo-confirm" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .pi-steps { display: flex; flex-wrap: wrap; gap: var(--q-row-gap); list-style: none; padding: 0; margin: 0 0 var(--qm-block-gap); font-size: var(--qm-text-sm); }
+    .pi-steps li { display: flex; align-items: center; gap: 6px; color: var(--qm-text-muted); }
+    .pi-steps li span { display: inline-flex; width: 20px; height: 20px; align-items: center; justify-content: center; border-radius: var(--qm-radius-full); border: 1px solid var(--qm-border); font-size: var(--qm-text-xs); }
+    .pi-steps li.pi-step--active { color: var(--qm-text-primary); font-weight: 600; }
+    .pi-steps li.pi-step--active span { background: var(--qm-primary); color: var(--qm-text-on-primary); border-color: var(--qm-primary); }
+    .pi-steps li.pi-step--done span { background: var(--qm-bg-secondary); }
+    .pi-drop { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: var(--qm-empty-pad); border: 1px dashed var(--qm-border-hover); border-radius: var(--qm-radius-md); cursor: pointer; text-align: center; }
+    .pi-drop-main { font-weight: 600; }
+    .pi-drop-sub, .pi-muted { color: var(--qm-text-muted); font-size: var(--qm-text-sm); }
+    .pi-file { position: absolute; width: 1px; height: 1px; opacity: 0; }
+    .pi-loading { display: flex; align-items: center; gap: var(--q-row-gap); padding: var(--qm-block-gap) 0; }
+    .pi-note { display: flex; align-items: center; gap: 6px; color: var(--qm-text-secondary); font-size: var(--qm-text-sm); margin: 0 0 var(--qm-block-gap); }
+    .pi-refusal { color: var(--qm-danger); }
+    .pi-table { border-top: 1px solid var(--qm-border); padding-top: var(--qm-block-gap); margin-top: var(--qm-block-gap); }
+    .pi-table:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
+    .pi-table-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--q-row-gap); }
+    .pi-kind { min-width: 220px; }
+    .pi-reasons { margin: 6px 0; padding-left: 18px; font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
+    .pi-columns { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: var(--q-row-gap); margin: 6px 0; }
+    .pi-column { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .pi-column-name { font-size: var(--qm-text-xs); color: var(--qm-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pi-section { margin-top: var(--qm-block-gap); }
+    .pi-issues { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--q-row-gap); }
+    .pi-issues--plain { font-size: var(--qm-text-sm); gap: 4px; }
+    .pi-issue { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--q-row-gap); padding: 8px 0; border-bottom: 1px solid var(--qm-border); }
+    .pi-issue-text { flex: 1 1 320px; min-width: 0; }
+    .pi-issue-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--q-row-gap); }
+    .pi-attendance { display: flex; flex-wrap: wrap; align-items: center; gap: var(--q-row-gap); }
+    .pi-attendance-empty { display: flex; flex-wrap: wrap; align-items: center; gap: var(--q-row-gap); margin-top: 6px; color: var(--qm-danger); font-size: var(--qm-text-sm); }
+    .pi-previews { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--qm-block-gap); }
+    .pi-day { display: grid; grid-template-columns: 110px 1fr; gap: var(--q-row-gap); padding: 4px 0; border-bottom: 1px solid var(--qm-border); }
+    .pi-day ul { list-style: none; margin: 0; padding: 0; }
+    .pi-day-date { font-weight: 600; font-size: var(--qm-text-sm); }
+    .pi-time { display: inline-block; min-width: 52px; color: var(--qm-text-muted); font-size: var(--qm-text-sm); }
+    .pi-people { list-style: none; margin: 0; padding: 0; font-size: var(--qm-text-sm); }
+    .pi-people li { padding: 3px 0; border-bottom: 1px solid var(--qm-border); }
+    .pi-sentence { font-size: var(--qm-text-md); }
+    .pi-sub { font-size: var(--qm-text-base); margin: var(--qm-block-gap) 0 4px; }
+</style>
+
+@code {
+    [Parameter] public bool Embedded { get; set; }
+    [Inject] private NavigationManager Navigation { get; set; } = default!;
+
+    private const string InputId = "pi-files";
+    private const string MappingPrefix = "qmgr-programme-table:";
+
+    private enum Stage { Choose, Understand, Check, Confirm, Done }
+
+    /// <summary>Whether the commit tells each person their new duties (one message each). On by default.</summary>
+    private bool notifyPeople = true;
+
+    private Guid branchId;
+    private Stage stage = Stage.Choose;
+    private ProgrammeImportContextDto? ctx;
+    private string? loadError;
+    private List<ProgrammeFileReading> files = new();
+    private ProgrammeCheckResult? checks;
+    private List<PersonQuestion> personQuestions = new();
+    private readonly Dictionary<string, PersonAnswer> people = new(StringComparer.Ordinal);
+    private readonly HashSet<string> acknowledged = new(StringComparer.Ordinal);
+    private List<string> roles = new();
+    private (DateOnly Start, DateOnly End)? termFromDocs;
+    private string? termName, termTheme;
+    private bool setTerm;
+    private ProgrammeImportResultDto? preview, committed;
+    private List<ProgrammeImportJobDto>? jobs;
+    private bool historyOpen, working, reading;
+    private string? readingName;
+    private Guid? undoJobId;
+    private int agendaDays = 30;
+    private int addedRows;
+
+    private sealed record KindOption(ProgrammeTableKind Kind, string Label);
+    private sealed record RoleOption(ProgrammeColumnRole Role, string Label);
+    private sealed record AttendanceOption(MeetingAttendance Value, string Label);
+
+    /// <summary>One name as the documents wrote it, and who the reader or the ladder said it is.</summary>
+    private sealed class PersonAnswer
+    {
+        public string Written { get; set; } = string.Empty;
+        public NameMatchResult Match { get; set; } = new();
+        public Guid? UserId { get; set; }
+        public bool Skipped { get; set; }
+        /// <summary>The reader chose it (as opposed to a certain match): learned as an alias.</summary>
+        public bool Confirmed { get; set; }
+    }
+
+    private sealed class PersonQuestion
+    {
+        public string Key { get; set; } = string.Empty;
+        public string Written { get; set; } = string.Empty;
+        public NameMatchResult Match { get; set; } = new();
+        public Guid Chosen { get; set; }
+        public bool Answered { get; set; }
+        public int Slots { get; set; }
+    }
+
+    private static readonly List<KindOption> KindOptions = new()
+    {
+        new(ProgrammeTableKind.TermActivities, "Term activities"),
+        new(ProgrammeTableKind.DailyProgramme, "Timed programme"),
+        new(ProgrammeTableKind.MeetingSchedule, "Schedule of meetings"),
+        new(ProgrammeTableKind.PersonRota, "Duty rota (by person)"),
+        new(ProgrammeTableKind.PeriodRota, "Duty rota (by week)"),
+        new(ProgrammeTableKind.Ignore, "Leave this table out"),
+        new(ProgrammeTableKind.Unknown, "Not recognised")
+    };
+
+    private static readonly List<RoleOption> RoleOptions = new()
+    {
+        new(ProgrammeColumnRole.None, "Not used"),
+        new(ProgrammeColumnRole.Week, "Week"),
+        new(ProgrammeColumnRole.Date, "Date"),
+        new(ProgrammeColumnRole.Time, "Time"),
+        new(ProgrammeColumnRole.Title, "Activity / meeting"),
+        new(ProgrammeColumnRole.Venue, "Venue"),
+        new(ProgrammeColumnRole.Responsible, "Responsible / convener"),
+        new(ProgrammeColumnRole.Person, "Person"),
+        new(ProgrammeColumnRole.Phone, "Phone"),
+        new(ProgrammeColumnRole.PeriodLabel, "Week number"),
+        new(ProgrammeColumnRole.Serial, "Serial number")
+    };
+
+    // ---- Loading ------------------------------------------------------------------------------------------
+
+    protected override async Task OnInitializedAsync()
+    {
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        TrackBranch();
+        await LoadContextAsync();
+    }
+
+    protected override async Task OnBranchChangedAsync(Guid branchId)
+    {
+        this.branchId = branchId;
+        Reset();
+        ctx = null;
+        await LoadContextAsync();
+    }
+
+    private async Task LoadContextAsync()
+    {
+        loadError = null;
+        if (branchId == Guid.Empty) return;
+        try
+        {
+            ctx = await ImportApi.GetContextAsync(branchId);
+        }
+        catch (Exception ex)
+        {
+            loadError = ex.Message;
+        }
+    }
+
+    private void Reset()
+    {
+        stage = Stage.Choose;
+        files = new();
+        checks = null;
+        personQuestions = new();
+        people.Clear();
+        acknowledged.Clear();
+        roles = new();
+        termFromDocs = null;
+        setTerm = false;
+        preview = null;
+        committed = null;
+        agendaDays = 30;
+    }
+
+    // ---- 1. Choose ----------------------------------------------------------------------------------------
+
+    private async Task OnFilesChosen(InputFileChangeEventArgs e)
+    {
+        IReadOnlyList<IBrowserFile> chosen;
+        try { chosen = e.GetMultipleFiles(20); }
+        catch (InvalidOperationException)
+        {
+            Toast.Notify(ToastSeverity.Warning, "Too many files", "Choose at most 20 documents at a time.");
+            return;
+        }
+        if (chosen.Count == 0) return;
+        reading = true;
+        files = new();
+        try
+        {
+            for (var i = 0; i < chosen.Count; i++)
+            {
+                var name = chosen[i].Name;
+                readingName = name;
+                StateHasChanged();
+                if (chosen[i].Size > 10 * 1024 * 1024)
+                {
+                    files.Add(new ProgrammeFileReading { FileName = name, Refusal = $"\"{name}\" is over 10 MB — this page reads programmes, not archives." });
+                    continue;
+                }
+                try
+                {
+                    ProgrammeFileReading file;
+                    if (DocumentReader.IsDocumentName(name))
+                        file = ProgrammeTableParser.Read(await ImportDocumentReading.ReadAsync(JS, InputId, name, i));
+                    else
+                        file = ProgrammeTableParser.Read(await SheetDocumentAsync(name, i));
+                    await RestoreReadingsAsync(file);
+                    files.Add(file);
+                }
+                catch (ImportDocumentException ex)
+                {
+                    files.Add(new ProgrammeFileReading { FileName = name, Refusal = ex.Message });
+                }
+                catch (Exception ex) when (ex is JSException or InvalidOperationException or FormatException or System.Xml.XmlException)
+                {
+                    files.Add(new ProgrammeFileReading { FileName = name, Refusal = $"\"{name}\" could not be read: {ex.Message}" });
+                }
+            }
+            stage = Stage.Understand;
+        }
+        finally
+        {
+            reading = false;
+        }
+    }
+
+    private sealed record SheetCsv(string Name, string Csv);
+
+    /// <summary>A spreadsheet's sheets as one document with a table per sheet — SheetJS reads it, as for every import.</summary>
+    private async Task<ImportDocument> SheetDocumentAsync(string name, int index)
+    {
+        var sheets = await JS.InvokeAsync<SheetCsv[]>("importDocuments.sheetsAt", InputId, index);
+        var doc = new ImportDocument { FileName = name, Format = "sheet" };
+        foreach (var sheet in sheets ?? Array.Empty<SheetCsv>())
+        {
+            var table = new ImportDocTable();
+            foreach (var line in CsvText.Lines(sheet.Csv))
+                table.Rows.Add(CsvText.ParseLine(line).Select(c => new ImportDocCell { Text = ImportDocText.Tidy(c) }).ToList());
+            if (table.Rows.Count > 0) doc.Tables.Add(table);
+        }
+        if (doc.Tables.Count == 0) throw new ImportDocumentException($"\"{name}\" has no rows in it.");
+        return doc;
+    }
+
+    // ---- 2. Understand: overrides, remembered by the table's header ----------------------------------------
+
+    private sealed class RememberedReading
+    {
+        public ProgrammeTableKind Kind { get; set; }
+        public List<ProgrammeColumnRole> Roles { get; set; } = new();
+    }
+
+    private async Task RestoreReadingsAsync(ProgrammeFileReading file)
+    {
+        if (file.Document == null) return;
+        foreach (var table in file.Tables.Where(t => t.MappingKey.Length > 0))
+        {
+            try
+            {
+                var json = await JS.InvokeAsync<string?>("localStorage.getItem", MappingPrefix + table.MappingKey);
+                if (string.IsNullOrEmpty(json)) continue;
+                var remembered = JsonSerializer.Deserialize<RememberedReading>(json);
+                if (remembered == null || remembered.Roles.Count != table.Roles.Count) continue;
+                table.Kind = remembered.Kind;
+                table.Roles = remembered.Roles;
+                table.Reasons.Add("Read the way you chose last time for a table with these headings.");
+                ProgrammeTableParser.ParseTable(file, file.Document, table);
+            }
+            catch (JSException) { /* storage unavailable: the automatic reading stands */ }
+            catch (JsonException) { /* a stale entry: ignored */ }
+        }
+    }
+
+    private async Task RememberAsync(ProgrammeTableReading table)
+    {
+        if (table.MappingKey.Length == 0) return;
+        try
+        {
+            await JS.InvokeVoidAsync("localStorage.setItem", MappingPrefix + table.MappingKey,
+                JsonSerializer.Serialize(new RememberedReading { Kind = table.Kind, Roles = table.Roles }));
+        }
+        catch (JSException) { /* storage unavailable: nothing remembered, nothing lost */ }
+    }
+
+    private async Task OnKindChangedAsync(ProgrammeFileReading file, ProgrammeTableReading table, ProgrammeTableKind kind)
+    {
+        table.Kind = kind;
+        if (file.Document != null) ProgrammeTableParser.ParseTable(file, file.Document, table);
+        await RememberAsync(table);
+    }
+
+    private async Task OnRoleChangedAsync(ProgrammeFileReading file, ProgrammeTableReading table, int column, ProgrammeColumnRole role)
+    {
+        table.Roles[column] = role;
+        if (file.Document != null) ProgrammeTableParser.ParseTable(file, file.Document, table);
+        await RememberAsync(table);
+    }
+
+    private static string TableSummary(ProgrammeFileReading file, ProgrammeTableReading table)
+    {
+        var rows = file.Candidates.Where(c => c.TableIndex == table.TableIndex).ToList();
+        var parts = new List<string>();
+        var events = rows.Count(c => c.Kind == ProgrammeRowKind.Event && !c.FromNote);
+        var meetings = rows.Count(c => c.Kind == ProgrammeRowKind.Meeting && !c.FromNote);
+        var rota = rows.Count(c => c.Kind == ProgrammeRowKind.Rota);
+        var notes = rows.Count(c => c.FromNote);
+        if (events > 0) parts.Add($"{events} event{(events == 1 ? "" : "s")}");
+        if (meetings > 0) parts.Add($"{meetings} staff meeting{(meetings == 1 ? "" : "s")}");
+        if (rota > 0) parts.Add($"{rota} duty assignment{(rota == 1 ? "" : "s")} for {file.RotaPeople} people, {file.NotOnRota.Count} not on the rota");
+        if (file.EmptyWeeks > 0) parts.Add($"{file.EmptyWeeks} empty week{(file.EmptyWeeks == 1 ? "" : "s")}");
+        if (notes > 0) parts.Add($"{notes} found in a note");
+        return parts.Count == 0 ? "Nothing read from this table." : "Read: " + string.Join(" · ", parts) + ".";
+    }
+
+    // ---- 3. Check ------------------------------------------------------------------------------------------
+
+    private void GoToCheck()
+    {
+        ResolvePeople();
+        ResolveOffices();
+        roles = ProgrammeChecks.Roles(files);
+        foreach (var m in MeetingRowsAll().Where(m => m.Attendance == MeetingAttendance.EventOnly && m.AttendanceRole == null))
+        {
+            var role = ProgrammeChecks.RoleForMeeting(files, m.Title);
+            if (role != null) { m.Attendance = MeetingAttendance.RoleHolders; m.AttendanceRole = role; }
+        }
+        termFromDocs = ProgrammeChecks.TermFrom(files);
+        termTheme = files.Select(f => f.Theme).FirstOrDefault(t => !string.IsNullOrWhiteSpace(t));
+        termName = TermNameFromDocs();
+        RunChecks();
+        stage = Stage.Check;
+    }
+
+    /// <summary>Every rota row, and every person a rota lists by role, through the name ladder (plan §6).</summary>
+    private void ResolvePeople()
+    {
+        var rows = files.SelectMany(f => f.Candidates).Where(c => c.Kind == ProgrammeRowKind.Rota && !string.IsNullOrWhiteSpace(c.PersonText)).ToList();
+        foreach (var c in rows)
+        {
+            var key = ProgrammeText.NameKey(c.PersonText);
+            if (!people.TryGetValue(key, out var answer))
+            {
+                var match = StaffNameResolver.Resolve(c.PersonText, StaffNameResolver.PhoneKey(ctx!.OrganizationId, c.PhoneText), ctx.People, ctx.Aliases);
+                people[key] = answer = new PersonAnswer { Written = c.PersonText!, Match = match, UserId = match.Verdict == NameMatchVerdict.Match ? match.UserId : null };
+            }
+            c.UserId = answer.UserId;
+            if (answer.Skipped) c.Include = false;
+        }
+        foreach (var n in files.SelectMany(f => f.NotOnRota))
+        {
+            var key = ProgrammeText.NameKey(n.PersonText);
+            if (!people.TryGetValue(key, out var answer))
+            {
+                var match = StaffNameResolver.Resolve(n.PersonText, StaffNameResolver.PhoneKey(ctx!.OrganizationId, n.PhoneText), ctx.People, ctx.Aliases);
+                answer = new PersonAnswer { Written = n.PersonText, Match = match, UserId = match.Verdict == NameMatchVerdict.Match ? match.UserId : null };
+                // Only asked about when a meeting's attendance uses them (see ExpectedFor).
+                people[key] = answer;
+            }
+            n.UserId = answer.UserId;
+        }
+
+        personQuestions = people
+            .Where(p => p.Value.UserId == null && !p.Value.Skipped && rows.Any(r => ProgrammeText.NameKey(r.PersonText) == p.Key))
+            .Select(p => new PersonQuestion
+            {
+                Key = p.Key,
+                Written = p.Value.Written,
+                Match = p.Value.Match,
+                Chosen = p.Value.Match.Candidates.Count == 1 ? p.Value.Match.Candidates[0].UserId : Guid.Empty,
+                Slots = rows.Count(r => ProgrammeText.NameKey(r.PersonText) == p.Key)
+            })
+            .OrderBy(q => q.Written, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>Owners written as offices ("Biology HOD", "Academic Office") to departments and their heads.</summary>
+    private void ResolveOffices()
+    {
+        foreach (var c in files.SelectMany(f => f.Candidates).Where(c => c.Kind != ProgrammeRowKind.Rota && !string.IsNullOrWhiteSpace(c.ResponsibleText)))
+        {
+            var office = OfficeResolver.Resolve(c.ResponsibleText, ctx!.Departments, ctx.Aliases);
+            c.ResponsibleDepartmentIds = office.DepartmentIds;
+            c.ResponsibleUserIds = office.UserIds;
+            if (c.Kind == ProgrammeRowKind.Meeting) c.RecorderUserIds = office.UserIds;
+        }
+    }
+
+    private void RunChecks()
+    {
+        checks = ProgrammeChecks.Run(files, ctx!.Settings, ctx.National);
+        foreach (var issue in checks.Issues) issue.Resolved = acknowledged.Contains(IssueKey(issue));
+    }
+
+    private static string IssueKey(ProgrammeIssue i)
+        => $"{i.Kind}|{i.Date?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}|{string.Join(',', i.CandidateIds)}|{i.PersonText}";
+
+    private int OpenMustDecide => (checks?.MustDecide.Count(i => !i.Resolved) ?? 0) + personQuestions.Count(q => !q.Answered)
+        + MeetingRows().Count(ExpectsNobody);
+
+    /// <summary>A meeting with a register whose attendance resolves to nobody on the staff list — a question, not a submit-time refusal.</summary>
+    private bool ExpectsNobody(ProgrammeCandidate m)
+        => ctx != null && ctx.CanImportDuties && m.Kind == ProgrammeRowKind.Meeting && m.Attendance != MeetingAttendance.EventOnly
+           && m.StartTime != null && ExpectedFor(m) is { Count: 0 };
+
+    private IEnumerable<StaffCandidate> PeopleFor(PersonQuestion q)
+    {
+        var first = q.Match.Candidates.Select(c => c.UserId).ToHashSet();
+        return ctx!.People.Where(p => first.Contains(p.UserId))
+            .Concat(ctx.People.Where(p => !first.Contains(p.UserId)).OrderBy(p => p.FullName, StringComparer.OrdinalIgnoreCase));
+    }
+
+    private void AnswerPerson(PersonQuestion q)
+    {
+        if (q.Chosen == Guid.Empty) return;
+        q.Answered = true;
+        if (people.TryGetValue(q.Key, out var answer))
+        {
+            answer.UserId = q.Chosen;
+            answer.Confirmed = true;
+        }
+        foreach (var c in AllCandidates().Where(c => c.Kind == ProgrammeRowKind.Rota && ProgrammeText.NameKey(c.PersonText) == q.Key)) c.UserId = q.Chosen;
+        foreach (var n in files.SelectMany(f => f.NotOnRota).Where(n => ProgrammeText.NameKey(n.PersonText) == q.Key)) n.UserId = q.Chosen;
+        RunChecks();
+    }
+
+    private void SkipPerson(PersonQuestion q)
+    {
+        q.Answered = true;
+        if (people.TryGetValue(q.Key, out var answer)) answer.Skipped = true;
+        foreach (var c in AllCandidates().Where(c => c.Kind == ProgrammeRowKind.Rota && ProgrammeText.NameKey(c.PersonText) == q.Key)) c.Include = false;
+        RunChecks();
+    }
+
+    private void ChooseDate(ProgrammeIssue issue, DateOnly date)
+    {
+        var rows = AllCandidates().Where(c => issue.CandidateIds.Contains(c.Id)).ToList();
+        foreach (var c in rows)
+        {
+            if (c.StartsOn is { } start)
+            {
+                var length = (c.EndsOn ?? start).DayNumber - start.DayNumber;
+                c.StartsOn = date;
+                c.EndsOn = date.AddDays(length);
+            }
+            else { c.StartsOn = date; c.EndsOn = date; }
+            c.WeekdayMismatch = false;
+        }
+        // Two documents about one thing: keep the first, the others fold into it on the chosen date.
+        if (issue.Kind == ProgrammeIssueKind.Conflict && rows.Count > 1)
+        {
+            var keep = rows.FirstOrDefault(r => r.Kind == ProgrammeRowKind.Meeting) ?? rows[0];
+            foreach (var other in rows.Where(r => r != keep)) other.MergedIntoId = keep.Id;
+        }
+        acknowledged.Add(IssueKey(issue));
+        RunChecks();
+    }
+
+    private void ApplySuggestion(ProgrammeIssue issue)
+    {
+        var slot = AllCandidates().FirstOrDefault(c => c.Id == issue.SuggestCandidateId);
+        if (slot == null || issue.SuggestTo is not { } to) return;
+        slot.StartsOn = to;
+        slot.EndsOn = to;
+        slot.Notes.Add($"Date changed from {issue.SuggestFrom?.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)} on your say-so.");
+        RunChecks();
+    }
+
+    private void FillGap(ProgrammeIssue issue, Guid userId)
+    {
+        if (userId == Guid.Empty || issue.Date is not { } date) return;
+        var rotaName = AllCandidates().Where(c => c.Kind == ProgrammeRowKind.Rota && c.RotaName != null).Select(c => c.RotaName!).Distinct()
+            .FirstOrDefault(n => issue.Message.Contains(n, StringComparison.Ordinal));
+        var template = AllCandidates().FirstOrDefault(c => c.Kind == ProgrammeRowKind.Rota && c.RotaName == rotaName)
+                       ?? AllCandidates().FirstOrDefault(c => c.Kind == ProgrammeRowKind.Rota);
+        if (template == null) return;
+        var person = ctx!.People.First(p => p.UserId == userId);
+        var file = files.First(f => f.FileName == template.FileName);
+        var row = new ProgrammeCandidate
+        {
+            Id = $"added#{++addedRows}",
+            FileName = template.FileName,
+            TableIndex = template.TableIndex,
+            TableKind = template.TableKind,
+            Kind = ProgrammeRowKind.Rota,
+            Title = template.RotaName ?? template.Title,
+            RotaName = template.RotaName,
+            PersonText = person.FullName,
+            UserId = userId,
+            StartsOn = date,
+            EndsOn = date,
+            DateText = date.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture),
+            SourceKey = ProgrammeTableParser.RotaKey(template.RotaName ?? template.Title, person.FullName, date)
+        };
+        row.Notes.Add("Added here to fill a gap.");
+        file.Candidates.Add(row);
+        people.TryAdd(ProgrammeText.NameKey(person.FullName), new PersonAnswer { Written = person.FullName, UserId = userId });
+        RunChecks();
+    }
+
+    private void DateUndated(ProgrammeIssue issue, DateTime? value)
+    {
+        if (value is not { } v) return;
+        var date = DateOnly.FromDateTime(v);
+        foreach (var c in AllCandidates().Where(c => issue.CandidateIds.Contains(c.Id)))
+        {
+            c.StartsOn = date;
+            c.EndsOn = date;
+            if (c.Kind != ProgrammeRowKind.Rota)
+                c.SourceKey = c.SourceKey.Replace(":undated", ":" + date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), StringComparison.Ordinal);
+        }
+        RunChecks();
+    }
+
+    private void LeaveOut(ProgrammeIssue issue)
+    {
+        foreach (var c in AllCandidates().Where(c => issue.CandidateIds.Contains(c.Id))) c.Include = false;
+        RunChecks();
+    }
+
+    private void MeetingAsEvent(ProgrammeIssue issue)
+    {
+        foreach (var c in AllCandidates().Where(c => issue.CandidateIds.Contains(c.Id))) c.Attendance = MeetingAttendance.EventOnly;
+        RunChecks();
+    }
+
+    private void Acknowledge(ProgrammeIssue issue)
+    {
+        acknowledged.Add(IssueKey(issue));
+        issue.Resolved = true;
+    }
+
+    private void SetAttendance(ProgrammeCandidate m, MeetingAttendance a)
+    {
+        m.Attendance = a;
+        if (a == MeetingAttendance.RoleHolders && m.AttendanceRole == null) m.AttendanceRole = roles.FirstOrDefault();
+        RunChecks();
+    }
+
+    private List<AttendanceOption> AttendanceOptions(ProgrammeCandidate m)
+    {
+        var list = new List<AttendanceOption>
+        {
+            new(MeetingAttendance.EventOnly, "Event only — no register"),
+            new(MeetingAttendance.Everyone, "Every member of staff"),
+            new(MeetingAttendance.DepartmentHeads, "Heads of department")
+        };
+        if (roles.Count > 0) list.Add(new(MeetingAttendance.RoleHolders, "People the rota lists as…"));
+        return list;
+    }
+
+    /// <summary>The expected list a meeting will be sent with: null = everyone.</summary>
+    private List<Guid>? ExpectedFor(ProgrammeCandidate m) => m.Attendance switch
+    {
+        MeetingAttendance.Everyone => null,
+        MeetingAttendance.DepartmentHeads => ctx!.Departments.Where(d => d.HeadUserId.HasValue).Select(d => d.HeadUserId!.Value).Distinct().ToList(),
+        MeetingAttendance.RoleHolders => m.AttendanceRole == null ? new List<Guid>()
+            : ProgrammeChecks.RoleHolders(files, m.AttendanceRole).Where(n => n.UserId.HasValue).Select(n => n.UserId!.Value).Distinct().ToList(),
+        MeetingAttendance.Chosen => m.ExpectedUserIds.Distinct().ToList(),
+        _ => new List<Guid>()
+    };
+
+    private string TermLabel()
+    {
+        if (termFromDocs is not { } t) return string.Empty;
+        return $"Set {termName ?? "the term"} to {QDateFormat.D(t.Start)} – {QDateFormat.D(t.End)}" + (termTheme != null ? $", theme \"{termTheme}\"" : string.Empty);
+    }
+
+    private string? TermNameFromDocs()
+    {
+        foreach (var title in files.Select(f => f.Title).Where(t => t != null))
+        {
+            var words = ProgrammeText.Words(title);
+            var i = words.IndexOf("TERM");
+            if (i >= 0 && i + 1 < words.Count && int.TryParse(words[i + 1], out var n) && n is >= 1 and <= 4)
+            {
+                var year = files.Select(f => f.Year).FirstOrDefault(y => y.HasValue);
+                return $"Term {n} {year}".Trim();
+            }
+        }
+        return null;
+    }
+
+    // ---- Rows ------------------------------------------------------------------------------------------------
+
+    private IEnumerable<ProgrammeCandidate> AllCandidates() => files.SelectMany(f => f.Candidates);
+
+    private IEnumerable<ProgrammeCandidate> Live() => AllCandidates().Where(c => c.Include && c.MergedIntoId == null && c.StartsOn.HasValue);
+
+    private IEnumerable<ProgrammeCandidate> MeetingRowsAll() => AllCandidates().Where(c => c.Include && c.MergedIntoId == null && c.Kind == ProgrammeRowKind.Meeting);
+
+    /// <summary>Meetings sent as meetings: a register, somebody expected, duties allowed.</summary>
+    private IEnumerable<ProgrammeCandidate> MeetingRows()
+        => ctx!.CanImportDuties ? Live().Where(c => c.Kind == ProgrammeRowKind.Meeting && c.Attendance != MeetingAttendance.EventOnly && c.StartTime != null) : Enumerable.Empty<ProgrammeCandidate>();
+
+    /// <summary>Events — and meetings going in as events (event only, or duties not allowed).</summary>
+    private IEnumerable<ProgrammeCandidate> EventRows()
+    {
+        var meetings = MeetingRows().ToHashSet();
+        return Live().Where(c => c.Kind == ProgrammeRowKind.Event || (c.Kind == ProgrammeRowKind.Meeting && !meetings.Contains(c)));
+    }
+
+    private IEnumerable<ProgrammeCandidate> RotaRows()
+        => ctx!.CanImportDuties ? Live().Where(c => c.Kind == ProgrammeRowKind.Rota && c.UserId.HasValue) : Enumerable.Empty<ProgrammeCandidate>();
+
+    private IEnumerable<IGrouping<DateOnly, ProgrammeCandidate>> AgendaDays()
+        => EventRows().Concat(MeetingRows()).GroupBy(c => c.StartsOn!.Value).OrderBy(g => g.Key);
+
+    private sealed record PersonLine(string Name, string Text);
+
+    private List<PersonLine> PerPerson()
+    {
+        var names = ctx!.People.ToDictionary(p => p.UserId, p => p.FullName);
+        return Live().Where(c => c.Kind == ProgrammeRowKind.Rota)
+            .GroupBy(c => c.UserId.HasValue && names.ContainsKey(c.UserId.Value) ? names[c.UserId.Value] : $"{c.PersonText} (not matched)")
+            .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new PersonLine(g.Key, string.Join("; ", g.GroupBy(c => c.RotaName).Select(r =>
+                $"{r.Key}: {string.Join(", ", r.OrderBy(c => c.StartsOn).Select(c => c.EndsOn.HasValue && c.EndsOn != c.StartsOn ? $"{QDateFormat.D(c.StartsOn)} – {QDateFormat.D(c.EndsOn)}" : c.StartsOn!.Value.ToString("ddd dd MMM", CultureInfo.InvariantCulture)))}"))))
+            .ToList();
+    }
+
+    private static string When(ProgrammeCandidate c)
+        => c.StartsOn.HasValue ? $"{c.StartsOn.Value.ToString("ddd dd MMM", CultureInfo.InvariantCulture)}{(c.StartTime != null ? ", " + c.StartTime : "")}" : "No date";
+
+    private string KindLabel(ProgrammeCandidate c)
+        => c.Kind == ProgrammeRowKind.Meeting && MeetingRows().Contains(c) ? "Meeting" : c.SeriesName != null ? "Programme" : c.Category ?? "Event";
+
+    // ---- 4. Preview with the server, then commit ------------------------------------------------------------
+
+    private ProgrammeImportRequest BuildRequest(bool previewOnly)
+    {
+        var meetings = MeetingRows().ToList();
+        var meetingKeys = meetings.ToDictionary(m => m.Id, m => m.SourceKey);
+        var categories = ctx!.Settings.Categories;
+
+        var request = new ProgrammeImportRequest
+        {
+            Preview = previewOnly,
+            SourceFiles = files.Where(f => f.Refusal == null).Select(f => f.FileName).ToList(),
+            NotifyPeople = notifyPeople,
+            Events = EventRows().Select(c => new ProgrammeEventRow
+            {
+                SourceKey = Trim(c.SourceKey, 200),
+                Title = Trim(c.Title, 200),
+                StartsOn = c.StartsOn!.Value,
+                EndsOn = c.EndsOn ?? c.StartsOn!.Value,
+                StartTime = c.StartTime,
+                EndTime = c.StartTime == null ? null : c.EndTime,
+                Category = categories.FirstOrDefault(x => string.Equals(x, c.Category, StringComparison.OrdinalIgnoreCase)),
+                Audience = c.Audience,
+                ClassNames = c.ClassNames,
+                Location = TrimOrNull(c.Location, 200),
+                ResponsibleText = TrimOrNull(c.ResponsibleText, 300),
+                ResponsibleUserIds = c.ResponsibleUserIds,
+                ResponsibleDepartmentIds = c.ResponsibleDepartmentIds,
+                SeriesName = TrimOrNull(c.SeriesName, 200),
+                SameAsMeetingKey = c.SameAsMeetingId != null && meetingKeys.TryGetValue(c.SameAsMeetingId, out var mk) ? mk : null
+            }).ToList(),
+            Meetings = meetings.Select(m => new ProgrammeMeetingRow
+            {
+                SourceKey = Trim(m.SourceKey, 200),
+                Title = Trim(m.Title, 200),
+                Date = m.StartsOn!.Value,
+                StartTime = m.StartTime,
+                EndTime = m.EndTime,
+                Location = TrimOrNull(m.Location, 200),
+                ConvenerText = TrimOrNull(m.ResponsibleText, 300),
+                RecorderUserIds = m.RecorderUserIds,
+                ExpectedUserIds = ExpectedFor(m),
+                ExpectedText = m.Attendance switch
+                {
+                    MeetingAttendance.Everyone => "every member of staff",
+                    MeetingAttendance.DepartmentHeads => "the heads of department",
+                    MeetingAttendance.RoleHolders => $"the people the rota lists as {m.AttendanceRole}",
+                    _ => null
+                }
+            }).ToList(),
+            RotaSlots = RotaRows().Select(r => new ProgrammeRotaRow
+            {
+                SourceKey = Trim(r.SourceKey, 200),
+                RotaName = Trim(r.RotaName ?? r.Title, 120),
+                UserId = r.UserId!.Value,
+                StartsOn = r.StartsOn!.Value,
+                EndsOn = r.EndsOn ?? r.StartsOn!.Value
+            }).ToList()
+        };
+
+        if (setTerm && termFromDocs is { } term)
+        {
+            var existing = ctx.Terms.FirstOrDefault(t => t.Start <= term.End && term.Start <= t.End);
+            request.Term = new ProgrammeTermUpdate
+            {
+                Key = existing?.Key,
+                Name = existing?.Name ?? termName ?? $"Term {term.Start.Year}",
+                Start = term.Start,
+                End = term.End,
+                Theme = termTheme
+            };
+        }
+
+        var learned = new ImportAliasesDto();
+        foreach (var answer in people.Values.Where(a => a.Confirmed && a.UserId.HasValue))
+            learned.People[StaffNameResolver.AliasKey(answer.Written)] = answer.UserId!.Value;
+        if (learned.People.Count > 0) request.LearnedAliases = learned;
+        return request;
+    }
+
+    /// <summary>The page refuses first what the server would refuse (the rule in CLAUDE.md).</summary>
+    private string? ClientProblem(ProgrammeImportRequest r)
+    {
+        if (r.Events.Count + r.Meetings.Count + r.RotaSlots.Count == 0 && r.Term == null) return "There is nothing to import: every row is left out or merged.";
+        if (r.Events.Count > 1000 || r.Meetings.Count > 300 || r.RotaSlots.Count > 1500) return "That is more than one import can take — split the documents.";
+        if (r.Meetings.Any(m => m.StartTime == null)) return "A meeting has no start time.";
+        if (r.Meetings.Any(m => m.ExpectedUserIds is { Count: 0 })) return "A meeting expects nobody the staff list holds — choose who is expected, or import it as an event.";
+        return null;
+    }
+
+    private async Task PreviewAsync()
+    {
+        var request = BuildRequest(previewOnly: true);
+        if (ClientProblem(request) is { } problem) { Toast.Notify(ToastSeverity.Warning, "Not ready to import", problem); return; }
+        working = true;
+        try
+        {
+            preview = await ImportApi.ImportAsync(branchId, request);
+            stage = Stage.Confirm;
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "The server could not check the import", ex.Message);
+        }
+        finally { working = false; }
+    }
+
+    private async Task CommitAsync()
+    {
+        var request = BuildRequest(previewOnly: false);
+        if (ClientProblem(request) is { } problem) { Toast.Notify(ToastSeverity.Warning, "Not ready to import", problem); return; }
+        working = true;
+        try
+        {
+            committed = await ImportApi.ImportAsync(branchId, request);
+            stage = Stage.Done;
+            Toast.Notify(ToastSeverity.Success, "Imported", DoneSentence(committed));
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "The import did not go through", ex.Message);
+        }
+        finally { working = false; }
+    }
+
+    private static bool NothingToWrite(ProgrammeImportResultDto r)
+        => r.EventsCreated + r.EventsUpdated + r.MeetingsCreated + r.MeetingsUpdated + r.RotaSlotsCreated == 0;
+
+    private string ImportButtonText => preview == null || NothingToWrite(preview) ? "Nothing new to import" : "Import";
+
+    private static string Plural(int n, string one, string many) => n == 1 ? $"1 {one}" : $"{n} {many}";
+
+    private string ConfirmSentence(ProgrammeImportResultDto r)
+    {
+        if (NothingToWrite(r))
+            return $"Everything in these documents is already here — {Plural(r.Unchanged, "row", "rows")} unchanged. Nothing would be created.";
+        var parts = new List<string>();
+        if (r.EventsCreated > 0) parts.Add(Plural(r.EventsCreated, "event", "events"));
+        if (r.MeetingsCreated > 0) parts.Add(Plural(r.MeetingsCreated, "meeting", "meetings"));
+        if (r.RotaSlotsCreated > 0) parts.Add(Plural(r.RotaSlotsCreated, "duty slot", "duty slots"));
+        var sentence = parts.Count > 0 ? $"Create {JoinAnd(parts)}" : "Create nothing new";
+        var updates = r.EventsUpdated + r.MeetingsUpdated;
+        if (updates > 0) sentence += $", update {Plural(updates, "entry", "entries")}";
+        if (r.PeopleNotified > 0 && notifyPeople) sentence += $", and tell {Plural(r.PeopleNotified, "person", "people")} their dates";
+        sentence += ".";
+        if (r.Unchanged > 0) sentence += $" {Plural(r.Unchanged, "row is", "rows are")} already there and will not change.";
+        if (r.Refused > 0) sentence += $" {Plural(r.Refused, "row is", "rows are")} refused (listed below).";
+        if (setTerm && termFromDocs != null) sentence += " The term dates will be set.";
+        return sentence;
+    }
+
+    private string DoneSentence(ProgrammeImportResultDto r)
+    {
+        var parts = new List<string>();
+        if (r.EventsCreated > 0) parts.Add(Plural(r.EventsCreated, "event", "events"));
+        if (r.MeetingsCreated > 0) parts.Add(Plural(r.MeetingsCreated, "meeting", "meetings"));
+        if (r.RotaSlotsCreated > 0) parts.Add(Plural(r.RotaSlotsCreated, "duty slot", "duty slots"));
+        var text = parts.Count > 0 ? $"Created {JoinAnd(parts)}." : "Nothing new was created.";
+        if (r.EventsUpdated + r.MeetingsUpdated > 0) text += $" Updated {Plural(r.EventsUpdated + r.MeetingsUpdated, "entry", "entries")}.";
+        if (r.PeopleNotified > 0) text += $" {Plural(r.PeopleNotified, "person was", "people were")} told their dates.";
+        if (r.TermUpdated) text += " The term dates were set.";
+        return text;
+    }
+
+    private static string JoinAnd(List<string> parts)
+        => parts.Count <= 1 ? string.Join(string.Empty, parts) : string.Join(", ", parts.Take(parts.Count - 1)) + " and " + parts[^1];
+
+    private string RowLabel(ProgrammeRowResultDto r)
+    {
+        var c = AllCandidates().FirstOrDefault(x => x.SourceKey == r.SourceKey);
+        return c == null ? r.SourceKey : c.Kind == ProgrammeRowKind.Rota ? $"{c.PersonText}, {When(c)}" : $"{c.Title} ({When(c)})";
+    }
+
+    // ---- History and undo ------------------------------------------------------------------------------------
+
+    private async Task OpenHistoryAsync()
+    {
+        historyOpen = true;
+        jobs = null;
+        try { jobs = await ImportApi.GetJobsAsync(branchId); }
+        catch (Exception ex)
+        {
+            jobs = new();
+            Toast.Notify(ToastSeverity.Error, "Could not load the import history", ex.Message);
+        }
+    }
+
+    private void AskUndo(Guid jobId) => undoJobId = jobId;
+
+    private async Task UndoAsync()
+    {
+        if (undoJobId is not { } jobId) return;
+        working = true;
+        try
+        {
+            var result = await ImportApi.UndoAsync(branchId, jobId);
+            var text = $"{Plural(result.EventsRemoved, "event", "events")} removed and {Plural(result.DutiesRemoved, "duty slot", "duty slots")} cancelled.";
+            if (result.DutiesKept > 0) text += $" {Plural(result.DutiesKept, "was", "were")} kept because the register had been taken.";
+            Toast.Notify(ToastSeverity.Success, "Import undone", text);
+            undoJobId = null;
+            if (committed?.JobId == jobId) Reset();
+            if (historyOpen) jobs = await ImportApi.GetJobsAsync(branchId);
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not undo the import", ex.Message);
+        }
+        finally { working = false; }
+    }
+
+    // ---- Small helpers -----------------------------------------------------------------------------------------
+
+    private string StepClass(Stage s) => s == stage ? "pi-step--active" : s < stage ? "pi-step--done" : string.Empty;
+
+    private static string FileIcon(ProgrammeFileReading f) => f.Refusal != null ? "file-earmark-x" : f.Format switch
+    {
+        "pdf" => "file-earmark-pdf",
+        "sheet" => "file-earmark-spreadsheet",
+        _ => "file-earmark-word"
+    };
+
+    private static string FileSubtitle(ProgrammeFileReading f)
+    {
+        if (f.Refusal != null) return "Could not be read";
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(f.Title)) parts.Add(ProgrammeTableParser.TitleCase(f.Title));
+        if (f.Theme != null) parts.Add($"Theme: {f.Theme}");
+        return string.Join(" · ", parts);
+    }
+
+    private static string Trim(string? value, int max)
+    {
+        var t = (value ?? string.Empty).Trim();
+        return t.Length <= max ? t : t[..max];
+    }
+
+    private static string? TrimOrNull(string? value, int max) => string.IsNullOrWhiteSpace(value) ? null : Trim(value, max);
+}

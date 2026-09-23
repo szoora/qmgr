@@ -1,47 +1,105 @@
 @namespace QMgr.Web.Components.Shared.UI
+@inject IJSRuntime JS
 
-@if (Count > 0 && (ShowCaption || TotalPages > 1))
+@*
+    The one pager (plan STUDENT_ROSTER_AND_LIST_STANDARD §1). Everything added on 2026-09-23 is OPT-IN:
+    a page passing only Count / PageSize / PageIndex renders what it always did, plus first and last.
+
+    With PageSizeOptions the bar carries a "Rows per page" QSelect and renders even on ONE page — a reader who
+    chose All or 100 must be able to switch back, and a bar that vanishes at one page takes the control with it.
+    PageSize == QPager.All (0) means every row on one page; the caption then reads "Showing all 214 students"
+    and the page buttons go.
+*@
+@if (Count > 0 && (ShowCaption || TotalPages > 1 || HasSizeControl))
 {
     <div class="q-pager-bar @Class" @attributes="AdditionalAttributes">
         @if (ShowCaption)
         {
-            <span class="q-pager__caption">Showing @From.ToString("N0", Inv)–@To.ToString("N0", Inv) of @Count.ToString("N0", Inv)@(string.IsNullOrEmpty(ItemLabel) ? "" : $" {ItemLabel}")</span>
+            <span class="q-pager__caption">@CaptionText</span>
         }
 
-        @if (TotalPages > 1)
-        {
-            <nav class="q-pager" aria-label="Pagination">
-                @* The two arrows are icon-only, so the accessible name has to live on the button —
-                   without it a screen reader announces them as bare "button". The numbered buttons read
-                   out their own digit, but need aria-current so the active page is distinguishable by
-                   something other than colour. *@
-                <button type="button" class="q-pager__btn" aria-label="Previous page" disabled="@(PageIndex == 0)" @onclick="() => GoTo(PageIndex - 1)">
-                    <QIcon Name="chevron-left" />
-                </button>
+        <div class="q-pager__controls">
+            @if (HasSizeControl)
+            {
+                <QSelect TValue="int" TItem="int"
+                         Class="q-pager__size"
+                         Label="Rows per page"
+                         Items="@SizeItems"
+                         Value="@PageSize"
+                         ValueChanged="@OnSizeChosen"
+                         TextSelector="@SizeText" />
+            }
 
-                @foreach (var page in GetVisiblePages())
-                {
-                    <button type="button"
-                            class="q-pager__btn @(page == PageIndex ? "q-pager__btn--active" : "")"
-                            aria-label="@($"Page {page + 1}")"
-                            aria-current="@(page == PageIndex ? "page" : null)"
-                            @onclick="() => GoTo(page)">
-                        @(page + 1)
+            @if (!IsAll && TotalPages > 1)
+            {
+                <nav class="q-pager" aria-label="Pagination">
+                    @if (ShowFirstLast)
+                    {
+                        <button type="button" class="q-pager__btn q-pager__btn--edge" aria-label="First page" disabled="@(PageIndex == 0)" @onclick="() => GoTo(0)">
+                            <QIcon Name="chevron-double-left" />
+                        </button>
+                    }
+
+                    @* The two arrows are icon-only, so the accessible name has to live on the button —
+                       without it a screen reader announces them as bare "button". The numbered buttons read
+                       out their own digit, but need aria-current so the active page is distinguishable by
+                       something other than colour. *@
+                    <button type="button" class="q-pager__btn" aria-label="Previous page" disabled="@(PageIndex == 0)" @onclick="() => GoTo(PageIndex - 1)">
+                        <QIcon Name="chevron-left" />
                     </button>
-                }
 
-                <button type="button" class="q-pager__btn" aria-label="Next page" disabled="@(PageIndex >= TotalPages - 1)" @onclick="() => GoTo(PageIndex + 1)">
-                    <QIcon Name="chevron-right" />
-                </button>
-            </nav>
-        }
+                    @* A phone shows this instead of the numbers: "‹ Page 2 of 9 ›". *@
+                    <span class="q-pager__summary" aria-live="polite">Page @((PageIndex + 1).ToString("N0", Inv)) of @TotalPages.ToString("N0", Inv)</span>
+
+                    @foreach (var page in GetVisiblePages())
+                    {
+                        <button type="button"
+                                class="q-pager__btn q-pager__btn--number @(page == PageIndex ? "q-pager__btn--active" : "")"
+                                aria-label="@($"Page {page + 1}")"
+                                aria-current="@(page == PageIndex ? "page" : null)"
+                                @onclick="() => GoTo(page)">
+                            @(page + 1)
+                        </button>
+                    }
+
+                    <button type="button" class="q-pager__btn" aria-label="Next page" disabled="@(PageIndex >= TotalPages - 1)" @onclick="() => GoTo(PageIndex + 1)">
+                        <QIcon Name="chevron-right" />
+                    </button>
+
+                    @if (ShowFirstLast)
+                    {
+                        <button type="button" class="q-pager__btn q-pager__btn--edge" aria-label="Last page" disabled="@(PageIndex >= TotalPages - 1)" @onclick="() => GoTo(TotalPages - 1)">
+                            <QIcon Name="chevron-double-right" />
+                        </button>
+                    }
+                </nav>
+
+                @if (TotalPages >= JumpFromPages)
+                {
+                    <QSelect TValue="int" TItem="int"
+                             Class="q-pager__jump"
+                             Label="Go to page"
+                             Items="@PageNumbers"
+                             Value="@(PageIndex + 1)"
+                             ValueChanged="@(p => GoTo(p - 1))"
+                             TextSelector="@(p => p.ToString(Inv))" />
+                }
+            }
+        </div>
     </div>
 }
 
 @code {
+    /// <summary><c>PageSize == QPager.All</c> means every row on one page.</summary>
+    public const int All = 0;
+
+    /// <summary>At this many pages or more the bar offers "Go to page".</summary>
+    private const int JumpFromPages = 10;
+
     /// <summary>Total number of items being paged over.</summary>
     [Parameter] public int Count { get; set; }
 
+    /// <summary>Rows on a page; <see cref="All"/> (0) shows every row.</summary>
     [Parameter] public int PageSize { get; set; } = 10;
 
     /// <summary>How many page-number buttons to show around the current page.</summary>
@@ -57,6 +115,30 @@
     /// <summary>A noun for the caption: "Showing 1–20 of 57 invoices".</summary>
     [Parameter] public string? ItemLabel { get; set; }
 
+    /// <summary>
+    /// The sizes a reader may choose, e.g. <c>QPagerDefaults.Sizes</c>. Null = no size control (the pager's
+    /// behaviour before 2026-09-23). A list page passes one — <c>scripts/e2e/pager-check.mjs</c> says so.
+    /// </summary>
+    [Parameter] public IReadOnlyList<int>? PageSizeOptions { get; set; }
+
+    /// <summary>Adds "All" to <see cref="PageSizeOptions"/>.</summary>
+    [Parameter] public bool AllowAll { get; set; }
+
+    /// <summary>Raised with the new size (0 = All). <see cref="PageIndexChanged"/>(0) follows it.</summary>
+    [Parameter] public EventCallback<int> PageSizeChanged { get; set; }
+
+    /// <summary>
+    /// When set, the chosen size is remembered in this browser under <c>qmgr-pagesize:{StorageKey}</c> and
+    /// restored on first render (by raising <see cref="PageSizeChanged"/>). Stable and page-specific.
+    /// </summary>
+    [Parameter] public string? StorageKey { get; set; }
+
+    /// <summary>When above zero the caption adds " · 3 selected".</summary>
+    [Parameter] public int SelectedCount { get; set; }
+
+    /// <summary>First («) and last (») page buttons.</summary>
+    [Parameter] public bool ShowFirstLast { get; set; } = true;
+
     [Parameter] public string? Class { get; set; }
 
     [Parameter(CaptureUnmatchedValues = true)]
@@ -64,10 +146,46 @@
 
     private static readonly System.Globalization.CultureInfo Inv = System.Globalization.CultureInfo.InvariantCulture;
 
-    private int TotalPages => PageSize <= 0 ? 0 : (int)Math.Ceiling(Count / (double)PageSize);
+    private bool IsAll => PageSize == All;
+    private bool HasSizeControl => PageSizeOptions is { Count: > 0 };
 
-    private int From => Count == 0 ? 0 : Math.Min(Count, PageIndex * PageSize + 1);
-    private int To => Math.Min(Count, (PageIndex + 1) * PageSize);
+    private int TotalPages => IsAll ? (Count > 0 ? 1 : 0)
+                            : PageSize < 0 ? 0 : (int)Math.Ceiling(Count / (double)PageSize);
+
+    private int From => Count == 0 ? 0 : IsAll ? 1 : Math.Min(Count, PageIndex * PageSize + 1);
+    private int To => IsAll ? Count : Math.Min(Count, (PageIndex + 1) * PageSize);
+
+    private string Noun => string.IsNullOrEmpty(ItemLabel) ? "" : $" {ItemLabel}";
+
+    private string CaptionText
+    {
+        get
+        {
+            var text = IsAll
+                ? $"Showing all {Count.ToString("N0", Inv)}{Noun}"
+                : $"Showing {From.ToString("N0", Inv)}–{To.ToString("N0", Inv)} of {Count.ToString("N0", Inv)}{Noun}";
+            return SelectedCount > 0 ? $"{text} · {SelectedCount.ToString("N0", Inv)} selected" : text;
+        }
+    }
+
+    private IEnumerable<int> SizeItems
+    {
+        get
+        {
+            var sizes = (PageSizeOptions ?? Array.Empty<int>()).Where(s => s > 0).Distinct().ToList();
+            // A page whose own size is not on the list (a deliberate 8, say) still shows it as chosen.
+            if (!IsAll && PageSize > 0 && !sizes.Contains(PageSize)) sizes.Add(PageSize);
+            sizes.Sort();
+            if (AllowAll || IsAll) sizes.Add(All);
+            return sizes;
+        }
+    }
+
+    private IEnumerable<int> PageNumbers => Enumerable.Range(1, Math.Max(TotalPages, 0));
+
+    private static string SizeText(int size) => size == All ? "All" : size.ToString(Inv);
+
+    private string StorageName => $"qmgr-pagesize:{StorageKey}";
 
     private IEnumerable<int> GetVisiblePages()
     {
@@ -84,5 +202,49 @@
         if (page < 0 || page >= TotalPages || page == PageIndex) return;
         PageIndex = page;
         await PageIndexChanged.InvokeAsync(page);
+    }
+
+    private bool IsOffered(int size) =>
+        size == All ? AllowAll : size > 0 && PageSizeOptions != null && PageSizeOptions.Contains(size);
+
+    private async Task OnSizeChosen(int size)
+    {
+        if (size == PageSize) return;
+        await ApplySizeAsync(size);
+        await SaveAsync(size);
+    }
+
+    private async Task ApplySizeAsync(int size)
+    {
+        PageSize = size;
+        PageIndex = 0;
+        await PageSizeChanged.InvokeAsync(size);
+        await PageIndexChanged.InvokeAsync(0);
+    }
+
+    // localStorage is a per-browser convenience: it can be absent (a private window, blocked site data) or the
+    // circuit can be gone, so every read and write is wrapped and a failure simply means "use the default".
+    // Interop exists only after render, which is why the restore lives in OnAfterRenderAsync.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || string.IsNullOrWhiteSpace(StorageKey) || !HasSizeControl) return;
+
+        string? saved = null;
+        try { saved = await JS.InvokeAsync<string?>("localStorage.getItem", StorageName); }
+        catch { return; }
+
+        if (int.TryParse(saved, System.Globalization.NumberStyles.Integer, Inv, out var size)
+            && size != PageSize && IsOffered(size))
+        {
+            await ApplySizeAsync(size);
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveAsync(int size)
+    {
+        if (string.IsNullOrWhiteSpace(StorageKey)) return;
+        try { await JS.InvokeVoidAsync("localStorage.setItem", StorageName, size.ToString(Inv)); }
+        catch { /* a per-browser convenience; the size still applies to this visit */ }
     }
 }

@@ -17,7 +17,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Staff<QInfo Text="Everyone on this branch's staff, with their department, line manager and this period's band." Label="Staff" /></h1>
+            <h1>Staff</h1>
             <p class="subtitle">Everyone on this branch's staff, with their department, line manager and this period's band.</p>
         </div>
         <div class="header-actions">
@@ -54,7 +54,13 @@
        minus Band and Last record. One page, four tabs, one sidebar entry. *@
     <QTabs Tabs="@hubTabs" @bind-ActiveKey="@hubTab" IdPrefix="sd" />
 
-    @if (hubTab != "people")
+    @* Class and subject assignments are their own sections; everything else that is not People is
+       still the structure section. *@
+    @if (hubTab is "class-teachers" or "subject-teachers")
+    {
+        <ClassTeachers Embedded="true" EmbeddedTab="@hubTab" />
+    }
+    else if (hubTab != "people")
     {
         <StaffStructure Embedded="true" EmbeddedTab="@hubTab" EditMemberId="@structureEditId"
                         EditMemberHandled="@(() => structureEditId = null)" />
@@ -63,7 +69,7 @@
     {
     <QFilterBar Wrap="true">
         <QInput TValue="string" @bind-Value="@search" Placeholder="Search name, email or job title" @bind-Value:after="PruneSelection" IconLeft="search" Clearable="true" Class="sd-search" />
-        <QSelect TValue="string" TItem="string" @bind-Value="@departmentFilter" @bind-Value:after="PruneSelection" Items="@DepartmentOptions" TextSelector="@(d => d)" ValueSelector="@(d => d)"
+        <QSelect TValue="string" TItem="string" @bind-Value="@departmentFilter" @bind-Value:after="PruneSelection" Items="@DepartmentOptions" Sorted="true" TextSelector="@(d => d)" ValueSelector="@(d => d)"
                  Placeholder="All departments" AllowClear="true" Class="sd-filter" />
         <QSelect TValue="string" TItem="(string Code, string Name)" @bind-Value="@roleFilter" @bind-Value:after="PruneSelection" Items="@RoleOptions" TextSelector="@(r => r.Name)" ValueSelector="@(r => r.Code)"
                  Placeholder="All roles" AllowClear="true" Class="sd-filter" />
@@ -81,18 +87,28 @@
        each, so every rule it already enforces still applies (nobody is their own line manager; the
        person is told who supervises them), and whatever it refuses is named rather than swallowed.
        A selection may only ever cover rows the reader can SEE: PruneSelection runs on every filter. *@
-    @if (canEditStructure && directory != null && directory.Items.Count > 0)
+    @if (CanSelect && directory != null && directory.Items.Count > 0)
     {
         <QBulkBar ShowSearch="false" ShowSelection="true"
                   VisibleCount="@Visible.Count" SelectedCount="@selected.Count"
                   AllSelected="@AllVisibleSelected" AllSelectedChanged="@ToggleSelectAllVisible"
                   ClearSelection="@(() => selected.Clear())"
-                  IdleHint="Tick people to put several in a department, or give them the same line manager, or">
+                  IdleHint="@BulkIdleHint">
             <Actions>
-                <QButton Text="Move to a department" Icon="diagram-3" Size="sm" Variant="secondary"
-                         OnClick="@(() => OpenBulk(BulkAction.Department))" />
-                <QButton Text="Assign a line manager" Icon="person-up" Size="sm" Variant="secondary"
-                         OnClick="@(() => OpenBulk(BulkAction.LineManager))" />
+                @if (canEditStructure)
+                {
+                    <QButton Text="Move to a department" Icon="diagram-3" Size="sm" Variant="secondary"
+                             OnClick="@(() => OpenBulk(BulkAction.Department))" />
+                    <QButton Text="Assign a line manager" Icon="person-up" Size="sm" Variant="secondary"
+                             OnClick="@(() => OpenBulk(BulkAction.LineManager))" />
+                }
+                @if (canCreate)
+                {
+                    @* One record for everyone ticked — a contribution or a conduct matter they share. The dialog
+                       leaves the reader out and says so; the server re-checks every person against the scope. *@
+                    <QButton Text="Log a record" Icon="journal-plus" Size="sm" Variant="secondary"
+                             OnClick="@OpenBulkLog" />
+                }
             </Actions>
         </QBulkBar>
     }
@@ -117,7 +133,7 @@
                 <table class="data-table q-stack sd-table">
                     <thead>
                         <tr>
-                            @if (canEditStructure) { <th class="sd-tick"></th> }
+                            @if (CanSelect) { <th class="sd-tick"></th> }
                             <th>Name</th>
                             <th>Role</th>
                             <th>Departments</th>
@@ -128,74 +144,25 @@
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var m in Paged)
+                        @* All above QPaging.VirtualizeAbove rows renders through <Virtualize>, so choosing All on a large list
+                           never ships every row down the circuit at once (plan STUDENT_ROSTER_AND_LIST_STANDARD §1, L3). *@
+                        @if (pageSize == QPager.All && Visible.Count > QPaging.VirtualizeAbove)
                         {
-                            <tr class="@(selected.Contains(m.UserId) ? "sd-row--picked" : "")">
-                                @if (canEditStructure)
-                                {
-                                    <td class="sd-tick">
-                                        @* No label: the name is in the next cell, and repeating it
-                                           would read out twice. The title carries it for a screen reader. *@
-                                        <span title="@($"Select {m.FullName}")">
-                                            <QCheckbox Value="@selected.Contains(m.UserId)"
-                                                       ValueChanged="@(v => Pick(m.UserId, v))" />
-                                        </span>
-                                    </td>
-                                }
-                                <td>
-                                    <div class="sd-person">
-                                        <QAvatar Name="@m.FullName" PhotoUrl="@m.PhotoUrl" Size="sm" />
-                                        <div class="sd-person__text">
-                                            <a href="/admin/staff/@m.UserId/timeline" class="sd-person__name">@m.FullName</a>
-                                            <span class="sd-person__sub">@(string.IsNullOrWhiteSpace(m.JobTitle) ? m.Email : m.JobTitle)</span>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td><QChip Text="@m.RoleName" Color="@m.RoleColor" Size="sm" /></td>
-                                <td>@(m.DepartmentNames.Any() ? string.Join(", ", m.DepartmentNames) : "—")</td>
-                                <td>@(m.LineManagerName ?? "—")</td>
-                                <td>
-                                    @if (m.CurrentBand.HasValue)
-                                    {
-                                        <QChip Text="@($"{m.CurrentBandName} · {StaffDisplay.Composite(m.CurrentComposite)}")" Variant="@StaffDisplay.BandVariant(m.CurrentBand)" Size="sm" />
-                                    }
-                                    else
-                                    {
-                                        <span class="sd-muted">No evidence yet</span>
-                                    }
-                                </td>
-                                <td>@(m.LastRecordAt.HasValue ? QDateFormat.D(m.LastRecordAt.Value.ToLocalTime()) : "—")</td>
-                                <td>
-                                    <div class="sd-actions">
-                                        <QButton Text="Timeline" Icon="clock-history" Variant="ghost" Size="sm" OnClick="@(() => Navigation.NavigateTo($"/admin/staff/{m.UserId}/timeline"))" />
-                                        @* The staff record — employment terms, qualification,
-                                           registration number, contact. It could only ever be
-                                           WRITTEN by the bulk import until 2026-09-19, and never
-                                           read back per person. *@
-                                        <QButton Text="Record" Icon="person-vcard" Variant="ghost" Size="sm"
-                                                 OnClick="@(() => OpenProfile(m))" />
-                                        @if (canEditStructure)
-                                        {
-                                            @* The department / line-manager editor moved here with the
-                                               duplicate Staff tab's removal; the dialog itself still lives
-                                               in the Departments section, so this opens that section on
-                                               this person rather than duplicating the form. *@
-                                            <QButton Text="Structure" Icon="diagram-3" Variant="ghost" Size="sm"
-                                                     OnClick="@(() => { structureEditId = m.UserId; hubTab = "departments"; })" />
-                                        }
-                                        @if (canCreate)
-                                        {
-                                            <QButton Text="Log record" Icon="journal-plus" Variant="ghost" Size="sm" OnClick="@(() => OpenRecordFor(m))" />
-                                        }
-                                    </div>
-                                </td>
-                            </tr>
+                            <Virtualize Items="@Visible" Context="m" ItemSize="52" SpacerElement="tr">@DirectoryRow(m)</Virtualize>
+                        }
+                        else
+                        {
+                            @foreach (var m in Paged)
+                            {
+                                @DirectoryRow(m)
+                            }
                         }
                     </tbody>
                 </table>
             </div>
         </QCard>
-        <QPager Count="@Visible.Count" PageSize="@pageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="people" />
+        <QPager Count="@Visible.Count" PageSize="@pageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="staff-directory"
+                    PageSizeChanged="@(n => { pageSize = n; pageIndex = 0; })" SelectedCount="@selected.Count" ItemLabel="people" />
     }
     }
 </div>
@@ -210,6 +177,9 @@
 
     <AddStaffDialog BranchId="@branchId" Directory="@directory.Items"
                     @bind-Visible="showAddDialog" OnCreated="@LoadAsync" />
+
+    <BulkStaffRecordDialog BranchId="@branchId" People="@bulkLogPeople"
+                           @bind-Visible="showBulkLog" OnLogged="@OnBulkLogged" />
 }
 
 @* The one dialog both bulk actions use: pick the target, read what it will do, apply. It names the
@@ -312,7 +282,7 @@
     }
 
     private IEnumerable<StaffMemberDto> ManagerOptions =>
-        directory?.Items.OrderBy(m => m.FullName, StringComparer.OrdinalIgnoreCase) ?? Enumerable.Empty<StaffMemberDto>();
+        directory?.Items.OrderBy(m => m.SortName ?? m.FullName, StringComparer.OrdinalIgnoreCase) ?? Enumerable.Empty<StaffMemberDto>();
 
     private List<StaffMemberDto> SelectedPeople =>
         Visible.Where(m => selected.Contains(m.UserId)).ToList();
@@ -424,7 +394,7 @@
         ? StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest { Kind = StaffExportKinds.Directory, Format = export.Format?.ToString(), RowCount = export.RowCount })
         : Task.CompletedTask;
 
-    private const int pageSize = 25;
+    private int pageSize = QPagerDefaults.Size;
 
     private Guid branchId;
     private bool isLoading = true;
@@ -439,6 +409,13 @@
     private static readonly HubTabs.Section[] Sections =
     {
         new(new QTab("people", "People", "people"), Permissions.StaffRecordsView),
+        // Class and subject assignments live here since 2026-09-22: the ASSIGNMENT is what grants
+        // the pastoral permissions and the class scope, so this is an access-granting screen and
+        // belongs beside the other ones. Gated on its own permission, which is neither a subset nor
+        // a superset of StaffRecordsView — a staff reader who cannot assign classes must not see the
+        // tabs, and a classes.teachers.manage holder without staff.records.view must still reach them.
+        new(new QTab("class-teachers", "Class teachers", "person-video3"), Permissions.ClassTeachersManage),
+        new(new QTab("subject-teachers", "Subject teachers", "book"), Permissions.ClassTeachersManage),
         new(new QTab("departments", "Departments", "diagram-3"), Permissions.StaffStructureManage),
         new(new QTab("coverage", "Coverage", "shield-check"), Permissions.StaffRecordsView, Permissions.StaffStructureManage),
         new(new QTab("import", "Import", "upload"), Permissions.StaffStructureManage),
@@ -512,13 +489,13 @@
                 .Where(m => roleFilter == null || m.RoleCode == roleFilter)
                 .Where(m => bandFilter == null || (bandFilter == 0 ? m.CurrentBand == null : m.CurrentBand == bandFilter))
                 .Where(m => !onlyGaps || !m.DepartmentNames.Any() || m.LineManagerUserId == null)
-                .OrderBy(m => m.FullName)
+                .OrderBy(m => m.SortName ?? m.FullName)
                 .ToList();
         }
     }
 
-    private IEnumerable<StaffMemberDto> Paged => Visible.Skip(SafePageIndex * pageSize).Take(pageSize);
-    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (Visible.Count - 1) / pageSize));
+    private IEnumerable<StaffMemberDto> Paged => QPaging.Page(Visible, SafePageIndex, pageSize);
+    private int SafePageIndex => QPaging.SafeIndex(pageIndex, Visible.Count, pageSize);
 
     private string ExportSubtitle => $"{BranchState.CurrentBranchName} · {period} · {Visible.Count} of {directory?.Items.Count ?? 0} people";
 
@@ -619,6 +596,44 @@
         showProfileDialog = true;
     }
 
+    // ---- The group log ("Log a record" on the bulk bar, 2026-09-23) ----
+
+    /// <summary>A tick box is offered to anyone with something to apply to a selection: a structure action or the group log.</summary>
+    private bool CanSelect => canEditStructure || canCreate;
+
+    private string BulkIdleHint => canEditStructure && canCreate
+        ? "Tick people to log one record for all of them, put several in a department, or give them the same line manager, or"
+        : canCreate
+            ? "Tick people to log one record for all of them, or"
+            : "Tick people to put several in a department, or give them the same line manager, or";
+
+    private bool showBulkLog;
+
+    /// <summary>Captured when the dialog opens, so a filter change behind it cannot change who it writes for.</summary>
+    private IReadOnlyList<StaffMemberDto> bulkLogPeople = Array.Empty<StaffMemberDto>();
+
+    private void OpenBulkLog()
+    {
+        if (selected.Count == 0)
+        {
+            Toast.Notify(ToastSeverity.Info, "Nobody is ticked", "Tick the people this record is about first.");
+            return;
+        }
+        bulkLogPeople = SelectedPeople;
+        showBulkLog = true;
+    }
+
+    private async Task OnBulkLogged(BulkStaffRecordResultDto result)
+    {
+        var who = $"{result.Created} {(result.Created == 1 ? "person" : "people")}";
+        Toast.Notify(ToastSeverity.Success, $"Logged for {who}" + (result.SkippedSelf.Count > 0 ? " — you were left out" : ""),
+            "Each person can read it on their own file.");
+        selected.Clear();
+        bulkLogPeople = Array.Empty<StaffMemberDto>();
+        await LoadAsync();
+        PruneSelection();
+    }
+
     private void OpenRecordFor(StaffMemberDto m)
     {
         recordSubjectId = m.UserId;
@@ -643,4 +658,69 @@
     {
         HubTabs.FollowQuery(hubTabs, TabParam, ref appliedTab, ref hubTab);
     }
+
+    /// <summary>One row, shared by the paged loop and the virtualised All so the two cannot drift.</summary>
+    private RenderFragment DirectoryRow(StaffMemberDto m) => __builder =>
+    {
+                            <tr class="@(selected.Contains(m.UserId) ? "sd-row--picked" : "")">
+                                @if (CanSelect)
+                                {
+                                    <td class="sd-tick">
+                                        @* No label: the name is in the next cell, and repeating it
+                                           would read out twice. The title carries it for a screen reader. *@
+                                        <span title="@($"Select {m.FullName}")">
+                                            <QCheckbox Value="@selected.Contains(m.UserId)"
+                                                       ValueChanged="@(v => Pick(m.UserId, v))" />
+                                        </span>
+                                    </td>
+                                }
+                                <td>
+                                    <div class="sd-person">
+                                        <QAvatar Name="@m.FullName" PhotoUrl="@m.PhotoUrl" Size="sm" />
+                                        <div class="sd-person__text">
+                                            <a href="/admin/staff/@m.UserId/timeline" class="sd-person__name">@m.FullName</a>
+                                            <span class="sd-person__sub">@(string.IsNullOrWhiteSpace(m.JobTitle) ? m.Email : m.JobTitle)</span>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td><QChip Text="@m.RoleName" Color="@m.RoleColor" Size="sm" /></td>
+                                <td>@(m.DepartmentNames.Any() ? string.Join(", ", m.DepartmentNames) : "—")</td>
+                                <td>@(m.LineManagerName ?? "—")</td>
+                                <td>
+                                    @if (m.CurrentBand.HasValue)
+                                    {
+                                        <QChip Text="@($"{m.CurrentBandName} · {StaffDisplay.Composite(m.CurrentComposite)}")" Variant="@StaffDisplay.BandVariant(m.CurrentBand)" Size="sm" />
+                                    }
+                                    else
+                                    {
+                                        <span class="sd-muted">No evidence yet</span>
+                                    }
+                                </td>
+                                <td>@(m.LastRecordAt.HasValue ? QDateFormat.D(m.LastRecordAt.Value.ToLocalTime()) : "—")</td>
+                                <td>
+                                    <div class="sd-actions">
+                                        <QButton Text="Timeline" Icon="clock-history" Variant="ghost" Size="sm" OnClick="@(() => Navigation.NavigateTo($"/admin/staff/{m.UserId}/timeline"))" />
+                                        @* The staff record — employment terms, qualification,
+                                           registration number, contact. It could only ever be
+                                           WRITTEN by the bulk import until 2026-09-19, and never
+                                           read back per person. *@
+                                        <QButton Text="Record" Icon="person-vcard" Variant="ghost" Size="sm"
+                                                 OnClick="@(() => OpenProfile(m))" />
+                                        @if (canEditStructure)
+                                        {
+                                            @* The department / line-manager editor moved here with the
+                                               duplicate Staff tab's removal; the dialog itself still lives
+                                               in the Departments section, so this opens that section on
+                                               this person rather than duplicating the form. *@
+                                            <QButton Text="Structure" Icon="diagram-3" Variant="ghost" Size="sm"
+                                                     OnClick="@(() => { structureEditId = m.UserId; hubTab = "departments"; })" />
+                                        }
+                                        @if (canCreate)
+                                        {
+                                            <QButton Text="Log record" Icon="journal-plus" Variant="ghost" Size="sm" OnClick="@(() => OpenRecordFor(m))" />
+                                        }
+                                    </div>
+                                </td>
+                            </tr>
+    };
 }

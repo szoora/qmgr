@@ -186,6 +186,7 @@ public class NotificationsController : ControllerBase
         var result = notifications.Select(n => new NotificationDto
         {
             Id = n.Id,
+            UserId = n.UserId,
             Title = n.Title,
             Message = n.Message,
             Type = n.Type.ToString(),
@@ -292,44 +293,58 @@ public class NotificationsController : ControllerBase
     {
         // SECURITY: never trust client-supplied OrganizationId/UserId/BranchId here — this
         // selects which org's SMTP/SMS gateway sends the message and who receives it.
+        //
+        // A RECIPIENT IS REQUIRED (2026-09-23). Without one this wrote a row the whole school read and
+        // pushed it to every tenant on the platform — for a SuperAdmin who named no organization, with
+        // OrganizationId Guid.Empty. A message for the whole school is a Staff Notice, which sends one
+        // copy per person to an audience it can explain.
+        if (request.UserId is not { } targetUserId || targetUserId == Guid.Empty)
+            return BadRequest(new ProblemDetails
+            {
+                Title = "A recipient is required",
+                Detail = "A notification is sent to one person. To reach the whole school, publish a staff notice.",
+                Status = StatusCodes.Status400BadRequest
+            });
+
+        if (!Enum.TryParse<NotificationType>(request.Type ?? "Custom", true, out var type)
+            || !Enum.TryParse<NotificationPriority>(request.Priority ?? "Normal", true, out var priority))
+            return BadRequest(new ProblemDetails { Title = "Unknown type or priority", Status = StatusCodes.Status400BadRequest });
+
         var tenantContext = _tenantAccessor.TenantContext;
         var isSuperAdmin = RoleCodes.IsSuperAdmin(tenantContext?.UserRole);
-        Guid organizationId;
-        if (isSuperAdmin)
-        {
-            organizationId = request.OrganizationId ?? Guid.Empty;
-        }
-        else
-        {
-            if (tenantContext == null || !tenantContext.IsResolved)
-                return Unauthorized(new ProblemDetails
-                {
-                    Title = "Organization not resolved",
-                    Detail = "Unable to determine your organization context.",
-                    Status = StatusCodes.Status401Unauthorized
-                });
+        if (!isSuperAdmin && (tenantContext == null || !tenantContext.IsResolved))
+            return Unauthorized(new ProblemDetails
+            {
+                Title = "Organization not resolved",
+                Detail = "Unable to determine your organization context.",
+                Status = StatusCodes.Status401Unauthorized
+            });
 
-            organizationId = tenantContext.OrganizationId;
+        // The organization is the RECIPIENT'S, read from their row — never the request's. A tenant
+        // caller may only reach their own organization, and an unknown person and a person in
+        // another tenant read the same: 404.
+        var target = await _dbContext.Users.IgnoreQueryFilters().AsNoTracking()
+            .Where(u => u.Id == targetUserId && u.OrganizationId != Guid.Empty)
+            .Select(u => new { u.OrganizationId })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (target == null
+            || (!isSuperAdmin && target.OrganizationId != tenantContext!.OrganizationId)
+            || (isSuperAdmin && request.OrganizationId is { } named && named != target.OrganizationId))
+            return NotFound(new ProblemDetails { Title = "User not found", Status = StatusCodes.Status404NotFound });
 
-            // User/Branch DbSets are globally filtered to the caller's own org for
-            // non-SuperAdmin (see QMgrDbContext.TenantIsolationEnabled), so these checks
-            // transparently reject a foreign-org target without a separate org comparison.
-            if (request.UserId.HasValue && !await _dbContext.Users.AnyAsync(u => u.Id == request.UserId.Value, cancellationToken))
-                return NotFound(new ProblemDetails { Title = "User not found", Status = StatusCodes.Status404NotFound });
-
-            if (request.BranchId.HasValue && !await _dbContext.Branches.AnyAsync(b => b.Id == request.BranchId.Value && b.OrganizationId == organizationId, cancellationToken))
-                return NotFound(new ProblemDetails { Title = "Branch not found", Status = StatusCodes.Status404NotFound });
-        }
+        var organizationId = target.OrganizationId;
+        if (request.BranchId.HasValue && !await _dbContext.Branches.IgnoreQueryFilters().AnyAsync(b => b.Id == request.BranchId.Value && b.OrganizationId == organizationId, cancellationToken))
+            return NotFound(new ProblemDetails { Title = "Branch not found", Status = StatusCodes.Status404NotFound });
 
         var notification = await _notificationService.CreateInAppNotificationAsync(new CreateNotificationRequest
         {
-            UserId = request.UserId,
+            UserId = targetUserId,
             BranchId = request.BranchId,
             OrganizationId = organizationId,
             Title = request.Title,
             Message = request.Message,
-            Type = Enum.Parse<NotificationType>(request.Type ?? "Custom"),
-            Priority = Enum.Parse<NotificationPriority>(request.Priority ?? "Normal"),
+            Type = type,
+            Priority = priority,
             IconClass = request.IconClass,
             ActionUrl = request.ActionUrl,
             Channels = ParseChannels(request.Channels),
@@ -341,6 +356,7 @@ public class NotificationsController : ControllerBase
         return CreatedAtAction(nameof(GetNotifications), new NotificationDto
         {
             Id = notification.Id,
+            UserId = notification.UserId,
             Title = notification.Title,
             Message = notification.Message,
             Type = notification.Type.ToString(),

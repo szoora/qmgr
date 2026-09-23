@@ -19,6 +19,7 @@
 @inject IModuleStateService ModuleState
 @inject IJSRuntime JS
 @inject IAuthService AuthService
+@inject IPeopleNamesService PeopleNames
 
 @* Since 2026-09-18 this is normally EMBEDDED in the Staff hub (StaffDirectory), which owns the
    page header and the tab strip — the sidebar had 16 Staff Performance entries against Student
@@ -34,7 +35,7 @@
     {
         <div class="page-header">
             <div class="header-content">
-                <h1>Departments &amp; Structure<QInfo Text="Who belongs to which department, who heads it, and who each person reports to." Label="Departments &amp; Structure" /></h1>
+                <h1>Departments &amp; Structure</h1>
                 <p class="subtitle">Who belongs to which department, who heads it, and who each person reports to.</p>
             </div>
         </div>
@@ -129,7 +130,8 @@
                     </table>
                 </div>
             </QCard>
-            <QPager Count="@VisibleStaff.Count" PageSize="@PageSize" PageIndex="@staffPage" PageIndexChanged="@(i => staffPage = i)" ItemLabel="people" />
+            <QPager Count="@VisibleStaff.Count" PageSize="@PageSize" PageIndex="@staffPage" PageIndexChanged="@(i => staffPage = i)" PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="staff-structure-people"
+                    PageSizeChanged="@(n => { PageSize = n; staffPage = 0; })" ItemLabel="people" />
         }
     }
     else if (activeTab == "coverage")
@@ -366,7 +368,7 @@
     .ss-cov--ok { color: var(--qm-success); font-size: var(--qm-text-base); margin: 0; }</style>
 
 @code {
-    private const int PageSize = 25;
+    private int PageSize = QPagerDefaults.Size;
 
     private Guid branchId;
     private bool isLoading = true, saving, canImport, showRetired, onlyGaps;
@@ -447,17 +449,20 @@
 
     private sealed record PreviewRow(int Number, StaffImportRow Row, string? Error);
 
-    private List<StaffMemberDto> ActiveStaff => staff.Where(s => s.IsActive).OrderBy(s => s.FullName).ToList();
+    private List<StaffMemberDto> ActiveStaff => staff.Where(s => s.IsActive).OrderBy(s => s.SortName ?? s.FullName).ToList();
 
     private List<StaffMemberDto> VisibleStaff => staff
         .Where(m => string.IsNullOrWhiteSpace(staffSearch)
                     || m.FullName.Contains(staffSearch, StringComparison.OrdinalIgnoreCase)
                     || (m.JobTitle?.Contains(staffSearch, StringComparison.OrdinalIgnoreCase) ?? false))
         .Where(m => !onlyGaps || m.DepartmentIds.Count == 0 || m.LineManagerUserId == null)
-        .OrderBy(m => m.FullName)
+        .OrderBy(m => m.SortName ?? m.FullName)
         .ToList();
 
-    private IEnumerable<StaffMemberDto> PagedStaff => VisibleStaff.Skip(staffPage * PageSize).Take(PageSize);
+    private IEnumerable<StaffMemberDto> PagedStaff => QPaging.Page(VisibleStaff, staffPage, PageSize);
+
+    /// <summary>How this school writes a name — the import preview shows each row the way the directory will.</summary>
+    private NameOrder displayOrder = NameOrder.GivenFirst;
 
     protected override async Task OnInitializedAsync()
     {
@@ -466,6 +471,8 @@
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
             return;
         }
+
+        displayOrder = (await PeopleNames.GetAsync()).DisplayOrder;
 
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
@@ -823,7 +830,7 @@
     /// <summary>What the preview shows for a row, rather than the first four raw cells.</summary>
     private RenderFragment<StaffImportRow> StaffRowSummary => row => __builder =>
     {
-        <span class="ss-preview-name">@($"{row.FirstName} {row.LastName}".Trim())</span>
+        <span class="ss-preview-name">@PersonName.Join(row.FirstName, row.LastName, displayOrder)</span>
         <span class="ss-preview-sub">@(string.IsNullOrWhiteSpace(row.Email) ? "no email" : row.Email) · @row.RoleCode@(row.DepartmentCodes.Count > 0 ? " · " + string.Join("/", row.DepartmentCodes) : "")</span>
     };
 

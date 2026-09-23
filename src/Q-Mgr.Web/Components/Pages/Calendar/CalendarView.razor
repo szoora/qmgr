@@ -1,0 +1,936 @@
+@* No @page: a SECTION of the Calendar hub at /calendar. The hub owns ?tab=; this section reads its own
+   ?view= and ?date= once, on arrival, so a link can open a month or a term directly. *@
+@using Microsoft.AspNetCore.WebUtilities
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@inherits BranchAwareComponentBase
+@inject ICalendarApiService CalendarApi
+@inject IStaffPerformanceApiService StaffApi
+@inject IStudentApiService StudentApi
+@inject IToastService Toast
+@inject NavigationManager Navigation
+
+@*
+    The school calendar (plan TERM_PROGRAMME_CALENDAR_AND_GATES §9). Three views of one range:
+      * Term   — the term's programme, week by week, the shape a school prints and pins up;
+      * Month  — a Monday-first 7-column grid; under 640px it stacks into a day list, because seven
+                 columns on a phone are 50px each and nothing fits in them;
+      * Agenda — the month as a list of the days that have something on them.
+    Events are the school's; "My duties" are the caller's own Session and Rota duties (lessons are the
+    timetable's). National dates (D9) are muted markers — reference only, never a rule.
+*@
+
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1>Calendar</h1>
+    </Title>
+    <Actions>
+        <QButton Text="Print programme" Icon="printer" Variant="secondary" OnClick="@OpenPrint" Disabled="@(branchId == Guid.Empty)" />
+        @if (range?.CanManage == true)
+        {
+            <QButton Text="New event" Icon="plus-lg" Variant="primary" OnClick="@(() => OpenCreate(null))" id="cal-new-event" />
+        }
+    </Actions>
+</QPageActions>
+
+<div class="cal-page">
+    <QFilterBar Wrap="true" Class="cal-toolbar">
+        <QTabs Tabs="@ViewTabs" ActiveKey="@view" ActiveKeyChanged="@ChangeViewAsync" IdPrefix="calv" AriaLabel="Calendar view" Class="cal-views" />
+        <div class="cal-nav" role="group" aria-label="Move through the calendar">
+            <QButton Icon="chevron-left" Variant="ghost" Size="sm" OnClick="@(() => MoveAsync(-1))" aria-label="@($"Previous {ViewNoun}")" id="cal-prev" />
+            <QButton Text="Today" Variant="secondary" Size="sm" OnClick="@TodayAsync" id="cal-today" />
+            <QButton Icon="chevron-right" Variant="ghost" Size="sm" OnClick="@(() => MoveAsync(1))" aria-label="@($"Next {ViewNoun}")" id="cal-next" />
+            <strong class="cal-nav__label" id="cal-range-label">@RangeLabel</strong>
+        </div>
+        <QSwitch Value="@showDuties" ValueChanged="@(v => showDuties = v)" Label="My duties" aria-label="Show my duties" />
+    </QFilterBar>
+
+    @if (branchId == Guid.Empty)
+    {
+        <QEmptyState Icon="building" Title="Choose a branch" Text="The calendar belongs to a branch. Pick one in the switcher above." />
+    }
+    else if (isLoading && range == null)
+    {
+        <div class="cal-loading"><QSpinner Size="lg" /><span>Loading the calendar...</span></div>
+    }
+    else if (range != null)
+    {
+        @if (CurrentTerm is { } term)
+        {
+            <div class="cal-term" id="cal-term">
+                <QIcon Name="bookmark-star" />
+                <div class="cal-term__text">
+                    <strong>@term.Name</strong>
+                    <span>@QDateFormat.Range(term.Start, term.End)@(TermWeek(term) is { } w ? $" · week {w.Week} of {w.Of}" : "")</span>
+                    @if (!string.IsNullOrWhiteSpace(term.Theme))
+                    {
+                        <em class="cal-term__theme">“@term.Theme”</em>
+                    }
+                </div>
+            </div>
+        }
+
+        <QBulkBar Filters="@CategoryChips" ActiveFilter="@category" ActiveFilterChanged="@(k => category = k)"
+                  Search="@search" SearchChanged="@(s => search = s ?? string.Empty)" SearchPlaceholder="Search events" Class="cal-filter" />
+
+        @if (view == MonthView)
+        {
+            <div class="cal-month" role="grid" aria-label="@RangeLabel" id="cal-month">
+                <div class="cal-month__head" role="row">
+                    @foreach (var d in WeekdayNames) { <div class="cal-month__dow" role="columnheader">@d</div> }
+                </div>
+                <div class="cal-month__body">
+                    @foreach (var day in GridDays())
+                    {
+                        var items = ItemsOn(day);
+                        var inMonth = day.Month == anchor.Month;
+                        var national = NationalOn(day).ToList();
+                        <div class="cal-day @(inMonth ? "" : "cal-day--out") @(day == Today ? "cal-day--today" : "") @(items.Count == 0 && national.Count == 0 ? "cal-day--empty" : "")"
+                             role="gridcell" data-date="@CalendarDisplay.Iso(day)">
+                            <div class="cal-day__head">
+                                <span class="cal-day__num">@day.Day</span>
+                                <span class="cal-day__long">@QDateFormat.Dy(day) @QDateFormat.C(day)</span>
+                                @if (range.CanManage && inMonth)
+                                {
+                                    <button type="button" class="cal-day__add" title="New event on this day" aria-label="@($"New event on {QDateFormat.D(day)}")" @onclick="@(() => OpenCreate(day))"><QIcon Name="plus" Size="sm" /></button>
+                                }
+                            </div>
+                            @foreach (var n in national)
+                            {
+                                <span class="cal-national" title="@($"{n.Title}{(string.IsNullOrWhiteSpace(n.Source) ? "" : $" — {n.Source}")}")">@n.Title</span>
+                            }
+                            @foreach (var item in items.Take(MaxPerCell))
+                            {
+                                @ItemPill(item)
+                            }
+                            @if (items.Count > MaxPerCell)
+                            {
+                                <button type="button" class="cal-more" @onclick="@(() => OpenDayAsync(day))">+@(items.Count - MaxPerCell) more</button>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+            @if (!AnyVisibleIn(GridDays().Where(d => d.Month == anchor.Month)))
+            {
+                <QEmptyState Icon="calendar-x" Title="No events this month" Text="@EmptyText" Class="cal-empty" />
+            }
+        }
+        else
+        {
+            var days = ListDays().ToList();
+            var withItems = days.Where(d => ItemsOn(d).Count > 0 || NationalOn(d).Any()).ToList();
+            @if (withItems.Count == 0)
+            {
+                <QEmptyState Icon="calendar-x" Title="@(view == TermView ? "No events this term" : "No events this month")" Text="@EmptyText" Class="cal-empty" />
+            }
+            else
+            {
+                <div class="cal-agenda" id="cal-agenda">
+                    @foreach (var week in withItems.GroupBy(CalendarDisplay.MondayOf))
+                    {
+                        @if (view == TermView)
+                        {
+                            <h2 class="cal-week">@WeekHeading(week.Key)</h2>
+                        }
+                        @foreach (var day in week)
+                        {
+                            var items = ItemsOn(day);
+                            <section class="cal-agenda__day @(day == Today ? "cal-agenda__day--today" : "")" data-date="@CalendarDisplay.Iso(day)">
+                                <div class="cal-agenda__date">
+                                    <strong>@QDateFormat.Dy(day)</strong>
+                                    <span>@QDateFormat.C(day)</span>
+                                </div>
+                                <div class="cal-agenda__items">
+                                    @foreach (var n in NationalOn(day))
+                                    {
+                                        <span class="cal-national">@n.Title@(string.IsNullOrWhiteSpace(n.Kind) ? "" : $" · {n.Kind}")</span>
+                                    }
+                                    @foreach (var item in items)
+                                    {
+                                        @ItemRow(item)
+                                    }
+                                </div>
+                            </section>
+                        }
+                    }
+                </div>
+            }
+        }
+    }
+</div>
+
+@* ---- One event ------------------------------------------------------------------------------ *@
+<QModal @bind-Visible="showDetail" Title="@(detail?.Title ?? "Event")" Icon="calendar-event" Size="md">
+    <ChildContent>
+        @if (detail != null)
+        {
+            <dl class="cal-detail" id="cal-detail">
+                <dt>When</dt><dd>@CalendarDisplay.DatesAndTime(detail)</dd>
+                @if (!string.IsNullOrWhiteSpace(detail.Location)) { <dt>Venue</dt><dd>@detail.Location</dd> }
+                @if (!string.IsNullOrWhiteSpace(detail.Category)) { <dt>Category</dt><dd>@detail.Category</dd> }
+                <dt>For</dt><dd>@CalendarDisplay.Audience(detail.Audience)@(CalendarDisplay.Classes(detail) is { } cls ? $" · {cls}" : " · the whole school")</dd>
+                @if (CalendarDisplay.Responsible(detail) is { } who) { <dt>Responsible</dt><dd>@who</dd> }
+                @if (DepartmentNames(detail) is { } depts) { <dt>Departments</dt><dd>@depts</dd> }
+                @if (!string.IsNullOrWhiteSpace(detail.SeriesName)) { <dt>Programme</dt><dd>@detail.SeriesName</dd> }
+                @if (!string.IsNullOrWhiteSpace(detail.Description)) { <dt>Notes</dt><dd class="cal-detail__notes">@detail.Description</dd> }
+            </dl>
+            @if (detail.DutyId.HasValue)
+            {
+                <p class="cal-hint"><QIcon Name="clipboard-check" Size="sm" /> <span>This event is also a staff meeting with a register.</span></p>
+            }
+        }
+    </ChildContent>
+    <FooterContent>
+        @if (detail?.CanEdit == true)
+        {
+            <QButton Text="Delete" Icon="trash" Variant="outline-danger" OnClick="@AskDelete" id="cal-detail-delete" />
+            <QButton Text="Edit" Icon="pencil" Variant="secondary" OnClick="@(() => OpenEdit(detail!))" id="cal-detail-edit" />
+        }
+        <QButton Text="Close" Icon="x-lg" Variant="ghost" OnClick="@(() => showDetail = false)" />
+    </FooterContent>
+</QModal>
+
+@* ---- A day's full list, when a month cell overflows ------------------------------------------ *@
+<QModal @bind-Visible="showDay" Title="@(dayOpen.HasValue ? QDateFormat.LongDay(dayOpen.Value) : "Day")" Icon="calendar-day" Size="md">
+    <ChildContent>
+        @if (dayOpen is { } open)
+        {
+            <div class="cal-agenda__items">
+                @foreach (var item in ItemsOn(open)) { @ItemRow(item) }
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Icon="x-lg" Variant="ghost" OnClick="@(() => showDay = false)" />
+    </FooterContent>
+</QModal>
+
+@* ---- New / edit ------------------------------------------------------------------------------ *@
+<QModal @bind-Visible="showEditor" Title="@(editingId.HasValue ? "Edit event" : "New event")" Icon="calendar-plus" Size="lg">
+    <ChildContent>
+        <p class="form-required-note">* Required</p>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@form.Title" Label="Title" Required="true" MaxLength="200" id="cal-ev-title"
+                    Placeholder="Grand Mass, Visiting Day, S.4 mock examinations"
+                    HasError="@(Error("title") != null)" ErrorMessage="@Error("title")" />
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <QDatePicker @bind-Value="@formStart" Label="First day" Required="true"
+                             HasError="@(Error("startsOn") != null)" ErrorMessage="@Error("startsOn")" />
+            </div>
+            <div class="form-group">
+                <QDatePicker @bind-Value="@formEnd" Label="Last day" Required="true" Min="@formStart"
+                             HasError="@(Error("endsOn") != null)" ErrorMessage="@Error("endsOn")" />
+            </div>
+        </div>
+        <div class="form-group">
+            <QSwitch Value="@formAllDay" ValueChanged="@(v => formAllDay = v)" Label="All day" aria-label="All day" id="cal-ev-allday" />
+        </div>
+        @if (!formAllDay)
+        {
+            <div class="form-row">
+                <div class="form-group">
+                    <QDatePicker @bind-Value="@formStartTime" ShowTime="true" Label="Starts" Required="true"
+                                 HasError="@(Error("startTime") != null)" ErrorMessage="@Error("startTime")" />
+                </div>
+                <div class="form-group">
+                    <QDatePicker @bind-Value="@formEndTime" ShowTime="true" Label="Ends" Clearable="true" Placeholder="Onwards"
+                                 HasError="@(Error("endTime") != null)" ErrorMessage="@Error("endTime")" />
+                </div>
+            </div>
+        }
+        <div class="form-row">
+            <div class="form-group">
+                <QSelect TValue="string" TItem="string" @bind-Value="@form.Category" Items="@Categories" AllowClear="true"
+                         TextSelector="@(c => c)" ValueSelector="@(c => c)" Label="Category" Placeholder="Choose a category"
+                         Hint="The school's own list, kept on the Settings tab." />
+            </div>
+            <div class="form-group">
+                <QInput TValue="string" @bind-Value="@form.Location" Label="Venue" MaxLength="200" List="cal-rooms"
+                        Placeholder="A room, the chapel, the main field" Hint="Pick a room or type any place." />
+                <datalist id="cal-rooms">
+                    @foreach (var r in rooms) { <option value="@r"></option> }
+                </datalist>
+            </div>
+        </div>
+
+        <fieldset class="cal-audience">
+            <legend>Who it is for <QInfo Text="Staff see it on their calendar, My School Day and their phone's calendar. Public puts it on the signage screens' Coming up list. Students and Guardians are kept with the event and shown to them once they have a way in — not yet." Label="the audience" /></legend>
+            <div class="cal-audience__row">
+                <QCheckbox Value="@Has(EventAudience.Staff)" ValueChanged="@(v => SetAudience(EventAudience.Staff, v))" Label="Staff" />
+                <QCheckbox Value="@Has(EventAudience.Students)" ValueChanged="@(v => SetAudience(EventAudience.Students, v))" Label="Students" />
+                <QCheckbox Value="@Has(EventAudience.Guardians)" ValueChanged="@(v => SetAudience(EventAudience.Guardians, v))" Label="Guardians" />
+                <QCheckbox Value="@Has(EventAudience.Public)" ValueChanged="@(v => SetAudience(EventAudience.Public, v))" Label="Public (signage)" />
+            </div>
+            @if (Error("audience") is { } audienceError) { <p class="form-error" role="alert">@audienceError</p> }
+        </fieldset>
+
+        <div class="form-row">
+            <div class="form-group">
+                <QMultiSelect TValue="string" TItem="string" SelectedValues="@form.ClassNames" SelectedValuesChanged="@(v => form.ClassNames = v.ToList())"
+                              Items="@classes" TextSelector="@(c => c)" ValueSelector="@(c => c)" Label="Classes"
+                              Placeholder="The whole school" Hint="Leave empty for the whole school." />
+            </div>
+            <div class="form-group">
+                <QInput TValue="string" @bind-Value="@form.ResponsibleText" Label="Responsible, as written" MaxLength="300"
+                        Placeholder="Senior Ladies &amp; Matrons" Hint="Words for the programme. Name people below to put it on their own calendar." />
+            </div>
+        </div>
+        @if (staff.Any() || departments.Any())
+        {
+            <div class="form-row">
+                @if (staff.Any())
+                {
+                    <div class="form-group">
+                        <QMultiSelect TValue="Guid" TItem="StaffMemberDto" SelectedValues="@form.ResponsibleUserIds" SelectedValuesChanged="@(v => form.ResponsibleUserIds = v.ToList())"
+                                      Items="@staff" ValueSelector="@(s => s.UserId)" TextSelector="@(s => s.FullName)" Sorted="true"
+                                      Label="Responsible people" Placeholder="Nobody named" />
+                    </div>
+                }
+                @if (departments.Any())
+                {
+                    <div class="form-group">
+                        <QMultiSelect TValue="Guid" TItem="DepartmentDto" SelectedValues="@form.ResponsibleDepartmentIds" SelectedValuesChanged="@(v => form.ResponsibleDepartmentIds = v.ToList())"
+                                      Items="@departments" ValueSelector="@(d => d.Id)" TextSelector="@(d => d.Name)" Sorted="true"
+                                      Label="Responsible departments" Placeholder="No department" />
+                    </div>
+                }
+            </div>
+        }
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@form.Description" Type="textarea" Rows="3" MaxLength="2000" Label="Notes" />
+        </div>
+        @if (formProblem != null)
+        {
+            <p class="form-error" role="alert">@formProblem</p>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showEditor = false)" />
+        <QButton Text="@(editingId.HasValue ? "Save changes" : "Add event")" Icon="check-lg" Variant="primary" Loading="@saving" OnClick="@SaveAsync" id="cal-ev-save" />
+    </FooterContent>
+</QModal>
+
+<ConfirmDialog @bind-IsVisible="showDelete" Title="Delete this event?"
+               Message="@($"\"{detail?.Title}\" leaves the calendar, the printed programme and everybody's phone calendar at their next refresh.")"
+               ConfirmText="Delete" ConfirmButtonClass="btn-danger" OnClose="@DeleteConfirmedAsync" />
+
+<style>
+    .cal-page { display: flex; flex-direction: column; gap: var(--qm-block-gap, 10px); }
+    .cal-toolbar { align-items: center; }
+    .cal-views { margin-bottom: 0; }
+    .cal-nav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0; }
+    .cal-nav__label { margin-left: 6px; font-size: var(--qm-text-md); font-family: var(--qm-font-display); white-space: nowrap; }
+    .cal-loading { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 48px 16px; color: var(--qm-text-muted); }
+
+    .cal-term { display: flex; align-items: flex-start; gap: 10px; padding: 8px 12px; border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-primary); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); }
+    .cal-term__text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; min-width: 0; font-size: var(--qm-text-base); }
+    .cal-term__text span { color: var(--qm-text-secondary); }
+    .cal-term__theme { flex-basis: 100%; color: var(--qm-text-secondary); }
+
+    /* The month: a real 7-column grid, Monday first. */
+    .cal-month { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); overflow: hidden; background: var(--qm-bg-card); }
+    .cal-month__head, .cal-month__body { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+    .cal-month__dow { padding: 6px 8px; font-size: var(--qm-text-sm); font-weight: 600; color: var(--qm-text-secondary); border-bottom: 1px solid var(--qm-border); }
+    .cal-day { min-height: 104px; min-width: 0; padding: 4px 6px 6px; border-right: 1px solid var(--qm-border); border-bottom: 1px solid var(--qm-border); display: flex; flex-direction: column; gap: 3px; }
+    .cal-day:nth-child(7n) { border-right: 0; }
+    .cal-day--out { background: var(--qm-bg-secondary); }
+    .cal-day--out .cal-day__num { color: var(--qm-text-muted); }
+    .cal-day--today .cal-day__num { background: var(--qm-primary); color: var(--qm-text-on-primary); border-radius: var(--qm-radius-md); padding: 0 6px; }
+    .cal-day__head { display: flex; align-items: center; gap: 6px; min-height: 22px; }
+    .cal-day__num { font-size: var(--qm-text-sm); font-weight: 600; }
+    .cal-day__long { display: none; font-size: var(--qm-text-sm); font-weight: 600; }
+    .cal-day__add { margin-left: auto; border: 0; background: none; color: var(--qm-text-muted); cursor: pointer; padding: 0 2px; opacity: 0; min-width: 24px; min-height: 24px; }
+    .cal-day:hover .cal-day__add, .cal-day__add:focus-visible { opacity: 1; }
+
+    .cal-pill { display: flex; align-items: center; gap: 4px; width: 100%; min-width: 0; border: 0; text-align: left; cursor: pointer; padding: 2px 6px; border-radius: var(--qm-radius-sm); font: inherit; font-size: var(--qm-text-xs); line-height: 1.35; background: var(--qm-primary-light); color: var(--qm-text-primary); }
+    .cal-pill__t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cal-pill__time { flex: 0 0 auto; color: var(--qm-text-secondary); }
+    .cal-pill--allday { background: var(--qm-primary); color: var(--qm-text-on-primary); }
+    .cal-pill--allday .cal-pill__time { color: inherit; }
+    .cal-pill--duty { background: none; border: 1px dashed var(--qm-border); cursor: default; }
+    .cal-national { display: block; font-size: var(--qm-text-xs); color: var(--qm-text-muted); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cal-more { border: 0; background: none; padding: 0 6px; text-align: left; font: inherit; font-size: var(--qm-text-xs); color: var(--qm-primary); cursor: pointer; }
+
+    /* The agenda and the term: one line per item under a day heading. */
+    .cal-agenda { display: flex; flex-direction: column; gap: 6px; }
+    .cal-week { margin: 8px 0 0; font-size: var(--qm-text-base); color: var(--qm-text-secondary); }
+    .cal-agenda__day { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 10px; padding: 8px 10px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); }
+    .cal-agenda__day--today { border-left: 3px solid var(--qm-primary); }
+    .cal-agenda__date { display: flex; flex-direction: column; font-size: var(--qm-text-base); }
+    .cal-agenda__date span { color: var(--qm-text-secondary); font-size: var(--qm-text-sm); }
+    .cal-agenda__items { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .cal-row { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 2px 10px; align-items: baseline; width: 100%; border: 0; background: none; padding: 3px 4px; border-radius: var(--qm-radius-sm); text-align: left; font: inherit; font-size: var(--qm-text-base); color: inherit; cursor: pointer; }
+    .cal-row:hover { background: var(--qm-bg-secondary); }
+    .cal-row--duty { cursor: default; }
+    .cal-row--duty:hover { background: none; }
+    .cal-row__time { color: var(--qm-text-secondary); font-size: var(--qm-text-sm); }
+    .cal-row__main { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+    .cal-row__meta { color: var(--qm-text-secondary); font-size: var(--qm-text-sm); }
+    .cal-empty { margin-top: 4px; }
+
+    .cal-detail { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 6px 12px; margin: 0; font-size: var(--qm-text-base); }
+    .cal-detail dt { color: var(--qm-text-secondary); font-weight: 500; }
+    .cal-detail dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+    .cal-detail__notes { white-space: pre-line; }
+    .cal-hint { display: flex; align-items: center; gap: 6px; margin: 10px 0 0; font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
+    .cal-audience { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 8px 12px; margin: 0 0 var(--qm-field-gap, 12px); }
+    .cal-audience legend { display: inline-flex; align-items: center; gap: 4px; padding: 0 4px; width: auto; float: none; margin: 0; font-size: var(--qm-text-base); font-weight: 500; color: var(--qm-text-secondary); }
+    .cal-audience__row { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+
+    /* A phone: the grid becomes the list of days that have something on them. */
+    @@media (max-width: 640px) {
+        .cal-month__head { display: none; }
+        .cal-month__body { grid-template-columns: minmax(0, 1fr); }
+        .cal-day { min-height: 0; border-right: 0; }
+        .cal-day--out, .cal-day--empty { display: none; }
+        .cal-day__num { display: none; }
+        .cal-day__long { display: inline; }
+        .cal-day__add { opacity: 1; }
+        .cal-pill { font-size: var(--qm-text-sm); padding: 4px 8px; }
+        .cal-agenda__day { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+        .cal-agenda__date { flex-direction: row; gap: 6px; }
+        .cal-row { grid-template-columns: minmax(0, 1fr); }
+        .cal-detail { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+        .cal-detail dd { margin-bottom: 6px; }
+    }
+</style>
+
+@code {
+    [Parameter] public bool Embedded { get; set; }
+
+    private const string TermView = "term";
+    private const string MonthView = "month";
+    private const string AgendaView = "agenda";
+    private const string AllCategories = "all";
+    private const int MaxPerCell = 3;
+
+    private static readonly IReadOnlyList<QTab> ViewTabs = new List<QTab>
+    {
+        new(TermView, "Term", "bookmark-star"),
+        new(MonthView, "Month", "calendar3"),
+        new(AgendaView, "Agenda", "list-ul"),
+    };
+
+    private static readonly string[] WeekdayNames = { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
+
+    private Guid branchId;
+    private bool isLoading = true;
+    private string view = MonthView;
+    private DateOnly anchor = DateOnly.FromDateTime(DateTime.Today);
+    private CalendarRangeDto? range;
+    private bool showDuties = true;
+    private string category = AllCategories;
+    private string search = string.Empty;
+
+    /// <summary>The term the Term view is showing, when one covers the anchor. Null falls back to 13 weeks.</summary>
+    private PerformancePeriodDto? loadedTerm;
+
+    private bool showDetail, showDay, showEditor, showDelete, saving;
+    private SchoolEventDto? detail;
+    private DateOnly? dayOpen;
+
+    private Guid? editingId;
+    private SaveSchoolEventRequest form = new();
+    private DateTime? formStart, formEnd, formStartTime, formEndTime;
+    private bool formAllDay = true;
+    private string? formProblem;
+    private readonly Dictionary<string, string> errors = new(StringComparer.OrdinalIgnoreCase);
+
+    private List<string> classes = new();
+    private List<string> rooms = new();
+    private List<StaffMemberDto> staff = new();
+    private List<DepartmentDto> departments = new();
+    private bool lookupsLoaded;
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+
+    /// <summary>One thing on a day: a school event, or one of my own duties.</summary>
+    private sealed record DayItem(SchoolEventDto? Event, StaffDutyDto? Duty, DateTime? DutyStart, DateTime? DutyEnd)
+    {
+        public bool AllDay => Event != null && string.IsNullOrWhiteSpace(Event.StartTime);
+        /// <summary>"HH:mm" for ordering; all-day sorts first.</summary>
+        public string SortTime => Event != null ? (Event.StartTime ?? "") : QDateFormat.T(DutyStart!.Value);
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        ReadQuery();
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        TrackBranch();
+        await LoadAsync();
+    }
+
+    protected override async Task OnBranchChangedAsync(Guid branchId)
+    {
+        this.branchId = branchId;
+        lookupsLoaded = false;
+        classes = new(); rooms = new(); staff = new(); departments = new();
+        range = null;
+        await LoadAsync();
+    }
+
+    /// <summary>?view= and ?date= on arrival only — the hub owns ?tab= and nothing here writes the URL.</summary>
+    private void ReadQuery()
+    {
+        var query = QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query);
+        if (query.TryGetValue("view", out var v) && v.ToString() is TermView or MonthView or AgendaView) view = v.ToString();
+        if (query.TryGetValue("date", out var d) && CalendarDisplay.ParseIso(d.ToString()) is { } parsed) anchor = parsed;
+    }
+
+    // ---- The range ------------------------------------------------------------------------------
+
+    private (DateOnly From, DateOnly To) MonthSpan()
+    {
+        var first = new DateOnly(anchor.Year, anchor.Month, 1);
+        var last = first.AddMonths(1).AddDays(-1);
+        return (first, last);
+    }
+
+    private (DateOnly From, DateOnly To) GridSpan()
+    {
+        var (first, last) = MonthSpan();
+        var from = CalendarDisplay.MondayOf(first);
+        var to = CalendarDisplay.MondayOf(last).AddDays(6);
+        return (from, to);
+    }
+
+    private (DateOnly From, DateOnly To) LoadedSpan() => view switch
+    {
+        MonthView => GridSpan(),
+        AgendaView => MonthSpan(),
+        _ => loadedTerm != null ? (loadedTerm.Start, loadedTerm.End) : (CalendarDisplay.MondayOf(anchor), CalendarDisplay.MondayOf(anchor).AddDays(13 * 7 - 1))
+    };
+
+    private async Task LoadAsync()
+    {
+        if (branchId == Guid.Empty) { isLoading = false; range = null; return; }
+        isLoading = true;
+        try
+        {
+            if (view == TermView)
+            {
+                // The term is found from the range answer itself: ask for the anchor's own day, and
+                // widen to that term. A school with no terms set falls back to thirteen weeks.
+                var probe = await CalendarApi.GetRangeAsync(branchId, anchor, anchor);
+                loadedTerm = probe.Terms.FirstOrDefault(t => t.Start <= anchor && t.End >= anchor);
+            }
+            var (from, to) = LoadedSpan();
+            range = await CalendarApi.GetRangeAsync(branchId, from, to);
+            if (!range.Categories.Contains(category) && category != AllCategories) category = AllCategories;
+        }
+        catch (Exception ex)
+        {
+            range ??= new CalendarRangeDto();
+            Toast.Notify(ToastSeverity.Error, "Could not load the calendar", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task ChangeViewAsync(string key)
+    {
+        if (key == view) return;
+        view = key;
+        await LoadAsync();
+    }
+
+    private async Task MoveAsync(int step)
+    {
+        if (view == TermView)
+        {
+            if (loadedTerm != null)
+                anchor = step > 0 ? loadedTerm.End.AddDays(1) : loadedTerm.Start.AddDays(-1);
+            else
+                anchor = anchor.AddDays(step * 13 * 7);
+            // Between terms (a holiday) the probe finds nothing; step to the NEXT term's first day on the
+            // next press, which the probe will then find.
+        }
+        else
+        {
+            anchor = new DateOnly(anchor.Year, anchor.Month, 1).AddMonths(step);
+        }
+        await LoadAsync();
+    }
+
+    private async Task TodayAsync()
+    {
+        anchor = Today;
+        await LoadAsync();
+    }
+
+    private string ViewNoun => view switch { TermView => "term", _ => "month" };
+
+    private string RangeLabel => view switch
+    {
+        TermView => loadedTerm?.Name ?? $"13 weeks from {QDateFormat.D(CalendarDisplay.MondayOf(anchor))}",
+        _ => QDateFormat.MYLong(anchor.ToDateTime(TimeOnly.MinValue))
+    };
+
+    private PerformancePeriodDto? CurrentTerm =>
+        range?.Terms.FirstOrDefault(t => t.Start <= anchor && t.End >= anchor)
+        ?? (view == TermView ? loadedTerm : null)
+        ?? range?.Terms.FirstOrDefault();
+
+    private static (int Week, int Of)? TermWeek(PerformancePeriodDto term)
+    {
+        var today = Today;
+        if (today < term.Start || today > term.End) return null;
+        var monday = CalendarDisplay.MondayOf(term.Start);
+        var week = (CalendarDisplay.MondayOf(today).DayNumber - monday.DayNumber) / 7 + 1;
+        var of = (CalendarDisplay.MondayOf(term.End).DayNumber - monday.DayNumber) / 7 + 1;
+        return (week, of);
+    }
+
+    private string WeekHeading(DateOnly monday)
+    {
+        if (view == TermView && loadedTerm != null)
+        {
+            var n = (monday.DayNumber - CalendarDisplay.MondayOf(loadedTerm.Start).DayNumber) / 7 + 1;
+            return $"Week {n} · {QDateFormat.C(monday)} – {QDateFormat.C(monday.AddDays(6))}";
+        }
+        return $"Week of {QDateFormat.C(monday)}";
+    }
+
+    private IEnumerable<DateOnly> GridDays()
+    {
+        var (from, to) = GridSpan();
+        for (var d = from; d <= to; d = d.AddDays(1)) yield return d;
+    }
+
+    private IEnumerable<DateOnly> ListDays()
+    {
+        var (from, to) = LoadedSpan();
+        for (var d = from; d <= to; d = d.AddDays(1)) yield return d;
+    }
+
+    // ---- What is on a day -----------------------------------------------------------------------
+
+    private IEnumerable<SchoolEventDto> FilteredEvents()
+    {
+        if (range == null) return Enumerable.Empty<SchoolEventDto>();
+        IEnumerable<SchoolEventDto> events = range.Events;
+        if (category != AllCategories)
+            events = events.Where(e => string.Equals(e.Category, category, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var q = search.Trim();
+            bool Has(string? s) => (s ?? string.Empty).Contains(q, StringComparison.OrdinalIgnoreCase);
+            events = events.Where(e => Has(e.Title) || Has(e.Location) || Has(e.ResponsibleText) || Has(e.Description));
+        }
+        return events;
+    }
+
+    private static DateTime Local(DateTime value) => value.Kind == DateTimeKind.Utc ? value.ToLocalTime() : value;
+
+    private List<DayItem> ItemsOn(DateOnly day)
+    {
+        var items = FilteredEvents().Where(e => CalendarDisplay.IsOn(e, day)).Select(e => new DayItem(e, null, null, null)).ToList();
+        // Duties follow the category filter only when it is off: a duty has no category, and hiding my
+        // own duty behind "Sports & clubs" would read as the duty having moved.
+        if (showDuties && range != null && category == AllCategories && string.IsNullOrWhiteSpace(search))
+        {
+            foreach (var d in range.MyDuties.Where(d => d.IsActive))
+            {
+                var start = Local(d.StartsAt);
+                var end = Local(d.EndsAt);
+                if (DateOnly.FromDateTime(start) <= day && DateOnly.FromDateTime(end) >= day)
+                    items.Add(new DayItem(null, d, start, end));
+            }
+        }
+        return items.OrderBy(i => !i.AllDay).ThenBy(i => i.SortTime, StringComparer.Ordinal)
+            .ThenBy(i => i.Event?.Title ?? i.Duty?.Title, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private IEnumerable<NationalCalendarEntryDto> NationalOn(DateOnly day)
+        => range?.NationalDates.Where(n => n.StartsOn <= day && n.EndsOn >= day) ?? Enumerable.Empty<NationalCalendarEntryDto>();
+
+    private bool AnyVisibleIn(IEnumerable<DateOnly> days) => days.Any(d => ItemsOn(d).Count > 0);
+
+    private string EmptyText => range?.CanManage == true
+        ? "Add one with New event, or bring a whole term's programme in on the Import tab."
+        : "Nothing has been put on the calendar for this period.";
+
+    private List<QBulkBar.Filter> CategoryChips
+    {
+        get
+        {
+            var events = range?.Events ?? new List<SchoolEventDto>();
+            var chips = new List<QBulkBar.Filter> { new(AllCategories, "All", events.Count) };
+            foreach (var c in Categories)
+            {
+                var n = events.Count(e => string.Equals(e.Category, c, StringComparison.OrdinalIgnoreCase));
+                if (n > 0 || string.Equals(category, c, StringComparison.OrdinalIgnoreCase)) chips.Add(new(c, c, n));
+            }
+            return chips;
+        }
+    }
+
+    private List<string> Categories => range?.Categories ?? new List<string>();
+
+    private RenderFragment ItemPill(DayItem item) => __builder =>
+    {
+        if (item.Event is { } e)
+        {
+            <button type="button" class="cal-pill @(item.AllDay ? "cal-pill--allday" : "")" title="@e.Title" @onclick="@(() => OpenDetail(e))" data-event-id="@e.Id">
+                @if (!item.AllDay) { <span class="cal-pill__time">@e.StartTime</span> }
+                <span class="cal-pill__t">@e.Title</span>
+            </button>
+        }
+        else if (item.Duty is { } d)
+        {
+            <span class="cal-pill cal-pill--duty" title="@($"{d.Title} — {DutyRole(d)}")">
+                <QIcon Name="@(d.Kind == DutyKind.Rota ? "shield-check" : "person-check")" Size="sm" />
+                <span class="cal-pill__t">@d.Title</span>
+            </span>
+        }
+    };
+
+    private RenderFragment ItemRow(DayItem item) => __builder =>
+    {
+        if (item.Event is { } e)
+        {
+            <button type="button" class="cal-row" @onclick="@(() => OpenDetail(e))" data-event-id="@e.Id">
+                <span class="cal-row__time">@CalendarDisplay.When(e)</span>
+                <span class="cal-row__main">
+                    <strong>@e.Title</strong>
+                    @if (!string.IsNullOrWhiteSpace(e.Category)) { <QChip Text="@e.Category" Size="sm" Variant="muted" /> }
+                    @if (e.EndsOn > e.StartsOn) { <span class="cal-row__meta">until @QDateFormat.C(e.EndsOn)</span> }
+                    @if (!string.IsNullOrWhiteSpace(e.Location)) { <span class="cal-row__meta"><QIcon Name="geo-alt" Size="sm" /> @e.Location</span> }
+                    @if (CalendarDisplay.Responsible(e) is { } who) { <span class="cal-row__meta"><QIcon Name="person" Size="sm" /> @who</span> }
+                </span>
+            </button>
+        }
+        else if (item.Duty is { } d)
+        {
+            <div class="cal-row cal-row--duty">
+                <span class="cal-row__time">@QDateFormat.T(item.DutyStart!.Value)–@QDateFormat.T(item.DutyEnd!.Value)</span>
+                <span class="cal-row__main">
+                    <strong>@d.Title</strong>
+                    <QChip Text="@DutyRole(d)" Size="sm" Variant="info" Icon="@(d.Kind == DutyKind.Rota ? "shield-check" : "person-check")" />
+                    @if (!string.IsNullOrWhiteSpace(d.Location)) { <span class="cal-row__meta"><QIcon Name="geo-alt" Size="sm" /> @d.Location</span> }
+                </span>
+            </div>
+        }
+    };
+
+    private static string DutyRole(StaffDutyDto d)
+        => d.Kind == DutyKind.Rota ? (d.IsSupervisedByMe ? "Supervising" : "On duty")
+         : d.CanIRecord ? "You take the register" : "My meeting";
+
+    private string? DepartmentNames(SchoolEventDto e)
+    {
+        if (e.ResponsibleDepartmentIds is not { Count: > 0 } ids || !departments.Any()) return null;
+        var names = ids.Select(id => departments.FirstOrDefault(d => d.Id == id)?.Name).Where(n => n != null).ToList();
+        return names.Count == 0 ? null : string.Join(", ", names);
+    }
+
+    private void OpenDetail(SchoolEventDto e)
+    {
+        detail = e;
+        showDay = false;
+        showDetail = true;
+    }
+
+    private Task OpenDayAsync(DateOnly day)
+    {
+        dayOpen = day;
+        showDay = true;
+        return Task.CompletedTask;
+    }
+
+    private void OpenPrint()
+    {
+        var (from, to) = LoadedSpan();
+        if (view != TermView)
+        {
+            // From the month view, print the whole term the month falls in when there is one.
+            if (CurrentTerm is { } t) { from = t.Start; to = t.End; }
+            else (from, to) = MonthSpan();
+        }
+        Navigation.NavigateTo($"/calendar/print?from={CalendarDisplay.Iso(from)}&to={CalendarDisplay.Iso(to)}");
+    }
+
+    // ---- Create / edit --------------------------------------------------------------------------
+
+    private async Task EnsureLookupsAsync()
+    {
+        if (lookupsLoaded || branchId == Guid.Empty) return;
+        lookupsLoaded = true;
+        try
+        {
+            var vocab = await StudentApi.GetVocabulariesAsync(branchId);
+            classes = vocab.Classes.Where(c => c.IsActive).OrderBy(c => c.SortOrder).Select(c => c.Name).ToList();
+            rooms = vocab.Rooms.Where(r => r.IsActive).OrderBy(r => r.SortOrder).Select(r => r.Name).ToList();
+        }
+        catch { /* the fields stay free text */ }
+        // The staff directory and departments belong to Welfare & Performance and to staff.records.view.
+        // A school without either still writes "Responsible" in words; the pickers simply do not appear.
+        try { staff = (await StaffApi.GetDirectoryAsync(branchId)).Items.Where(s => s.IsActive).ToList(); }
+        catch { staff = new(); }
+        try { departments = (await StaffApi.GetDepartmentsAsync(branchId)).Where(d => d.IsActive).ToList(); }
+        catch { departments = new(); }
+    }
+
+    private async Task OpenCreate(DateOnly? day)
+    {
+        editingId = null;
+        var start = day ?? (anchor.Month == Today.Month && anchor.Year == Today.Year ? Today : anchor);
+        form = new SaveSchoolEventRequest { BranchId = branchId, Audience = EventAudience.Staff, Category = null };
+        formStart = start.ToDateTime(TimeOnly.MinValue);
+        formEnd = formStart;
+        formAllDay = true;
+        formStartTime = start.ToDateTime(new TimeOnly(8, 0));
+        formEndTime = null;
+        formProblem = null;
+        errors.Clear();
+        showDetail = false;
+        showEditor = true;
+        await EnsureLookupsAsync();
+    }
+
+    private async Task OpenEdit(SchoolEventDto e)
+    {
+        editingId = e.Id;
+        form = new SaveSchoolEventRequest
+        {
+            BranchId = e.BranchId,
+            Title = e.Title,
+            Description = e.Description,
+            StartsOn = e.StartsOn,
+            EndsOn = e.EndsOn,
+            StartTime = e.StartTime,
+            EndTime = e.EndTime,
+            Category = e.Category,
+            Audience = e.Audience,
+            ClassNames = e.ClassNames.ToList(),
+            Location = e.Location,
+            ResponsibleText = e.ResponsibleText,
+            ResponsibleUserIds = e.ResponsibleUserIds.ToList(),
+            ResponsibleDepartmentIds = e.ResponsibleDepartmentIds.ToList(),
+        };
+        formStart = e.StartsOn.ToDateTime(TimeOnly.MinValue);
+        formEnd = e.EndsOn.ToDateTime(TimeOnly.MinValue);
+        formAllDay = string.IsNullOrWhiteSpace(e.StartTime);
+        formStartTime = ParseTime(e.StartsOn, e.StartTime) ?? e.StartsOn.ToDateTime(new TimeOnly(8, 0));
+        formEndTime = ParseTime(e.StartsOn, e.EndTime);
+        formProblem = null;
+        errors.Clear();
+        showDetail = false;
+        showEditor = true;
+        await EnsureLookupsAsync();
+    }
+
+    private static DateTime? ParseTime(DateOnly day, string? hhmm)
+        => TimeOnly.TryParseExact(hhmm, "HH:mm", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var t)
+            ? day.ToDateTime(t) : null;
+
+    private static string HHmm(DateTime value) => value.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+
+    private string? Error(string field) => errors.TryGetValue(field, out var m) ? m : null;
+
+    private bool Has(EventAudience flag) => form.Audience.HasFlag(flag);
+
+    private void SetAudience(EventAudience flag, bool on)
+        => form.Audience = on ? form.Audience | flag : form.Audience & ~flag;
+
+    /// <summary>
+    /// The refusals the server makes, made first — a form that accepts anything and refuses afterwards is
+    /// how people learn to stop trying. The server checks every one again; this only saves the round trip.
+    /// </summary>
+    private bool Validate()
+    {
+        errors.Clear();
+        if (string.IsNullOrWhiteSpace(form.Title)) errors["title"] = "Give the event a title.";
+        if (formStart == null) errors["startsOn"] = "Choose the first day.";
+        if (formEnd == null) errors["endsOn"] = "Choose the last day.";
+        if (formStart is { } s && formEnd is { } e)
+        {
+            if (e.Date < s.Date) errors["endsOn"] = "The last day cannot be before the first.";
+            else if ((e.Date - s.Date).TotalDays > 92) errors["endsOn"] = "An event can run for at most 92 days.";
+        }
+        if (!formAllDay)
+        {
+            if (formStartTime == null) errors["startTime"] = "Give a start time, or switch on All day.";
+            else if (formEndTime is { } et && formStart?.Date == formEnd?.Date
+                     && TimeOnly.FromDateTime(et) <= TimeOnly.FromDateTime(formStartTime.Value))
+                errors["endTime"] = "The end time must be after the start time.";
+        }
+        if (form.Audience == EventAudience.None) errors["audience"] = "Choose who the event is for.";
+        return errors.Count == 0;
+    }
+
+    private async Task SaveAsync()
+    {
+        formProblem = null;
+        if (!Validate()) return;
+
+        form.Title = form.Title.Trim();
+        form.BranchId ??= branchId;
+        form.StartsOn = DateOnly.FromDateTime(formStart!.Value);
+        form.EndsOn = DateOnly.FromDateTime(formEnd!.Value);
+        form.StartTime = formAllDay ? null : HHmm(formStartTime!.Value);
+        form.EndTime = formAllDay || formEndTime == null ? null : HHmm(formEndTime.Value);
+        form.Location = string.IsNullOrWhiteSpace(form.Location) ? null : form.Location.Trim();
+        form.ResponsibleText = string.IsNullOrWhiteSpace(form.ResponsibleText) ? null : form.ResponsibleText.Trim();
+
+        saving = true;
+        try
+        {
+            if (editingId.HasValue)
+            {
+                await CalendarApi.UpdateEventAsync(branchId, editingId.Value, form);
+                Toast.Notify(ToastSeverity.Success, "Event updated", form.Title);
+            }
+            else
+            {
+                await CalendarApi.CreateEventAsync(branchId, form);
+                Toast.Notify(ToastSeverity.Success, "Event added", form.Title);
+            }
+            showEditor = false;
+            // Show where it landed: the month of its first day.
+            if (view != TermView) anchor = form.StartsOn;
+            await LoadAsync();
+        }
+        catch (ApiFieldException ex)
+        {
+            foreach (var (field, message) in ex.Errors) errors[field] = message;
+            formProblem = ex.Errors.Count > 0 ? "Complete the fields marked in red." : ex.Message;
+        }
+        catch (Exception ex)
+        {
+            formProblem = ex.Message;
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    // ---- Delete ---------------------------------------------------------------------------------
+
+    private void AskDelete() => showDelete = true;
+
+    private async Task DeleteConfirmedAsync(bool confirmed)
+    {
+        if (!confirmed || detail == null) return;
+        try
+        {
+            await CalendarApi.DeleteEventAsync(branchId, detail.Id);
+            Toast.Notify(ToastSeverity.Success, "Event deleted", detail.Title);
+            showDetail = false;
+            detail = null;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not delete the event", ex.Message);
+        }
+    }
+}

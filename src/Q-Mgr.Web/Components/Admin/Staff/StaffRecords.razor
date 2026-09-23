@@ -18,7 +18,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Staff Records<QInfo Text="Every record in the ledger for this branch — search it, log to it, open a person's timeline from it." Label="Staff Records" /></h1>
+            <h1>Staff Records</h1>
             <p class="subtitle">Every record in the ledger for this branch — search it, log to it, open a person's timeline from it.</p>
         </div>
         <div class="header-actions">
@@ -135,7 +135,8 @@
                 </table>
             </div>
         </QCard>
-        <QPager Count="@result.TotalCount" PageSize="@pageSize" PageIndex="@pageIndex" PageIndexChanged="@OnPageChanged" ItemLabel="records" />
+        <QPager Count="@result.TotalCount" PageSize="@pageSize" PageIndex="@pageIndex" PageIndexChanged="@OnPageChanged" PageSizeOptions="@QPagerDefaults.Sizes" StorageKey="staff-records"
+               PageSizeChanged="@(n => pageSize = n)" ItemLabel="records" />
     }
     }
 </div>
@@ -182,7 +183,8 @@
     /// <summary>The last ?tab= this hub acted on — see HubTabs.FollowQuery.</summary>
     private string? appliedTab;
 
-    private const int pageSize = 25;
+    // SERVER-paged: the API caps a page at 200, so "All" is not offered — it would quietly be one page of 200.
+    private int pageSize = QPagerDefaults.Size;
 
     private static readonly IReadOnlyList<(string Value, string Label)> StatusOptions = new[]
     {
@@ -280,7 +282,7 @@
     {
         try
         {
-            directory = (await StaffApi.GetDirectoryAsync(branchId)).Items.OrderBy(m => m.FullName).ToList();
+            directory = (await StaffApi.GetDirectoryAsync(branchId)).Items.OrderBy(m => m.SortName ?? m.FullName).ToList();
             parameters = (await StaffApi.GetParametersAsync(includeInactive: true)).OrderBy(p => p.SortOrder).ThenBy(p => p.Name).ToList();
         }
         catch (Exception ex)

@@ -394,7 +394,7 @@
         get
         {
             if (register == null) return new();
-            IEnumerable<RegisterRowDto> rows = register.Rows.OrderBy(r => r.FullName, StringComparer.OrdinalIgnoreCase);
+            IEnumerable<RegisterRowDto> rows = register.Rows.OrderBy(r => r.SortName ?? r.FullName, StringComparer.OrdinalIgnoreCase);
 
             if (filter == "unmarked") rows = rows.Where(r => !marks[r.UserId].Outcome.HasValue);
             else if (filter != "all") rows = rows.Where(r => marks[r.UserId].Outcome is { } o && Slug(o) == filter);

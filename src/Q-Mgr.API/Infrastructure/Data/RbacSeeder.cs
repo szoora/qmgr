@@ -199,6 +199,8 @@ public class RbacSeeder
         new("staff.dutyreports.review", "Review Duty Reports", "Comment on duty reports, return them for changes and mark them reviewed", "Staff Performance", 15, true),
         new("timetable.manage", "Manage the Timetable", "Build, check and publish the timetable, bell schedule and rooms — the timetable master", "Staff Performance", 16, true),
         new("timetable.lessons.flag", "Flag Lessons", "Confirm or override lessons taught, missed and recovered for the staff in scope", "Staff Performance", 17, true),
+        // School calendar (2026-09-23) — mirrored in Permissions.All and the Web copy
+        new("calendar.manage", "Manage the School Calendar", "Create and edit school events and import the term programme, meetings and duty rotas", "Calendar", 1, true),
 
         // ============================================
         // MARKETING (contacts + broadcast campaigns)
@@ -326,6 +328,8 @@ public class RbacSeeder
                 "feedback.view", "feedback.respond", "feedback.analytics",
                 // Visitor Management (full)
                 "visitors.view", "visitors.checkin", "visitors.checkout", "visitors.manage",
+                // School calendar
+                "calendar.manage",
                 // Student Rosters (full)
                 "students.view", "students.manage", "classes.teachers.manage",
                 // Student Welfare Ledger (full, except confidential-tier — see the welfare-plan's
@@ -377,48 +381,6 @@ public class RbacSeeder
         ),
 
         // ============================================
-        // CLASS TEACHER
-        // Pastoral responsibility for one or more classes.
-        //
-        // The permission set is deliberately narrow, but what actually defines this role is not
-        // what it may do — it is WHICH ROWS it may do it to. DataScope.AssignedClasses narrows
-        // every roster and welfare read to students whose ClassName matches one of the caller's
-        // live ClassTeacherAssignment rows, enforced in StudentScopeService.
-        //
-        // Notably absent, each for a reason:
-        //   students.manage            — a class teacher does not edit the roll or bulk-import it
-        //   classes.teachers.manage    — could otherwise self-assign to any class, defeating the scope
-        //   welfare.confidential.view  — safeguarding stays with the DSL/administrator (KCSIE
-        //                                need-to-know; user decision 2026-09-09)
-        //   welfare.restricted.view    — administrator only
-        // ============================================
-        [RoleCodes.ClassTeacher] = new RoleDefinition(
-            Name: "Class Teacher",
-            Code: RoleCodes.ClassTeacher,
-            Description: "Pastoral responsibility for assigned classes. Sees only the students in those classes.",
-            Color: "#E67E22",
-            Icon: "person-video3",
-            SortOrder: 4,
-            IsSystemRole: true,
-            Permissions: new[]
-            {
-                "dashboard.view",
-                "notifications.view",
-                // Scoped to the caller's own classes by StudentScopeService.
-                "students.view",
-                "welfare.view", "welfare.create", "welfare.edit", "welfare.notify",
-                // Scoped too, so this answers "how is my class doing" and nothing wider. The OWN code, not
-                // the branch-wide one, so a school can withhold the page from a custom class-teacher role
-                // without touching what a manager reads (user decision, 2026-09-18).
-                "welfare.reports.own",
-                // The staff portal needs no permission; recognition does.
-                "staff.recognition.give",
-            },
-            DataScope: RoleDataScope.AssignedClasses,
-            StaffScope: StaffDataScope.SelfOnly
-        ),
-
-        // ============================================
         // STAFF PERFORMANCE MONITOR HIERARCHY (2026-09-16)
         // Director of Studies · Academic Assistant · Head of Department · Teacher · Support Staff.
         // All five rank below Manager in RoleCodes.All (plan §13 decision 1). What defines a head of
@@ -445,6 +407,7 @@ public class RbacSeeder
                 // Duty rota plan §15 decisions 4 and 10: the DoS reads and reviews duty reports, is a timetable
                 // master, and supervises lessons school-wide.
                 "staff.dutyreports.view", "staff.dutyreports.review", "timetable.manage", "timetable.lessons.flag",
+                "calendar.manage",
             },
             DataScope: RoleDataScope.Organization,
             StaffScope: StaffDataScope.Organization
@@ -467,32 +430,12 @@ public class RbacSeeder
                 "staff.reports.view", "staff.notices.manage", "staff.recognition.give",
                 // Duty rota plan §15 decision 10: the academic assistant is a timetable master and reads duty reports.
                 "staff.dutyreports.view", "timetable.manage", "timetable.lessons.flag",
+                "calendar.manage",
             },
             DataScope: RoleDataScope.Organization,
             StaffScope: StaffDataScope.Organization
         ),
 
-        [RoleCodes.HeadOfDepartment] = new RoleDefinition(
-            Name: "Head of Department",
-            Code: RoleCodes.HeadOfDepartment,
-            Description: "Sees and appraises the staff of the departments they head. A head with no department sees nobody.",
-            Color: "#C99A5B",
-            Icon: "diagram-3",
-            SortOrder: 3,
-            IsSystemRole: true,
-            Permissions: new[]
-            {
-                "dashboard.view", "notifications.view",
-                "staff.records.view", "staff.records.create", "staff.records.edit",
-                "staff.duties.manage",
-                "staff.appraisals.conduct",
-                "staff.reports.view", "staff.recognition.give",
-                // Duty rota plan §15 decision 4: a head flags and reads for their department only (the staff scope does that).
-                "staff.dutyreports.view", "timetable.lessons.flag",
-            },
-            DataScope: RoleDataScope.Organization,
-            StaffScope: StaffDataScope.AssignedDepartments
-        ),
 
         [RoleCodes.Teacher] = new RoleDefinition(
             Name: "Teacher",
@@ -529,7 +472,8 @@ public class RbacSeeder
                 "staff.recognition.give",
             },
             DataScope: RoleDataScope.Organization,
-            StaffScope: StaffDataScope.SelfOnly
+            StaffScope: StaffDataScope.SelfOnly,
+            StaffGroup: StaffGroups.Support
         ),
 
         // ============================================
@@ -627,6 +571,7 @@ public class RbacSeeder
                     IsSystem = roleDef.IsSystemRole,
                     DataScope = roleDef.DataScope,
                     StaffScope = roleDef.StaffScope,
+                    StaffGroup = roleDef.StaffGroup,
                     IsActive = true,
                     CreatedAt = DateTime.UtcNow
                 });
@@ -659,6 +604,15 @@ public class RbacSeeder
             if (role.StaffScope != roleDef.StaffScope)
             {
                 role.StaffScope = roleDef.StaffScope;
+                repaired++;
+            }
+            // And the staff GROUP, for the same reason: a role row created before 2026-09-22 has
+            // none, and a null there resolves to the tenant's first group rather than the one the
+            // role actually belongs to — which is how support staff came to be scored on Lesson
+            // Attendance in the first place.
+            if (!string.Equals(role.StaffGroup, roleDef.StaffGroup, StringComparison.Ordinal))
+            {
+                role.StaffGroup = roleDef.StaffGroup;
                 repaired++;
             }
             // The DISPLAY NAME and description are repaired too, since 2026-09-18. They were
@@ -885,7 +839,10 @@ public class RbacSeeder
         bool IsSystemRole,
         string[] Permissions,
         RoleDataScope DataScope = RoleDataScope.Organization,
-        StaffDataScope StaffScope = StaffDataScope.Organization
+        StaffDataScope StaffScope = StaffDataScope.Organization,
+        // Which staff group a role's holders are in. Only support-staff differs, which is exactly
+        // what the old roleCode == "support-staff" test resolved to — so seeding these moves no score.
+        string StaffGroup = StaffGroups.Teaching
     );
 
     #endregion

@@ -48,12 +48,24 @@ public interface INotificationService
     Task<bool> SendWhatsAppAsync(Guid organizationId, string phoneNumber, string message, IReadOnlyList<NotificationAttachment>? attachments = null, CancellationToken cancellationToken = default);
 
     // In-App notifications
+
+    /// <summary>
+    /// Writes ONE person's notification and pushes it to them. <see cref="CreateNotificationRequest.UserId"/>
+    /// is REQUIRED and this throws without it (2026-09-23): a recipient-less row used to be read by the
+    /// whole tenant and pushed to the whole platform.
+    /// </summary>
     Task<Notification> CreateInAppNotificationAsync(CreateNotificationRequest request, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Returns notifications for <paramref name="userId"/>, restricted to broadcasts and
-    /// notifications belonging to <paramref name="organizationId"/> — a broadcast notification
-    /// (UserId == null) from another tenant must never surface here.
+    /// The same notification to several people — one row, one push and one preference decision EACH.
+    /// Build the list with <c>NotificationAudience.HoldersAsync</c>, never by hand. The template's own
+    /// UserId is ignored. Returns how many were written; one failure does not stop the rest.
+    /// </summary>
+    Task<int> NotifyManyAsync(IEnumerable<Guid> recipients, CreateNotificationRequest template, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns <paramref name="userId"/>'s OWN notifications in <paramref name="organizationId"/>, and
+    /// nothing else: there are no broadcast rows (2026-09-23).
     /// </summary>
     /// <param name="eventKey">Narrows to one NotificationEventKeys category (the notification centre's per-group view). Null = every kind.</param>
     /// <param name="offset">Rows to skip, for paging the full centre. 0 = the bell's behaviour.</param>
@@ -62,9 +74,9 @@ public interface INotificationService
 
     /// <summary>
     /// Marks a notification read. Only succeeds if it belongs to <paramref name="organizationId"/>
-    /// AND is either a broadcast (UserId == null) or belongs to <paramref name="callerId"/> —
-    /// returns false (treat as 404) otherwise, so a caller can never touch another user's private
-    /// notification by guessing its ID, nor another tenant's broadcast notification.
+    /// AND to <paramref name="callerId"/> — false (treat as 404) otherwise, so nobody can touch
+    /// anybody else's notification by guessing its ID, and there is no shared row whose read flag
+    /// one person could set for everybody.
     /// </summary>
     Task<bool> MarkAsReadAsync(Guid notificationId, Guid callerId, Guid organizationId, CancellationToken cancellationToken = default);
     Task MarkAllAsReadAsync(Guid userId, Guid organizationId, CancellationToken cancellationToken = default);
@@ -107,10 +119,12 @@ public interface INotificationSettingsService
 /// </summary>
 public interface INotificationHubService
 {
+    /// <summary>
+    /// The ONLY way a notification is pushed: to its one recipient's group. There is deliberately
+    /// no branch-wide or platform-wide push for a notification — see NotificationAudience.
+    /// </summary>
     Task SendToUserAsync(Guid userId, Notification notification);
-    Task SendToBranchAsync(Guid branchId, Notification notification);
-    Task SendToAllAsync(Notification notification);
-    Task NotifyUnreadCountAsync(Guid userId, int count);
+    Task NotifyUnreadCountAsync(Guid userId, int count, DateTime countedAtUtc);
 
     /// <summary>
     /// Tells a signed-in user's open circuits that their role or role permissions changed, so
@@ -183,6 +197,14 @@ public class CreateNotificationRequest
     public string? EmailHtmlBody { get; set; }
 
     public DateTime? ExpiresAt { get; set; }
+
+    /// <summary>A copy of this request addressed to <paramref name="userId"/>. Used by NotifyManyAsync.</summary>
+    public CreateNotificationRequest For(Guid userId)
+    {
+        var copy = (CreateNotificationRequest)MemberwiseClone();
+        copy.UserId = userId;
+        return copy;
+    }
 }
 
 /// <summary>

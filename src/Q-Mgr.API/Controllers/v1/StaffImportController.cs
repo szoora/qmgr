@@ -301,7 +301,7 @@ public class StaffImportController : ControllerBase
         {
             if (matchedIds.Contains(person.Id)) continue;   // the import lands on them; not a duplicate
 
-            var key = ImportMatching.NameKey($"{person.FirstName} {person.LastName}");
+            var key = ImportMatching.NameKey(PersonName.Join(person.FirstName, person.LastName));
             if (key == null || !unmatchedByName.TryGetValue(key, out var inFile)) continue;
 
             var label = !string.IsNullOrWhiteSpace(person.EmployeeNumber) ? person.EmployeeNumber
@@ -387,7 +387,7 @@ public class StaffImportController : ControllerBase
                 slips.Add(new TemporaryPasswordSlipDto
                 {
                     RowNumber = i + 1,
-                    FullName = $"{row.FirstName} {row.LastName}".Trim(),
+                    FullName = PersonNames.Display(organizationId, row.FirstName, row.LastName),
                     Username = row.Username,
                     Email = row.Email,
                     TemporaryPassword = temporary,

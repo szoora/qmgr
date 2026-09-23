@@ -110,13 +110,15 @@ public class StaffDutiesController : ControllerBase
         if (RoleCodes.IsSuperAdmin(_tenantAccessor.TenantContext?.UserRole)) return true;
         if (_permissionCache.TryGetValue(code, out var cached)) return cached;
 
+        // Role AND posts, through PostPermissionService.EffectiveCodesAsync — the one home for that union.
+        // staff.duties.manage arrives with a department-head post, so reading the role alone hid it.
         var userId = CurrentUserId();
-        var has = userId != Guid.Empty && await _context.Users
-            .Where(u => u.Id == userId && u.IsActive)
-            .SelectMany(u => u.Role.RolePermissions)
-            .AnyAsync(rp => rp.Permission.Code == code);
-        return _permissionCache[code] = has;
+        if (userId == Guid.Empty) return _permissionCache[code] = false;
+        _effectiveCodes ??= await PostPermissionService.EffectiveCodesAsync(_context, userId);
+        return _permissionCache[code] = _effectiveCodes.Contains(code);
     }
+
+    private HashSet<string>? _effectiveCodes;
 
     private static IActionResult NotFoundDuty() => new NotFoundObjectResult(new ProblemDetails { Title = "Duty not found", Status = StatusCodes.Status404NotFound });
 
@@ -768,6 +770,7 @@ public class StaffDutiesController : ControllerBase
             {
                 UserId = u.Id,
                 FullName = StaffPerformanceMapping.FullName(u),
+                SortName = PersonNames.SortKey(u),
                 PhotoUrl = UploadLinks.Sign(u.PhotoUrl),
                 JobTitle = u.JobTitle,
                 DepartmentNames = StaffLookups.DepartmentNames(u.DepartmentIds, departmentNames),

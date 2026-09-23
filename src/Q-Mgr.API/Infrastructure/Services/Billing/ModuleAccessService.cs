@@ -347,13 +347,20 @@ public class ModuleAccessService : IModuleAccessService
         // below), so it's the only thing left in the JSON blob.
         if (customerId != null) org.StripeCustomerId = customerId;
 
+        await _dbContext.SaveChangesAsync();
+
+        // The JSON half through the one writer of Organization.Settings, re-read under its lock
+        // (2026-09-23): a Stripe webhook landing while an administrator saved any other setting
+        // could otherwise drop one of the two.
         if (subscriptionId != null)
         {
-            var current = ReadModuleBillingSettings(org.Settings);
-            org.Settings = WriteModuleBillingSettings(org.Settings, current with { StripeSubscriptionId = subscriptionId });
+            await OrganizationSettingsLock.MutateAsync(_dbContext, organizationId, locked =>
+            {
+                var current = ReadModuleBillingSettings(locked.Settings);
+                locked.Settings = WriteModuleBillingSettings(locked.Settings, current with { StripeSubscriptionId = subscriptionId });
+                return true;
+            });
         }
-
-        await _dbContext.SaveChangesAsync();
     }
 
     /// <summary>Holds only the module system's shared Stripe subscription ID — the customer ID

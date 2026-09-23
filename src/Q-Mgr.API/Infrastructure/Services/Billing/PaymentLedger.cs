@@ -14,6 +14,7 @@ using QMgr.Domain.Enums;
 using QMgr.Domain.Payments;
 using QMgr.Infrastructure.Data;
 using QMgr.Infrastructure.Email;
+using QMgr.API.Application.Services;
 
 namespace QMgr.Infrastructure.Services.Billing;
 
@@ -617,9 +618,16 @@ public sealed class PaymentLedger : IPaymentLedger
         };
         if (title == null) return;
 
-        await _notifications.CreateInAppNotificationAsync(new CreateNotificationRequest
+        // TO THE PEOPLE WHO CAN OPEN THE INVOICES TAB, and nobody else (2026-09-23). This was written
+        // with no recipient, which the bell read as "everybody in the school" and the live push read
+        // as "everybody on the platform": a newly onboarded teacher read the school's failed
+        // payments. Sent once per settlement — SettleAsync only reaches here on a real change of
+        // status, under the payment's own advisory lock.
+        var audience = await NotificationAudience.HoldersAsync(_db, payment.OrganizationId, Permissions.BillingView, cancellationToken);
+        await _notifications.NotifyManyAsync(audience, new CreateNotificationRequest
         {
             OrganizationId = payment.OrganizationId,
+            EventKey = NotificationEventKeys.BillingPayment,
             Title = title,
             Message = message!,
             Type = NotificationType.SystemAlert,

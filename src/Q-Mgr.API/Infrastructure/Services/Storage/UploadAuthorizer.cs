@@ -336,14 +336,20 @@ public class UploadAuthorizer : IUploadAuthorizer
         }
     }
 
+    /// <summary>
+    /// Role AND posts, through <see cref="PostPermissionService.EffectiveCodesAsync"/> — the one home for that
+    /// union. It read the role alone until 2026-09-22, so a class teacher whose derived <c>welfare.view</c> let
+    /// them open a welfare record could not open its EVIDENCE with their bearer token: the record's own gate
+    /// honoured the post and this one did not. The visibility rung and the class-teacher scope still apply on top.
+    /// </summary>
     private async Task<bool> HasPermissionAsync(string code, CancellationToken ct)
     {
         var raw = _httpContextAccessor.HttpContext?.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         if (!Guid.TryParse(raw, out var userId)) return false;
 
-        return await _db.Users.IgnoreQueryFilters()
-            .Where(u => u.Id == userId && u.IsActive)
-            .SelectMany(u => u.Role.RolePermissions)
-            .AnyAsync(rp => rp.Permission.Code == code, ct);
+        _effectiveCodes ??= await QMgr.API.Application.Services.PostPermissionService.EffectiveCodesAsync(_db, userId, ct);
+        return _effectiveCodes.Contains(code);
     }
+
+    private HashSet<string>? _effectiveCodes;
 }

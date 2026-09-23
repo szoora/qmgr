@@ -112,7 +112,7 @@ public class UsersController : ControllerBase
                 Email = u.Email ?? string.Empty,
                 FirstName = u.FirstName,
                 LastName = u.LastName,
-                FullName = (u.FirstName ?? "") + " " + (u.LastName ?? ""),
+                OrganizationId = u.OrganizationId,
                 Phone = u.Phone,
                 EmployeeNumber = u.EmployeeNumber,
                 RoleId = u.RoleId,
@@ -132,7 +132,7 @@ public class UsersController : ControllerBase
 
         // Signed AFTER materialisation: UploadLinks.Sign cannot translate to SQL, so the
         // projection above carries the raw column and the token is minted here.
-        users = users.Select(d => d with { PhotoUrl = UploadLinks.Sign(d.PhotoUrl) }).ToList();
+        users = users.Select(d => Named(d) with { PhotoUrl = UploadLinks.Sign(d.PhotoUrl) }).ToList();
 
         return Ok(users);
     }
@@ -178,7 +178,7 @@ public class UsersController : ControllerBase
                 Email = u.Email ?? string.Empty,
                 FirstName = u.FirstName,
                 LastName = u.LastName,
-                FullName = (u.FirstName ?? "") + " " + (u.LastName ?? ""),
+                OrganizationId = u.OrganizationId,
                 Phone = u.Phone,
                 EmployeeNumber = u.EmployeeNumber,
                 RoleId = u.RoleId,
@@ -204,8 +204,19 @@ public class UsersController : ControllerBase
                 Status = StatusCodes.Status404NotFound
             });
 
-        return Ok(user with { PhotoUrl = UploadLinks.Sign(user.PhotoUrl) });
+        return Ok(Named(user) with { PhotoUrl = UploadLinks.Sign(user.PhotoUrl) });
     }
+
+    /// <summary>
+    /// The name in this person's organisation's own order, and the key a list sorts them on — written
+    /// after materialisation, because PersonNames cannot translate to SQL. The projection used to
+    /// concatenate first name then surname in the query itself, whatever the school had chosen.
+    /// </summary>
+    private static UserDto Named(UserDto d) => d with
+    {
+        FullName = PersonNames.Display(d.OrganizationId, d.FirstName, d.LastName, d.Username),
+        SortName = PersonNames.SortKey(d.OrganizationId, d.FirstName, d.LastName)
+    };
 
     /// <summary>
     /// Creates a new user
@@ -443,6 +454,7 @@ public class UsersController : ControllerBase
             FirstName = user.FirstName,
             LastName = user.LastName,
             FullName = user.FullName,
+            SortName = PersonNames.SortKey(user),
             Phone = user.Phone,
             EmployeeNumber = user.EmployeeNumber,
             RoleId = role.Id,
@@ -663,6 +675,7 @@ public class UsersController : ControllerBase
             FirstName = user.FirstName,
             LastName = user.LastName,
             FullName = user.FullName,
+            SortName = PersonNames.SortKey(user),
             Phone = user.Phone,
             EmployeeNumber = user.EmployeeNumber,
             RoleId = user.RoleId,
@@ -744,6 +757,7 @@ public class UsersController : ControllerBase
             FirstName = user.FirstName,
             LastName = user.LastName,
             FullName = user.FullName,
+            SortName = PersonNames.SortKey(user),
             Phone = user.Phone,
             EmployeeNumber = user.EmployeeNumber,
             RoleId = user.RoleId,
@@ -815,7 +829,18 @@ public class UsersController : ControllerBase
     }
 
     /// <summary>
-    /// Resets a user's password
+    /// Issues somebody a new temporary password: one the administrator types, or one generated here.
+    ///
+    /// <para>THIS IS THE ONLY WAY BACK IN FOR MOST OF THIS PRODUCT'S USERS. <c>User.Email</c> is
+    /// nullable and 133 of the 184 staff on the first real school list this product imported have no
+    /// address at all, so the self-service reset link can never reach them. An administrator issuing
+    /// one by hand — read out, or on a printed slip — is not a fallback here, it is the path.</para>
+    ///
+    /// <para>The password is returned ONCE and never stored readably. <c>MustChangePassword</c> is
+    /// set, so the token that password buys is change-only (15 minutes, no refresh token,
+    /// <c>PasswordChangeOnlyMiddleware</c> refuses everything else) and the person chooses their own
+    /// before they can do anything. That forced change is what makes an administrator-chosen
+    /// password acceptable at all — it is the same bargain Google Workspace and Entra ID strike.</para>
     /// </summary>
     [HttpPost("{userId:guid}/reset-password")]
     [RequirePermission(Permissions.UsersEdit)]
@@ -827,7 +852,9 @@ public class UsersController : ControllerBase
         // SECURITY: Build organization filter (except for SuperAdmin)
         var roleClaim = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
         var isSuperAdmin = RoleCodes.IsSuperAdmin(roleClaim);
-        var query = _dbContext.Users.Where(u => u.Id == userId);
+        // Include(Role) because the rank guard below weighs this person's role against the
+        // caller's; without it RoleAssignmentGuard reads a null navigation and cannot refuse.
+        var query = _dbContext.Users.Include(u => u.Role).Where(u => u.Id == userId);
 
         if (!isSuperAdmin)
         {
@@ -854,31 +881,57 @@ public class UsersController : ControllerBase
                 Status = StatusCodes.Status404NotFound
             });
 
-        if (string.IsNullOrWhiteSpace(request.NewPassword))
-            return BadRequest(new ProblemDetails
-            {
-                Title = "Validation failed",
-                Detail = "New password is required.",
-                Status = StatusCodes.Status400BadRequest
-            });
+        // RESETTING SOMEBODY'S PASSWORD IS TAKING OVER THEIR ACCOUNT, so it is bounded by rank —
+        // the same rule, and the same one home, that CreateUser and UpdateUser were put behind on
+        // 2026-09-18 after a tenant Admin holding users.edit could mint themselves a Platform
+        // Administrator. This endpoint was the door beside those two: it checked users.edit and the
+        // organization and NOTHING ELSE, so the same Admin could reset a Platform Administrator's
+        // password, sign in as them and reach every organization. StaffOnboardingController.Reissue
+        // has always refused this — "that would be taking over their account" — and this did not.
+        //
+        // A reset of one's OWN password is always allowed: that is not an escalation, and an
+        // administrator locked out of their own account is the case this exists for.
+        var actorId = GetCurrentUserIdOrNull();
+        if (actorId == null) return Unauthorized();
+        if (user.Id != actorId.Value)
+        {
+            var rankRefusal = await RoleAssignmentGuard.RefusalAsync(_dbContext, actorId.Value, user.Role);
+            if (rankRefusal != null)
+                return BadRequest(new ProblemDetails
+                {
+                    Title = "You cannot reset this person's password",
+                    Detail = rankRefusal,
+                    Status = StatusCodes.Status400BadRequest
+                });
+        }
 
-        // Validate password against platform policy and the blocklist, the organization's name included
-        var organizationName = await _dbContext.Organizations.IgnoreQueryFilters().Where(o => o.Id == user.OrganizationId).Select(o => o.Name).FirstOrDefaultAsync();
-        var passwordValidation = await _passwordValidation.ValidatePasswordAsync(
-            request.NewPassword,
-            user.Username,
-            user.Email,
-            organizationName);
+        // Generated by default. An administrator reading a password down a phone line may type their
+        // own instead, and it then meets the policy and the blocklist exactly as a self-chosen one
+        // would — so never "pass", never the school's name, never this person's own username.
+        var generated = string.IsNullOrWhiteSpace(request.NewPassword);
+        var newPassword = generated
+            ? QMgr.API.Application.Services.TemporaryPasswords.Generate()
+            : request.NewPassword;
 
-        if (!passwordValidation.IsValid)
-            return BadRequest(new ProblemDetails
-            {
-                Title = "Password validation failed",
-                Detail = passwordValidation.ErrorMessage,
-                Status = StatusCodes.Status400BadRequest
-            });
+        if (!generated)
+        {
+            var organizationName = await _dbContext.Organizations.IgnoreQueryFilters().Where(o => o.Id == user.OrganizationId).Select(o => o.Name).FirstOrDefaultAsync();
+            var passwordValidation = await _passwordValidation.ValidatePasswordAsync(
+                newPassword,
+                user.Username,
+                user.Email,
+                organizationName);
 
-        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+            if (!passwordValidation.IsValid)
+                return BadRequest(new ProblemDetails
+                {
+                    Title = "Password validation failed",
+                    Detail = passwordValidation.ErrorMessage + " Leave it empty to have one generated.",
+                    Status = StatusCodes.Status400BadRequest
+                });
+        }
+
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
         user.RefreshToken = null; // Invalidate any existing refresh tokens
         user.RefreshTokenExpiry = null;
         // An administrator's reset issues a temporary password (duty rota plan §12.3): the person must
@@ -887,13 +940,33 @@ public class UsersController : ControllerBase
         user.TemporaryPasswordExpiresAt = DateTime.UtcNow.Add(QMgr.API.Application.Services.TemporaryPasswords.Lifetime);
         user.PasswordResetToken = null;
         user.PasswordResetTokenExpiry = null;
+        // The lockout goes with it. Somebody who has forgotten their password has usually just tried
+        // it five times, so leaving the counter standing means the new password they were read over
+        // the phone is refused too — and the administrator has no way to see why. Reissue has always
+        // cleared both; this did not.
+        user.FailedLoginAttempts = 0;
+        user.LockoutEnd = null;
         user.UpdatedAt = DateTime.UtcNow;
 
         await _dbContext.SaveChangesAsync();
 
-        _logger.LogInformation("Reset password for user: {UserId} - {Username}", userId, user.Username);
+        // The password is never logged, here or anywhere. Which ACCOUNT was reset, and by whom, is
+        // the useful half and is what an audit of this asks for.
+        _logger.LogInformation("Reset password for user {UserId} ({Username}) by {ActorId}; generated={Generated}",
+            userId, user.Username, actorId, generated);
 
-        return Ok(new { message = "Password reset successfully" });
+        // Returned ONCE. The slip shape is the one the import and the re-issue already hand back, so
+        // a caller printing or reading out a password has one shape to know rather than three.
+        return Ok(new QMgr.Application.DTOs.TemporaryPasswordSlipDto
+        {
+            UserId = user.Id,
+            FullName = user.FullName,
+            SortName = PersonNames.SortKey(user),
+            Username = user.Username,
+            Email = user.Email ?? string.Empty,
+            TemporaryPassword = newPassword,
+            ExpiresAt = user.TemporaryPasswordExpiresAt ?? DateTime.UtcNow
+        });
     }
 
     /// <summary>
@@ -933,6 +1006,13 @@ public record UserDto
     public string? FirstName { get; init; }
     public string? LastName { get; init; }
     public string FullName { get; init; } = string.Empty;
+
+    /// <summary>What a list sorts this person on, in the organisation's chosen order (PersonNames.SortKey).</summary>
+    public string? SortName { get; init; }
+
+    /// <summary>Whose naming order applies. Carried from the query to <c>Named</c>; never sent.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Guid OrganizationId { get; init; }
     public string? Phone { get; init; }
     public string? EmployeeNumber { get; init; }
     public Guid RoleId { get; init; }
@@ -981,6 +1061,12 @@ public record UpdateUserRequest
 
 public record ResetPasswordRequest
 {
+    /// <summary>
+    /// The password to set — or EMPTY, which is the normal case and has one generated. An empty
+    /// value is not a validation failure here: "generate one for me" is the default an administrator
+    /// should be nudged towards, and making it an error would push them towards typing something
+    /// memorable instead.
+    /// </summary>
     public string NewPassword { get; init; } = string.Empty;
 }
 

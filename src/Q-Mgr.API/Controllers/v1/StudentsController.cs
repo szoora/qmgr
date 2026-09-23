@@ -1,3 +1,4 @@
+using QMgr.API.Application.Services;
 using System.Linq.Expressions;
 using QMgr.Domain.Entities.Welfare;
 using QMgr.Domain.Identity;
@@ -206,10 +207,13 @@ public class StudentsController : ControllerBase
     // Student / Guardian CRUD
     // ---------------------------------------------------------------------
 
+    /// <summary>The most students one roll request returns: well above any school's roll, a guard against a runaway query.</summary>
+    private const int WholeRoll = 10000;
+
     [HttpGet("branches/{branchId:guid}/students")]
     [RequirePermission(Permissions.StudentsView)]
     [ProducesResponseType(typeof(List<StudentDto>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetStudents(Guid branchId, [FromQuery] bool includeInactive = false, [FromQuery] int limit = 100)
+    public async Task<IActionResult> GetStudents(Guid branchId, [FromQuery] bool includeInactive = false, [FromQuery] int limit = WholeRoll)
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
@@ -224,7 +228,12 @@ public class StudentsController : ControllerBase
         // empty list, never the whole branch.
         query = await _scope.ApplyAnyTierAsync(query, branchId);
 
-        var students = await query.OrderBy(s => s.FullName).Take(Math.Clamp(limit, 1, 500)).ToListAsync();
+        // THE WHOLE ROLL (2026-09-23). This took 100 by default and never more than 500, and no caller ever asked for
+        // more — so the roster showed the first 100 students by name with nothing saying the list was cut, and the
+        // welfare timeline, which finds its own student in this list, lost the guardians and the "other students"
+        // picker for every child past the hundredth. Maryhill has 1,711. Paging is the PAGE's job (QPager); a list
+        // endpoint that silently truncates is the bug.
+        var students = await query.OrderBy(s => s.FullName).Take(Math.Clamp(limit, 1, WholeRoll)).ToListAsync();
 
         var pastoral = await CanViewPastoralAsync();
         var confidential = await CanViewConfidentialAsync();
@@ -451,6 +460,75 @@ public class StudentsController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>The most names one tidy may touch (plan STUDENT_ROSTER_AND_LIST_STANDARD §2).</summary>
+    private const int MaxTidyNames = 5000;
+
+    /// <summary>
+    /// "Tidy names out of capitals" (plan STUDENT_ROSTER_AND_LIST_STANDARD §2): a SHOUTED name — "ABAASA BARBRA",
+    /// as school exports very often are — becomes "Abaasa Barbra" through <c>PersonName.FixShouting</c>, the one
+    /// home for that rule. A name holding ANY lower-case letter is never touched, not even to tidy its spacing:
+    /// "McDonald" and "van der Berg" are somebody's own spelling.
+    ///
+    /// Preview writes nothing and lists what would move. The commit is one save (one transaction). The caller
+    /// affects only the students they could edit one by one — the same pastoral scope <c>UpdateStudent</c>'s
+    /// <c>VerifyStudentAccess</c> applies — and a named student outside it is refused with the SAME 404 as an
+    /// unknown one. Student carries no normalised or search copy of FullName, so the name is the only column.
+    /// </summary>
+    [HttpPost("branches/{branchId:guid}/students/tidy-names")]
+    [RequirePermission(Permissions.StudentsManage)]
+    [ProducesResponseType(typeof(TidyStudentNamesResultDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> TidyStudentNames(Guid branchId, [FromBody] TidyStudentNamesRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+        request ??= new TidyStudentNamesRequest();
+
+        var query = _context.Students.Where(s => s.BranchId == branchId);
+        var named = (request.StudentIds ?? new List<Guid>()).Where(id => id != Guid.Empty).Distinct().ToList();
+        if (named.Count > MaxTidyNames)
+            return BadRequest(new ProblemDetails { Title = $"At most {MaxTidyNames:N0} names can be tidied at once.", Status = StatusCodes.Status400BadRequest });
+
+        if (named.Count > 0) query = query.Where(s => named.Contains(s.Id));
+        else query = query.Where(s => s.IsActive);
+
+        // Pastoral scope, the WRITE rule. Fails closed: a scoped caller with no classes touches nobody.
+        query = await _scope.ApplyAsync(query, branchId);
+
+        var students = await query.OrderBy(s => s.FullName).Take(MaxTidyNames + 1).ToListAsync();
+        if (named.Count > 0 && students.Count != named.Count)
+            return NotFound(new ProblemDetails { Title = "Student not found", Status = StatusCodes.Status404NotFound });
+        if (students.Count > MaxTidyNames)
+            return BadRequest(new ProblemDetails { Title = $"This branch has more than {MaxTidyNames:N0} students; tidy a selection instead.", Status = StatusCodes.Status400BadRequest });
+
+        var changes = new List<(Student Student, string From, string To)>();
+        foreach (var s in students)
+        {
+            var from = s.FullName ?? string.Empty;
+            if (from.Any(char.IsLower)) continue; // mixed case is somebody's own spelling — never touched
+            var to = PersonName.FixShouting(from);
+            if (to.Length == 0 || string.Equals(to, from, StringComparison.Ordinal)) continue;
+            changes.Add((s, from, to));
+        }
+
+        var applied = 0;
+        if (!request.Preview && changes.Count > 0)
+        {
+            foreach (var c in changes) c.Student.FullName = c.To;
+            await _context.SaveChangesAsync();
+            applied = changes.Count;
+            _logger.LogInformation("Tidied {Count} student name(s) out of capitals in branch {BranchId} by {UserId}", applied, branchId, CurrentUserId());
+        }
+
+        return Ok(new TidyStudentNamesResultDto
+        {
+            Preview = request.Preview,
+            Changes = changes.Select(c => new TidyStudentNameChangeDto { StudentId = c.Student.Id, From = c.From, To = c.To }).ToList(),
+            Applied = applied
+        });
+    }
+
     /// <summary>
     /// Records or withdraws data-processing consent for a student — three nullable columns on
     /// the Student row (see Student.DataConsentGivenAt), not a consent-log table. Given=true
@@ -567,7 +645,7 @@ public class StudentsController : ControllerBase
             .ToList();
         var userNames = await _context.Users
             .Where(u => userIds.Contains(u.Id))
-            .Select(u => new { u.Id, Name = (u.FirstName + " " + u.LastName).Trim() })
+            .Select(u => new { u.Id, Name = PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName) })
             .ToDictionaryAsync(u => u.Id, u => string.IsNullOrWhiteSpace(u.Name) ? "Unknown" : u.Name);
 
         var notifiedProfileIds = records.SelectMany(r => r.Notifications.Select(n => n.GuardianVisitorProfileId)).Distinct().ToList();
@@ -807,11 +885,14 @@ public class StudentsController : ControllerBase
         var userId = CurrentUserId();
         if (!userId.HasValue) return false;
 
-        return await _context.Users
-            .Where(u => u.Id == userId.Value && u.IsActive)
-            .SelectMany(u => u.Role.RolePermissions)
-            .AnyAsync(rp => rp.Permission.Code == permissionCode);
+        // Role AND posts, through PostPermissionService.EffectiveCodesAsync — the one home for that union.
+        // students.view arrives with a pastoral post, so reading the role alone was the derived-permission
+        // feature half-working: the attribute honoured it and the in-code check did not.
+        _effectiveCodes ??= await PostPermissionService.EffectiveCodesAsync(_context, userId.Value);
+        return _effectiveCodes.Contains(permissionCode);
     }
+
+    private HashSet<string>? _effectiveCodes;
 
     [HttpPost("branches/{branchId:guid}/students/{studentId:guid}/guardians")]
     [RequirePermission(Permissions.StudentsManage)]
@@ -1891,7 +1972,7 @@ public class StudentsController : ControllerBase
 
         return await _context.Users
             .Where(u => ids.Contains(u.Id))
-            .Select(u => new { u.Id, Name = (u.FirstName + " " + u.LastName).Trim() })
+            .Select(u => new { u.Id, Name = PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName) })
             .ToDictionaryAsync(u => u.Id, u => string.IsNullOrWhiteSpace(u.Name) ? "Unknown" : u.Name);
     }
 
@@ -2062,6 +2143,10 @@ public class StudentsController : ControllerBase
         // write: whatever a client sends, the stored rooms are kept, so an older client or a dialog opened before a room
         // was added cannot erase it.
         vocab.Rooms = ReadVocabularies(branch.Settings).Rooms;
+
+        // Gates likewise belong to visitor check-in (PUT …/visitors/gates, gated on visitors.manage): kept as stored,
+        // whatever this editor sends — it has never known they exist, so it would otherwise erase them (plan §10).
+        vocab.Gates = ReadVocabularies(branch.Settings).Gates;
 
         var listError = ValidateList(vocab.Classes, "class")
                         ?? ValidateList(vocab.Houses, "house")

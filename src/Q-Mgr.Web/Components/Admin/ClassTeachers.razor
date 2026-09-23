@@ -1,4 +1,19 @@
-@page "/admin/students/class-teachers"
+@* No @page since 2026-09-22: this is a SECTION of the hub at /admin/staff, not a page of its own.
+   Two URLs rendering one screen is two sources of truth for it — see CLAUDE.md.
+
+   WHY IT MOVED HERE. §2 of docs/plans/DERIVED_POST_PERMISSIONS.md turns the assignment into the
+   access grant: being made class teacher of S4B now confers StudentAccessTier.Pastoral and the
+   welfare permission set. From that point, pressing "Assign a Class Teacher" is the same KIND of
+   act as setting somebody's role, naming them head of a department, or giving them a line manager
+   — and in this product those all live in one family of screens. A screen that grants a person
+   access belongs where the other access grants are; filing the one that reaches children's
+   safeguarding records somewhere else puts it where an administrator auditing "who can read
+   welfare records?" would not look.
+
+   TWO TABS, ONE COMPONENT. View="class" renders the pastoral holders, View="subject" the teaching
+   ones. Both halves are the same class-centric grid over the same coverage payload, so splitting
+   them into two components would mean two copies of the load, the dialogs and the fail-closed
+   rules. The hub passes which one it wants. *@
 @inject IClassTeacherApiService ClassTeacherApi
 @inject HttpClient Http
 @inject System.Text.Json.JsonSerializerOptions JsonOptions
@@ -14,24 +29,31 @@
 @using QMgr.Domain.Constants
 @using QMgr.Web.Services
 
-<QPageTitle Text="Class Teachers" />
-
-<div class="admin-page">
-    <div class="page-header">
-        <div class="header-content">
-            <h1>Class Teachers<QInfo Text="Who holds pastoral responsibility for each class, and who teaches it which subject. A class teacher sees their own classes' students and their welfare, and is alerted about them. A subject teacher sees only the students they teach, with no guardians, welfare or discipline." Label="Class Teachers" /></h1>
-            <p class="subtitle">Who holds pastoral responsibility for each class, and who teaches it which subject. A class teacher sees their own classes' students and their welfare, and is alerted about them. A subject teacher sees only the students they teach, with no guardians, welfare or discipline.</p>
-        </div>
-        <div class="header-actions">
-            @if (canManage)
+@* The hub owns the page title and the band; a section renders its ACTIONS through QPageActions or
+   they vanish, which is what happened to nine sections on 2026-09-18. *@
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1>@(Pastoral ? "Class Teachers" : "Subject Teachers")<QInfo Text="@HeadingHelp" Label="@(Pastoral ? "Class Teachers" : "Subject Teachers")" /></h1>
+        <p class="subtitle">@HeadingHelp</p>
+    </Title>
+    <Actions>
+        @if (canManage)
+        {
+            @if (Pastoral)
             {
                 <QButton Text="History" Icon="clock-history" Variant="secondary" OnClick="@(() => ShowHistoryDialog(null))"
                          Title="Who held each class before — the audit answer to who could see a child's file last term" />
-                <QButton Text="Assign a Subject Teacher" Icon="book" Variant="secondary" OnClick="@(() => ShowSubjectDialog(null))" />
                 <QButton Text="Assign a Class Teacher" Icon="person-plus" Variant="primary" OnClick="@(() => ShowAssignDialog(null))" />
             }
-        </div>
-    </div>
+            else
+            {
+                <QButton Text="Assign a Subject Teacher" Icon="book" Variant="primary" OnClick="@(() => ShowSubjectDialog(null))" />
+            }
+        }
+    </Actions>
+</QPageActions>
+
+<div class="admin-page">
 
     @if (isLoading)
     {
@@ -143,6 +165,9 @@
                             <span class="ct-count">@row.StudentCount student@(row.StudentCount == 1 ? "" : "s")</span>
                         </div>
 
+                        @* Pastoral half — Class teachers tab. *@
+                        @if (Pastoral)
+                        {
                         @if (row.ClassTeacher is { } ct)
                         {
                             @RenderTeacher(ct, isPrimary: true)
@@ -163,6 +188,10 @@
                         {
                             @RenderTeacher(a, isPrimary: false)
                         }
+                        }
+
+                        @if (!Pastoral)
+                        {
 
                         @* Subject teachers: the Teaching tier. Compact rows — the contact card belongs to the
                            pastoral lead, the person a parent or the front desk actually calls. *@
@@ -208,16 +237,25 @@
                                 </ul>
                             }
                         </div>
+                        }
 
                         @if (canManage)
                         {
                             <div class="ct-card-foot">
-                                @if (row.ClassTeacher != null)
+                                @* Each tab offers only its own act: a button that adds a subject teacher
+                                   on the Class teachers tab is the mixing this split undoes. *@
+                                @if (Pastoral)
                                 {
-                                    <QButton Text="Add assistant" Icon="plus" Variant="ghost" Size="sm" OnClick="@(() => ShowAssignDialog(row.ClassName, ClassTeacherRole.Assistant))" />
+                                    @if (row.ClassTeacher != null)
+                                    {
+                                        <QButton Text="Add assistant" Icon="plus" Variant="ghost" Size="sm" OnClick="@(() => ShowAssignDialog(row.ClassName, ClassTeacherRole.Assistant))" />
+                                    }
+                                    <QButton Text="History" Icon="clock-history" Variant="ghost" Size="sm" OnClick="@(() => ShowHistoryDialog(row.ClassName))" />
                                 }
-                                <QButton Text="Add subject teacher" Icon="book" Variant="ghost" Size="sm" OnClick="@(() => ShowSubjectDialog(row.ClassName))" />
-                                <QButton Text="History" Icon="clock-history" Variant="ghost" Size="sm" OnClick="@(() => ShowHistoryDialog(row.ClassName))" />
+                                else
+                                {
+                                    <QButton Text="Add subject teacher" Icon="book" Variant="ghost" Size="sm" OnClick="@(() => ShowSubjectDialog(row.ClassName))" />
+                                }
                             </div>
                         }
                     </div>
@@ -257,19 +295,11 @@
                  ValueSelector="@(r => r.Value)"
                  TextSelector="@(r => r.Label)" />
 
-        @* The single most common way to get this wrong: assigning a class to somebody whose
-           RBAC role has no class scope. They are notified but see the whole school (or, on a
-           role with no welfare access, nothing at all). Better said here than discovered later. *@
-        @if (SelectedStaffRoleCode() is { } rc && rc != RoleCodes.ClassTeacher)
-        {
-            <div class="ct-inline-warn">
-                <QIcon Name="info-circle-fill" />
-                <span>
-                    This person's role is <strong>@rc</strong>, not Class Teacher. They will be alerted about this class,
-                    but their visibility is whatever that role already gives them — assigning a class does not narrow it.
-                </span>
-            </div>
-        }
+        @* There WAS a warning here saying the assignment grants nothing unless the person holds the
+           class-teacher role. That was true and is the defect this page no longer has: since
+           2026-09-22 the ASSIGNMENT grants the pastoral permissions and the class scope together
+           (PostPermissionService), whatever role the person holds, and the class-teacher role has
+           been deleted. Anybody on the staff can hold a class. *@
     </div>
     </ChildContent>
     <FooterContent>
@@ -312,16 +342,6 @@
         <QInput TValue="int?" Label="Periods a week" Type="number" Min="0" Max="60" @bind-Value="subjectForm.PeriodsPerWeek"
                 HelperText="The planned load. The timetable compares what it places against this." />
 
-        @if (SubjectStaffRoleCode() is { } rc && rc != RoleCodes.Teacher && rc != RoleCodes.ClassTeacher)
-        {
-            <div class="ct-inline-warn">
-                <QIcon Name="info-circle-fill" />
-                <span>
-                    This person's role is <strong>@rc</strong>, not Teacher. A subject assignment narrows what a
-                    Teacher sees to the students they teach; on this role their visibility is whatever the role already gives them.
-                </span>
-            </div>
-        }
         @if (DuplicateSubjectAssignment())
         {
             <div class="ct-inline-warn">
@@ -406,7 +426,7 @@
 @* ── History ───────────────────────────────────────────────────────────────────────────────
    Assignments are ended, never deleted, precisely so this view can exist: "who could see this
    child's file last term" is an audit question a school will eventually be asked. *@
-<QModal @bind-Visible="showHistory" Title="@(historyClass == null ? "Class-teacher history" : $"History — {historyClass}")" Icon="clock-history" Size="lg" ShowDefaultFooter="false">
+<QModal @bind-Visible="showHistory" Title="@(historyClass == null ? "Class-teacher history" : $"History — {historyClass}")" Icon="clock-history" Size="xl" ShowDefaultFooter="false">
     <ChildContent>
     @if (isLoadingHistory)
     {
@@ -489,6 +509,26 @@
 </QModal>
 
 @code {
+    /// <summary>True when the Staff Directory hub is hosting this; the hub then owns the band.</summary>
+    [Parameter] public bool Embedded { get; set; }
+
+    /// <summary>
+    /// Which half to render: <c>"class-teachers"</c> (pastoral) or <c>"subject-teachers"</c>
+    /// (teaching). The hub passes its own <c>?tab=</c> straight through.
+    ///
+    /// <para>Two tabs rather than two components because both are the same class-centric grid over
+    /// the same coverage payload: separating them would duplicate the load, the five dialogs and the
+    /// fail-closed rules, and this codebase pays for every second copy it has ever made.</para>
+    /// </summary>
+    [Parameter] public string EmbeddedTab { get; set; } = "class-teachers";
+
+    /// <summary>The pastoral half — class teachers and assistants — rather than subject teaching.</summary>
+    private bool Pastoral => !string.Equals(EmbeddedTab, "subject-teachers", StringComparison.OrdinalIgnoreCase);
+
+    private string HeadingHelp => Pastoral
+        ? "Who holds pastoral responsibility for each class. A class teacher sees their own classes' students and their welfare, is alerted about them, and may log a concern — the assignment itself is what grants that, so anybody on the staff can hold a class."
+        : "Who teaches each class which subject, and for how many periods a week. A subject teacher sees only the students they teach, with no guardians, welfare or discipline, and the timetable reads this as its planned load.";
+
     private bool isLoading = true;
     private bool canManage;
     private bool saving;
@@ -586,7 +626,7 @@
             var users = await Http.GetFromJsonAsync<List<UserPickDto>>("api/v1/users?pageSize=500", JsonOptions);
             staff = (users ?? new())
                 .Where(u => u.IsActive)
-                .OrderBy(u => u.FullName)
+                .OrderBy(u => u.SortName ?? u.FullName)
                 .Select(u => new StaffOption(u.Id, string.IsNullOrWhiteSpace(u.FullName) ? u.Username : $"{u.FullName} ({u.RoleName})", u.RoleCode ?? ""))
                 .ToList();
         }
@@ -803,9 +843,12 @@
                     {
                         <QBadge Text="Account inactive" Variant="danger" />
                     }
-                    else if (t.RoleCode != RoleCodes.ClassTeacher)
+                    else if (!string.IsNullOrWhiteSpace(t.RoleCode))
                     {
-                        <QBadge Text="@t.RoleCode" Variant="warning" />
+                        @* Their role, stated plainly. It was a WARNING badge until 2026-09-22, on the
+                           reasoning that only a class-teacher role made the assignment work — which
+                           was true then and is the defect the post-derived permissions removed. *@
+                        <QBadge Text="@t.RoleCode" Variant="secondary" />
                     }
                 </div>
                 @if (!string.IsNullOrWhiteSpace(t.JobTitle))
@@ -859,6 +902,7 @@
         public Guid Id { get; init; }
         public string Username { get; init; } = "";
         public string FullName { get; init; } = "";
+        public string? SortName { get; init; }
         public string RoleName { get; init; } = "";
         public string? RoleCode { get; init; }
         public bool IsActive { get; init; }

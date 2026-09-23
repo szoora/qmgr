@@ -5,7 +5,7 @@
    <style> block and build on top of these classes rather than duplicating them.
 
    BUG FIX: every selector below is scoped under .login-container. This file is loaded globally
-   (App.razor), and several of the class names it needs (.form-group, .user-avatar,
+   (App.razor), and several of the class names it needs (.form-group, .form-control,
    .footer-links, .form-row, .validation-message, ...) are common enough that they already exist,
    with different rules, in the app's own dashboard stylesheets (layout.css, app.css) - loading
    this file unscoped after them silently overrode the real dashboard header avatar size and the
@@ -110,18 +110,16 @@
     object-fit: contain;
 }
 
-.login-container .user-avatar {
-    width: 80px;
-    height: 80px;
-    margin: 0 auto 16px;
-    background: var(--qm-primary);
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-size: 28px;
-    font-weight: 600;
+/* The mark on the password step. QBrandMark owns the tile itself — its size, its ring and its
+   fallback icon — so all that is left here is the gap to the address underneath it, which is
+   tighter than the 20px the mark uses above a heading.
+
+   What was here before was a hand-rolled 80px disc with `color: white` baked into it. That is the
+   token rule this project keeps relearning: white on a tenant's own brand colour is a guess, and
+   QBrandMark reads var(--qm-text-on-primary), which BrandPalette derives from the brand's own
+   luminance. A school that picks a pale colour gets readable text rather than a guess. */
+.login-container .login-header__mark {
+    margin-bottom: 16px;
 }
 
 .login-container .user-email {
@@ -318,39 +316,6 @@
     color: var(--qm-primary);
 }
 
-/* "Get the mobile app".
-   Deliberately QUIETER than an auth-door and on its own row: those two answer "how do I get in",
-   and making this look like a third of them is how downloading an app starts reading as a way of
-   signing in — the exact conflation the two-doors fix was for. A borderless link, not a button. */
-.login-container .get-app-row {
-    display: flex;
-    justify-content: center;
-    margin-top: 10px;
-}
-
-.login-container .get-app-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    /* Meets the project's 40px phone floor even though it reads as a link: it is a real tap target
-       on the screen most people open on a phone. */
-    min-height: var(--q-control-h);
-    padding: 0 10px;
-    border-radius: var(--qm-radius-md);
-    color: var(--qm-text-secondary);
-    font-size: var(--qm-text-sm);
-    text-decoration: none;
-}
-
-.login-container .get-app-link:hover {
-    color: var(--qm-primary);
-    background: var(--qm-bg-card-hover);
-}
-
-@media (max-width: 480px) {
-    .login-container .get-app-link { min-height: 40px; }
-}
-
 .login-container .form-group {
     margin-bottom: 20px;
 }
@@ -525,7 +490,11 @@
     text-decoration: underline;
 }
 
+/* The gap the retired .get-app-row used to provide. Without it the legal links butt
+   straight against the buttons above them — on every auth page, since they all share this
+   footer, which is the reason it is set here rather than on the one page that lost the row. */
 .login-container .footer-links {
+    margin-top: 14px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -549,6 +518,20 @@
 
 .login-container .login-footer p.powered-by {
     margin: 12px 0 0 0;
+    font-size: 11px;
+    color: var(--qm-text-muted);
+    letter-spacing: 0.02em;
+}
+
+/* QCopyright renders a bare <p class="q-copyright">; the class a caller passes is how each surface
+   places it, the same way the legal pages pass .doc-copyright.
+
+   Scoped to .login-container rather than to .login-footer because GetApp renders the line directly
+   inside the card — it has no footer block — and a rule that only reached six of the seven pages
+   would be the drift this sweep is closing. */
+.login-container .login-copyright {
+    margin: 8px 0 0 0;
+    text-align: center;
     font-size: 11px;
     color: var(--qm-text-muted);
     letter-spacing: 0.02em;
@@ -619,14 +602,9 @@
         font-size: 24px;
     }
 
-    .login-container .logo-circle,
-    .login-container .user-avatar {
+    .login-container .logo-circle {
         width: 64px;
         height: 64px;
-    }
-
-    .login-container .user-avatar {
-        font-size: 24px;
     }
 
     .login-container .form-row {

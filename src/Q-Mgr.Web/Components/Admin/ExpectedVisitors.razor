@@ -17,7 +17,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Expected Visitors<QInfo Text="Who is booked in to arrive, and one-click check-in when they do" Label="Expected Visitors" /></h1>
+            <h1>Expected Visitors</h1>
             <p class="subtitle">Who is booked in to arrive, and one-click check-in when they do</p>
         </div>
         <div class="header-actions">
@@ -164,13 +164,11 @@
                 <label>ID number<input @bind="checkInModel.IdNumber" placeholder="Passport / National ID" /></label>
                 <label>Vehicle plate<input @bind="checkInModel.VehiclePlate" placeholder="KDA 123B" /></label>
             </div>
+            <VisitorGatePicker BranchId="@branchId" Gates="@gates" @bind-Value="checkInModel.Gate" ShowError="@checkInGateError" />
 
             @if (consentRequired)
             {
-                <label class="consent-check">
-                    <input type="checkbox" checked="@checkInConsentGiven" @onchange="@(e => checkInConsentGiven = (bool)(e.Value ?? false))" />
-                    <span>@consentText</span>
-                </label>
+                <QCheckbox Value="@checkInConsentGiven" ValueChanged="@(v => checkInConsentGiven = v)" Label="@consentText" Class="consent-check q-checkbox-row--top" />
             }
         }
     </ChildContent>
@@ -244,8 +242,7 @@
     .warn-box label { display: flex; flex-direction: column; gap: 6px; font-size: var(--qm-text-base); color: var(--qm-text-muted); margin-top: 8px; }
     .warn-box input { width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-card); color: var(--qm-text-primary); }
 
-    .consent-check { display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; font-size: var(--qm-text-base); color: var(--qm-text-muted); cursor: pointer; }
-    .consent-check input { margin-top: 3px; }
+    .consent-check { margin-top: 14px; }
 </style>
 
 @code {
@@ -311,6 +308,10 @@
     private bool showCheckInModal;
     private VisitorDto? checkInTarget;
     private CheckInVisitorRequest checkInModel = new();
+
+    // The gate they came in by (plan §10) — the same picker and rule as the desk check-in.
+    private List<VocabularyItemDto> gates = new();
+    private bool checkInGateError;
     private bool checkInConsentGiven;
     private string watchlistOverrideReason = "";
     private DateTime? inductionCompletedLocal;
@@ -368,6 +369,7 @@
 
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         expected = await VisitorApi.GetExpectedVisitorsAsync(branchId, today, today.AddDays(UpcomingWindowDays));
+        gates = await VisitorApi.GetGatesAsync(branchId);
 
         isLoading = false;
         await InvokeAsync(StateHasChanged);
@@ -492,6 +494,7 @@
     {
         checkInTarget = visitor;
         checkInModel = new CheckInVisitorRequest();
+        checkInGateError = false;
         checkInConsentGiven = false;
         watchlistOverrideReason = "";
         inductionCompletedLocal = null;
@@ -503,6 +506,14 @@
     {
         var visitor = checkInTarget;
         if (visitor == null) return;
+
+        if (VisitorGateRule.Problem(gates, checkInModel.Gate) is { } gateProblem)
+        {
+            checkInGateError = true;
+            NotificationService.Notify(ToastSeverity.Error, "Cannot check in", gateProblem);
+            return;
+        }
+        checkInGateError = false;
 
         try
         {

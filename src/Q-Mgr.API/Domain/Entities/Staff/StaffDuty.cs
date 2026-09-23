@@ -126,6 +126,13 @@ public class StaffDuty : BaseAuditableEntity
     public Guid? SeriesId { get; set; }
 
     /// <summary>
+    /// The programme import that created this duty (plan TERM_PROGRAMME_CALENDAR_AND_GATES §8): a meeting read from the
+    /// schedule of meetings, or a rota slot read from a duty rota. It is the undo handle — "Undo this import" removes
+    /// every duty carrying it EXCEPT one whose register has been taken, which is never deleted.
+    /// </summary>
+    public Guid? ImportJobId { get; set; }
+
+    /// <summary>
     /// The administrator(s) on duty: they supervise the people on duty, take the close-out register, read the
     /// on-duty reports and write their own (plan §4.3). Empty on a Session duty.
     /// </summary>

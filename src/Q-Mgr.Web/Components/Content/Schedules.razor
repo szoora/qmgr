@@ -122,7 +122,8 @@
                 </QCard>
             }
         </div>
-        <QPager Count="@(FilteredPlaylists.Count())" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="playlists" />
+        <QPager Count="@(FilteredPlaylists.Count())" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="schedule-playlists"
+                    PageSizeChanged="@(n => { PageSize = n; pageIndex = 0; })" ItemLabel="playlists" />
 
         <!-- Weekly overview on the shared week grid (duty rota plan §9, Phase 6): the same scrolling, keyboard and
              phone list as the timetable and the rota, and two playlists over the same hours shown as an overlap. -->
@@ -482,10 +483,10 @@
     // ---- Paging (list-page sweep, plan Phase 2) --------------------------------------------
     // Every row here is a component subtree Blazor Server diffs and ships down the circuit, so
     // a page of them is drawn rather than the whole list.
-    private const int PageSize = 24;
+    private int PageSize = QPagerDefaults.Size;
     private int pageIndex;
-    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (FilteredPlaylists.Count() - 1) / PageSize));
-    private IEnumerable<PlaylistDetailDto> PagedPlaylists => FilteredPlaylists.Skip(SafePageIndex * PageSize).Take(PageSize);
+    private int SafePageIndex => QPaging.SafeIndex(pageIndex, FilteredPlaylists.Count(), PageSize);
+    private IEnumerable<PlaylistDetailDto> PagedPlaylists => QPaging.Page(FilteredPlaylists, SafePageIndex, PageSize);
 
     protected override async Task OnInitializedAsync()
     {

@@ -86,9 +86,7 @@
                     <div class="qm-admin-settings-section">
                         <div class="qm-admin-section-header">
                             <h3><i class="bi bi-chat-dots"></i> SMS Notifications</h3>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" role="switch" @bind="settings.SmsEnabled" />
-                            </div>
+                            <QSwitch @bind-Value="settings.SmsEnabled" aria-label="SMS notifications" />
                         </div>
 
                         <div class="qm-admin-settings-group @(!settings.SmsEnabled ? "disabled" : "")">
@@ -170,9 +168,7 @@
                     <div class="qm-admin-settings-section">
                         <div class="qm-admin-section-header">
                             <h3><i class="bi bi-envelope"></i> Email Notifications</h3>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" role="switch" @bind="settings.EmailEnabled" />
-                            </div>
+                            <QSwitch @bind-Value="settings.EmailEnabled" aria-label="Email notifications" />
                         </div>
 
                         <div class="qm-admin-settings-group @(!settings.EmailEnabled ? "disabled" : "")">
@@ -217,9 +213,7 @@
                                         <label>Use SSL/TLS</label>
                                         <p class="qm-admin-form-hint">Enable secure connection</p>
                                     </div>
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.SmtpUseSsl" disabled="@(!settings.EmailEnabled)" />
-                                    </div>
+                                    <QSwitch @bind-Value="settings.SmtpUseSsl" Disabled="@(!settings.EmailEnabled)" aria-label="Use SSL/TLS" />
                                 </div>
                             </div>
 
@@ -250,9 +244,7 @@
                     <div class="qm-admin-settings-section">
                         <div class="qm-admin-section-header">
                             <h3><i class="bi bi-telegram"></i> Telegram Notifications</h3>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" role="switch" @bind="settings.TelegramEnabled" />
-                            </div>
+                            <QSwitch @bind-Value="settings.TelegramEnabled" aria-label="Telegram notifications" />
                         </div>
 
                         <div class="qm-admin-settings-group @(!settings.TelegramEnabled ? "disabled" : "")">
@@ -275,9 +267,7 @@
                     <div class="qm-admin-settings-section">
                         <div class="qm-admin-section-header">
                             <h3><i class="bi bi-whatsapp"></i> WhatsApp Notifications</h3>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" role="switch" @bind="settings.WhatsAppEnabled" />
-                            </div>
+                            <QSwitch @bind-Value="settings.WhatsAppEnabled" aria-label="WhatsApp notifications" />
                         </div>
 
                         <div class="qm-admin-settings-group @(!settings.WhatsAppEnabled ? "disabled" : "")">
@@ -304,9 +294,7 @@
                     <div class="qm-admin-settings-section">
                         <div class="qm-admin-section-header">
                             <h3><i class="bi bi-bell"></i> In-App Notifications</h3>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" role="switch" @bind="settings.InAppEnabled" />
-                            </div>
+                            <QSwitch @bind-Value="settings.InAppEnabled" aria-label="In-app notifications" />
                         </div>
 
                         <div class="qm-admin-settings-group @(!settings.InAppEnabled ? "disabled" : "")">
@@ -316,9 +304,7 @@
                                         <label>Play Sound</label>
                                         <p class="qm-admin-form-hint">Play notification sound when new alerts arrive</p>
                                     </div>
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.InAppPlaySound" disabled="@(!settings.InAppEnabled)" />
-                                    </div>
+                                    <QSwitch @bind-Value="settings.InAppPlaySound" Disabled="@(!settings.InAppEnabled)" aria-label="Play Sound" />
                                 </div>
 
                                 <div class="qm-admin-form-group">
@@ -335,9 +321,7 @@
                     <div class="qm-admin-settings-section">
                         <div class="qm-admin-section-header">
                             <h3><i class="bi bi-person-check"></i> Queue Notifications</h3>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" role="switch" @bind="settings.QueueNotificationsEnabled" />
-                            </div>
+                            <QSwitch @bind-Value="settings.QueueNotificationsEnabled" aria-label="Queue notifications" />
                         </div>
 
                         <div class="qm-admin-settings-group @(!settings.QueueNotificationsEnabled ? "disabled" : "")">
@@ -365,9 +349,7 @@
                                             }
                                         </p>
                                     </div>
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.QueueNotifySms" disabled="@(!settings.QueueNotificationsEnabled)" />
-                                    </div>
+                                    <QSwitch @bind-Value="settings.QueueNotifySms" Disabled="@(!settings.QueueNotificationsEnabled)" aria-label="Queue notifications by SMS" />
                                 </div>
 
                                 <div class="qm-admin-form-group toggle-item">
@@ -384,9 +366,7 @@
                                             }
                                         </p>
                                     </div>
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.QueueNotifyEmail" disabled="@(!settings.QueueNotificationsEnabled)" />
-                                    </div>
+                                    <QSwitch @bind-Value="settings.QueueNotifyEmail" Disabled="@(!settings.QueueNotificationsEnabled)" aria-label="Queue notifications by email" />
                                 </div>
                             </div>
 
@@ -399,9 +379,7 @@
                                         <label>Ticket issued</label>
                                         <p class="qm-admin-form-hint">Confirmation with the ticket number and position</p>
                                     </div>
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.QueueNotifyOnIssued" disabled="@(!settings.QueueNotificationsEnabled)" />
-                                    </div>
+                                    <QSwitch @bind-Value="settings.QueueNotifyOnIssued" Disabled="@(!settings.QueueNotificationsEnabled)" aria-label="Ticket issued" />
                                 </div>
 
                                 <div class="qm-admin-form-group toggle-item">
@@ -409,9 +387,7 @@
                                         <label>Nearly your turn</label>
                                         <p class="qm-admin-form-hint">Sent once, when they reach the position threshold below</p>
                                     </div>
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.QueueNotifyOnApproaching" disabled="@(!settings.QueueNotificationsEnabled)" />
-                                    </div>
+                                    <QSwitch @bind-Value="settings.QueueNotifyOnApproaching" Disabled="@(!settings.QueueNotificationsEnabled)" aria-label="Nearly your turn" />
                                 </div>
 
                                 <div class="qm-admin-form-group toggle-item">
@@ -419,9 +395,7 @@
                                         <label>Called to counter</label>
                                         <p class="qm-admin-form-hint">Sent the moment staff call them, naming the counter</p>
                                     </div>
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.QueueNotifyOnCalled" disabled="@(!settings.QueueNotificationsEnabled)" />
-                                    </div>
+                                    <QSwitch @bind-Value="settings.QueueNotifyOnCalled" Disabled="@(!settings.QueueNotificationsEnabled)" aria-label="Called to counter" />
                                 </div>
 
                                 <div class="qm-admin-form-group">

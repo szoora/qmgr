@@ -1,0 +1,205 @@
+@* No @page: the Settings SECTION of the Calendar hub at /calendar?tab=settings. *@
+@using QMgr.Application.DTOs
+@using QMgr.Web.Services
+@inject ICalendarApiService CalendarApi
+@inject IPermissionService PermissionService
+@inject IToastService Toast
+
+@*
+    The organization's calendar settings (Organization.Settings["Calendar"], one writer on the API side):
+      * the categories — data, not an enum; they carry no behaviour, so the school names them (the rule
+        in CLAUDE.md, "A field that carries no BEHAVIOUR is data");
+      * how many people a daily rota expects on one day (decision D7), with named exceptions such as
+        reporting day wanting two.
+    Renaming a category here does not rewrite events already filed under the old name; the server keeps
+    what it was sent, and an event keeps the word it was saved with until somebody edits it.
+*@
+
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1>Calendar settings</h1>
+    </Title>
+    <Actions>
+        <QButton Text="Save" Icon="check-lg" Variant="primary" Loading="@saving" OnClick="@SaveAsync" Disabled="@(settings == null)" id="cal-settings-save" />
+    </Actions>
+</QPageActions>
+
+@if (settings == null)
+{
+    <div class="cals-loading"><QSpinner Size="lg" /><span>Loading settings...</span></div>
+}
+else
+{
+    <div class="cals-grid">
+        <QCard Title="Categories" Icon="tags" Hint="The words the calendar files events under, in the order the filter shows them. Nothing is scored or decided by a category.">
+            <ul class="cals-list" id="cal-categories">
+                @for (var i = 0; i < settings.Categories.Count; i++)
+                {
+                    var index = i;
+                    <li class="cals-row">
+                        <QInput TValue="string" Value="@settings.Categories[index]" ValueChanged="@(v => settings!.Categories[index] = v ?? string.Empty)"
+                                MaxLength="60" aria-label="@($"Category {index + 1}")"
+                                HasError="@(problems.Contains(index))" ErrorMessage="Blank or repeated" />
+                        <QButton Icon="arrow-up" Variant="ghost" Size="sm" Disabled="@(index == 0)" OnClick="@(() => Move(index, -1))" aria-label="Move up" />
+                        <QButton Icon="arrow-down" Variant="ghost" Size="sm" Disabled="@(index == settings.Categories.Count - 1)" OnClick="@(() => Move(index, 1))" aria-label="Move down" />
+                        <QButton Icon="trash" Variant="ghost" Size="sm" OnClick="@(() => Remove(index))" aria-label="@($"Remove {settings.Categories[index]}")" />
+                    </li>
+                }
+            </ul>
+            <div class="cals-add">
+                <QInput TValue="string" @bind-Value="@newCategory" Placeholder="Add a category" MaxLength="60" aria-label="New category" id="cal-new-category" />
+                <QButton Text="Add" Icon="plus-lg" Variant="secondary" OnClick="@Add" Disabled="@(string.IsNullOrWhiteSpace(newCategory))" id="cal-add-category" />
+            </div>
+        </QCard>
+
+        <QCard Title="Teachers on duty per day" Icon="shield-check" Hint="How many people a daily rota expects on one day. A day with fewer is a gap and a day with more is a double; both are warnings on the rota, never refusals.">
+            <div class="form-group">
+                <QInput TValue="int" @bind-Value="@settings.PeoplePerRotaDay" Type="number" Min="1" Max="20" Label="People per day" Required="true"
+                        HasError="@(settings.PeoplePerRotaDay is < 1 or > 20)" ErrorMessage="Between 1 and 20" />
+            </div>
+            <h3 class="cals-sub">Exceptions</h3>
+            @if (!exceptions.Any())
+            {
+                <p class="cals-muted">None. Add one for a day that needs a different number, such as reporting day.</p>
+            }
+            else
+            {
+                <ul class="cals-list">
+                    @foreach (var ex in exceptions)
+                    {
+                        var row = ex;
+                        <li class="cals-row">
+                            <QInput TValue="string" @bind-Value="@row.Name" MaxLength="60" Placeholder="Reporting day" aria-label="Exception name" />
+                            <QInput TValue="int" @bind-Value="@row.People" Type="number" Min="1" Max="20" aria-label="People on that day" Class="cals-num" />
+                            <QButton Icon="trash" Variant="ghost" Size="sm" OnClick="@(() => exceptions.Remove(row))" aria-label="@($"Remove {row.Name}")" />
+                        </li>
+                    }
+                </ul>
+            }
+            <QButton Text="Add exception" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@(() => exceptions.Add(new ExceptionRow()))" />
+        </QCard>
+    </div>
+    @if (problem != null)
+    {
+        <p class="form-error" role="alert">@problem</p>
+    }
+}
+
+<style>
+    .cals-loading { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 48px 16px; color: var(--qm-text-muted); }
+    .cals-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--qm-block-gap, 10px); align-items: start; }
+    .cals-list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+    .cals-row { display: flex; align-items: flex-start; gap: 4px; }
+    .cals-row > :first-child { flex: 1 1 auto; min-width: 0; }
+    .cals-num { flex: 0 0 90px; }
+    .cals-add { display: flex; align-items: flex-start; gap: var(--q-row-gap, 8px); }
+    .cals-add > :first-child { flex: 1 1 auto; min-width: 0; }
+    .cals-sub { margin: 8px 0 4px; }
+    .cals-muted { margin: 0 0 8px; font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
+</style>
+
+@code {
+    [Parameter] public bool Embedded { get; set; }
+
+    private CalendarSettingsDto? settings;
+    private string? newCategory;
+    private bool saving;
+    private string? problem;
+    private readonly HashSet<int> problems = new();
+
+    private sealed class ExceptionRow
+    {
+        public string Name { get; set; } = string.Empty;
+        public int People { get; set; } = 2;
+    }
+
+    private List<ExceptionRow> exceptions = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // The hub hides this tab from a caller without the permission; a section reached some other way
+        // still says nothing rather than loading a form it cannot save.
+        if (!await PermissionService.HasPermissionAsync(Permissions.CalendarManage)) return;
+        try
+        {
+            settings = await CalendarApi.GetSettingsAsync();
+            exceptions = settings.PeoplePerRotaDayOn.Select(kv => new ExceptionRow { Name = kv.Key, People = kv.Value }).ToList();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load the calendar settings", ex.Message);
+        }
+    }
+
+    private void Add()
+    {
+        if (settings == null || string.IsNullOrWhiteSpace(newCategory)) return;
+        var name = newCategory.Trim();
+        if (settings.Categories.Any(c => string.Equals(c.Trim(), name, StringComparison.OrdinalIgnoreCase)))
+        {
+            Toast.Notify(ToastSeverity.Warning, "Already on the list", name);
+            return;
+        }
+        settings.Categories.Add(name);
+        newCategory = null;
+    }
+
+    private void Remove(int index)
+    {
+        if (settings == null || index < 0 || index >= settings.Categories.Count) return;
+        settings.Categories.RemoveAt(index);
+        problems.Clear();
+    }
+
+    private void Move(int index, int step)
+    {
+        if (settings == null) return;
+        var target = index + step;
+        if (target < 0 || target >= settings.Categories.Count) return;
+        (settings.Categories[index], settings.Categories[target]) = (settings.Categories[target], settings.Categories[index]);
+        problems.Clear();
+    }
+
+    private async Task SaveAsync()
+    {
+        if (settings == null) return;
+        problem = null;
+        problems.Clear();
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < settings.Categories.Count; i++)
+        {
+            var c = settings.Categories[i]?.Trim() ?? string.Empty;
+            if (c.Length == 0 || !seen.Add(c)) problems.Add(i);
+            settings.Categories[i] = c;
+        }
+        if (problems.Any()) { problem = "A category is blank or on the list twice."; return; }
+        if (settings.PeoplePerRotaDay is < 1 or > 20) { problem = "People per day must be between 1 and 20."; return; }
+
+        var named = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in exceptions)
+        {
+            var name = row.Name?.Trim() ?? string.Empty;
+            if (name.Length == 0) { problem = "Give every exception a name, or remove it."; return; }
+            if (row.People is < 1 or > 20) { problem = $"\"{name}\" must be between 1 and 20 people."; return; }
+            if (!named.TryAdd(name, row.People)) { problem = $"\"{name}\" is on the list twice."; return; }
+        }
+        settings.PeoplePerRotaDayOn = named;
+
+        saving = true;
+        try
+        {
+            settings = await CalendarApi.UpdateSettingsAsync(settings);
+            exceptions = settings.PeoplePerRotaDayOn.Select(kv => new ExceptionRow { Name = kv.Key, People = kv.Value }).ToList();
+            Toast.Notify(ToastSeverity.Success, "Calendar settings saved");
+        }
+        catch (Exception ex)
+        {
+            problem = ex.Message;
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}

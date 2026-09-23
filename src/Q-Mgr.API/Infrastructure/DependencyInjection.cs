@@ -89,6 +89,9 @@ public static class DependencyInjection
         services.AddScoped<IActivityLogger, ActivityLogger>();
         services.AddScoped<IStaffPerformancePolicyService, StaffPerformancePolicyService>();
         services.AddScoped<ITimetableSettingsService, TimetableSettingsService>();
+        // Changing a PUBLISHED timetable: copy, trade, check, publish over. Scoped, because it takes the same
+        // advisory locks the publish endpoint does and must share the request's DbContext with it.
+        services.AddScoped<QMgr.API.Application.Services.ITimetableRepublishService, QMgr.API.Application.Services.TimetableRepublishService>();
         services.AddSingleton<IReminderLadderService, ReminderLadderService>();
         services.AddScoped<IStaffScoringService, StaffScoringService>();
         services.AddScoped<IStaffAlertService, StaffAlertService>();

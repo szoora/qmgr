@@ -29,6 +29,8 @@ public record VisitorReportFilter
     public bool WatchlistOnly { get; set; }
     /// <summary>Roster (visiting-day) check-ins only — visits linked to a student.</summary>
     public bool RosterOnly { get; set; }
+    /// <summary>Visits that came in OR left by this gate (plan §10), matched by the gate's name.</summary>
+    public string? Gate { get; set; }
 
     /// <summary>Renders the active filters as a human sentence for a print header or an email subject.</summary>
     public string Describe()
@@ -40,6 +42,7 @@ public record VisitorReportFilter
         if (!string.IsNullOrWhiteSpace(Company)) parts.Add($"company “{Company}”");
         if (WatchlistOnly) parts.Add("watchlisted only");
         if (RosterOnly) parts.Add("visiting-day only");
+        if (!string.IsNullOrWhiteSpace(Gate)) parts.Add($"gate “{Gate}”");
         return parts.Count == 0 ? "No filters" : string.Join(" · ", parts);
     }
 }
@@ -158,6 +161,16 @@ public record VisitorReportDtoV2
 
     /// <summary>Per-branch comparison. Empty for a single-branch report; populated at org scope.</summary>
     public List<BranchVisitSummaryDto> Branches { get; init; } = new();
+
+    /// <summary>
+    /// Visitors by gate (plan §10): entries, exits, who is on site now by the gate they came in, and arrivals by
+    /// local hour per gate — the visiting-day staffing question. Visits with no gate recorded are one row named
+    /// <see cref="NoGateLabel"/> so the totals still add up. Empty when no visit in range carries a gate.
+    /// </summary>
+    public List<VisitorGateCountDto> Gates { get; init; } = new();
+
+    /// <summary>The row name for visits that recorded no gate (older visits, or a branch with none).</summary>
+    public const string NoGateLabel = "Not recorded";
 }
 
 public record BranchVisitSummaryDto

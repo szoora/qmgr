@@ -131,12 +131,39 @@
             </QCard>
         }
 
-        <QCard Title="Coming up" Subtitle="Duties you are expected at" Icon="calendar-event" Class="portal-card">
-            @if (!portal.ComingUp.Any())
+        <QCard Title="Coming up" Subtitle="Duties you are expected at, and the school's events" Icon="calendar-event" Class="portal-card" id="coming-up">
+            <HeaderActions>
+                <QButton Text="Calendar" Icon="calendar3" Size="sm" Variant="ghost" OnClick="@(() => Navigation.NavigateTo("/calendar"))" />
+            </HeaderActions>
+            <ChildContent>
+            @if (!portal.ComingUp.Any() && !portal.UpcomingEvents.Any())
             {
-                <QEmptyState Icon="calendar-check" Title="Nothing scheduled" Text="No duties are coming up for you in the next while." Class="q-empty--compact" />
+                <QEmptyState Icon="calendar-check" Title="Nothing scheduled" Text="No duties or events are coming up for you in the next while." Class="q-empty--compact" />
             }
-            else
+            @if (portal.UpcomingEvents.Any())
+            {
+                @* The school's events beside the meetings (TERM_PROGRAMME_CALENDAR_AND_GATES §9), soonest
+                   first — the same audience rule as My School Day decides which reach this list. *@
+                <ul class="portal-list portal-events">
+                    @foreach (var ev in portal.UpcomingEvents.OrderBy(e => e.StartsOn).ThenBy(e => e.StartTime != null).ThenBy(e => e.StartTime))
+                    {
+                        <li class="portal-duty portal-event">
+                            <div class="portal-duty__main">
+                                <strong>@ev.Title</strong>
+                                <span class="portal-duty__when">
+                                    <QIcon Name="calendar3" Size="sm" /> @QMgr.Web.Components.Pages.Calendar.CalendarDisplay.DatesAndTime(ev)
+                                    @if (!string.IsNullOrEmpty(ev.Location)) { <span> · <QIcon Name="geo-alt" Size="sm" /> @ev.Location</span> }
+                                </span>
+                                @if (!string.IsNullOrWhiteSpace(ev.Category))
+                                {
+                                    <span class="portal-duty__param"><QChip Text="@ev.Category" Size="sm" Variant="muted" /></span>
+                                }
+                            </div>
+                        </li>
+                    }
+                </ul>
+            }
+            @if (portal.ComingUp.Any())
             {
                 <ul class="portal-list">
                     @foreach (var duty in portal.ComingUp.OrderBy(d => d.StartsAt))
@@ -167,6 +194,7 @@
                     }
                 </ul>
             }
+            </ChildContent>
         </QCard>
 
         @* ---- On duty (duty rota plan §4.2, §10): rota slots I am on or supervise ------------------- *@
@@ -714,6 +742,7 @@
 
     .portal-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
     .portal-list--tight { gap: 8px; }
+    .portal-events:not(:last-child) { margin-bottom: 10px; }
     .portal-muted { color: var(--qm-text-muted); font-size: var(--qm-text-base); margin: 0; }
 
     .portal-duty { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-secondary); }

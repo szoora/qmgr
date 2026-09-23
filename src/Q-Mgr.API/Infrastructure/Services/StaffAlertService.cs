@@ -1,3 +1,4 @@
+using QMgr.API.Application.Services;
 using Microsoft.EntityFrameworkCore;
 using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
@@ -25,6 +26,13 @@ public interface IStaffAlertService
 {
     /// <summary>A record has just become Final (created final, or finalised from a draft, or written by a register).</summary>
     Task NotifyRecordLoggedAsync(Guid recordId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// A batch of records has just become Final (the group log, 2026-09-23). Each SUBJECT is told about their own
+    /// record exactly as <see cref="NotifyRecordLoggedAsync"/> tells them; a supervisor gets ONE summary for every
+    /// record of theirs in the batch, not one per colleague. Same visibility rule. Returns how many people were told.
+    /// </summary>
+    Task<int> NotifyRecordsLoggedAsync(IReadOnlyCollection<Guid> recordIds, CancellationToken cancellationToken = default);
 
     /// <summary>Recompute the subject's score and push it live; bell the subject about points when they want that.</summary>
     Task NotifyScoreUpdatedAsync(Guid organizationId, Guid branchId, Guid subjectUserId, CancellationToken cancellationToken = default);
@@ -75,9 +83,9 @@ public class StaffAlertService : IStaffAlertService
         {
             var lm = await _db.Users.IgnoreQueryFilters().AsNoTracking()
                 .Where(u => u.Id == me.LineManagerUserId.Value && u.IsActive)
-                .Select(u => new { u.Id, u.FirstName, u.LastName })
+                .Select(u => new { u.Id, u.OrganizationId, u.FirstName, u.LastName })
                 .FirstOrDefaultAsync(cancellationToken);
-            if (lm != null) result.Add(new StaffSupervisor(lm.Id, $"{lm.FirstName} {lm.LastName}".Trim(), "Line manager"));
+            if (lm != null) result.Add(new StaffSupervisor(lm.Id, PersonNames.Display(lm.OrganizationId, lm.FirstName, lm.LastName), "Line manager"));
         }
 
         if (me.DepartmentIds is { Length: > 0 })
@@ -85,102 +93,171 @@ public class StaffAlertService : IStaffAlertService
             var deptIds = me.DepartmentIds;
             var heads = await _db.Departments.IgnoreQueryFilters().AsNoTracking()
                 .Where(d => deptIds.Contains(d.Id) && d.IsActive && d.HeadUserId != null)
-                .Select(d => new { d.Name, d.HeadUserId, d.Head!.FirstName, d.Head.LastName, HeadActive = d.Head.IsActive })
+                .Select(d => new { d.Name, d.HeadUserId, d.OrganizationId, d.Head!.FirstName, d.Head.LastName, HeadActive = d.Head.IsActive })
                 .ToListAsync(cancellationToken);
             foreach (var h in heads)
             {
                 if (!h.HeadActive || h.HeadUserId == null || excluded.Contains(h.HeadUserId.Value) || h.HeadUserId == userId) continue;
                 if (result.Any(r => r.UserId == h.HeadUserId.Value)) continue;
-                result.Add(new StaffSupervisor(h.HeadUserId.Value, $"{h.FirstName} {h.LastName}".Trim(), $"Head of {h.Name}"));
+                result.Add(new StaffSupervisor(h.HeadUserId.Value, PersonNames.Display(h.OrganizationId, h.FirstName, h.LastName), $"Head of {h.Name}"));
             }
         }
 
         return result;
     }
 
-    public async Task NotifyRecordLoggedAsync(Guid recordId, CancellationToken cancellationToken = default)
+    public Task NotifyRecordLoggedAsync(Guid recordId, CancellationToken cancellationToken = default)
+        => NotifyRecordsLoggedAsync(new[] { recordId }, cancellationToken);
+
+    /// <summary>What one supervisor is told about, gathered across every record of a batch.</summary>
+    private sealed class SupervisorDigest
     {
+        public readonly List<Domain.Entities.Staff.StaffPerformanceRecord> Records = new();
+        public readonly HashSet<string> Relationships = new();
+    }
+
+    public async Task<int> NotifyRecordsLoggedAsync(IReadOnlyCollection<Guid> recordIds, CancellationToken cancellationToken = default)
+    {
+        var told = new HashSet<Guid>();
         try
         {
-            var record = await _db.StaffPerformanceRecords.AsNoTracking()
+            var ids = recordIds.Distinct().ToList();
+            if (ids.Count == 0) return 0;
+
+            var loaded = await _db.StaffPerformanceRecords.AsNoTracking()
                 .Include(r => r.Parameter)
                 .Include(r => r.Subject)
-                .FirstOrDefaultAsync(r => r.Id == recordId, cancellationToken);
-            if (record == null || record.Status != StaffRecordStatus.Final) return;
+                .Where(r => ids.Contains(r.Id))
+                .ToListAsync(cancellationToken);
+            var records = loaded.Where(r => r.Status == StaffRecordStatus.Final).ToList();
 
             // ── The visibility rule. One place. ─────────────────────────────────────────────────
-            if (record.Visibility == WelfareVisibility.Restricted)
+            var alertable = new List<Domain.Entities.Staff.StaffPerformanceRecord>();
+            foreach (var record in records)
             {
-                _logger.LogDebug("Staff record {RecordId} is Restricted; nobody is alerted by design", recordId);
-                return;
-            }
-
-            var parameterName = record.Parameter?.Name ?? "a record";
-            var loggerName = await _db.Users.IgnoreQueryFilters().AsNoTracking()
-                .Where(u => u.Id == record.LoggedByUserId)
-                .Select(u => (u.FirstName + " " + u.LastName).Trim())
-                .FirstOrDefaultAsync(cancellationToken);
-            var actionUrl = "/portal";
-
-            var isRecognition = record.Parameter?.Kind == ParameterKind.Recognition;
-            var isSystem = record.Source == RecordSource.System;
-
-            // The subject. A Confidential record tells them a record exists and what it is called —
-            // never its content, never who else is involved.
-            if (record.SubjectUserId != record.LoggedByUserId)
-            {
-                var title = isRecognition ? "You were recognised" : $"{parameterName} logged about you";
-                var message = record.Visibility == WelfareVisibility.Confidential
-                    ? $"A confidential {parameterName.ToLowerInvariant()} record was filed about you. Open your portal to see it and respond."
-                    : isRecognition
-                        ? $"{loggerName ?? "A colleague"}: {Trim(record.Description, 160)}"
-                        : $"{OutcomeText(record)}{Trim(record.Description, 140)}" + (isSystem ? " (automatic)" : loggerName == null ? "" : $" — logged by {loggerName}");
-
-                await SendAsync(new CreateNotificationRequest
+                if (record.Visibility == WelfareVisibility.Restricted)
                 {
-                    UserId = record.SubjectUserId,
-                    OrganizationId = record.OrganizationId,
-                    BranchId = record.BranchId,
-                    Title = title,
-                    Message = message,
-                    Type = NotificationType.StaffPerformance,
-                    Priority = record.Points is < 0 ? NotificationPriority.High : NotificationPriority.Normal,
-                    Channels = NotificationChannel.InApp | NotificationChannel.Email,
-                    EventKey = isRecognition ? NotificationEventKeys.StaffRecognitionReceived : NotificationEventKeys.StaffRecordLogged,
-                    ActionUrl = actionUrl,
-                    IconClass = isRecognition ? "award" : "journal-check"
-                }, cancellationToken);
+                    _logger.LogDebug("Staff record {RecordId} is Restricted; nobody is alerted by design", record.Id);
+                    continue;
+                }
+                alertable.Add(record);
             }
+            if (alertable.Count == 0) return 0;
 
-            // Their supervisors, for a Standard record only, and never the person who logged it.
-            if (record.Visibility == WelfareVisibility.Standard && !isRecognition)
+            var loggerIds = alertable.Select(r => r.LoggedByUserId).Distinct().ToList();
+            var loggerNames = await _db.Users.IgnoreQueryFilters().AsNoTracking()
+                .Where(u => loggerIds.Contains(u.Id))
+                .Select(u => new { u.Id, u.OrganizationId, u.FirstName, u.LastName })
+                .ToListAsync(cancellationToken);
+            var nameOf = loggerNames.ToDictionary(u => u.Id, u => PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName));
+            string? LoggerName(Domain.Entities.Staff.StaffPerformanceRecord r) => nameOf.TryGetValue(r.LoggedByUserId, out var n) ? n : null;
+
+            var digests = new Dictionary<Guid, SupervisorDigest>();
+
+            foreach (var record in alertable)
             {
-                var subjectName = record.Subject?.FullName ?? "a member of staff";
-                foreach (var s in await GetSupervisorsAsync(record.SubjectUserId, new[] { record.LoggedByUserId }, cancellationToken))
+                var parameterName = record.Parameter?.Name ?? "a record";
+                var loggerName = LoggerName(record);
+                var isRecognition = record.Parameter?.Kind == ParameterKind.Recognition;
+                var isSystem = record.Source == RecordSource.System;
+
+                // The subject — ALWAYS their own message, batch or not: the record is about them. A Confidential
+                // record tells them a record exists and what it is called — never its content, never who else is involved.
+                if (record.SubjectUserId != record.LoggedByUserId)
                 {
-                    await SendAsync(new CreateNotificationRequest
+                    var title = isRecognition ? "You were recognised" : $"{parameterName} logged about you";
+                    var message = record.Visibility == WelfareVisibility.Confidential
+                        ? $"A confidential {parameterName.ToLowerInvariant()} record was filed about you. Open your portal to see it and respond."
+                        : isRecognition
+                            ? $"{loggerName ?? "A colleague"}: {Trim(record.Description, 160)}"
+                            : $"{OutcomeText(record)}{Trim(record.Description, 140)}" + (isSystem ? " (automatic)" : loggerName == null ? "" : $" — logged by {loggerName}");
+
+                    if (await SendAsync(new CreateNotificationRequest
                     {
-                        UserId = s.UserId,
+                        UserId = record.SubjectUserId,
                         OrganizationId = record.OrganizationId,
                         BranchId = record.BranchId,
-                        Title = $"{parameterName} — {subjectName}",
-                        Message = $"{OutcomeText(record)}{Trim(record.Description, 140)}" + (loggerName == null ? "" : $" — logged by {loggerName}"),
+                        Title = title,
+                        Message = message,
                         Type = NotificationType.StaffPerformance,
-                        Priority = NotificationPriority.Normal,
-                        Channels = NotificationChannel.InApp,
-                        EventKey = NotificationEventKeys.StaffRecordLogged,
-                        ActionUrl = $"/admin/staff/{record.SubjectUserId}/timeline",
-                        IconClass = "journal-text"
-                    }, cancellationToken);
+                        Priority = record.Points is < 0 ? NotificationPriority.High : NotificationPriority.Normal,
+                        Channels = NotificationChannel.InApp | NotificationChannel.Email,
+                        EventKey = isRecognition ? NotificationEventKeys.StaffRecognitionReceived : NotificationEventKeys.StaffRecordLogged,
+                        ActionUrl = "/portal",
+                        IconClass = isRecognition ? "award" : "journal-check"
+                    }, cancellationToken))
+                        told.Add(record.SubjectUserId);
+                }
+
+                // Their supervisors, for a Standard record only, and never the person who logged it — gathered, so a
+                // head whose whole department is in a batch hears about it ONCE.
+                if (record.Visibility == WelfareVisibility.Standard && !isRecognition)
+                {
+                    foreach (var s in await GetSupervisorsAsync(record.SubjectUserId, new[] { record.LoggedByUserId }, cancellationToken))
+                    {
+                        if (!digests.TryGetValue(s.UserId, out var digest)) digests[s.UserId] = digest = new SupervisorDigest();
+                        digest.Records.Add(record);
+                        digest.Relationships.Add(s.Relationship);
+                    }
                 }
             }
 
-            await NotifyScoreUpdatedAsync(record.OrganizationId, record.BranchId, record.SubjectUserId, cancellationToken);
+            foreach (var (supervisorId, digest) in digests)
+            {
+                var first = digest.Records[0];
+                var parameterName = first.Parameter?.Name ?? "a record";
+                var loggerName = LoggerName(first);
+                string title, message, actionUrl;
+                if (digest.Records.Count == 1)
+                {
+                    // One record: exactly what the single create has always sent.
+                    var subjectName = first.Subject?.FullName ?? "a member of staff";
+                    title = $"{parameterName} — {subjectName}";
+                    message = $"{OutcomeText(first)}{Trim(first.Description, 140)}" + (loggerName == null ? "" : $" — logged by {loggerName}");
+                    actionUrl = $"/admin/staff/{first.SubjectUserId}/timeline";
+                }
+                else
+                {
+                    // A batch: ONE summary. Every record of a group log shares its parameter and wording, so the first
+                    // one speaks for all; the names are people this supervisor already supervises.
+                    var people = digest.Records.Select(r => r.SubjectUserId).Distinct().Count();
+                    var names = digest.Records.Select(r => r.Subject?.FullName).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList();
+                    var shown = string.Join(", ", names.Take(3)) + (names.Count > 3 ? $" and {names.Count - 3} more" : "");
+                    var departments = digest.Relationships.Where(r => r.StartsWith("Head of ", StringComparison.Ordinal))
+                        .Select(r => r["Head of ".Length..]).ToList();
+                    var where = departments.Count == 1 && digest.Relationships.Count == 1 ? $" in {departments[0]}" : "";
+                    var sameParameter = digest.Records.All(r => r.ParameterId == first.ParameterId);
+                    var what = sameParameter ? parameterName : "Records";
+                    title = $"{what} logged for {people} people{where}";
+                    message = $"{OutcomeText(first)}{Trim(first.Description, 120)} — {shown}" + (loggerName == null ? "" : $". Logged by {loggerName}");
+                    actionUrl = "/admin/staff/records";
+                }
+
+                if (await SendAsync(new CreateNotificationRequest
+                {
+                    UserId = supervisorId,
+                    Title = title,
+                    Message = message,
+                    ActionUrl = actionUrl,
+                    OrganizationId = first.OrganizationId,
+                    BranchId = first.BranchId,
+                    Type = NotificationType.StaffPerformance,
+                    Priority = NotificationPriority.Normal,
+                    Channels = NotificationChannel.InApp,
+                    EventKey = NotificationEventKeys.StaffRecordLogged,
+                    IconClass = "journal-text"
+                }, cancellationToken))
+                    told.Add(supervisorId);
+            }
+
+            foreach (var subject in alertable.Select(r => new { r.OrganizationId, r.BranchId, r.SubjectUserId }).Distinct())
+                await NotifyScoreUpdatedAsync(subject.OrganizationId, subject.BranchId, subject.SubjectUserId, cancellationToken);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Staff record alert fan-out failed for {RecordId}", recordId);
+            _logger.LogError(ex, "Staff record alert fan-out failed for {Count} record(s)", recordIds.Count);
         }
+        return told.Count;
     }
 
     public async Task NotifyScoreUpdatedAsync(Guid organizationId, Guid branchId, Guid subjectUserId, CancellationToken cancellationToken = default)
@@ -217,10 +294,11 @@ public class StaffAlertService : IStaffAlertService
         }
     }
 
-    private async Task SendAsync(CreateNotificationRequest request, CancellationToken ct)
+    /// <summary>True when the notification was written. Never throws.</summary>
+    private async Task<bool> SendAsync(CreateNotificationRequest request, CancellationToken ct)
     {
-        try { await _notifications.CreateInAppNotificationAsync(request, ct); }
-        catch (Exception ex) { _logger.LogError(ex, "Failed to notify {UserId}: {Title}", request.UserId, request.Title); }
+        try { await _notifications.CreateInAppNotificationAsync(request, ct); return true; }
+        catch (Exception ex) { _logger.LogError(ex, "Failed to notify {UserId}: {Title}", request.UserId, request.Title); return false; }
     }
 
     private static string OutcomeText(Domain.Entities.Staff.StaffPerformanceRecord r) => r.Outcome switch

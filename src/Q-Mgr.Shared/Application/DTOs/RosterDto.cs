@@ -570,6 +570,13 @@ public record BranchVocabulariesDto
     /// <summary>Rooms lessons are held in (duty rota plan §3.1, §6.1), name-matched like classes for clash checking.</summary>
     public List<VocabularyItemDto> Rooms { get; set; } = new();
 
+    /// <summary>
+    /// The branch's gates, chosen by the gate man at visitor check-in and check-out (plan TERM_PROGRAMME_CALENDAR_AND_GATES
+    /// §10, 2026-09-23). Rooms' shape and Rooms' rule: ONE writer, <c>PUT …/visitors/gates</c>; <c>UpdateVocabularies</c>
+    /// keeps the stored gates whatever it is sent, and a gate that has been used is retired, never removed.
+    /// </summary>
+    public List<VocabularyItemDto> Gates { get; set; } = new();
+
     public List<string> HomeLanguages { get; set; } = new();
     public List<string> Religions { get; set; } = new();
     public List<string> GuardianRelationships { get; set; } = new();
@@ -649,4 +656,29 @@ public record RosterImportPrecheckDto
 
     /// <summary>Names that look like one child entered twice. A question for the reader, never a refusal.</summary>
     public List<ImportPossibleDuplicateDto> PossibleDuplicates { get; init; } = new();
+}
+
+/// <summary>
+/// "Tidy names out of capitals" (plan STUDENT_ROSTER_AND_LIST_STANDARD §2, 2026-09-23). Uses
+/// <c>PersonName.FixShouting</c>, which never touches a name already in mixed case. Preview writes nothing.
+/// </summary>
+public record TidyStudentNamesRequest
+{
+    public bool Preview { get; set; } = true;
+    /// <summary>Only these students; null or empty = every active student of the branch.</summary>
+    public List<Guid>? StudentIds { get; set; }
+}
+
+public record TidyStudentNameChangeDto
+{
+    public Guid StudentId { get; init; }
+    public string From { get; init; } = string.Empty;
+    public string To { get; init; } = string.Empty;
+}
+
+public record TidyStudentNamesResultDto
+{
+    public bool Preview { get; init; }
+    public List<TidyStudentNameChangeDto> Changes { get; init; } = new();
+    public int Applied { get; init; }
 }

@@ -159,6 +159,8 @@ builder.Services.AddScoped<IQueueHubService, QueueHubService>();
 builder.Services.AddScoped<IQueueHubContext, QueueHubContext>();
 builder.Services.AddScoped<INotificationHubService, NotificationHubService>();
 builder.Services.AddSingleton<QMgr.API.Hubs.IDisplayHubContext, QMgr.API.Hubs.DisplayHubContext>();
+// Each organisation's chosen name order, behind the static PersonNames face (attached below).
+builder.Services.AddSingleton<QMgr.API.Application.Services.PersonNameSettingsCache>();
 
 // ASP.NET Core's form-reading middleware caps multipart bodies at 128MB by default,
 // independent of Kestrel's own request size limit — raised to match ContentController's
@@ -334,6 +336,10 @@ app.MapHealthChecks("/health");
 // Attach the upload-link signer to its static face before anything can map a DTO — see
 // UploadLinks for why the static mappers cannot take it by injection.
 QMgr.Infrastructure.Services.Storage.UploadLinks.Use(app.Services.GetRequiredService<IUploadAccessService>());
+
+// The same for how a person's name is written — see PersonNames. Before this, every name is written
+// given-first, which is also what a school that has not chosen sees.
+QMgr.API.Application.Services.PersonNames.Use(app.Services.GetRequiredService<QMgr.API.Application.Services.PersonNameSettingsCache>());
 
 // Initialize database BEFORE Hangfire tries to connect
 {

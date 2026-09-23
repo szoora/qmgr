@@ -61,16 +61,17 @@ public class ContentController : ControllerBase
 
     // Permissions aren't JWT claims here (see PermissionAuthorizationHandler); resolved by role
     // lookup, the same shape WelfareController uses.
+    // Role AND posts, through PostPermissionService.EffectiveCodesAsync — the one home for that union.
     private async Task<bool> HasPermissionAsync(string code)
     {
         if (RoleCodes.IsSuperAdmin(_tenantAccessor.TenantContext?.UserRole)) return true;
         var userId = CurrentUserId();
         if (userId == null) return false;
-        return await _dbContext.Users
-            .Where(u => u.Id == userId.Value && u.IsActive)
-            .SelectMany(u => u.Role.RolePermissions)
-            .AnyAsync(rp => rp.Permission.Code == code);
+        _effectiveCodes ??= await PostPermissionService.EffectiveCodesAsync(_dbContext, userId.Value);
+        return _effectiveCodes.Contains(code);
     }
+
+    private HashSet<string>? _effectiveCodes;
 
     /// <summary>
     /// ONE mapper for MediaContent → DTO, used by every media endpoint here and by

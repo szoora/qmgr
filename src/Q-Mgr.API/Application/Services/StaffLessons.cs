@@ -97,6 +97,11 @@ public static class StaffLessons
             .Where(l => versionIds.Contains(l.TimetableId)).ToListAsync(ct);
         var subjects = await db.Subjects.IgnoreQueryFilters().AsNoTracking().Where(s => s.OrganizationId == branch.OrganizationId).ToDictionaryAsync(s => s.Id, s => s.Name, ct);
 
+        // One-day departures: cover and cancellation (2026-09-22). THIS IS THE ONLY PLACE AN EXCEPTION DOES
+        // ANYTHING — a row on its own changes nothing until a lesson duty is generated from it, which is why
+        // a cover can be arranged weeks ahead of the 14-day window and still land.
+        var exceptions = await TimetableExceptions.ReadAsync(db, branchId, versionIds, today, last, ct);
+
         var (attendanceId, _) = await EnsureParametersAsync(db, policyService, branch.OrganizationId, logger);
 
         // What should exist: one duty per teacher per lesson (a joint lesson is one duty naming every class).
@@ -115,13 +120,21 @@ public static class StaffLessons
                 var start = TimeZoneInfo.ConvertTimeToUtc(date.ToDateTime(TimetableCycle.ParseTime(period.Start)!.Value), zone);
                 var end = TimeZoneInfo.ConvertTimeToUtc(date.ToDateTime(TimetableCycle.ParseTime(period.End)!.Value), zone);
                 if (end <= nowUtc) continue;
+
+                // A one-day departure. A CANCELLED lesson is left out of `desired` entirely, so the ordinary
+                // reconciliation below cancels its duty and tells the teacher — no second mechanism. A COVER
+                // keeps the duty at its own time and changes who is expected and who records it.
+                exceptions.TryGetValue((first.Id, date), out var exception);
+                if (exception?.Kind == LessonExceptionKind.Cancelled) continue;
+                var teacher = exception is { Kind: LessonExceptionKind.Cover, CoverUserId: { } cover } ? cover : first.TeacherUserId;
+
                 var className = string.Join(" + ", rows.Select(r => r.ClassName).Distinct(StringComparer.OrdinalIgnoreCase));
                 var subjectName = subjects.GetValueOrDefault(first.SubjectId, "Lesson");
                 desired.Add(new StaffDuty
                 {
                     OrganizationId = branch.OrganizationId, BranchId = branchId, ParameterId = attendanceId, Kind = DutyKind.Lesson,
                     Title = Truncate($"{className} {subjectName}", 200), Location = first.Room, StartsAt = start, EndsAt = end,
-                    ExpectedUserIds = new[] { first.TeacherUserId }, RecorderUserIds = new[] { first.TeacherUserId },
+                    ExpectedUserIds = new[] { teacher }, RecorderUserIds = new[] { teacher },
                     TimetableLessonId = first.Id, ClassName = Truncate(className, 100), SubjectId = first.SubjectId, Room = first.Room,
                     CreatedByUserId = version.PublishedByUserId ?? Guid.Empty, CreatedBy = version.PublishedByUserId
                 });
@@ -132,6 +145,7 @@ public static class StaffLessons
         var windowEnd = TimeZoneInfo.ConvertTimeToUtc(last.AddDays(1).ToDateTime(TimeOnly.MinValue), zone);
         var created = 0;
         var cancelledDuties = new List<StaffDuty>();
+        var reassigned = new List<(StaffDuty Duty, Guid From, Guid To)>();
 
         var strategy = db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
@@ -139,6 +153,7 @@ public static class StaffLessons
             db.ChangeTracker.Clear();
             created = 0;
             cancelledDuties = new();
+            reassigned = new();
             await using var tx = await db.Database.BeginTransactionAsync(ct);
             var lockKey = $"lesson-generation:{branchId}";
             await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtext({lockKey})::bigint)", ct);
@@ -167,6 +182,35 @@ public static class StaffLessons
                 old.Title = same.Title;
                 old.UpdatedAt = nowUtc;
                 pending.Remove(same);
+            }
+
+            // COVER ARRANGED AFTER THE DUTY WAS ALREADY MADE. The reconciliation above keys on
+            // (TimetableLessonId, StartsAt), and a cover changes NEITHER — so without this pass an existing duty
+            // is found, left alone, and the cover silently does nothing for any lesson inside the 14-day window,
+            // which is most of them. The lesson keeps its row (its reminder stage, its place in My Day) and
+            // changes hands.
+            //
+            // A duty somebody has already flagged is never reassigned: the register was taken, and moving it
+            // afterwards would put another teacher's name on a mark they did not make.
+            var desiredByKey = desired.ToDictionary(d => (d.TimetableLessonId!.Value, d.StartsAt));
+            var toReassign = existing
+                .Where(d => d.IsActive && d.StartsAt > nowUtc
+                            && desiredByKey.TryGetValue((d.TimetableLessonId!.Value, d.StartsAt), out var want)
+                            && want.ExpectedUserIds![0] != d.ExpectedUserIds?.FirstOrDefault())
+                .ToList();
+            if (toReassign.Count > 0)
+            {
+                var ids = toReassign.Select(d => d.Id).ToList();
+                var alreadyMarked = await db.StaffPerformanceRecords.IgnoreQueryFilters()
+                    .Where(r => r.DutyId != null && ids.Contains(r.DutyId.Value)).Select(r => r.DutyId!.Value).Distinct().ToListAsync(ct);
+                foreach (var d in toReassign.Where(d => !alreadyMarked.Contains(d.Id)))
+                {
+                    var want = desiredByKey[(d.TimetableLessonId!.Value, d.StartsAt)];
+                    reassigned.Add((d, d.ExpectedUserIds?.FirstOrDefault() ?? Guid.Empty, want.ExpectedUserIds![0]));
+                    d.ExpectedUserIds = want.ExpectedUserIds;
+                    d.RecorderUserIds = want.RecorderUserIds;
+                    d.UpdatedAt = nowUtc;
+                }
             }
 
             foreach (var d in pending)
@@ -224,8 +268,12 @@ public static class StaffLessons
             }
         }
 
-        if (created > 0 || cancelledDuties.Count > 0)
-            logger.LogInformation("Lessons for branch {BranchId}: {Created} created, {Cancelled} cancelled, {Changed} teacher(s) told of a change today", branchId, created, cancelledDuties.Count, changed);
+        // Reassignments are deliberately NOT notified from here. Cover is arranged by a person, and that person's
+        // endpoint tells both teachers at the moment it is arranged — with the reason, which this sweep does not
+        // have. Telling them again when the duty happens to be regenerated would be the same news twice.
+        if (created > 0 || cancelledDuties.Count > 0 || reassigned.Count > 0)
+            logger.LogInformation("Lessons for branch {BranchId}: {Created} created, {Cancelled} cancelled, {Reassigned} covered, {Changed} teacher(s) told of a change today",
+                branchId, created, cancelledDuties.Count, reassigned.Count, changed);
         return new MaterialiseResult(created, cancelledDuties.Count, changed);
     }
 

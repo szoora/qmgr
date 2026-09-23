@@ -24,7 +24,7 @@
 <div class="admin-page">
 <QPageActions Embedded="@Embedded">
     <Title>
-        <h1>Duty Reports<QInfo Text="Reports from the people on duty and the administrators who supervise them: what is waiting for review, what came back, and what was never written." Label="Duty Reports" /></h1>
+        <h1>Duty Reports</h1>
         <p class="subtitle">Reports from the people on duty and the administrators who supervise them: what is waiting for review, what came back, and what was never written.</p>
     </Title>
     <Actions>
@@ -116,7 +116,8 @@
                         </tbody>
                     </table>
                 </div>
-                <QPager Count="@Visible.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="reports" />
+                <QPager Count="@Visible.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="duty-reports"
+                    PageSizeChanged="@(n => { PageSize = n; pageIndex = 0; })" ItemLabel="reports" />
             </QCard>
             @if (queue.Total > queue.Items.Count) { <p class="drq-muted">Showing @queue.Items.Count of @queue.Total. Narrow the period to see the rest.</p> }
             }
@@ -138,7 +139,7 @@
     private bool isLoading = true, forbidden;
     private Guid branchId;
     private DutyReportQueueDto? queue;
-    private const int PageSize = 25;
+    private int PageSize = QPagerDefaults.Size;
     private string search = string.Empty;
     private int pageIndex;
 
@@ -156,8 +157,8 @@
         }
     }
 
-    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (Visible.Count - 1) / PageSize));
-    private IEnumerable<DutyReportSummaryDto> Paged => Visible.Skip(SafePageIndex * PageSize).Take(PageSize);
+    private int SafePageIndex => QPaging.SafeIndex(pageIndex, Visible.Count, PageSize);
+    private IEnumerable<DutyReportSummaryDto> Paged => QPaging.Page(Visible, SafePageIndex, PageSize);
 
     private void SetSearch(string value) { search = value ?? string.Empty; pageIndex = 0; }
     private DateRange range = new(DateOnly.FromDateTime(DateTime.Today.AddDays(-30)), DateOnly.FromDateTime(DateTime.Today.AddDays(1)));

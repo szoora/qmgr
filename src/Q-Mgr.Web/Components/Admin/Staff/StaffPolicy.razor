@@ -20,7 +20,7 @@
 <div class="admin-page">
 <QPageActions Embedded="@Embedded">
     <Title>
-        <h1>Scoring Policy<QInfo Text="Periods, bands, caps, the leaderboard switch, budgets, lead times and retention — one setting per decision, organisation-wide." Label="Scoring Policy" /></h1>
+        <h1>Scoring Policy</h1>
         <p class="subtitle">Periods, bands, caps, the leaderboard switch, budgets, lead times and retention — one setting per decision, organisation-wide.</p>
     </Title>
     <Actions>
@@ -86,12 +86,53 @@
                 @if (bandError != null) { <p class="pol-error">@bandError</p> }
             </QCard>
 
+            @* Staff groups (2026-09-22). This list was a three-value enum resolved from the role
+               code, so every custom role a school made — and admin, manager and viewer — counted as
+               teaching staff, and an imported staff list arrived entirely teaching: the bursar and
+               the driver were scored on Lesson Attendance. It is the school's own list now, and a
+               role says which group it belongs to in Users & Roles. *@
+            <QCard Title="Staff groups" Icon="people" Class="pol-card"
+                   Hint="Who your staff are, for parameters and notices that apply to some of them rather than all. Teaching and Support are seeded; add Boarding, Administration or anything else you distinguish. A role says which group its holders are in — set that in Users & Roles. A group in use is retired rather than removed, because deleting one would silently widen every parameter naming it to all staff.">
+                <div class="table-wrap">
+                    <table class="data-table q-stack pol-table">
+                        <thead><tr><th>Name</th><th>In use</th><th></th></tr></thead>
+                        <tbody>
+                            @for (var i = 0; i < groupDrafts.Count; i++)
+                            {
+                                var idx = i;
+                                <tr class="@(groupDrafts[idx].IsActive ? "" : "row-muted")">
+                                    <td><QInput TValue="string" @bind-Value="@groupDrafts[idx].Name" MaxLength="60" Placeholder="e.g. Boarding staff" /></td>
+                                    <td><QCheckbox @bind-Value="@groupDrafts[idx].IsActive" Label="@(groupDrafts[idx].IsActive ? "Active" : "Retired")" /></td>
+                                    <td><QButton Icon="trash" Variant="ghost" Size="sm" OnClick="@(() => RemoveGroup(idx))" Title="Remove — only safe before anything names it; retire it instead once it is in use" /></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <QButton Text="Add group" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@AddGroup" Class="pol-add" />
+                @if (groupError != null) { <p class="pol-error">@groupError</p> }
+            </QCard>
+
             <QCard Title="Weights and points" Icon="sliders" Class="pol-card">
                 <QInput TValue="int" @bind-Value="@policy.MaxParameterWeightPercent" Type="number" Min="10" Max="50" Label="Weight cap (%)"
                         Hint="No single parameter may carry more than this share of the composite. Between 10 and 50: the MET study found composites where no measure exceeds about half the weight were the most stable, so 50 is a ceiling you may tighten but not lift."
                         HasError="@weightCapError" ErrorMessage="Between 10% and 50%." />
                 <QInput TValue="int" @bind-Value="@policy.RecognitionMonthlyBudget" Type="number" Min="0" Max="100" Label="Recognition budget per person per month"
                         Hint="How many recognitions a member of staff may give a month. Self-recognition is always refused." />
+                @* The three scoring dials (2026-09-22). Each was a hard-coded literal in
+                   StaffScoringService and each is school policy rather than arithmetic. The formula
+                   itself stays ours — a score that feeds an appraisal and an MoES return has to be
+                   explainable, and a school-authored expression fails silently — but what a late
+                   arrival is WORTH is not ours to decide. *@
+                <QInput TValue="decimal" @bind-Value="@policy.LateCreditFraction" Type="number" Step="0.05" Min="0" Max="1" Label="A late arrival counts as"
+                        Hint="How much of a present a late arrival is worth, in attendance and duty parameters. 0.5 is half. Set 0 to count late as absent, or 0.67 if three lates make an absence. Being excused is never counted against anybody and is not adjustable — that is the MoES rule that organisational factors are not a performance gap."
+                        HasError="@lateCreditError" ErrorMessage="Between 0 and 1." />
+                <QInput TValue="int" @bind-Value="@policy.DefaultEntriesPerPeriod" Type="number" Min="1" Max="200" Label="Entries a period, when no cap is set"
+                        Hint="For a points parameter with no cap per period, how many entries a term it is assumed to attract. It only sets the scale the points are scored against; setting a cap on the parameter itself overrides it."
+                        HasError="@entriesError" ErrorMessage="At least 1." />
+                <QInput TValue="decimal" @bind-Value="@policy.NeutralScore" Type="number" Step="1" Min="0" Max="100" Label="Neutral score"
+                        Hint="Where a points parameter sits once it has any evidence at all, before that evidence pushes it either way. 50 is the middle. Raising it makes points harder to gain and easier to lose."
+                        HasError="@neutralError" ErrorMessage="Between 0 and 100." />
                 <QCheckbox @bind-Value="@policy.SystemAwardsEnabled" Label="Credit system activity automatically"
                            Hint="Off by default. When on, finalising a welfare record, completing a queue ticket, hosting a visitor or receiving a 4- or 5-star customer rating credits the matching automatic parameter — low points, capped per period, and labelled Automatic on the timeline so nobody mistakes it for a colleague's judgement. Switching it on adds any of those parameters that are missing. Nothing is credited into a closed period." />
             </QCard>
@@ -234,6 +275,9 @@
     private List<PeriodDraft> periodDrafts = new();
     private List<BandDraft> bandDrafts = new();
     private string? bandError;
+    /// <summary>The staff-group rows being edited. Bound directly; committed to the policy on Save.</summary>
+    private List<VocabularyItemDto> groupDrafts = new();
+    private string? groupError;
     private StaffReminderLadders? ladderEditor;
 
     protected override async Task OnInitializedAsync()
@@ -257,6 +301,8 @@
             periodDrafts = policy.Periods.Select(p => new PeriodDraft { Key = p.Key, Name = p.Name, Start = p.Start.ToDateTime(TimeOnly.MinValue), End = p.End.ToDateTime(TimeOnly.MinValue) }).ToList();
             var bands = policy.Bands.Count == 5 ? policy.Bands : new StaffPerformancePolicyDto().Bands;
             bandDrafts = bands.OrderByDescending(b => b.Rating).Select(b => new BandDraft { Rating = b.Rating, Name = b.Name, MinScore = b.MinScore }).ToList();
+            // Copied rather than bound in place, so Cancel-by-navigation leaves the stored list alone.
+            groupDrafts = policy.StaffGroups.Select(g => new VocabularyItemDto { Name = g.Name, IsActive = g.IsActive, SortOrder = g.SortOrder }).ToList();
         }
         catch (Exception ex)
         {
@@ -267,6 +313,10 @@
             isLoading = false;
         }
     }
+
+    private void AddGroup() => groupDrafts.Add(new VocabularyItemDto { Name = "", IsActive = true, SortOrder = groupDrafts.Count });
+
+    private void RemoveGroup(int idx) => groupDrafts.RemoveAt(idx);
 
     private void AddPeriod()
     {
@@ -283,6 +333,9 @@
     }
 
     private bool weightCapError;
+    private bool lateCreditError;
+    private bool entriesError;
+    private bool neutralError;
 
     /// <summary>What each leaderboard mode shows, as the portal now renders it.</summary>
     private static string LeaderboardText(LeaderboardMode m) => m switch
@@ -298,9 +351,26 @@
         if (policy == null) return;
 
         weightCapError = policy.MaxParameterWeightPercent is < 10 or > 50;
-        if (weightCapError) return;
+        // The three scoring dials. Checked here as well as clamped in the scorer: the scorer clamps
+        // so a stored blob written before these existed can never produce nonsense, and this refuses
+        // so somebody typing 5 into "a late counts as" is told rather than silently given 1.
+        lateCreditError = policy.LateCreditFraction is < 0m or > 1m;
+        entriesError = policy.DefaultEntriesPerPeriod < 1;
+        neutralError = policy.NeutralScore is < 0m or > 100m;
+        if (weightCapError || lateCreditError || entriesError || neutralError) return;
 
         // Bands: 5 rows, rating 1 always starts at 0, thresholds strictly increasing with the rating.
+        // Staff groups: names are trimmed, blanks dropped, duplicates refused by KEY (the comparison
+        // folds case and punctuation), and the list may never be emptied — a parameter restricted to
+        // a group that no longer exists would apply to nobody, with nothing on screen saying why.
+        groupError = null;
+        var groups = groupDrafts.Where(g => !string.IsNullOrWhiteSpace(g.Name)).ToList();
+        for (var i = 0; i < groups.Count; i++) { groups[i].Name = groups[i].Name.Trim(); groups[i].SortOrder = i; }
+        if (groups.Count == 0) groupError = "Keep at least one staff group.";
+        else if (groups.Select(g => StaffGroups.Key(g.Name)).Distinct().Count() != groups.Count)
+            groupError = "Two groups have the same name.";
+        if (groupError != null) return;
+
         bandError = null;
         var ordered = bandDrafts.OrderBy(b => b.Rating).ToList();
         ordered[0].MinScore = 0;
@@ -346,6 +416,7 @@
 
         policy.Periods = periods;
         policy.Bands = ordered.Select(b => new ScoreBandDto { Rating = b.Rating, Name = b.Name.Trim(), MinScore = b.MinScore }).ToList();
+        policy.StaffGroups = groups;
 
         isSaving = true;
         try

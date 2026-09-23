@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 namespace QMgr.Application.DTOs;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -106,11 +107,27 @@ public record TenantInfoResponse
     public TenantApiCapabilitiesDto Api { get; init; } = new();
 }
 
+/// <summary>
+/// The tenant's palette as the app receives it.
+///
+/// <para><b>It carries the DERIVED family, not three colours.</b> Until 2026-09-22 it held only
+/// Primary, Secondary and Accent, and the native shell had to invent the hover, the tint and the
+/// text colour that sits on the brand. That is the same defect BrandPalette was written to fix on
+/// the web — three tokens set, seven wine literals left behind — reproduced one platform over: a
+/// wine sign-in screen under a navy top bar, seen on a handset.</para>
+///
+/// <para>Every value here comes from <c>BrandPalette.ColorsFor</c>, which the web also uses, so the
+/// two chromes cannot drift. Null Colors means the tenant set nothing usable and the app keeps its
+/// own shipped palette.</para>
+/// </summary>
 public record TenantBrandDto
 {
     public string? Primary { get; init; }
     public string? Secondary { get; init; }
     public string? Accent { get; init; }
+
+    /// <summary>The full derived set. Prefer this; the three above are what an older app reads.</summary>
+    public BrandColors? Colors { get; init; }
 }
 
 /// <summary>

@@ -28,6 +28,13 @@ public class OrganizationModule : BaseAuditableEntity
     /// <summary>When the trial for this module ends (null once converted to a real subscription)</summary>
     public DateTime? TrialEndsAt { get; set; }
 
+    /// <summary>
+    /// When "your trial ends in N days" was last sent. CLAIMED with a conditional UPDATE before the
+    /// notices go out (the reminder-ladder pattern), so a retried or overlapping run of the daily job
+    /// cannot tell the same administrators twice in one day. Null until the first reminder.
+    /// </summary>
+    public DateTime? TrialReminderSentAt { get; set; }
+
     /// <summary>When this module was cancelled/removed (null while active)</summary>
     public DateTime? CancelledAt { get; set; }
 

@@ -29,6 +29,17 @@ public class NotificationClientService : INotificationClientService
     /// </summary>
     private readonly HashSet<Guid> _joinedBranches = new();
 
+    /// <summary>
+    /// Whose connection this is. A pushed notification for anybody else is DROPPED, not shown
+    /// (2026-09-23): the server once pushed recipient-less notifications through Clients.All, so a
+    /// payment failure at one school rang the bell at every other. The server no longer can; this
+    /// is the second line, so a routing mistake there can never again reach somebody's bell here.
+    /// </summary>
+    private Guid _userId;
+
+    /// <summary>The newest unread count seen, by the server's own counting time. An older count arriving late is ignored.</summary>
+    private long _lastCountTicks;
+
     public event Func<NotificationDto, Task>? OnNotificationReceived;
     public event Func<int, Task>? OnUnreadCountUpdated;
     public event Func<VisitorActivityEvent, Task>? OnVisitorActivityReceived;
@@ -53,7 +64,10 @@ public class NotificationClientService : INotificationClientService
     {
         if (_hubConnection != null)
         {
-            if (_hubConnection.State == HubConnectionState.Connected)
+            // Already connected AS THIS PERSON. A connection opened for somebody else — a sign-out
+            // and sign-in on the same circuit — is torn down below: its groups are the previous
+            // user's, and keeping it would deliver their notifications to the new one.
+            if (_hubConnection.State == HubConnectionState.Connected && userId == _userId)
             {
                 _logger.LogDebug("Notification hub already connected");
                 return;
@@ -96,9 +110,18 @@ public class NotificationClientService : INotificationClientService
             .WithAutomaticReconnect(new[] { TimeSpan.Zero, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10) })
             .Build();
 
+        _userId = userId;
+        _lastCountTicks = 0;
+
         // Handle incoming notifications
         _hubConnection.On<NotificationDto>("ReceiveNotification", async notification =>
         {
+            if (notification.UserId != _userId)
+            {
+                _logger.LogWarning("Dropped notification {NotificationId} pushed to this connection for another user", notification.Id);
+                return;
+            }
+
             _logger.LogDebug("Received notification: {Title}", notification.Title);
             if (OnNotificationReceived != null)
             {
@@ -107,8 +130,14 @@ public class NotificationClientService : INotificationClientService
         });
 
         // Handle unread count updates
-        _hubConnection.On<int>("UnreadCountUpdated", async count =>
+        // Carries the moment the server COUNTED. Two notifications landing together each count and
+        // push, and the first count can arrive last; keeping only the newest stops the badge
+        // settling one short.
+        _hubConnection.On<int, long>("UnreadCountUpdated", async (count, countedAtTicks) =>
         {
+            if (countedAtTicks < _lastCountTicks) return;
+            _lastCountTicks = countedAtTicks;
+
             _logger.LogDebug("Unread count updated: {Count}", count);
             if (OnUnreadCountUpdated != null)
             {

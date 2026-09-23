@@ -143,6 +143,10 @@ public static class Permissions
     public const string TimetableManage = "timetable.manage";               // the timetable master: build, check, publish
     public const string TimetableLessonsFlag = "timetable.lessons.flag";    // confirm or override lesson flags within the staff scope
 
+    // School calendar (2026-09-23, plan TERM_PROGRAMME_CALENDAR_AND_GATES). In all THREE catalogues. Reading the
+    // calendar needs no code: every signed-in member of the organization reads the events whose audience includes them.
+    public const string CalendarManage = "calendar.manage";                 // create, edit and import school events and the term programme
+
     // Marketing (contacts + broadcast campaigns)
     public const string MarketingView = "marketing.view";
     public const string MarketingManage = "marketing.manage"; // Manage contacts, create/edit broadcast drafts
@@ -296,6 +300,7 @@ public static class Permissions
         new("staff.dutyreports.review", "Review Duty Reports", "Comment on duty reports, return them for changes and mark them reviewed", "Staff Performance", 15),
         new("timetable.manage", "Manage the Timetable", "Build, check and publish the timetable, bell schedule and rooms — the timetable master", "Staff Performance", 16),
         new("timetable.lessons.flag", "Flag Lessons", "Confirm or override lessons taught, missed and recovered for the staff in scope", "Staff Performance", 17),
+        new("calendar.manage", "Manage the School Calendar", "Create and edit school events and import the term programme, meetings and duty rotas", "Calendar", 1),
 
         // Marketing
         new("marketing.view", "View Marketing", "View contacts and broadcast campaigns", "Marketing", 1),
@@ -386,6 +391,7 @@ public static class Permissions
                 FeedbackView, FeedbackRespond, FeedbackAnalytics,
                 VisitorsView, VisitorsCheckIn, VisitorsCheckOut, VisitorsManage,
                 StudentsView, StudentsManage, ClassTeachersManage,
+                CalendarManage,
                 // Welfare: full except the two confidentiality tiers. An Admin grants
                 // welfare.confidential.view to a DSL/counsellor custom role; welfare.restricted.view
                 // stays with Admin unless deliberately delegated.
@@ -417,35 +423,6 @@ public static class Permissions
             }
         ),
 
-        // Pastoral responsibility for one or more classes. The permission set is narrow on purpose;
-        // what makes this role work is not what it may do but WHICH ROWS it may do it to — see
-        // DataScope below. Notably absent: students.manage (no roster editing, no bulk import),
-        // classes.teachers.manage (could otherwise self-assign to any class and defeat the scope),
-        // and both confidentiality tiers.
-        [RoleCodes.ClassTeacher] = new RoleDefinition(
-            "Class Teacher",
-            RoleCodes.ClassTeacher,
-            "Pastoral responsibility for assigned classes. Sees only students in those classes.",
-            "#E67E22",
-            "account-school",
-            4,
-            new[]
-            {
-                DashboardView,
-                NotificationsView,
-                StudentsView,
-                // Scoped by StudentScopeService to the caller's own classes, so the reports answer
-                // "how is my class doing" and nothing wider. The class teacher holds the OWN code,
-                // not the branch-wide one, so a school can withhold the page from a custom
-                // class-teacher role without touching what a manager reads (user decision, 2026-09-18).
-                WelfareView, WelfareCreate, WelfareEdit, WelfareNotify, WelfareReportsOwn,
-                // The staff portal needs no permission; recognition does.
-                StaffRecognitionGive,
-            },
-            RoleDataScope.AssignedClasses,
-            StaffDataScope.SelfOnly
-        ),
-
         // ---- Staff Performance Monitor hierarchy (2026-09-16). See RoleCodes for the rank decision. ----
 
         [RoleCodes.DirectorOfStudies] = new RoleDefinition(
@@ -465,6 +442,7 @@ public static class Permissions
                 StaffAppraisalsConduct, StaffAppraisalsApprove,
                 StaffReportsView, StaffNoticesManage, StaffStructureManage, StaffRecognitionGive,
                 StaffDutyReportsView, StaffDutyReportsReview, TimetableManage, TimetableLessonsFlag,
+                CalendarManage,
             },
             RoleDataScope.Organization,
             StaffDataScope.Organization
@@ -485,30 +463,12 @@ public static class Permissions
                 StaffDutiesManage,
                 StaffReportsView, StaffNoticesManage, StaffRecognitionGive,
                 StaffDutyReportsView, TimetableManage, TimetableLessonsFlag,
+                CalendarManage,
             },
             RoleDataScope.Organization,
             StaffDataScope.Organization
         ),
 
-        [RoleCodes.HeadOfDepartment] = new RoleDefinition(
-            "Head of Department",
-            RoleCodes.HeadOfDepartment,
-            "Sees and appraises the staff of the departments they head. A head with no department sees nobody.",
-            "#C99A5B",
-            "diagram-3",
-            3,
-            new[]
-            {
-                DashboardView, NotificationsView,
-                StaffRecordsView, StaffRecordsCreate, StaffRecordsEdit,
-                StaffDutiesManage,
-                StaffAppraisalsConduct,
-                StaffReportsView, StaffRecognitionGive,
-                StaffDutyReportsView, TimetableLessonsFlag,
-            },
-            RoleDataScope.Organization,
-            StaffDataScope.AssignedDepartments
-        ),
 
         [RoleCodes.Teacher] = new RoleDefinition(
             "Teacher",

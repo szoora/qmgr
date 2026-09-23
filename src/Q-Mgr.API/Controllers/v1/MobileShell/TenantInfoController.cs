@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using QMgr.Application.Branding;
 using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces.Billing;
 using QMgr.Domain.Constants;
@@ -109,12 +110,18 @@ public class TenantInfoController : ControllerBase
             Brand = branded
                 ? new TenantBrandDto
                 {
-                    // Only primary and accent are taken from the server; the app derives its hover
-                    // and dark tones. Three colours to configure is three chances to configure two
-                    // of them, and a half-applied theme reads as a rendering fault.
                     Primary = Safe(org.PrimaryColor),
                     Secondary = Safe(org.SecondaryColor),
-                    Accent = Safe(org.AccentColor)
+                    Accent = Safe(org.AccentColor),
+
+                    // THE SERVER DERIVES, THE APP DOES NOT. An earlier comment here said the app
+                    // would work out its own hover and dark tones from three colours — it did, and
+                    // it got them wrong, because the one value that cannot be guessed is the text
+                    // colour ON the brand (WCAG luminance) and the one that must not be is the
+                    // hover, which has to match the web pixel for pixel. BrandPalette is the single
+                    // home for that arithmetic and the web reads the same method.
+                    Colors = BrandPalette.ColorsFor(
+                        Safe(org.PrimaryColor), Safe(org.SecondaryColor), Safe(org.AccentColor))
                 }
                 : null,
             // Attribution removal sits ON TOP of white-labelling and is never beside it. A tenant

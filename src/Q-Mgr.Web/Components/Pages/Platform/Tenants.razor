@@ -136,7 +136,8 @@
                 <!-- Pagination -->
                 <QPager Count="@pagedResult.TotalCount" PageSize="@pageSize"
                         PageIndex="@(currentPage - 1)" PageIndexChanged="@OnPageChanged"
-                        ItemLabel="tenants" Class="tenants-pager" />
+                        PageSizeOptions="@QPagerDefaults.Sizes" StorageKey="platform-tenants"
+                        PageSizeChanged="@(n => pageSize = n)" ItemLabel="tenants" Class="tenants-pager" />
             }
             else
             {
@@ -526,11 +527,8 @@
                         <div class="tenant-row">
                             <label>@feature.Label:</label>
                             <div class="storage-quota-editor">
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" role="switch" checked="@on"
-                                           disabled="@isSavingOverride"
-                                           @onchange="@(e => SetOverride(tenantDetails.Id, feature.Code, (bool?)e.Value == true))" />
-                                </div>
+                                <QSwitch Value="@on" Disabled="@isSavingOverride" aria-label="@feature.Label"
+                                         ValueChanged="@(v => SetOverride(tenantDetails.Id, feature.Code, v))" />
                                 <QInfo Label="@feature.Label" Text="@feature.Note" />
                             </div>
                         </div>
@@ -659,11 +657,8 @@
                                     <span class="qm-text-muted"> &middot; @module.Status</span>
                                 }
                             </div>
-                            <label class="qm-switch">
-                                <input type="checkbox" checked="@module.Purchased"
-                                       @onchange="@((ChangeEventArgs e) => ToggleTenantModule(module.ModuleCode, (bool)e.Value!))" />
-                                <span class="qm-switch-slider"></span>
-                            </label>
+                            <QSwitch Value="@module.Purchased" aria-label="@module.ModuleName"
+                                     ValueChanged="@(v => ToggleTenantModule(module.ModuleCode, v))" />
                         </div>
                     }
                 </div>
@@ -950,48 +945,6 @@
         border-bottom: none;
     }
 
-    .qm-switch {
-        position: relative;
-        display: inline-block;
-        width: 38px;
-        height: 21px;
-        flex-shrink: 0;
-    }
-
-    .qm-switch input {
-        opacity: 0;
-        width: 0;
-        height: 0;
-    }
-
-    .qm-switch-slider {
-        position: absolute;
-        cursor: pointer;
-        inset: 0;
-        background-color: var(--qm-border);
-        border-radius: var(--qm-radius-lg);
-        transition: background-color 0.15s;
-    }
-
-    .qm-switch-slider::before {
-        content: "";
-        position: absolute;
-        height: 17px;
-        width: 17px;
-        left: 2px;
-        bottom: 2px;
-        background-color: var(--qm-text-on-primary);
-        border-radius: 50%;
-        transition: transform 0.15s;
-    }
-
-    .qm-switch input:checked + .qm-switch-slider {
-        background-color: var(--qm-primary);
-    }
-
-    .qm-switch input:checked + .qm-switch-slider::before {
-        transform: translateX(17px);
-    }
 </style>
 
 @code {
@@ -1003,7 +956,8 @@
     private string searchQuery = "";
     private string statusFilter = "";
     private int currentPage = 1;
-    private int pageSize = 20;
+    // SERVER-paged: "All" is not offered, since every tenant in one response is a query nobody should be able to ask for by accident.
+    private int pageSize = QPagerDefaults.Size;
 
     private PagedResult<TenantSummary> pagedResult = new();
     private TenantSummary? selectedTenant;

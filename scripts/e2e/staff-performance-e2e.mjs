@@ -105,17 +105,30 @@ await call(SA, "DELETE", `/api/v1/admin/tenants/${ORG}/modules/student-welfare?n
 hdr("14.1 Seed the staff structure (idempotent)");
 const roles = (await get(AD, "/api/v1/roles")).json ?? [];
 const roleId = (code) => roles.find((r) => r.code === code)?.id;
-for (const code of ["director-of-studies", "academic-assistant", "head-of-department", "teacher", "support-staff"]) {
+for (const code of ["director-of-studies", "academic-assistant", "teacher", "support-staff"]) {
   truthy(`seeded system role ${code} exists`, !!roleId(code));
 }
-truthy("head-of-department carries StaffScope AssignedDepartments", roles.find((r) => r.code === "head-of-department")?.staffScope === "AssignedDepartments", JSON.stringify(roles.find((r) => r.code === "head-of-department")));
+
+// THE head-of-department ROLE IS GONE, AND THAT IS THE POINT (2026-09-22, user decision: "what is the
+// point in having them if they cannot be assigned?"). Heading a department is a POST, not a role: the
+// permissions and the AssignedDepartments staff scope are DERIVED from Department.HeadUserId by
+// PostPermissionService, so the three heads below are ordinary teachers and become heads by being named
+// on a department at 14.1's ensureDept calls.
+//
+// This asserts the absence, because a run against a database where something re-seeded the row would
+// otherwise pass while testing the retired model. (One did: an older build started in a worktree.)
+truthy("the retired head-of-department role is absent — heading a department is a POST, not a role",
+  !roleId("head-of-department"), JSON.stringify(roles.filter((r) => r.code === "head-of-department")));
+truthy("…and so is class-teacher", !roleId("class-teacher"));
 
 const PEOPLE = [
   { key: "dos", username: "e2e.sp.dos", first: "Daniel", last: "Okello", role: "director-of-studies" },
   { key: "aa", username: "e2e.sp.aa", first: "Agnes", last: "Namuli", role: "academic-assistant" },
-  { key: "hodMath", username: "e2e.sp.hod.math", first: "Moses", last: "Ssempala", role: "head-of-department" },
-  { key: "hodLang", username: "e2e.sp.hod.lang", first: "Lydia", last: "Achieng", role: "head-of-department" },
-  { key: "hodEmpty", username: "e2e.sp.hod.empty", first: "Henry", last: "Mugisha", role: "head-of-department" },
+  // Teachers. They derive the head-of-department permissions and staff scope from the department they head.
+  { key: "hodMath", username: "e2e.sp.hod.math", first: "Moses", last: "Ssempala", role: "teacher" },
+  { key: "hodLang", username: "e2e.sp.hod.lang", first: "Lydia", last: "Achieng", role: "teacher" },
+  // Heads NOTHING, on purpose: the fail-closed case. With no post they derive nothing at all.
+  { key: "hodEmpty", username: "e2e.sp.hod.empty", first: "Henry", last: "Mugisha", role: "teacher" },
   { key: "math1", username: "e2e.sp.math1", first: "Martin", last: "Kato", role: "teacher" },
   { key: "math2", username: "e2e.sp.math2", first: "Mary", last: "Nabirye", role: "teacher" },
   { key: "lang1", username: "e2e.sp.lang1", first: "Luke", last: "Opio", role: "teacher" },
@@ -248,7 +261,17 @@ hdr("14.3 SCOPE — a head sees their department, fails closed with none, teache
   const dir = (await get(U.hodEmpty.token, `${B}/staff/structure/members`)).json;
   const others = (dir?.items ?? []).filter((m) => m.userId !== U.hodEmpty.id);
   eq("FAIL CLOSED: a head with no department sees nobody else", others.length, 0);
-  eq("…and gets 404, not 403, for a colleague's timeline", (await get(U.hodEmpty.token, `${B}/staff/members/${U.math1.id}/timeline`)).status, 404);
+  // A HEAD WITH NO DEPARTMENT IS NOW REFUSED AT THE PERMISSION LAYER (403), NOT THE SCOPE LAYER (404), and
+  // both are safe. Updated 2026-09-22 when the head-of-department ROLE was deleted: the permissions now arrive
+  // with the POST, so somebody heading no department derives none of them and cannot read staff records AT ALL.
+  //
+  // The standing rule — "out of scope answers 404, never 403, because a 403 confirms the person exists" —
+  // is about a per-subject refusal. This 403 is not per-subject: it is the same answer for any id, including
+  // one that does not exist, so it discloses strictly less than the 404 it replaced. 404 is still accepted
+  // because a caller who DOES hold the permission and is merely out of scope must keep getting it.
+  const emptyHeadTimeline = (await get(U.hodEmpty.token, `${B}/staff/members/${U.math1.id}/timeline`)).status;
+  truthy("…and is refused a colleague's timeline without confirming they exist (403 at the permission layer, or 404 out of scope)",
+    emptyHeadTimeline === 403 || emptyHeadTimeline === 404, `status ${emptyHeadTimeline}`);
 }
 eq("head of Maths gets 404 for the Languages teacher's timeline", (await get(U.hodMath.token, `${B}/staff/members/${U.lang1.id}/timeline`)).status, 404);
 eq("head of Maths reads a Maths teacher's timeline", (await get(U.hodMath.token, `${B}/staff/members/${U.math1.id}/timeline`)).status, 200);
@@ -749,7 +772,14 @@ hdr("14.10 IMPORT, CUSTOM ROLE SCOPE, SIGN-OUT");
   const t = await login(`${U.support.username}@qmgr.local`, PW);
   const loginRes = await call(null, "POST", "/api/v1/auth/login", { email: `${U.support.username}@qmgr.local`, password: await passwordOf(`${U.support.username}@qmgr.local`) });
   const refresh = loginRes.json?.refreshToken;
-  eq("SIGN-OUT: the logout endpoint answers 204", (await post(loginRes.json?.accessToken, "/api/v1/auth/logout")).status, 204);
+  // NO BODY AT ALL, and that is the contract rather than a detail. Since the mobile shell shipped, a BODY on
+  // /auth/logout means "a device is asking for a revocation" and must name what to revoke — naming nothing is a
+  // 400, because a "signed out" that revoked nothing is the worst available outcome and a 204 would make it
+  // indistinguishable from the real thing (see the endpoint's own note, and e2e 25.12).
+  //
+  // The browser's sign-out posts no body, so this must not use the `post` helper, which sends `{}`.
+  eq("SIGN-OUT: the logout endpoint answers 204 for a BODYLESS post, as the browser sends",
+    (await call(loginRes.json?.accessToken, "POST", "/api/v1/auth/logout")).status, 204);
   const rr = await call(null, "POST", "/api/v1/auth/refresh", { refreshToken: refresh });
   truthy("SIGN-OUT: the refresh token no longer works", rr.status === 401 || rr.status === 400, rr.status);
   const trail = (await get(t, "/api/v1/staff/portal/activity?pageSize=50")).json;

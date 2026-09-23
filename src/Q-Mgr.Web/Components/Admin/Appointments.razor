@@ -16,7 +16,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Appointments<QInfo Text="Scheduled bookings, and the arrivals waiting to be checked in" Label="Appointments" /></h1>
+            <h1>Appointments</h1>
             <p class="subtitle">Scheduled bookings, and the arrivals waiting to be checked in</p>
         </div>
         <div class="header-actions">
@@ -46,10 +46,7 @@
                 <QButton Text="Today" Variant="secondary" Size="sm" OnClick="@GoToToday" />
             </div>
             <div class="toolbar-filters">
-                <label class="range-toggle">
-                    <input type="checkbox" checked="@showWholeWeek" @onchange="OnRangeToggled" />
-                    <span>Show the whole week</span>
-                </label>
+                <QCheckbox Value="@showWholeWeek" ValueChanged="@OnRangeToggled" Label="Show the whole week" />
                 <QSelect TValue="AppointmentStatus?" TItem="StatusOption" Items="@statusOptions"
                          TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)" Value="@filterStatus"
                          ValueChanged="@OnStatusFilterChanged" Placeholder="Any status" />
@@ -110,9 +107,9 @@
                                 <span class="appointment-select">
                                     @if (IsCancellable(appointment))
                                     {
-                                        <input type="checkbox" checked="@selectedIds.Contains(appointment.Id)"
-                                               @onchange="@(e => ToggleSelection(appointment.Id, (bool)(e.Value ?? false)))"
-                                               aria-label="@($"Select {appointment.CustomerName}'s booking")" />
+                                        <QCheckbox Value="@selectedIds.Contains(appointment.Id)"
+                                                   ValueChanged="@(v => ToggleSelection(appointment.Id, v))"
+                                                   aria-label="@($"Select {appointment.CustomerName}'s booking")" />
                                     }
                                 </span>
                             }
@@ -181,7 +178,7 @@
                 </div>
                 <div class="form-group">
                     <label for="apt-service">Service</label>
-                    <QSelect TValue="Guid?" TItem="ServiceOption" Items="@serviceOptions"
+                    <QSelect TValue="Guid?" TItem="ServiceOption" Items="@serviceOptions" Sorted="true"
                              TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)" Value="@formServiceTypeId"
                              ValueChanged="@OnFormServiceChanged" Placeholder="Choose a service" />
                 </div>
@@ -277,15 +274,6 @@
         background: var(--qm-bg-input);
         color: var(--qm-text-primary);
         font: inherit;
-    }
-
-    .range-toggle {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        font-size: var(--qm-text-base);
-        color: var(--qm-text-secondary);
-        cursor: pointer;
     }
 
     .day-heading {
@@ -570,9 +558,9 @@
         await LoadAppointments();
     }
 
-    private async Task OnRangeToggled(ChangeEventArgs e)
+    private async Task OnRangeToggled(bool on)
     {
-        showWholeWeek = (bool)(e.Value ?? false);
+        showWholeWeek = on;
         await LoadAppointments();
     }
 

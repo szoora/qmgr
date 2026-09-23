@@ -4,6 +4,18 @@
 @using QMgr.Web.Components.Shared
 @attribute [AllowAnonymous]
 
+@* House style for the legal pages: the four rules are written out in full at the top of
+   Privacy.razor. In short — declare rather than try, no comparisons to other companies and no
+   asides, full forms rather than contractions, and no format labels.
+
+   This document additionally names its own obligations in the active voice ("we suspend",
+   "we delete", "we keep"), because a term stated in the passive is one nobody has to honour.
+   Every figure here is load-bearing and matches what the code actually does: 60/30/14 is
+   TenantLifecycleService, the grandfathered price is OrganizationModule.AgreedPrice*, the
+   unsubscribe link is built into the send pipeline, and the five-year tax record is the
+   statutory-retention lane in the tenant purge. Reword freely; do not soften a commitment or
+   change a number without changing the code that keeps it. *@
+
 <QPageTitle Text="Terms of Service" />
 
 <div class="doc-page">
@@ -25,23 +37,22 @@
             </header>
 
             <p class="doc-lede">
-                This is the agreement between you (or the organization you're signing up on behalf of) and SACC
-                Software Limited for the use of Q-Mgr. Registering an organization, or clicking "I agree" on the
-                sign-up form, means you're accepting it — so it's worth actually reading, and we've tried to
-                write it so that's not a chore.
+                These terms form the agreement between you &mdash; or the organization you are signing up on its
+                behalf &mdash; and SACC Software Limited, for the use of Q-Mgr. Registering an organization, or
+                accepting these terms on the sign-up form, binds you to them.
             </p>
 
             <h2>1. Who can use Q-Mgr</h2>
             <p>
-                You need to be at least 18 and have real authority to sign your organization up — a business
-                owner, a head teacher, an IT admin, an operations manager, whoever's actually responsible for
-                making this call. If you're setting this up on behalf of an organization, "you" throughout this
-                document means that organization, and you're confirming you're allowed to bind it to these terms.
+                You must be at least 18 years old and hold the authority to commit your organization: an owner, a
+                head teacher, an IT administrator, an operations manager, or another person responsible for the
+                decision. Where you are acting on behalf of an organization, "you" throughout this document means
+                that organization, and you confirm that you are authorised to bind it to these terms.
             </p>
 
-            <h2>2. What Q-Mgr actually is</h2>
+            <h2>2. What Q-Mgr is</h2>
             <p>
-                Q-Mgr is a front-office platform made of modules. Your organization chooses which ones it uses:
+                Q-Mgr is a front-office platform composed of modules. Your organization selects the ones it uses:
             </p>
             <ul>
                 <li><strong>Core Queue Management</strong> &mdash; ticket queues across service counters, the self-service kiosk and the customer display.</li>
@@ -51,178 +62,179 @@
                 <li><strong>Integrations &amp; API</strong> &mdash; API access and partner integrations.</li>
             </ul>
             <p>
-                Every organization gets its own isolated space — your data, your branches, your users — even
-                though everyone runs on the same platform underneath.
+                Each organization holds its own isolated space &mdash; its data, its branches, its users &mdash;
+                although all organizations run on the same platform.
             </p>
 
             <h2>3. Your account and your trial</h2>
             <p>
-                New organizations can try a module free for a trial period, with no payment details needed up
-                front &mdash; the current trial length is shown when you sign up, since it's the kind of number
-                that changes more often than this document should. A module on trial has to be paid for before
-                you add another one. If a trial ends without payment, that module stops working; your data stays
-                put, and paying for the module brings it straight back. You're responsible for keeping your login
-                credentials to yourself and for what happens under your account, so use a real password and
-                don't share logins between staff who should each have their own.
+                A new organization may trial a module without charge and without providing payment details. The
+                current trial length is shown at sign-up, since it changes more often than this document. A module
+                on trial must be paid for before a further module is added. Where a trial ends without payment,
+                that module stops working; your data remains in place, and paying for the module restores access
+                to it immediately. You are responsible for keeping your credentials confidential and for activity
+                carried out under your account. Each member of staff who needs access must hold their own login.
             </p>
             <p>
-                If a trial ends and is never paid for, the account doesn't sit here for ever: it follows the deletion
-                timetable in Section 8a, and after 104 days everything in it is permanently deleted. We'll email you
-                before each step.
+                Where a trial ends and is never paid for, the account does not remain indefinitely. It follows the
+                deletion timetable in Section 8a, and after 104 days everything within it is permanently deleted.
+                We email you before each step.
             </p>
 
-            <h2>4. Prices, paying, and cancelling</h2>
+            <h2>4. Prices, payment and cancellation</h2>
             <p>
-                You pay per module, monthly or annually, in advance, in Uganda shillings. Current prices are
-                shown on the Billing page inside the app. The price you agree to when you add a module is the
-                price you keep paying for it: if our list price changes later, your renewals stay at the price
-                you agreed unless we tell you otherwise in advance.
+                You pay per module, monthly or annually, in advance, in Uganda shillings. Current prices are shown
+                on the Billing page within the application. The price agreed when you add a module is the price
+                you continue to pay for it: where our list price changes subsequently, your renewals remain at the
+                agreed price unless we notify you otherwise in advance.
             </p>
             <p>
-                Payments are collected through the SACC payment gateway (sacc.ug), by Mobile Money (MTN or
-                Airtel) or by card where card payments are available. A Mobile Money payment is only ever taken
-                after you approve the prompt on your phone with your own PIN; a card is entered on the gateway's
-                secure payment page, never on Q-Mgr. When a module renews, we send a Mobile Money prompt for the
-                amount due to the renewal number your organization has set on the Billing page, and you can change
-                that number there at any time. An invoice is marked paid only once the payment has actually been
-                confirmed, and a receipt is sent by email.
+                Payments are collected through the SACC payment gateway (sacc.ug), by Mobile Money (MTN or Airtel)
+                or by card where card payment is available. A Mobile Money payment is taken only after you approve
+                the prompt on your own handset with your own PIN. Card details are entered on the gateway's secure
+                payment page and never within Q-Mgr. When a module renews, we send a Mobile Money prompt for the
+                amount due to the renewal number your organization holds on the Billing page, and you may change
+                that number there at any time. An invoice is marked paid only once payment is confirmed, and a
+                receipt is sent by email.
             </p>
             <p>
-                If a renewal isn't paid, the module becomes overdue, and if it stays unpaid past a grace period
-                we'll suspend the account rather than let usage run up against an unpaid bill — you'll see exactly
-                why, with a way to pay, not just a dead login page. You can pay an open invoice yourself from the
-                Billing page at any time.
+                Where a renewal is not paid, the module becomes overdue. Where it remains unpaid beyond the grace
+                period, we suspend the account rather than allow usage to accrue against an unpaid bill. The reason
+                is stated on screen together with a means of payment. You may settle an open invoice yourself from
+                the Billing page at any time.
             </p>
             <p>
-                You can remove a module whenever you like from the Billing page. Removing it ends access to that
-                module straight away, and you can add it back later. We don't refund unused time unless something
-                on our end genuinely went wrong, or you were charged an amount you didn't agree to.
+                You may remove a module at any time from the Billing page. Removal ends access to that module
+                immediately, and it may be added again later. We do not refund unused time, except where a fault on
+                our part caused the loss or where you were charged an amount you did not agree to.
             </p>
 
-            <h2>5. Using it responsibly</h2>
-            <p>You agree not to:</p>
+            <h2>5. Acceptable use</h2>
+            <p>You must not:</p>
             <ul>
-                <li>Use Q-Mgr for anything illegal, or to harass, defraud, or discriminate against anyone.</li>
-                <li>Send Broadcasts to people who haven't given you a real reason to expect them — a past customer, a patient, a parent, someone who opted in. The unsubscribe link on every message is there so recipients can opt out; removing it, ignoring opt-outs, or buying a contact list to blast is a violation of these terms and, in most places, the law. That's on you as the sender, not on us.</li>
-                <li>Use the Visitor Management watchlist to flag people for discriminatory reasons. It exists for genuine security purposes — a documented past incident, a real safety concern — not as a way to informally blacklist someone you'd rather not deal with.</li>
-                <li>Record anything in the welfare ledger or a staff member's file that you have no genuine reason to record, or give staff access to children's records they don't need to do their job. Who can see what is under your control, through the roles and visibility levels you set.</li>
-                <li>Try to break the isolation between organizations, access another organization's data, or probe the platform for vulnerabilities without telling us first (we'd rather you email us about a security issue than exploit it — see Section 10).</li>
-                <li>Resell or sublicense access to the platform itself without a separate written agreement with us.</li>
+                <li>Use Q-Mgr for any unlawful purpose, or to harass, defraud or discriminate against any person.</li>
+                <li>Send Broadcasts to people who have no reason to expect them. A past customer, a patient, a parent or a person who opted in has that reason; a purchased contact list does not. Every message carries an unsubscribe link so that recipients can opt out. Removing that link, ignoring opt-outs, or messaging a bought list breaches these terms and, in most jurisdictions, the law. Responsibility for this rests with you as the sender.</li>
+                <li>Use the Visitor Management watchlist to flag people for discriminatory reasons. It exists for genuine security purposes &mdash; a documented incident, an established safety concern &mdash; and not to informally blacklist a person.</li>
+                <li>Record anything in the welfare ledger or in a staff member's file without a genuine reason to record it, or grant staff access to children's records they do not need in order to do their work. Who may see what is under your control, through the roles and visibility levels you set.</li>
+                <li>Attempt to break the isolation between organizations, access another organization's data, or probe the platform for vulnerabilities without first notifying us under Section 10.</li>
+                <li>Resell or sublicense access to the platform without a separate written agreement with us.</li>
             </ul>
             <p>
-                If we find an account doing any of the above, we can suspend or terminate it. We'd rather warn
-                you and give you a chance to fix it — abuse serious enough for an instant termination is the
-                exception, not our default move.
+                Where an account breaches this section we may suspend or terminate it. Ordinarily we notify you and
+                allow an opportunity to remedy the breach; immediate termination is reserved for abuse serious
+                enough to warrant it.
             </p>
 
             <h2>6. Whose data it is</h2>
             <p>
-                Everything you or your staff put into Q-Mgr — your visitor logs, your queue history, your
-                students' and staff records, your documents, your contact lists, your branding — is yours. We
-                don't claim ownership of it, and we don't use it for anything beyond running the service you're
-                paying us for and, in aggregate and de-identified form, understanding how the platform gets used
-                so we can improve it. You are responsible for having a lawful basis for the personal data you put
-                in, and for the people you let see it. If your account is closed, your data is kept for a short
-                recovery window and then deleted, following the retention rules in our Privacy Policy.
+                Everything you or your staff enter into Q-Mgr &mdash; your visitor logs, your queue history, your
+                students' and staff records, your documents, your contact lists, your branding &mdash; belongs to
+                you. We claim no ownership of it. We use it only to operate the service you pay for and, in
+                aggregate and de-identified form, to understand how the platform is used so that we can improve it.
+                You are responsible for holding a lawful basis for the personal data you enter, and for the people
+                to whom you grant access to it. Where your account is closed, your data is held for a recovery
+                window and then deleted, under the retention rules in our <a href="/privacy">Privacy Policy</a>.
             </p>
 
-            <h2>7. Uptime and things breaking</h2>
+            <h2>7. Availability</h2>
             <p>
-                We run Q-Mgr to be available and reliable, and we take outages seriously when they happen. We're
-                not going to promise a specific uptime percentage with financial penalties attached here — a
-                formal service-level agreement is something a customer can discuss with us directly, not a
-                blanket claim we'll make to everyone up front. What we will say plainly: if the service is down,
-                we're already working on it, and we'll tell you what happened once we know.
+                We operate Q-Mgr to be available and reliable, and we treat outages as a priority. These terms carry
+                no guaranteed uptime percentage and no service credits. A formal service-level agreement is
+                available to discuss directly and is agreed in writing where a customer requires one. Where the
+                service is unavailable, we work to restore it and we report what occurred once the cause is
+                established.
             </p>
 
-            <h2>8. Ending the relationship</h2>
+            <h2>8. Ending this agreement</h2>
             <p>
-                You can close your account whenever you like by removing its modules from the Billing page, or by
-                emailing us. We can suspend or terminate an account for non-payment, a real breach of Section 5,
-                or if we're required to by law — and where it's practical to do so without making the underlying
-                problem worse, we'll give notice and a chance to fix things first. On termination, access stops,
-                and your data follows the deletion timetable in Section 8a rather than disappearing instantly.
+                You may close your account at any time by removing its modules from the Billing page, or by writing
+                to us. We may suspend or terminate an account for non-payment, for a breach of Section 5, or where
+                we are required to by law. Where it is practical to do so without compounding the underlying
+                problem, we give notice and an opportunity to remedy it first. On termination, access ends and your
+                data follows the deletion timetable in Section 8a rather than being removed immediately.
             </p>
 
-            <h2>8a. If you stop paying, your data is eventually deleted in full</h2>
+            <h2>8a. Deletion of data following non-payment</h2>
             <p>
-                We don't keep unpaid accounts indefinitely. If an account stops being paid for &mdash; a trial that
-                ended, or a subscription that lapsed &mdash; it moves through a published timetable, and at the end
-                of it everything we hold for that organization is <strong>permanently and irreversibly deleted</strong>.
-                Each step is measured from the one before it, and we email the address on the account before each one:
+                We do not retain unpaid accounts indefinitely. Where an account stops being paid for &mdash; a trial
+                that ended, or a subscription that lapsed &mdash; it moves through the timetable below, and at the
+                end of it everything we hold for that organization is
+                <strong>permanently and irreversibly deleted</strong>. Each step is measured from the one before it,
+                and we email the address on the account before each one:
             </p>
             <ul>
-                <li><strong>Suspended</strong> &mdash; nobody can sign in. Your data is untouched. Paying brings it
-                    straight back. After <strong>60 days</strong> the account is closed.</li>
-                <li><strong>Closed</strong> &mdash; the account is over and no further charges are made. Your data is
-                    still here and reactivating still recovers it. After <strong>30 days</strong> it is scheduled for
+                <li><strong>Suspended</strong> &mdash; nobody may sign in. Your data is untouched, and payment restores
+                    access immediately. After <strong>60 days</strong> the account is closed.</li>
+                <li><strong>Closed</strong> &mdash; the account is ended and no further charges are made. Your data
+                    remains, and reactivation still recovers it. After <strong>30 days</strong> it is scheduled for
                     deletion.</li>
-                <li><strong>Scheduled for deletion</strong> &mdash; the last window, and the last chance. After
-                    <strong>14 days</strong> the deletion happens.</li>
-                <li><strong>Deleted</strong> &mdash; irreversible. There is no undo, and no copy we can go back to.</li>
+                <li><strong>Scheduled for deletion</strong> &mdash; the final window. After <strong>14 days</strong>
+                    the deletion is carried out.</li>
+                <li><strong>Deleted</strong> &mdash; irreversible. There is no undo and no copy to restore from.</li>
             </ul>
             <p>
                 That is <strong>104 days</strong> from the day an account stops being paid for to the day its data is
-                gone, with three chances to come back. A signed-up account that never verifies its email address is
+                gone, with three opportunities to return. An account that never verifies its email address is
                 suspended after 14 days and then follows the same path.
             </p>
             <p>
-                <strong>What "deleted" means here.</strong> Every record belonging to your organization &mdash; students,
-                staff, visitors, welfare records, documents, messages, settings and every uploaded file &mdash; is removed
-                from our systems, and we check afterwards that nothing was left behind. Your backups are a separate matter
-                and we won't pretend otherwise: deleted data can still exist in encrypted database backups until those
-                backups expire on their normal schedule, which is <strong>30 days</strong>. It is not used for anything in
-                that window, and if a backup is ever restored the deletion is applied again automatically so nothing comes
-                back. After 30 days no copy remains anywhere.
+                <strong>What deletion means.</strong> Every record belonging to your organization &mdash; students,
+                staff, visitors, welfare records, documents, messages, settings and every uploaded file &mdash; is
+                removed from our systems, and we verify afterwards that nothing was left behind. Deleted data can
+                still exist in encrypted database backups until those backups expire on their normal schedule, which
+                is <strong>30 days</strong>. It is used for nothing during that window, and where a backup is restored
+                the deletion is applied again automatically so that nothing returns. After 30 days no copy remains
+                anywhere.
             </p>
             <p>
-                <strong>The two things we keep, and why.</strong> First, if you ever paid us, Uganda's Tax Procedures Code
-                requires us to keep the tax record of that payment for five years; we keep the invoice and the payment
-                &mdash; the amount, the date, the reference &mdash; and we delete the contact details attached to them.
-                If you never paid us, there is no such record and nothing is kept. Second, we keep a small marker showing
-                that an account was deleted and when: it contains no name, no address and no email address, only one-way
-                codes that cannot be turned back into anybody. It exists so a deleted account cannot quietly reappear,
-                and so we can answer honestly if you ask us later what happened to your data.
+                <strong>Two records survive a deletion.</strong> First, where you have paid us, Uganda's Tax
+                Procedures Code requires us to keep the tax record of that payment for five years. We keep the
+                invoice and the payment &mdash; the amount, the date, the reference &mdash; and we delete the contact
+                details attached to them. Where you never paid us, no such record exists and nothing is kept. Second,
+                we keep a marker showing that an account was deleted and when. It contains no name, no address and no
+                email address, only one-way codes that cannot be turned back into a person. It exists so that a
+                deleted account cannot quietly reappear, and so that we can answer accurately if you later ask what
+                became of your data.
             </p>
             <p>
-                <strong>You can ask us to delete it sooner.</strong> Email us and we'll bring the deletion forward rather
-                than making you wait out the timetable. You can also ask for a copy of your data before it goes, at any
+                <strong>You may ask us to delete it sooner.</strong> Write to us and we bring the deletion forward
+                rather than requiring you to wait out the timetable. You may also request a copy of your data at any
                 point before the final step.
             </p>
 
             <h2>9. Liability</h2>
             <p>
-                Q-Mgr is provided as-is. We work to keep it accurate and available, but we can't promise it will
-                be error-free or uninterrupted, and to the extent the law allows, we're not liable for indirect
-                or consequential losses — lost business, lost data from something outside our control, that sort
-                of thing. Nothing here limits liability that can't legally be limited, like liability for our own
-                gross negligence or willful misconduct.
+                Q-Mgr is provided as is. We work to keep it accurate and available. We do not warrant that it will
+                be error-free or uninterrupted, and to the extent permitted by law we are not liable for indirect or
+                consequential loss, including lost business and loss of data arising from causes outside our control.
+                Nothing in these terms limits liability that cannot lawfully be limited, including liability for our
+                own gross negligence or wilful misconduct.
             </p>
 
-            <h2>10. Found a security issue?</h2>
+            <h2>10. Reporting a security issue</h2>
             <p>
-                Tell us before you tell anyone else: <a href="mailto:support@getsacc.com">support@getsacc.com</a>.
-                We won't pursue action against a good-faith report made responsibly, and we genuinely want to
-                know before a real problem finds us the hard way.
+                Report it to us before disclosing it elsewhere:
+                <a href="mailto:support@getsacc.com">support@getsacc.com</a>. We take no action against a
+                good-faith report made responsibly.
             </p>
 
             <h2>11. Changes to these terms</h2>
             <p>
-                If we change these terms in a way that meaningfully affects how you use Q-Mgr, we'll update the
-                effective date above and email account admins directly. Continuing to use the service after that
-                means you've accepted the update; if you don't agree with a change, you can close your account
-                before it takes effect.
+                Where we change these terms in a way that materially affects your use of Q-Mgr, we update the
+                effective date above and email account administrators directly. Continued use of the service after
+                that date constitutes acceptance of the change. Where you do not accept a change, you may close your
+                account before it takes effect.
             </p>
 
             <h2>12. Governing law</h2>
             <p>
-                These terms are governed by the laws of the Republic of Uganda. Any dispute that can't be worked
-                out directly between us will be handled under that jurisdiction.
+                These terms are governed by the laws of the Republic of Uganda. Any dispute that cannot be resolved
+                directly between us is subject to that jurisdiction.
             </p>
 
             <h2>13. Contact</h2>
             <p>
-                Questions about any of this: <a href="mailto:support@getsacc.com">support@getsacc.com</a>.
+                Questions about these terms: <a href="mailto:support@getsacc.com">support@getsacc.com</a>.
             </p>
 
             <footer class="doc-footer">

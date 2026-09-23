@@ -240,12 +240,35 @@ public class RosterImportProcessorJob
         };
 
         // --- Validation ---
+        //
+        // A STUDENT IS A NAME, A CODE AND A CLASS. THE GUARDIAN IS OPTIONAL (user instruction,
+        // 2026-09-22: "since when did guardian and email mandatory for student? the only mandatory
+        // fields are Name, code and class").
+        //
+        // Until then this refused any row without a guardian name AND a guardian phone or email,
+        // which turned a roll that a school exports from its own system — 1,711 children, most rows
+        // carrying no guardian contact at all — into 1,711 failures. The requirement was never a
+        // property of a student: it was the guardian find-or-create below written as a
+        // precondition, so a child with no contact on file could not be admitted to the roll at all.
+        //
+        // The guardian block further down is now conditional. Class is required here for the same
+        // reason the code is: Student.ClassName is what IStudentScopeService matches on, so a child
+        // imported without one is invisible to their own class teacher — a safeguarding failure,
+        // not a cosmetic one.
         var missing = new List<string>();
         if (string.IsNullOrWhiteSpace(row.StudentFullName)) missing.Add("student name");
-        if (string.IsNullOrWhiteSpace(row.GuardianFullName)) missing.Add("guardian name");
+        if (string.IsNullOrWhiteSpace(row.ClassName)) missing.Add("class");
         var normPhone = VisitorMatching.NormalizePhone(row.GuardianPhone);
         var normEmail = VisitorMatching.NormalizeEmail(row.GuardianEmail);
-        if (normPhone == null && normEmail == null) missing.Add("a guardian phone or email");
+
+        // A guardian is taken when there is one to take: a name plus at least one way to reach them.
+        // A PARTIAL guardian is the one shape still refused — a name with no contact, or a contact
+        // with no name, is a half-row that would create an unreachable or nameless guardian record
+        // nobody could later correct. The student is still imported; only the link is declined.
+        var hasGuardianName = !string.IsNullOrWhiteSpace(row.GuardianFullName);
+        var hasGuardianContact = normPhone != null || normEmail != null;
+        var guardianPartial = hasGuardianName ^ hasGuardianContact;
+        var takeGuardian = hasGuardianName && hasGuardianContact;
 
         if (missing.Count > 0)
         {
@@ -312,6 +335,29 @@ public class RosterImportProcessorJob
         {
             student.FullName = row.StudentFullName.Trim();
             if (!string.IsNullOrWhiteSpace(row.ClassName)) student.ClassName = row.ClassName.Trim();
+        }
+
+        // --- The guardian, when the row carries one ---
+        //
+        // Everything from here to the outcome is conditional. A row with no guardian imports the
+        // child and says so; a row with half a guardian imports the child and says which half was
+        // missing, so the school can fix the sheet rather than hunt for a silent omission.
+        if (!takeGuardian)
+        {
+            await _context.SaveChangesAsync();
+            entry.StudentId = student.Id;
+            entry.Outcome = wasNew ? RosterImportRowOutcome.Created : RosterImportRowOutcome.Updated;
+
+            var note = guardianPartial
+                ? hasGuardianName
+                    ? " No guardian was linked: a guardian needs a phone number or an email address."
+                    : " No guardian was linked: a guardian contact was given with no name."
+                : string.Empty;
+            entry.Message = (wasNew ? "New student created." : "Matched an existing student — details refreshed.") + note;
+
+            if (wasNew) job.CreatedCount++; else job.UpdatedCount++;
+            _context.RosterImportJobEntries.Add(entry);
+            return;
         }
 
         // --- Find-or-create the guardian's VisitorProfile (same matching rule as check-in) ---
@@ -639,7 +685,7 @@ public class RosterImportProcessorJob
         var rooms = vocab.Rooms.Where(r => r.IsActive).GroupBy(r => TimetableCycle.Normalize(r.Name)).ToDictionary(g => g.Key, g => g.First().Name);
         var subjectRows = await _context.Subjects.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == job.OrganizationId && x.IsActive).ToListAsync();
         var staff = await StaffLookups.BranchStaff(_context, job.OrganizationId, job.BranchId)
-            .Select(u => new { u.Id, u.Email, u.Username, u.FirstName, u.LastName }).ToListAsync();
+            .Select(u => new { u.Id, u.OrganizationId, u.Email, u.Username, u.FirstName, u.LastName }).ToListAsync();
 
         // Day names: the cycle's own labels ("mon", "mon a"), full weekday names in a one-week cycle, and the number.
         var days = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -698,7 +744,8 @@ public class RosterImportProcessorJob
 
             var teacherText = (row.Teacher ?? "").Trim();
             var byEmailOrUser = staff.Where(u => string.Equals(u.Email, teacherText, StringComparison.OrdinalIgnoreCase) || string.Equals(u.Username, teacherText, StringComparison.OrdinalIgnoreCase)).ToList();
-            var byName = staff.Where(u => string.Equals($"{u.FirstName} {u.LastName}".Trim(), teacherText, StringComparison.OrdinalIgnoreCase)).ToList();
+            // Either order: a timetable sheet names a teacher however its author writes names.
+            var byName = staff.Where(u => PersonNames.Matches(teacherText, u.FirstName, u.LastName)).ToList();
             var teachers = byEmailOrUser.Count > 0 ? byEmailOrUser : byName;
             if (teachers.Count == 0) { Fail($"'{row.Teacher}' is not on this branch's staff (by email, username or full name)."); return; }
             if (teachers.Count > 1) { Fail($"'{row.Teacher}' matches {teachers.Count} members of staff; use their email instead."); return; }
@@ -724,7 +771,7 @@ public class RosterImportProcessorJob
             var mine = inSlot.Where(l => l.TeacherUserId == teacherId).ToList();
             if (mine.Any(l => l.SubjectId != subject.Id))
             {
-                Fail($"{teachers[0].FirstName} {teachers[0].LastName} already teaches {mine[0].ClassName} then.");
+                Fail($"{PersonNames.Display(teachers[0].OrganizationId, teachers[0].FirstName, teachers[0].LastName)} already teaches {mine[0].ClassName} then.");
                 return;
             }
 
@@ -794,7 +841,7 @@ public class RosterImportProcessorJob
                     }
                     return ProcessStaffRowAsync(job, row, rowNumber, mode, temporary, context, created, request.NameOrder, request.UpdateExisting);
                 },
-                row => new RosterImportJobEntry { StudentName = $"{row.FirstName} {row.LastName}".Trim(), StudentCode = row.EmployeeNumber, GuardianName = row.Email });
+                row => new RosterImportJobEntry { StudentName = PersonNames.Display(job.OrganizationId, row.FirstName, row.LastName), StudentCode = row.EmployeeNumber, GuardianName = row.Email });
         }
         finally
         {

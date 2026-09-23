@@ -133,8 +133,11 @@ public class StaffRecordsController : StaffPerformanceControllerBase
         if (!string.IsNullOrWhiteSpace(q))
         {
             var term = q.Trim().ToLower();
+            // A person's name is searched in BOTH orders: whoever is typing does not know, and should not
+            // have to know, which order this school shows names in (PersonNames).
             query = query.Where(r => r.Description.ToLower().Contains(term) || r.Parameter!.Name.ToLower().Contains(term)
-                                     || (r.Subject!.FirstName + " " + r.Subject.LastName).ToLower().Contains(term));
+                                     || (r.Subject!.FirstName + " " + r.Subject.LastName).ToLower().Contains(term)   // name-format: search
+                                     || (r.Subject!.LastName + " " + r.Subject.FirstName).ToLower().Contains(term)); // name-format: search
         }
 
         var total = await query.CountAsync();
@@ -157,6 +160,10 @@ public class StaffRecordsController : StaffPerformanceControllerBase
     /// staff group, points obey the kind's sign rule and the per-entry cap, an observation needs a
     /// rating on its scale, and the visibility is decided here: a caller may ASK for a rung they
     /// can read; the parameter's default and the Wellbeing floor are applied on top regardless.
+    ///
+    /// Every rule lives in <see cref="ResolveSubjectForWriteAsync"/>, <see cref="ResolveParameterForWriteAsync"/>
+    /// and <see cref="BuildRecordAsync"/>, and every side effect in <see cref="AfterRecordSavedAsync"/> — the group
+    /// log calls the same four, so a rule added here binds both and neither can drift into a second copy.
     /// </summary>
     [HttpPost("records")]
     [RequirePermission(Permissions.StaffRecordsCreate)]
@@ -168,32 +175,204 @@ public class StaffRecordsController : StaffPerformanceControllerBase
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
-        var me = CurrentUserId();
         var organizationId = await ResolveOrganizationIdAsync(branchId);
 
         // The subject: exists, is staff of this branch, and is in scope. One wording for all three
         // refusals, so a probe cannot learn which it was.
-        var subject = await FindBranchStaffAsync(organizationId, branchId, request.SubjectUserId);
-        if (subject == null || !await StaffScope.CanSeeStaffAsync(branchId, subject.Id)) return StaffMemberNotFound();
+        var subject = await ResolveSubjectForWriteAsync(organizationId, branchId, request.SubjectUserId);
+        if (subject == null) return StaffMemberNotFound();
 
-        var parameter = await Db.PerformanceParameters.FirstOrDefaultAsync(p => p.Id == request.ParameterId && p.OrganizationId == organizationId);
-        if (parameter == null) return BadRequestProblem("The parameter was not found");
-        if (!parameter.IsActive) return BadRequestProblem($"'{parameter.Name}' has been retired", "Choose an active parameter.");
-        if (parameter.Kind == ParameterKind.Recognition && subject.Id == me) return BadRequestProblem("You cannot recognise yourself");
-        // An automatic-credit parameter is written by the system alone, so its records can always be
-        // labelled "automatic" and never mistaken for a colleague's judgement.
-        if (parameter.IsSystemSource) return BadRequestProblem($"'{parameter.Name}' is credited automatically", "Records on it are written by the system when the activity happens; it cannot be logged by hand.");
-
-        var group = _policy.GroupFor(subject.Role?.Code);
-        if (parameter.AppliesTo != StaffGroup.AllStaff && parameter.AppliesTo != group)
-            return BadRequestProblem($"'{parameter.Name}' applies to {(parameter.AppliesTo == StaffGroup.TeachingStaff ? "teaching" : "support")} staff only");
-
-        if (string.IsNullOrWhiteSpace(request.Description) || request.Description.Trim().Length < 10)
-            return BadRequestProblem("Describe what happened", "At least 10 characters — a record that says nothing is worth nothing to the person it is about.");
-        if (request.OccurredAt > DateTime.UtcNow.AddDays(1))
-            return BadRequestProblem("A record cannot be dated in the future");
+        var (parameterError, parameter) = await ResolveParameterForWriteAsync(organizationId, request.ParameterId);
+        if (parameterError != null) return parameterError;
 
         var policy = await _policy.GetAsync(organizationId);
+        var (error, built) = await BuildRecordAsync(branchId, organizationId, request, acknowledgeLateEntry, subject, parameter!, policy);
+        if (error != null) return error;
+
+        AddBuilt(built!);
+        await Db.SaveChangesAsync();
+
+        await AfterRecordSavedAsync(built!, branchId, organizationId, alert: true);
+
+        var dto = await LoadDtoAsync(built!.Record.Id, branchId);
+        return CreatedAtAction(nameof(GetRecord), new { branchId, id = built.Record.Id }, dto);
+    }
+
+    /// <summary>
+    /// Logs the same Contribution or Conduct record for several members of staff — "everyone who ran the open
+    /// day", "the whole department missed the report deadline" (the Staff Directory's "Log a record", 2026-09-23).
+    /// The staff twin of the welfare group log, and the rules are deliberate:
+    /// <list type="bullet">
+    /// <item>ONLY CONTRIBUTION AND CONDUCT. Attendance and duties come from registers; an observation and a
+    /// wellbeing record are about one person; recognition has its own monthly allowance, which a group log would
+    /// walk straight past.</item>
+    /// <item>ONLY STANDARD. A confidential or restricted record is that person's own file.</item>
+    /// <item>NOBODY LOGS ABOUT THEMSELVES IN BULK. The caller is taken out of the list and named back in
+    /// <c>SkippedSelf</c> rather than refusing the batch: ticking "everyone in Maths" includes the head.</item>
+    /// <item>SCOPE, THE WHOLE BATCH: every person passes the check the single create runs, and one that does not
+    /// refuses the batch with the SAME not-found wording — a distinct "not in your department" would confirm the
+    /// person exists.</item>
+    /// <item>THE SAME CREATION CODE per record (<see cref="BuildRecordAsync"/>): points, the closed period and the
+    /// late-entry 409 bind exactly as for one. ONE TRANSACTION, AT MOST 200, all or nothing.</item>
+    /// <item>ALERTS COALESCED: each subject is told about their own record as the single create tells them; a
+    /// supervisor gets ONE summary for the batch, not one per colleague.</item>
+    /// <item>NO LOCK. Nothing here is an "at most N" or "exactly once" rule: two identical presses are two
+    /// batches, each complete, which is what the annul path is for.</item>
+    /// </list>
+    /// </summary>
+    [HttpPost("records/bulk")]
+    [RequirePermission(Permissions.StaffRecordsCreate)]
+    [ProducesResponseType(typeof(BulkStaffRecordResultDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CreateRecordsBulk(Guid branchId, [FromBody] BulkStaffRecordRequest request, [FromQuery] bool acknowledgeLateEntry = false)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        if (request?.Record == null) return BadRequestProblem("Describe the record to log");
+
+        var me = CurrentUserId();
+        var ids = (request.SubjectUserIds ?? new List<Guid>()).Where(id => id != Guid.Empty).Distinct().ToList();
+        if (ids.Count == 0) return BadRequestProblem("Choose at least one person");
+        // The cap first, before a single row is read: 5,000 ids must cost one comparison, not 5,000 lookups.
+        if (ids.Count > StaffBulkLimits.MaxPeople) return BadRequestProblem(StaffBulkLimits.CapMessage);
+
+        var skippedSelf = ids.Where(id => id == me).ToList();
+        ids = ids.Where(id => id != me).ToList();
+        if (ids.Count == 0) return BadRequestProblem(StaffBulkLimits.OnlySelfRefusal);
+
+        if (request.Record.SaveAsDraft) return BadRequestProblem(StaffBulkLimits.DraftRefusal);
+        if (request.Record.Visibility != WelfareVisibility.Standard) return BadRequestProblem(StaffBulkLimits.VisibilityRefusal);
+
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+        var (parameterError, parameter) = await ResolveParameterForWriteAsync(organizationId, request.Record.ParameterId);
+        if (parameterError != null) return parameterError;
+        if (!StaffBulkLimits.AllowsKind(parameter!.Kind)) return BadRequestProblem(StaffBulkLimits.KindRefusal);
+        // A parameter whose own default is above Standard would raise every record of the batch there.
+        if (parameter.DefaultVisibility != WelfareVisibility.Standard) return BadRequestProblem(StaffBulkLimits.VisibilityRefusal);
+
+        // --- SCOPE, THE WHOLE BATCH, BEFORE ANYTHING ELSE ---
+        var subjects = new List<User>(ids.Count);
+        foreach (var id in ids)
+        {
+            var subject = await ResolveSubjectForWriteAsync(organizationId, branchId, id);
+            if (subject == null) return StaffMemberNotFound();
+            subjects.Add(subject);
+        }
+
+        // Every person passed scope, so saying how many the parameter does not cover leaks nothing.
+        var outsideGroup = subjects.Count(s => !StaffGroups.Applies(parameter.AppliesToGroup, s.Role?.StaffGroup));
+        if (outsideGroup > 0)
+            return BadRequestProblem($"'{parameter.Name}' applies to {parameter.AppliesToGroup} only",
+                $"{outsideGroup} of the {subjects.Count} people chosen {(outsideGroup == 1 ? "is" : "are")} not in that group. Leave them out and log again.");
+
+        // --- Build every record through the one creation path. Nothing is written until all have passed. ---
+        var policy = await _policy.GetAsync(organizationId);
+        var built = new List<BuiltStaffRecord>(subjects.Count);
+        foreach (var subject in subjects)
+        {
+            var one = request.Record with { SubjectUserId = subject.Id, DutyId = null, PreObservationMeetingAt = null, FeedbackSessionAt = null };
+            var (error, b) = await BuildRecordAsync(branchId, organizationId, one, acknowledgeLateEntry, subject, parameter, policy);
+            if (error != null) return error;
+            built.Add(b!);
+        }
+
+        // --- One transaction, through the execution strategy: all or nothing. ---
+        var strategy = Db.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await Db.Database.BeginTransactionAsync();
+            foreach (var b in built)
+                if (Db.Entry(b.Record).State == EntityState.Detached) AddBuilt(b);
+            await Db.SaveChangesAsync();
+            await tx.CommitAsync();
+        });
+
+        var batchId = Guid.NewGuid();
+        var recordIds = built.Select(b => b.Record.Id).ToList();
+        _logger.LogInformation("Staff batch {BatchId}: {Records} {Parameter} record(s) logged in branch {BranchId}",
+            batchId, recordIds.Count, parameter.Name, branchId);
+
+        // --- After the commit: nothing below may fail the request. ---
+        // The per-record lines the single create writes (each person's own trail reads them)...
+        foreach (var b in built) await AfterRecordSavedAsync(b, branchId, organizationId, alert: false);
+
+        // ...ONE line for the batch, naming nobody — who was in it is in DetailJson, which no endpoint returns...
+        await Activity.RecordAsync(ActivityActions.RecordsBulkLogged, "staff-record-batch", batchId, null,
+            $"{parameter.Name} logged for {recordIds.Count} {(recordIds.Count == 1 ? "person" : "people")}",
+            new { BatchId = batchId, ParameterId = parameter.Id, Kind = parameter.Kind.ToString(), People = subjects.Select(s => s.Id).ToList(), RecordIds = recordIds, SkippedSelf = skippedSelf.Count > 0 },
+            branchId, organizationId, visibility: WelfareVisibility.Standard);
+
+        // ...and the alerts, coalesced: each subject once, each supervisor once for the whole batch.
+        var peopleAlerted = await _alerts.NotifyRecordsLoggedAsync(recordIds);
+
+        return StatusCode(StatusCodes.Status201Created, new BulkStaffRecordResultDto
+        {
+            Created = recordIds.Count,
+            RecordIds = recordIds,
+            BatchId = batchId,
+            PeopleAlerted = peopleAlerted,
+            SkippedSelf = skippedSelf
+        });
+    }
+
+    /// <summary>A record that has passed every rule and has not been saved, with what an observation adds beside it.</summary>
+    private sealed record BuiltStaffRecord(StaffPerformanceRecord Record, User Subject, PerformanceParameter Parameter, StaffDuty? FeedbackDuty, StaffPerformanceNote? Note);
+
+    private void AddBuilt(BuiltStaffRecord built)
+    {
+        Db.StaffPerformanceRecords.Add(built.Record);
+        if (built.FeedbackDuty != null) Db.StaffDuties.Add(built.FeedbackDuty);
+        if (built.Note != null) Db.StaffPerformanceNotes.Add(built.Note);
+    }
+
+    /// <summary>
+    /// The person a record may be written about, or null: exists, is active staff of this branch, and is in the
+    /// caller's scope. One answer for all three, so a probe cannot learn which it was — every caller refuses a null
+    /// with StaffMemberNotFound.
+    /// </summary>
+    private async Task<User?> ResolveSubjectForWriteAsync(Guid organizationId, Guid branchId, Guid userId)
+    {
+        var subject = await FindBranchStaffAsync(organizationId, branchId, userId);
+        if (subject == null || !await StaffScope.CanSeeStaffAsync(branchId, subject.Id)) return null;
+        return subject;
+    }
+
+    /// <summary>The parameter a record may be logged on: this organization's, active, and not written by the system alone.</summary>
+    private async Task<(IActionResult? Error, PerformanceParameter? Parameter)> ResolveParameterForWriteAsync(Guid organizationId, Guid parameterId)
+    {
+        var parameter = await Db.PerformanceParameters.FirstOrDefaultAsync(p => p.Id == parameterId && p.OrganizationId == organizationId);
+        if (parameter == null) return (BadRequestProblem("The parameter was not found"), null);
+        if (!parameter.IsActive) return (BadRequestProblem($"'{parameter.Name}' has been retired", "Choose an active parameter."), null);
+        // An automatic-credit parameter is written by the system alone, so its records can always be
+        // labelled "automatic" and never mistaken for a colleague's judgement.
+        if (parameter.IsSystemSource) return (BadRequestProblem($"'{parameter.Name}' is credited automatically", "Records on it are written by the system when the activity happens; it cannot be logged by hand."), null);
+        return (null, parameter);
+    }
+
+    /// <summary>
+    /// EVERY RULE ONE STAFF RECORD OBEYS once its subject and parameter are resolved: the staff group, the content,
+    /// the closed period, late entry, points, rating, visibility, the linked duty — and the entity built from them.
+    /// Adds NOTHING to the context; the caller does (<see cref="AddBuilt"/>). The single create and the group log both
+    /// call it, so a rule added here binds both.
+    /// </summary>
+    private async Task<(IActionResult? Error, BuiltStaffRecord? Built)> BuildRecordAsync(
+        Guid branchId, Guid organizationId, CreateStaffRecordRequest request, bool acknowledgeLateEntry,
+        User subject, PerformanceParameter parameter, StaffPerformancePolicyDto policy)
+    {
+        var me = CurrentUserId();
+        if (parameter.Kind == ParameterKind.Recognition && subject.Id == me) return (BadRequestProblem("You cannot recognise yourself"), null);
+
+        var group = subject.Role?.StaffGroup;
+        if (!StaffGroups.Applies(parameter.AppliesToGroup, group))
+            return (BadRequestProblem($"'{parameter.Name}' applies to {parameter.AppliesToGroup} only"), null);
+
+        if (string.IsNullOrWhiteSpace(request.Description) || request.Description.Trim().Length < 10)
+            return (BadRequestProblem("Describe what happened", "At least 10 characters — a record that says nothing is worth nothing to the person it is about."), null);
+        if (request.OccurredAt > DateTime.UtcNow.AddDays(1))
+            return (BadRequestProblem("A record cannot be dated in the future"), null);
+
         var occurredAt = DateTime.SpecifyKind(request.OccurredAt, DateTimeKind.Utc);
 
         // A closed period takes no new scored evidence. Wellbeing is never scored and a person's welfare
@@ -201,7 +380,7 @@ public class StaffRecordsController : StaffPerformanceControllerBase
         if (parameter.Kind != ParameterKind.Wellbeing)
         {
             var closed = ClosedPeriodProblem(_policy, policy, occurredAt, "A record");
-            if (closed != null) return closed;
+            if (closed != null) return (closed, null);
         }
 
         // The late-entry confirmation, enforced HERE and at the policy's threshold (the welfare shape:
@@ -209,24 +388,24 @@ public class StaffRecordsController : StaffPerformanceControllerBase
         // with 14 days hard-coded, so an API caller — or a tenant with a different threshold — skipped it.
         if (!request.SaveAsDraft && policy.LateEntryThresholdDays > 0
             && occurredAt < DateTime.UtcNow.AddDays(-policy.LateEntryThresholdDays) && !acknowledgeLateEntry)
-            return LateEntryProblem(policy.LateEntryThresholdDays);
+            return (LateEntryProblem(policy.LateEntryThresholdDays), null);
 
-        if (!Enum.IsDefined(request.Outcome)) return BadRequestProblem("Unrecognised outcome");
+        if (!Enum.IsDefined(request.Outcome)) return (BadRequestProblem("Unrecognised outcome"), null);
 
         var pointsError = ResolvePoints(parameter, request.Outcome, request.Points, out var points);
-        if (pointsError != null) return BadRequestProblem(pointsError);
+        if (pointsError != null) return (BadRequestProblem(pointsError), null);
 
         var ratingError = ResolveRating(parameter, request.Rating, out var rating);
-        if (ratingError != null) return BadRequestProblem(ratingError);
+        if (ratingError != null) return (BadRequestProblem(ratingError), null);
 
         var visibilityError = await ResolveVisibilityAsync(parameter, request.Visibility);
-        if (visibilityError.Error != null) return visibilityError.Error;
+        if (visibilityError.Error != null) return (visibilityError.Error, null);
 
         StaffDuty? duty = null;
         if (request.DutyId.HasValue)
         {
             duty = await Db.StaffDuties.FirstOrDefaultAsync(d => d.Id == request.DutyId.Value && d.BranchId == branchId);
-            if (duty == null) return BadRequestProblem("The duty was not found");
+            if (duty == null) return (BadRequestProblem("The duty was not found"), null);
         }
 
         var isObservation = parameter.Kind == ParameterKind.Observation;
@@ -248,9 +427,9 @@ public class StaffRecordsController : StaffPerformanceControllerBase
             LoggedByUserId = me,
             CreatedBy = me
         };
-        Db.StaffPerformanceRecords.Add(record);
 
         StaffDuty? feedbackDuty = null;
+        StaffPerformanceNote? note = null;
         if (isObservation && (request.PreObservationMeetingAt.HasValue || request.FeedbackSessionAt.HasValue))
         {
             var parts = new List<string>();
@@ -265,7 +444,7 @@ public class StaffRecordsController : StaffPerformanceControllerBase
             {
                 var meetingParameter = await Db.PerformanceParameters.AsNoTracking()
                     .Where(p => p.OrganizationId == organizationId && p.IsActive && !p.IsSystemSource
-                                && p.Kind == ParameterKind.Attendance && p.AppliesTo == StaffGroup.AllStaff)
+                                && p.Kind == ParameterKind.Attendance && p.AppliesToGroup == null)
                     .OrderByDescending(p => p.Name == "Meeting Attendance").ThenBy(p => p.SortOrder)
                     .FirstOrDefaultAsync();
                 if (meetingParameter != null)
@@ -285,32 +464,37 @@ public class StaffRecordsController : StaffPerformanceControllerBase
                         CreatedByUserId = me,
                         CreatedBy = me
                     };
-                    Db.StaffDuties.Add(feedbackDuty);
                     parts.Add("The feedback session is on the duty roster, with a reminder to both of you.");
                 }
             }
 
-            Db.StaffPerformanceNotes.Add(new StaffPerformanceNote { RecordId = record.Id, Body = string.Join(" ", parts), AuthorUserId = me, Kind = StaffNoteKind.Note });
+            note = new StaffPerformanceNote { RecordId = record.Id, Body = string.Join(" ", parts), AuthorUserId = me, Kind = StaffNoteKind.Note };
         }
 
-        await Db.SaveChangesAsync();
+        return (null, new BuiltStaffRecord(record, subject, parameter, feedbackDuty, note));
+    }
 
-        var subjectName = StaffPerformanceMapping.FullName(subject);
+    /// <summary>
+    /// What follows a committed record: its RecordCreated line (at the record's rung), the feedback-session line,
+    /// and — when <paramref name="alert"/> — the fan-out. The group log passes false and coalesces the alerts
+    /// itself. Never throws: both the logger and the alert service swallow their own failures.
+    /// </summary>
+    private async Task AfterRecordSavedAsync(BuiltStaffRecord built, Guid branchId, Guid organizationId, bool alert)
+    {
+        var record = built.Record;
+        var subjectName = StaffPerformanceMapping.FullName(built.Subject);
         await Activity.RecordAsync(ActivityActions.RecordCreated, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
-            RecordSummary(record.Status == StaffRecordStatus.Draft ? "drafted" : "created", record, parameter.Name, subjectName),
+            RecordSummary(record.Status == StaffRecordStatus.Draft ? "drafted" : "created", record, built.Parameter.Name, subjectName),
             new { record.ParameterId, record.Outcome, record.Points, record.Rating, record.Visibility, record.Status, record.Source, record.DutyId },
             branchId, organizationId, visibility: record.Visibility);
-        if (feedbackDuty != null)
+        if (built.FeedbackDuty is { } feedbackDuty)
             await Activity.RecordAsync(ActivityActions.DutyCreated, nameof(StaffDuty), feedbackDuty.Id, null,
                 string.Create(CultureInfo.InvariantCulture, $"Observation feedback session scheduled for {feedbackDuty.StartsAt:dd MMM yyyy HH:mm} UTC"),
                 new { feedbackDuty.StartsAt, FromRecord = record.Id }, branchId, organizationId);
 
         // A committed record's fan-out must not fail the request; the service never throws.
-        if (record.Status == StaffRecordStatus.Final)
+        if (alert && record.Status == StaffRecordStatus.Final)
             await _alerts.NotifyRecordLoggedAsync(record.Id);
-
-        var dto = await LoadDtoAsync(record.Id, branchId);
-        return CreatedAtAction(nameof(GetRecord), new { branchId, id = record.Id }, dto);
     }
 
     // ---------------------------------------------------------------------
@@ -794,9 +978,9 @@ public class StaffRecordsController : StaffPerformanceControllerBase
         var parameter = await Db.PerformanceParameters.FirstOrDefaultAsync(p => p.Id == request.ParameterId && p.OrganizationId == organizationId && p.IsActive);
         if (parameter == null) return BadRequestProblem("The recognition parameter was not found");
         if (parameter.Kind != ParameterKind.Recognition) return BadRequestProblem($"'{parameter.Name}' is not a recognition parameter");
-        var group = _policy.GroupFor(subject.Role?.Code);
-        if (parameter.AppliesTo != StaffGroup.AllStaff && parameter.AppliesTo != group)
-            return BadRequestProblem($"'{parameter.Name}' applies to {(parameter.AppliesTo == StaffGroup.TeachingStaff ? "teaching" : "support")} staff only");
+        var group = subject.Role?.StaffGroup;
+        if (!StaffGroups.Applies(parameter.AppliesToGroup, group))
+            return BadRequestProblem($"'{parameter.Name}' applies to {parameter.AppliesToGroup} only");
         if (string.IsNullOrWhiteSpace(request.Message) || request.Message.Trim().Length < 10)
             return BadRequestProblem("Say what you are recognising", "At least 10 characters — the point of recognition is the why.");
 

@@ -30,7 +30,9 @@ public class StaffNotice : BaseAuditableEntity
 
     public Guid[]? AudienceDepartmentIds { get; set; }
     public string[]? AudienceRoleCodes { get; set; }
-    public StaffGroup? AudienceStaffGroup { get; set; }
+    /// <summary>Restrict to one staff group by name (see StaffGroups). Null = every group.</summary>
+    [MaxLength(60)]
+    public string? AudienceStaffGroup { get; set; }
 
     public DateTime PublishAt { get; set; } = DateTime.UtcNow;
     public DateTime? ExpiresAt { get; set; }

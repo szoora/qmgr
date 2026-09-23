@@ -3,6 +3,7 @@
 @inject JsonSerializerOptions JsonOptions
 @inject IPermissionService PermissionSvc
 @inject NavigationManager Navigation
+@inject IStaffPerformanceApiService StaffApi
 @inherits BranchAwareComponentBase
 @inject IStudentApiService StudentApi
 @inject IClassTeacherApiService ClassTeacherApi
@@ -106,47 +107,18 @@
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var user in PagedUsers)
+                        @* All above QPaging.VirtualizeAbove rows renders through <Virtualize>, so choosing All on a large list
+                           never ships every row down the circuit at once (plan STUDENT_ROSTER_AND_LIST_STANDARD §1, L3). *@
+                        @if (UserPageSize == QPager.All && VisibleUsers.Count > QPaging.VirtualizeAbove)
                         {
-                            <tr class="@(user.IsActive ? "" : "row-muted") @(selectedUserIds.Contains(user.Id) ? "us-row--picked" : "")">
-                                @if (canEditUsers)
-                                {
-                                    <td class="us-tick">
-                                        @* No label: the name is in the next cell and repeating it
-                                           would read out twice. The title carries it for a reader. *@
-                                        <span title="@($"Select {user.FullName}")">
-                                            <QCheckbox Value="@selectedUserIds.Contains(user.Id)"
-                                                       ValueChanged="@(v => Pick(user.Id, v))" />
-                                        </span>
-                                    </td>
-                                }
-                                <td>
-                                    <div class="user-cell">
-                                        <QAvatar Name="@user.FullName" PhotoUrl="@user.PhotoUrl" Title="@user.FullName" />
-                                        <div class="user-info">
-                                            <span class="user-name">@user.FullName</span>
-                                            <span class="cell-sub">@(string.IsNullOrWhiteSpace(user.Email) ? "No email address" : user.Email)</span>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td>@user.Username</td>
-                                <td><QBadge Variant="@GetRoleVariant(user.Role)" Text="@user.Role" Size="sm" /></td>
-                                <td>@(string.IsNullOrWhiteSpace(user.Branch) ? "—" : user.Branch)</td>
-                                <td>
-                                    <QBadge Variant="@(user.IsActive ? "success" : "secondary")"
-                                            Text="@(user.IsActive ? "Active" : "Inactive")" Size="sm" />
-                                </td>
-                                <td class="row-actions">
-                                    @if (canEditUsers)
-                                    {
-                                        <QButton Icon="pencil-fill" Variant="ghost" Size="sm" OnClick="@(() => EditUser(user))" Title="Edit" />
-                                    }
-                                    @if (canDeleteUsers)
-                                    {
-                                        <QButton Icon="trash-fill" Variant="ghost" Size="sm" OnClick="@(() => DeleteUser(user))" Title="Delete" />
-                                    }
-                                </td>
-                            </tr>
+                            <Virtualize Items="@VisibleUsers" Context="user" ItemSize="52" SpacerElement="tr">@UserRow(user)</Virtualize>
+                        }
+                        else
+                        {
+                            @foreach (var user in PagedUsers)
+                            {
+                                @UserRow(user)
+                            }
                         }
                     </tbody>
                 </table>
@@ -160,7 +132,8 @@
             @* 143 people on the development tenant alone, so this pages rather than rendering the
                roll. Moving page PRUNES the selection for the same reason a filter does. *@
             <QPager Count="@VisibleUsers.Count" PageSize="@UserPageSize" PageIndex="@userPage"
-                    PageIndexChanged="@OnUserPageChanged" ItemLabel="people" />
+                    PageIndexChanged="@OnUserPageChanged" PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="users"
+                    PageSizeChanged="@(n => { UserPageSize = n; userPage = 0; })" SelectedCount="@selectedUserIds.Count" ItemLabel="people" />
         }
 
     }
@@ -314,7 +287,7 @@
                          ValueSelector="@(r => r.Id)" TextSelector="@(r => r.Name)" Label="Role *" />
             </div>
             <div class="form-group">
-                <QSelect TValue="Guid?" TItem="BranchOption" Value="@formData.BranchId" ValueChanged="@OnBranchSelected" Items="@branchOptions"
+                <QSelect TValue="Guid?" TItem="BranchOption" Value="@formData.BranchId" ValueChanged="@OnBranchSelected" Items="@branchOptions" Sorted="true"
                          ValueSelector="@(b => (Guid?)b.Id)" TextSelector="@(b => b.Name)" Label="Branch" AllowClear="true"
                          Disabled="@(isSuperAdmin && editingUser == null && formData.OrganizationId == null)"
                          Placeholder="@(isSuperAdmin && editingUser == null && formData.OrganizationId == null ? "Select an organization first" : "Select...")" />
@@ -325,7 +298,7 @@
            A class teacher's role gives them permissions; their CLASS ASSIGNMENTS are what give
            them any rows at all. Creating one without a class produced an account that opened to
            an empty app, and the only thing that said so was a warning on a different page. *@
-        @if (IsClassTeacherRoleSelected)
+        @if (CanHoldAClass)
         {
             <div class="form-group">
                 @if (!canManageClassTeachers)
@@ -365,7 +338,7 @@
                     <QMultiSelect TValue="string" TItem="ClassOption"
                                   SelectedValues="@selectedClasses"
                                   SelectedValuesChanged="@(v => selectedClasses = v.ToList())"
-                                  Items="@classOptions"
+                                  Items="@classOptions" Sorted="true"
                                   ValueSelector="@(c => c.Name)"
                                   TextSelector="@(c => c.Label)"
                                   Label="Classes this teacher holds"
@@ -393,6 +366,47 @@
     </FooterContent>
 </QModal>
 
+<!-- Reset Password -->
+<QModal @bind-Visible="showResetDialog" Title="@($"Reset password: {resetUser?.FullName}")" Icon="key" Size="md">
+    <ChildContent>
+        <p class="reset-lede">
+            They will be signed out everywhere and must choose their own password the next time they
+            sign in — the temporary one can do nothing else, and stops working after 72 hours.
+        </p>
+
+        @* OFF is the safe answer, so off is the default. A typed password is the deliberate act, and
+           it exists for the person on the other end of a phone line with no email address. *@
+        <QCheckbox @bind-Value="@resetTyped" Label="Type the password myself"
+                   Hint="Leave this off and one is generated — ten characters with no look-alike letters, so it survives being read aloud. Type one only when you need to say it to somebody now." />
+
+        @if (resetTyped)
+        {
+            <QInput TValue="string" Label="New temporary password" @bind-Value="@resetPassword"
+                    Hint="It has to pass the same rules a person's own password does: not a common word, not this organization's name, not their username. If it is refused, the reason says which."
+                    Placeholder="Type it as you will read it out" />
+        }
+
+        @if (resetResult != null)
+        {
+            <div class="reset-result" role="region" aria-label="The new temporary password">
+                <p class="reset-once"><QIcon Name="exclamation-circle" Size="14" /> <span>Shown once. Nothing can show it again — if it is lost, reset the password once more.</span></p>
+                <div class="reset-pair"><span>Username</span><code>@resetResult.Username</code></div>
+                <div class="reset-pair"><span>Password</span><code>@resetResult.TemporaryPassword</code></div>
+                <div class="reset-pair"><span>Works until</span><span>@QDateFormat.DT(resetResult.ExpiresAt.ToLocalTime())</span></div>
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="@(resetResult == null ? "Cancel" : "Done")" Variant="ghost" OnClick="@CloseReset" Disabled="@resetting" />
+        @if (resetResult == null)
+        {
+            <QButton Text="Reset password" Icon="key" Variant="primary" Loading="@resetting"
+                     Disabled="@(resetting || (resetTyped && string.IsNullOrWhiteSpace(resetPassword)))"
+                     OnClick="@ConfirmResetAsync" />
+        }
+    </FooterContent>
+</QModal>
+
 <!-- Delete Confirmation Dialog -->
 <ConfirmDialog
     IsVisible="@showDeleteConfirm"
@@ -404,7 +418,7 @@
     OnClose="@HandleDeleteConfirm" />
 
 <!-- Role Permissions Editor Dialog (read-only for a system role: the API refuses the write) -->
-<QModal @bind-Visible="showRoleDialog" Title="@($"{(editingRole?.IsSystem == true ? "Permissions" : "Edit Permissions")}: {editingRole?.Name}")" Size="lg">
+<QModal @bind-Visible="showRoleDialog" Title="@($"{(editingRole?.IsSystem == true ? "Permissions" : "Edit Permissions")}: {editingRole?.Name}")" Size="xl">
     <ChildContent>
         @if (editingRole != null)
         {
@@ -441,7 +455,7 @@
 </QModal>
 
 <!-- Role Editor Dialog: create, or edit a custom role's identity and its two scopes -->
-<QModal @bind-Visible="showRoleEditor" Title="@(roleBeingEdited == null ? "New Role" : $"Edit Role: {roleBeingEdited.Name}")" Size="lg">
+<QModal @bind-Visible="showRoleEditor" Title="@(roleBeingEdited == null ? "New Role" : $"Edit Role: {roleBeingEdited.Name}")" Size="xl">
     <ChildContent>
         <div class="role-editor">
             <div class="form-row">
@@ -527,6 +541,17 @@
                             A person always reads their own file regardless.
                         </p>
                     </div>
+                    <div class="form-group">
+                        @* Which staff group this role's holders are in. Was derived as
+                           "code == support-staff ? Support : Teaching", so every role a school made
+                           here counted as teaching staff and its holders were scored on lesson
+                           parameters they never taught. *@
+                        <QSelect TValue="string" TItem="string" @bind-Value="roleForm.StaffGroup"
+                                 Items="@staffGroupOptions" ValueSelector="@(g => g)" TextSelector="@(g => g)"
+                                 Label="Staff group" AllowClear="true" Sorted="true"
+                                 Placeholder="@(staffGroupOptions.FirstOrDefault() ?? "Teaching staff")"
+                                 Hint="Which group this role's holders belong to, for parameters and notices that apply to some staff rather than all. The list is yours — edit it on Staff Performance → Setup → Scoring Policy. Left empty, holders fall into the first group." />
+                    </div>
                 </div>
             </div>
 
@@ -555,6 +580,15 @@
     OnClose="@HandleRoleDeleteConfirm" />
 
 <style>
+    /* The reset-password dialog. A warning stays on the page rather than folding into a QInfo,
+       because it changes what somebody DOES with what is on screen. */
+    .reset-lede { font-size: var(--qm-text-base); color: var(--qm-text-secondary); margin: 0 0 12px; }
+    .reset-result { margin-top: 14px; padding: 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); background: var(--qm-bg-elevated); }
+    .reset-once { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 10px; font-size: var(--qm-text-sm); color: var(--qm-warning); }
+    .reset-pair { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: var(--qm-text-base); }
+    .reset-pair > span:first-child { color: var(--qm-text-secondary); }
+    /* A password read off a screen and typed on a phone: letter-spaced, and selectable in one go. */
+    .reset-pair code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--qm-text-md); letter-spacing: .08em; user-select: all; color: var(--qm-text-primary); }
 
     /* The hand-rolled batch strip these eight rules styled is gone: the Users tab runs QBulkBar,
        which is the one home for a bulk bar in this project. */
@@ -978,7 +1012,7 @@
     private string search = string.Empty;
     private Guid? bulkRoleId;
     private int userPage;
-    private const int UserPageSize = 25;
+    private int UserPageSize = QPagerDefaults.Size;
 
     private IReadOnlyList<QBulkBar.Filter> StatusFilters => new List<QBulkBar.Filter>
     {
@@ -1011,11 +1045,11 @@
                     (u.Branch ?? "").Contains(term, StringComparison.OrdinalIgnoreCase));
             }
 
-            return q.OrderBy(u => u.FullName, StringComparer.OrdinalIgnoreCase).ToList();
+            return q.OrderBy(u => u.SortName ?? u.FullName, StringComparer.OrdinalIgnoreCase).ToList();
         }
     }
 
-    private List<UserInfo> PagedUsers => VisibleUsers.Skip(userPage * UserPageSize).Take(UserPageSize).ToList();
+    private List<UserInfo> PagedUsers => QPaging.Page(VisibleUsers, userPage, UserPageSize).ToList();
 
     private bool AllVisibleSelected => VisibleUsers.Count > 0 && VisibleUsers.All(u => selectedUserIds.Contains(u.Id));
 
@@ -1103,6 +1137,12 @@
     private bool canCreateUsers = false;
     private bool canEditUsers = false;
     private bool canDeleteUsers = false;
+
+    /// <summary>The reset-password dialog. <c>resetResult</c> is the slip, and it is shown once.</summary>
+    private bool showResetDialog, resetTyped, resetting;
+    private UserInfo? resetUser;
+    private string resetPassword = string.Empty;
+    private TemporaryPasswordSlipDto? resetResult;
     private bool isSuperAdmin = false;
     private List<OrgOption> orgOptions = new();
 
@@ -1167,6 +1207,7 @@
                 {
                     Id = u.Id,
                     FullName = u.FullName,
+                    SortName = u.SortName,
                     Username = u.Username,
                     Email = u.Email,
                     PhotoUrl = u.PhotoUrl,
@@ -1309,6 +1350,7 @@
                         IsActive = r.IsActive,
                         DataScope = r.DataScope,
                         StaffScope = r.StaffScope,
+                        StaffGroup = r.StaffGroup,
                         SortOrder = detail?.SortOrder ?? 100,
                         // Counted over the users list this page already holds (inactive included),
                         // because that is the count DELETE refuses on — the API's UserCount is active only.
@@ -1317,6 +1359,13 @@
                     });
                 }
                 roles = loaded;
+
+                // The staff groups the role editor offers are the tenant's own (Scoring Policy),
+                // not a fixed teaching/support pair. A failure here leaves the picker empty rather
+                // than failing the page: a role can be saved without a group and falls back to the
+                // first one, which is what every role did before the column existed.
+                try { staffGroupOptions = (await StaffApi.GetPolicyAsync()).StaffGroups.Where(g => g.IsActive).OrderBy(g => g.SortOrder).Select(g => g.Name).ToList(); }
+                catch (Exception) { }
             }
             else
             {
@@ -1431,8 +1480,23 @@
 
     private sealed record ClassOption(string Name, string Label);
 
-    private bool IsClassTeacherRoleSelected =>
-        roleOptions.FirstOrDefault(r => r.Id == formData.RoleId)?.Code == RoleCodes.ClassTeacher;
+    /// <summary>
+    /// Whether to offer class assignments for the role being chosen.
+    ///
+    /// <para>This was <c>code == "class-teacher"</c>, which was the whole defect: only that role
+    /// could be given a class, and that role granted the scope and no permission, so it was the one
+    /// combination that did not work. Since 2026-09-22 the ASSIGNMENT grants the pastoral permissions
+    /// and the class scope together, so <b>anybody on the staff can hold a class</b> — a deputy head,
+    /// a librarian who tutors a form. Only a platform administrator cannot, having no school.</para>
+    /// </summary>
+    private bool CanHoldAClass
+    {
+        get
+        {
+            var code = roleOptions.FirstOrDefault(r => r.Id == formData.RoleId)?.Code;
+            return !string.IsNullOrWhiteSpace(code) && !RoleCodes.IsSuperAdmin(code);
+        }
+    }
 
     private async Task OnRoleSelected(Guid roleId)
     {
@@ -1440,7 +1504,7 @@
 
         // Only fetched when the Class Teacher role is actually picked — every other role would be
         // paying for a class list it never shows.
-        if (IsClassTeacherRoleSelected && !classOptions.Any())
+        if (CanHoldAClass && !classOptions.Any())
             await RefreshClassOptionsAsync();
     }
 
@@ -1642,7 +1706,7 @@
                 // After the user exists, not before: a new account has no id to assign a class to
                 // until the POST comes back. A class-assignment problem is reported on its own and
                 // does not retract the "user created" above, which is true either way.
-                if (IsClassTeacherRoleSelected)
+                if (CanHoldAClass)
                 {
                     var savedUserId = editingUser?.Id;
                     if (savedUserId == null)
@@ -1671,6 +1735,55 @@
         {
             NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save user: {ex.Message}");
         }
+    }
+
+    private void OpenReset(UserInfo user)
+    {
+        resetUser = user;
+        // A fresh choice every time, and never a password left in the box from the last person.
+        resetTyped = false;
+        resetPassword = string.Empty;
+        resetResult = null;
+        showResetDialog = true;
+    }
+
+    private void CloseReset()
+    {
+        // Closing discards the slip: the server cannot show it again.
+        showResetDialog = false;
+        resetResult = null;
+        resetPassword = string.Empty;
+        resetUser = null;
+    }
+
+    private async Task ConfirmResetAsync()
+    {
+        if (resetUser == null) return;
+        resetting = true;
+        try
+        {
+            var response = await Http.PostAsJsonAsync($"api/v1/users/{resetUser.Id}/reset-password",
+                new { newPassword = resetTyped ? resetPassword : string.Empty }, JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                // The dialog STAYS OPEN holding the slip. Closing on success and toasting the
+                // password would put it in a strip that disappears on a timer, and there is no
+                // second chance to read it.
+                resetResult = await response.Content.ReadFromJsonAsync<TemporaryPasswordSlipDto>(JsonOptions);
+                NotificationService.Notify(ToastSeverity.Success, "Password reset", $"{resetUser.FullName} must choose a new one at their next sign-in.");
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Could not reset the password: {ex.Message}");
+        }
+        finally { resetting = false; }
     }
 
     private void DeleteUser(UserInfo user)
@@ -1795,6 +1908,9 @@
     private bool isSavingRole;
     private RoleInfo? roleBeingEdited;
     private RoleFormData roleForm = new();
+
+    /// <summary>The tenant's staff groups, for the role editor's picker. Loaded with the role list.</summary>
+    private List<string> staffGroupOptions = new();
     private bool roleCodeEdited;
 
     private bool showRoleDeleteConfirm;
@@ -1923,7 +2039,8 @@
             Icon = role.Icon ?? "",
             SortOrder = role.SortOrder,
             DataScope = role.DataScope,
-            StaffScope = role.StaffScope
+            StaffScope = role.StaffScope,
+            StaffGroup = role.StaffGroup
         };
         selectedPermissions = allPermissions.ToDictionary(p => p.Code, p => role.Permissions.Contains(p.Code));
         showRoleEditor = true;
@@ -1963,7 +2080,8 @@
                     SortOrder = roleForm.SortOrder,
                     PermissionIds = SelectedPermissionIds(),
                     DataScope = roleForm.DataScope,
-                    StaffScope = roleForm.StaffScope
+                    StaffScope = roleForm.StaffScope,
+                    StaffGroup = roleForm.StaffGroup ?? ""
                 }, JsonOptions);
 
                 if (!response.IsSuccessStatusCode)
@@ -1985,7 +2103,8 @@
                     Icon = NullIfBlank(roleForm.Icon),
                     SortOrder = roleForm.SortOrder,
                     DataScope = roleForm.DataScope,
-                    StaffScope = roleForm.StaffScope
+                    StaffScope = roleForm.StaffScope,
+                    StaffGroup = roleForm.StaffGroup ?? ""
                 }, JsonOptions);
 
                 if (!response.IsSuccessStatusCode)
@@ -2155,6 +2274,8 @@
     private record UserDto
     {
         public Guid Id { get; init; }
+        /// <summary>What the list sorts on — the school's own sort order (PersonNames.SortKey on the API).</summary>
+        public string? SortName { get; init; }
         public string Username { get; init; } = "";
         public string Email { get; init; } = "";
         public string? FirstName { get; init; }
@@ -2191,6 +2312,7 @@
         public int PermissionCount { get; init; }
         public RoleDataScope DataScope { get; init; }
         public StaffDataScope StaffScope { get; init; }
+        public string? StaffGroup { get; init; }
     }
 
     /// <summary>Mirrors RolesController.RoleDetailDto — the shape GET roles/{id} and every role write return.</summary>
@@ -2236,12 +2358,15 @@
         public int SortOrder { get; set; } = 100;
         public RoleDataScope DataScope { get; set; } = RoleDataScope.Organization;
         public StaffDataScope StaffScope { get; set; } = StaffDataScope.Organization;
+        /// <summary>The staff group this role's holders belong to, by name. Empty = the tenant's first.</summary>
+        public string? StaffGroup { get; set; }
     }
 
     private class UserInfo
     {
         public Guid Id { get; set; }
         public string? FullName { get; set; }
+        public string? SortName { get; set; }
         public string? Username { get; set; }
         public string? Email { get; set; }
         public string? PhotoUrl { get; set; }
@@ -2265,6 +2390,8 @@
         public int SortOrder { get; set; } = 100;
         public RoleDataScope DataScope { get; set; }
         public StaffDataScope StaffScope { get; set; }
+        /// <summary>The staff group this role's holders are in, by name. See StaffGroups.</summary>
+        public string? StaffGroup { get; set; }
         public int UserCount { get; set; }
         public List<string> Permissions { get; set; } = new();
     }
@@ -2338,4 +2465,53 @@
     {
         await LoadData();
     }
+
+    /// <summary>One row, shared by the paged loop and the virtualised All so the two cannot drift.</summary>
+    private RenderFragment UserRow(UserInfo user) => __builder =>
+    {
+                            <tr class="@(user.IsActive ? "" : "row-muted") @(selectedUserIds.Contains(user.Id) ? "us-row--picked" : "")">
+                                @if (canEditUsers)
+                                {
+                                    <td class="us-tick">
+                                        @* No label: the name is in the next cell and repeating it
+                                           would read out twice. The title carries it for a reader. *@
+                                        <span title="@($"Select {user.FullName}")">
+                                            <QCheckbox Value="@selectedUserIds.Contains(user.Id)"
+                                                       ValueChanged="@(v => Pick(user.Id, v))" />
+                                        </span>
+                                    </td>
+                                }
+                                <td>
+                                    <div class="user-cell">
+                                        <QAvatar Name="@user.FullName" PhotoUrl="@user.PhotoUrl" Title="@user.FullName" />
+                                        <div class="user-info">
+                                            <span class="user-name">@user.FullName</span>
+                                            <span class="cell-sub">@(string.IsNullOrWhiteSpace(user.Email) ? "No email address" : user.Email)</span>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>@user.Username</td>
+                                <td><QBadge Variant="@GetRoleVariant(user.Role)" Text="@user.Role" Size="sm" /></td>
+                                <td>@(string.IsNullOrWhiteSpace(user.Branch) ? "—" : user.Branch)</td>
+                                <td>
+                                    <QBadge Variant="@(user.IsActive ? "success" : "secondary")"
+                                            Text="@(user.IsActive ? "Active" : "Inactive")" Size="sm" />
+                                </td>
+                                <td class="row-actions">
+                                    @if (canEditUsers)
+                                    {
+                                        <QButton Icon="pencil-fill" Variant="ghost" Size="sm" OnClick="@(() => EditUser(user))" Title="Edit" />
+                                        @* THE ONLY WAY BACK IN FOR MOST PEOPLE HERE. User.Email is nullable and
+                                           133 of the 184 staff on the first real school list this product imported
+                                           have none, so the self-service reset link can never reach them. The
+                                           endpoint has existed all along; nothing in the UI called it. *@
+                                        <QButton Icon="key-fill" Variant="ghost" Size="sm" OnClick="@(() => OpenReset(user))" Title="Reset password" />
+                                    }
+                                    @if (canDeleteUsers)
+                                    {
+                                        <QButton Icon="trash-fill" Variant="ghost" Size="sm" OnClick="@(() => DeleteUser(user))" Title="Delete" />
+                                    }
+                                </td>
+                            </tr>
+    };
 }

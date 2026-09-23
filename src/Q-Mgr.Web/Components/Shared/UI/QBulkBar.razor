@@ -82,7 +82,12 @@
     .q-bulkbar__progress { height: 4px; border-radius: 999px; background: var(--qm-bg-secondary); overflow: hidden; }
     .q-bulkbar__fill { height: 100%; background: var(--qm-success); transition: width .18s ease; }
     .q-bulkbar__row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
-    .q-bulkbar__row--bulk { min-height: var(--q-control-h-lg); }
+    /* ONE LINE ON A DESKTOP. "Select all 183 shown", the count, the actions and Clear selection
+       are one thought and belong on one row; they were landing on three. Two causes, both fixed:
+       Class never reached this row's checkbox (see QCheckbox), and the Change-role QSelect below
+       claimed the width that pushed Clear selection onto its own line. It still wraps on a phone —
+       nowrap there would scroll the page sideways, which is the one thing the layout must never do. */
+    .q-bulkbar__row--bulk { min-height: var(--q-control-h-lg); flex-wrap: nowrap; }
     .q-bulkbar__search { flex: 1 1 240px; max-width: 360px; margin-left: auto; }
     .q-bulkbar__search .q-input-wrapper { margin-bottom: 0; }
     .q-bulkbar__filters { display: flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
@@ -93,7 +98,14 @@
     .q-bulkbar__chip--on { background: var(--qm-primary); border-color: var(--qm-primary); color: var(--qm-text-on-primary); }
     .q-bulkbar__n { font-weight: 700; opacity: .85; }
     .q-bulkbar__all { margin-bottom: 0; flex: 0 0 auto; }
-    .q-bulkbar__bulk { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+    .q-bulkbar__bulk { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; min-width: 0; flex: 0 1 auto; }
+
+    /* A QSelect is width:100% inside a column-flex wrapper — correct in a form, wrong in a toolbar,
+       where it takes the row and pushes whatever follows it onto the next line. Bounded here rather
+       than in the component: the form behaviour is the right default and only a toolbar wants this. */
+    .q-bulkbar__bulk .q-select-wrapper { flex: 0 0 auto; margin-bottom: 0; }
+    .q-bulkbar__bulk .q-select { width: auto; min-width: 150px; }
+    .q-bulkbar__bulk > * { flex: 0 0 auto; }
     .q-bulkbar__bulk--idle { color: var(--qm-text-muted); font-size: var(--q-control-font-sm); margin-left: auto; }
     .q-bulkbar__hint { display: none; }
     @@media (min-width: 900px) { .q-bulkbar__hint { display: inline; } }
@@ -102,6 +114,9 @@
     @@media (max-width: 899px) {
         .q-bulkbar__search { max-width: none; margin-left: 0; }
         .q-bulkbar__bulk--idle { margin-left: 0; }
+        /* A phone has no room for one line, and the never-scroll-sideways rule outranks tidiness. */
+        .q-bulkbar__row--bulk, .q-bulkbar__bulk { flex-wrap: wrap; }
+        .q-bulkbar__bulk .q-select { min-width: 0; }
     }
 </style>
 

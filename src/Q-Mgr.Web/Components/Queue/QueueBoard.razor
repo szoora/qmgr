@@ -89,10 +89,9 @@
                         <div class="qb-waiting-item @(token.Priority == TokenPriority.Priority ? "qb-priority" : "") @(token.Priority == TokenPriority.VIP ? "qb-vip" : "")">
                             @if (selectionMode)
                             {
-                                <input type="checkbox" class="qb-waiting-check"
-                                       checked="@selectedTokenIds.Contains(token.Id)"
-                                       @onchange="@(e => ToggleSelection(token.Id, (bool)(e.Value ?? false)))"
-                                       aria-label="@($"Select ticket {token.DisplayNumber}")" />
+                                <QCheckbox Class="qb-waiting-check" Value="@selectedTokenIds.Contains(token.Id)"
+                                           ValueChanged="@(v => ToggleSelection(token.Id, v))"
+                                           aria-label="@($"Select ticket {token.DisplayNumber}")" />
                             }
                             <span class="qb-token-number">@token.DisplayNumber</span>
                             <span class="qb-service-type">@(token.ServiceType?.Name ?? "General")</span>
@@ -140,7 +139,7 @@
     .qb-batch-bar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; margin-bottom: 10px; border: 1px solid var(--qm-primary); border-radius: var(--qm-radius-md); background: var(--qm-primary-light); }
     .qb-select-all { background: none; border: none; padding: 0; cursor: pointer; font: inherit; font-size: var(--qm-text-base); color: var(--qm-primary); text-decoration: underline; }
     .qb-batch-count { margin-left: auto; font-size: var(--qm-text-base); font-variant-numeric: tabular-nums; }
-    .qb-waiting-check { width: 16px; height: 16px; margin-right: 10px; accent-color: var(--qm-primary); cursor: pointer; }
+    .qb-waiting-check { margin-right: 10px; }
 
     .qb-queue-board {
         display: flex;

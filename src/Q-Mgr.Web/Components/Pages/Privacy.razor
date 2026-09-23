@@ -4,6 +4,28 @@
 @using QMgr.Web.Components.Shared
 @attribute [AllowAnonymous]
 
+@* HOUSE STYLE FOR THE LEGAL PAGES (rewritten 2026-09-22, user direction: "the tone in the
+   document is not authoritative", and "the short version" reads as generic AI copy).
+
+   This page and /terms state what SACC Software Limited does. They do not apologise for it,
+   hedge it, or compare it to what anybody else writes. Four rules, and they are why the
+   wording below reads as it does:
+
+     1. DECLARE, NEVER TRY. "This policy sets out", not "this policy tries to be honest".
+        A document that hedges its own authority has none.
+     2. NO COMPARISONS AND NO ASIDES. Earlier drafts said the policy would not "blur it the
+        way most privacy pages do" and would not "bury it in a blog post six months later".
+        Both are jabs at other companies. They make a legal document sound like a blog.
+     3. FULL FORMS, NOT CONTRACTIONS. "do not", "will not", "cannot". This is the single
+        largest change here, and the one that carries the register on its own.
+     4. NO FORMAT LABELS. "The short version:" names the shape of a paragraph rather than its
+        subject. The callout below names what it actually answers.
+
+   What does NOT change: plain English, short sentences, and the concrete numbers — 730 days,
+   104 days, 60/30/14, the Tax Procedures Code. Authority here comes from being specific, not
+   from sounding like a contract. Every factual claim in this file is load-bearing; reword it
+   freely, but do not soften a commitment or drop a figure. *@
+
 <QPageTitle Text="Privacy Policy" />
 
 <div class="doc-page">
@@ -25,177 +47,178 @@
             </header>
 
             <p class="doc-lede">
-                Q-Mgr is front-office software built by SACC Software Limited. Organizations — businesses,
-                hospitals, government offices and schools — use it to run their queues, front desks, visitor
-                logs, communication and, in schools, student welfare and staff records. That means it handles two
-                different kinds of personal data, and this policy tries to be honest about the difference rather
-                than blur it the way most privacy pages do.
+                Q-Mgr is front-office software built by SACC Software Limited. Organizations &mdash; businesses,
+                hospitals, government offices and schools &mdash; use it to run their queues, front desks, visitor
+                logs, communication and, in schools, student welfare and staff records. It therefore handles two
+                distinct kinds of personal data, held under two different responsibilities. This policy sets out
+                both, and states which one applies to you.
             </p>
 
             <section class="doc-callout">
-                <strong>The short version:</strong> if you're a staff member at an organization using Q-Mgr, we
-                are the ones responsible for your account data, described below. If you're someone who took a
-                queue ticket, checked in at a front desk, received a message, opened a shared document, or are a
-                student or guardian at a school using Q-Mgr, your data was collected by that organization, using
-                our platform — we store and move it on their instruction. If you want it corrected or deleted,
-                start with them, not us; see "If you're a customer, visitor, student or guardian" below.
+                <strong>Who answers for your data depends on which of the two you are.</strong> If you are a
+                member of staff at an organization using Q-Mgr, we hold your account data and we answer for it;
+                Section 7 sets out how. If you took a queue ticket, checked in at a front desk, received a
+                message, opened a shared document, or are a student or guardian at a school using Q-Mgr, that
+                organization collected your data and we hold it on their instruction. A correction or a deletion
+                therefore starts with them, not with us. Section 8 sets out what to do.
             </section>
 
-            <h2>1. Who this covers</h2>
+            <h2>1. Who this policy covers</h2>
             <p>
                 Two groups of people interact with data that passes through Q-Mgr:
             </p>
             <ul>
                 <li>
-                    <strong>Our customers</strong> &mdash; the organizations who sign up for a Q-Mgr account, and
-                    the staff they invite (administrators, managers, counter agents, teachers). We are directly
+                    <strong>Our customers</strong> &mdash; the organizations that hold a Q-Mgr account, and the
+                    staff they invite (administrators, managers, counter agents, teachers). We are directly
                     responsible for their account and billing data.
                 </li>
                 <li>
                     <strong>The people they serve</strong> &mdash; people who take a queue ticket, are checked in at
                     a front desk, receive a Broadcast, give feedback, or open a document shared with them; and, in
-                    schools, students and their guardians. Legally, the organization is the data controller here
-                    and we are the data processor: they decide what to collect and why, we provide the software
-                    that stores and moves it.
+                    schools, students and their guardians. In law the organization is the data controller here and
+                    we are the data processor: they determine what is collected and why, and we provide the
+                    software that stores and moves it.
                 </li>
             </ul>
 
-            <h2>2. What we collect, and why</h2>
+            <h2>2. What we collect and why</h2>
             <p><strong>From organizations and their staff:</strong></p>
             <ul>
-                <li>Account details — name, work email, phone number, role, and a password (stored as a salted hash, never in plain text).</li>
-                <li>Organization details — name, industry, branch locations, timezone, and billing contact.</li>
-                <li>Billing information — the invoices and payments for the modules you use, and the Mobile Money number your renewals are charged to. Payments are collected by the SACC payment gateway (sacc.ug): Mobile Money is approved on the paying phone with its own PIN, and card details are entered on the gateway's own secure page, so we never see or store a card number. Phone numbers in our payment logs are shown masked.</li>
-                <li>Staff records, in schools that use Welfare &amp; Performance — employment details the school keeps (such as start date, qualification and registration number), duty and lesson registers, recognition, appraisals, and the records the school logs about a member of staff. You can read your own file and reply to what is recorded about you from your own workspace.</li>
-                <li>An activity log — who viewed, changed or exported a record, when, and from which (shortened) network address and browser. It is how an organization answers "who looked at this?". The name of who did something is removed after the organization's retention window (a year by default); the line itself stays.</li>
-                <li>Usage data — which features get used, API calls made through your integration keys, and error logs, so we can keep the service running and fix things that break.</li>
+                <li>Account details &mdash; name, work email, phone number, role, and a password, stored as a salted hash and never in plain text.</li>
+                <li>Organization details &mdash; name, industry, branch locations, timezone, and billing contact.</li>
+                <li>Billing information &mdash; the invoices and payments for the modules you use, and the Mobile Money number your renewals are charged to. Payments are collected by the SACC payment gateway (sacc.ug): Mobile Money is approved on the paying phone with its own PIN, and card details are entered on the gateway's own secure page. We never see or store a card number. Phone numbers in our payment logs are stored masked.</li>
+                <li>Staff records, in schools that use Welfare &amp; Performance &mdash; employment details the school keeps (such as start date, qualification and registration number), duty and lesson registers, recognition, appraisals, and the records the school logs about a member of staff. Every member of staff can read their own file and reply to what is recorded about them from their own workspace.</li>
+                <li>An activity log &mdash; who viewed, changed or exported a record, when, and from which shortened network address and browser. It is how an organization answers the question "who looked at this?". The name of who did something is removed after the organization's retention window, which is one year by default; the line itself remains.</li>
+                <li>Usage data &mdash; which features are used, API calls made through your integration keys, and error logs. We use these to keep the service running and to correct faults.</li>
             </ul>
-            <p><strong>From the people your organization serves, if you use these features:</strong></p>
+            <p><strong>From the people your organization serves, where these features are used:</strong></p>
             <ul>
-                <li><em>Queue tickets</em> &mdash; a name and phone number, if the organization asks for them at check-in, plus which counter served them and how long they waited.</li>
-                <li><em>Visitor Management</em> &mdash; full name, phone, email, a national ID or passport number if the site requires it, a check-in photo if the organization's kiosk captures one, vehicle plate, host name, and purpose of visit. If a person is placed on a site's watchlist, the reason given for that flag is also stored — this is one of the more sensitive things we hold, and it exists purely so front-desk staff can be warned; we don't do anything with it beyond storing it and surfacing it back to that organization.</li>
-                <li><em>Broadcasts</em> &mdash; contact details (email, phone, or a Telegram chat ID) that an organization uploads or collects, used to send messages the organization composes. Every message we send on their behalf includes a working unsubscribe link — that's not optional, it's built into the sending pipeline.</li>
-                <li><em>Feedback</em> &mdash; the answers someone gives to an organization's survey, and a contact detail only if they choose to leave one.</li>
-                <li><em>Shared documents</em> &mdash; when someone opens a document an organization has shared with them, we record that it was opened, when, the email address they verified if the link asks for one, and a shortened network address and browser. The organization sees this so it knows who read what it shared; these details are blanked after the organization's chosen retention period.</li>
-                <li><em>Students and guardians</em> &mdash; in schools using Welfare &amp; Performance: a student's name, class, date of birth, photograph, guardians and their contact details, and the welfare records the school keeps. Welfare records can be highly sensitive. The school decides who may see them: each record carries a visibility level, class teachers see only their own classes, the most restricted records are visible only to the school's senior administrators, and every export of a child's record is logged. Photographs and evidence files are never served to anyone who isn't allowed to see the record they belong to.</li>
+                <li><em>Queue tickets</em> &mdash; a name and phone number where the organization asks for them at check-in, together with which counter served the person and how long they waited.</li>
+                <li><em>Visitor Management</em> &mdash; full name, phone, email, a national ID or passport number where the site requires it, a check-in photograph where the organization's kiosk captures one, vehicle plate, host name, and purpose of visit. Where a person is placed on a site's watchlist, the reason given for that flag is stored with it. This is among the most sensitive information we hold. It exists so that front-desk staff can be warned, and we do nothing with it beyond storing it and returning it to the organization that entered it.</li>
+                <li><em>Broadcasts</em> &mdash; contact details (email, phone, or a Telegram chat ID) that an organization uploads or collects, used to send messages that organization composes. Every message we send on their behalf carries a working unsubscribe link. That is built into the sending pipeline and cannot be switched off.</li>
+                <li><em>Feedback</em> &mdash; the answers a person gives to an organization's survey, and a contact detail only where they choose to leave one.</li>
+                <li><em>Shared documents</em> &mdash; when a person opens a document an organization has shared with them, we record that it was opened, when, the email address they verified where the link requires one, and a shortened network address and browser. The organization sees this so that it knows who read what it shared. These details are blanked after the organization's chosen retention period.</li>
+                <li><em>Students and guardians</em> &mdash; in schools using Welfare &amp; Performance: a student's name, class, date of birth, photograph, guardians and their contact details, and the welfare records the school keeps. Welfare records can be highly sensitive. The school determines who may see them: each record carries a visibility level, class teachers see only their own classes, the most restricted records are visible only to the school's senior administrators, and every export of a child's record is logged. Photographs and evidence files are never served to anyone who may not see the record they belong to.</li>
             </ul>
 
             <h2>3. How long we keep it</h2>
             <p>
-                Visitor records have a built-in expiry: by default we hold them for 730 days (two years) and then
-                a nightly job permanently deletes them. Any organization can change that window to anywhere
-                between 30 days and 10 years to match its own compliance needs — we don't second-guess that
-                setting, it's theirs to configure. A visitor who's still checked in when their record would
-                otherwise expire is never purged mid-visit; the clock only runs on completed visits.
+                Visitor records expire automatically. We hold them for 730 days &mdash; two years &mdash; and a
+                nightly job then deletes them permanently. An organization may set that window to anywhere between
+                30 days and 10 years to match its own compliance obligations; the setting is theirs. A visitor who
+                is still checked in when their record would otherwise expire is never purged mid-visit, because the
+                clock runs only on completed visits.
             </p>
             <p>
-                The welfare ledger and staff records are append-only: a correction is added as a note rather than
-                overwriting what was written, because a record that can be quietly changed is no use to the child
-                or the adult it concerns. They are kept for as long as the school's account is active, or until
-                the school asks us to remove them. Queue history, broadcast send logs and billing records are kept
-                for as long as the organization's account is active, since they're the basis for its reports and
-                accounts.
+                The welfare ledger and staff records are append-only. A correction is added as a note rather than
+                overwriting what was written, because a record that can be quietly altered is of no use to the
+                child or the adult it concerns. They are held for as long as the school's account is active, or
+                until the school asks us to remove them. Queue history, broadcast send logs and billing records are
+                held for as long as the organization's account is active, since they are the basis of its reports
+                and accounts.
             </p>
             <p>
-                <strong>When an account stops being paid for, its data is eventually deleted in full.</strong> The
-                timetable is published in Section 8a of our <a href="/terms">Terms</a> and we email the account
-                before each step: suspended for 60 days, closed for 30 more, scheduled for deletion for a final 14.
-                That is 104 days in total, with three chances to come back. At the end, every record belonging to
-                that organization is permanently deleted &mdash; students, staff, visitors, welfare records,
-                documents, messages, settings and every uploaded file &mdash; and we verify afterwards that nothing
-                was left behind. An organization can ask us to bring that forward, or for a copy of its data, at any
-                point before the last step.
+                <strong>When an account stops being paid for, its data is deleted in full.</strong> The timetable is
+                published in Section 8a of our <a href="/terms">Terms</a>, and we email the account before each
+                step: suspended for 60 days, closed for 30 more, scheduled for deletion for a final 14. That is 104
+                days in total, with three opportunities to return. At the end, every record belonging to that
+                organization is permanently deleted &mdash; students, staff, visitors, welfare records, documents,
+                messages, settings and every uploaded file &mdash; and we verify afterwards that nothing was left
+                behind. An organization may ask us to bring that forward, or ask for a copy of its data, at any
+                point before the final step.
             </p>
             <p>
-                <strong>Backups.</strong> We won't claim more than is true. Deleted data can still exist inside
-                encrypted database backups until those backups expire on their normal schedule, which is 30 days.
-                During that window it is not used for anything and is not available to anyone, and if a backup is
-                ever restored the deletion is re-applied automatically so that nothing comes back. After 30 days no
-                copy of it remains anywhere.
+                <strong>Backups.</strong> Deleted data can still exist inside encrypted database backups until those
+                backups expire on their normal schedule, which is 30 days. During that window it is used for nothing
+                and is available to no one, and if a backup is restored the deletion is re-applied automatically so
+                that nothing returns. After 30 days no copy of it remains anywhere.
             </p>
             <p>
-                <strong>Two things outlive a deletion, and neither identifies anybody.</strong> If an organization
-                ever paid us, Uganda's Tax Procedures Code requires the tax record of that payment to be kept for
-                five years: we keep the invoice and the payment &mdash; amount, date, reference &mdash; and remove
-                the contact details attached to them. An organization that never paid has no such record and nothing
-                is kept. We also keep a short marker that an account was deleted and when, containing no name, no
-                address and no email address &mdash; only one-way codes that cannot be turned back into a person. It
-                exists so a deleted account cannot quietly reappear, and so we can answer accurately if someone asks
-                later what became of their data.
+                <strong>Two things outlive a deletion, and neither identifies anybody.</strong> Where an organization
+                has paid us, Uganda's Tax Procedures Code requires the tax record of that payment to be kept for five
+                years. We keep the invoice and the payment &mdash; amount, date, reference &mdash; and remove the
+                contact details attached to them. An organization that never paid has no such record, and nothing is
+                kept. We also keep a short marker that an account was deleted and when. It contains no name, no
+                address and no email address, only one-way codes that cannot be turned back into a person. It exists
+                so that a deleted account cannot quietly reappear, and so that we can answer accurately if someone
+                later asks what became of their data.
             </p>
 
-            <h2>4. Who else sees it</h2>
-            <p>We don't sell personal data, to anyone, ever. A small number of processors handle parts of the job on our behalf:</p>
+            <h2>4. Who else receives it</h2>
+            <p>We do not sell personal data. A small number of processors handle parts of the service on our behalf:</p>
             <ul>
-                <li><strong>SACC payment gateway (sacc.ug)</strong> &mdash; collects subscription payments by Mobile Money and card. It receives the paying phone number or card payer's name and email, and the amount; nothing else about your organization's data.</li>
-                <li><strong>SMS, email, WhatsApp, and Telegram gateways</strong> &mdash; only for organizations that send Broadcasts or notifications, and only to deliver the specific message that was sent.</li>
-                <li><strong>Our hosting and database provider</strong> &mdash; where everything above physically lives.</li>
+                <li><strong>SACC payment gateway (sacc.ug)</strong> &mdash; collects subscription payments by Mobile Money and card. It receives the paying phone number, or the card payer's name and email, and the amount. It receives nothing else about your organization's data.</li>
+                <li><strong>SMS, email, WhatsApp and Telegram gateways</strong> &mdash; used only for organizations that send Broadcasts or notifications, and only to deliver the specific message that was sent.</li>
+                <li><strong>Our hosting and database provider</strong> &mdash; where everything above physically resides.</li>
             </ul>
             <p>
-                We hand data to law enforcement only when legally compelled to (a valid court order or
-                equivalent), and we'll tell the affected organization unless we're legally barred from doing so.
+                We disclose data to law enforcement only where legally compelled to do so by a valid court order or
+                its equivalent, and we inform the affected organization unless we are legally barred from doing so.
             </p>
 
-            <h2>5. Keeping it safe</h2>
+            <h2>5. How we protect it</h2>
             <p>
-                Every connection to Q-Mgr runs over HTTPS. Passwords are hashed, never stored as plain text.
-                Each organization's data is logically separated from every other organization's — a bug in one
-                tenant's view can't leak another tenant's records, and this is enforced at the database query
-                level, not just in the interface. Within an organization, access follows the roles it sets, down
-                to which classes a teacher can see. Uploaded files such as photographs and evidence are checked
-                on every request against who is asking. Access to production data internally is limited to the
-                people who need it to keep the service running. No system is unbreakable, and if something ever
-                does go wrong badly enough to expose your data, we'll tell you promptly and plainly, not bury it
-                in a blog post six months later.
+                Every connection to Q-Mgr runs over HTTPS. Passwords are hashed and are never stored as plain text.
+                Each organization's data is logically separated from every other organization's, and that separation
+                is enforced at the database query level rather than in the interface alone, so that a fault in one
+                tenant's view cannot expose another tenant's records. Within an organization, access follows the
+                roles that organization sets, down to which classes a teacher may see. Uploaded files such as
+                photographs and evidence are authorised on every request against the person asking for them. Internal
+                access to production data is limited to the people who require it to operate the service.
+            </p>
+            <p>
+                No system is impregnable. If a breach exposes your data, we will inform you promptly and state what
+                occurred.
             </p>
 
             <h2>6. Cookies and local storage</h2>
             <p>
                 We use your browser's local storage to keep you signed in between visits and to remember small
-                preferences like your last-selected branch, a date range or how you like to read a document. We
-                don't run third-party advertising trackers, and we don't sell browsing data to ad networks —
-                there isn't an ad network involved in Q-Mgr at all, on the admin side.
+                preferences such as your last selected branch, a date range, or how you prefer to read a document.
+                Q-Mgr runs no third-party advertising trackers and we sell no browsing data. There is no advertising
+                network involved in the product.
             </p>
 
-            <h2>7. If you're a staff user of an organization on Q-Mgr</h2>
+            <h2>7. If you are a member of staff at an organization using Q-Mgr</h2>
             <p>
-                You can review and correct your own account and contact details from your profile or workspace
-                at any time, and read and reply to what your school records about you there. To delete your
-                account, ask your organization's administrator, or email us at
-                <a href="mailto:support@getsacc.com">support@getsacc.com</a> and we'll help.
+                You may review and correct your own account and contact details from your profile or workspace at any
+                time, and read and reply to what your school records about you there. To delete your account, ask your
+                organization's administrator, or write to
+                <a href="mailto:support@getsacc.com">support@getsacc.com</a>.
             </p>
 
-            <h2>8. If you're a customer, visitor, student or guardian</h2>
+            <h2>8. If you are a customer, visitor, student or guardian</h2>
             <p>
-                If an organization checked you into a queue, logged you as a visitor, sent you a message, shared a
-                document with you, or keeps records about you or your child as a school, that organization decided
-                to collect your data and is the right first place to ask about it — they can see, correct, or
-                delete it directly. If you can't reach them, or you'd rather come to us first, email
-                <a href="mailto:support@getsacc.com">support@getsacc.com</a> with the organization's name and
-                what you'd like done, and we'll help route it and, where we're able to act directly, act on it.
+                Where an organization checked you into a queue, logged you as a visitor, sent you a message, shared a
+                document with you, or keeps records about you or your child as a school, that organization decided to
+                collect your data and is the correct first point of contact. It can view, correct or delete that data
+                directly. If you cannot reach them, or you would prefer to approach us first, write to
+                <a href="mailto:support@getsacc.com">support@getsacc.com</a> with the organization's name and what you
+                would like done. We will direct your request to them and, where we are able to act directly, act on it.
             </p>
 
             <h2>9. Children</h2>
             <p>
-                Q-Mgr's accounts are for organizations and their adult staff; we don't knowingly create an account
-                for anyone under 18. Schools that use Welfare &amp; Performance do keep records about their students
-                in Q-Mgr, and the school is responsible for them as the data controller. We process that data only
-                on the school's instruction and to run the service, and we treat it as the most sensitive data we
-                hold. A visitor or queue entry for a minor (for example, a patient at a clinic) is handled the same
-                as any other record, under the organization's own responsibility.
+                Q-Mgr accounts are for organizations and their adult staff, and we do not knowingly create an account
+                for anyone under 18. Schools using Welfare &amp; Performance do keep records about their students in
+                Q-Mgr, and the school is responsible for those records as the data controller. We process that data
+                only on the school's instruction and to operate the service, and we treat it as the most sensitive
+                data we hold. A visitor or queue entry for a minor &mdash; a patient at a clinic, for example &mdash;
+                is handled as any other record, under the organization's own responsibility.
             </p>
 
             <h2>10. Changes to this policy</h2>
             <p>
-                If we make a material change to how we handle personal data, we'll update the effective date at
-                the top of this page and, for changes that meaningfully affect existing customers, email the
-                account admins directly rather than expecting anyone to notice a quiet edit.
+                Where we make a material change to how we handle personal data, we update the effective date at the
+                top of this page. Where a change meaningfully affects existing customers, we also email the account
+                administrators directly.
             </p>
 
             <h2>11. Contact</h2>
             <p>
-                Questions, requests, or concerns about any of the above: <a href="mailto:support@getsacc.com">support@getsacc.com</a>.
-                We read every email that comes in ourselves.
+                Questions, requests or concerns about any of the above:
+                <a href="mailto:support@getsacc.com">support@getsacc.com</a>.
             </p>
 
             <footer class="doc-footer">

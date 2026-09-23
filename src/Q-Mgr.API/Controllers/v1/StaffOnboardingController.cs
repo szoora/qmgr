@@ -44,6 +44,7 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
     private readonly INotificationHubService _hub;
     private readonly ILogger<StaffOnboardingController> _logger;
     private readonly QMgr.Infrastructure.Email.IEmailBrandService _emailBrands;
+    private readonly IPasswordValidationService _passwords;
 
     /// <summary>A bulk re-issue is synchronous (each password is hashed on the request), so it is capped.</summary>
     private const int MaxReissue = 200;
@@ -61,10 +62,12 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
         IStaffProfileChangeNotifier profileChanges,
         INotificationHubService hub,
         QMgr.Infrastructure.Email.IEmailBrandService emailBrands,
+        IPasswordValidationService passwords,
         ILogger<StaffOnboardingController> logger)
         : base(db, tenantAccessor, staffScope, activity)
     {
         _emailBrands = emailBrands;
+        _passwords = passwords;
         _policy = policy;
         _billing = billing;
         _notifications = notifications;
@@ -287,6 +290,8 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
                 UserId = r.Id,
                 FirstName = r.FirstName ?? "",
                 LastName = r.LastName ?? "",
+                FullName = PersonNames.Display(orgId.Value, r.FirstName, r.LastName, r.Email),
+                SortName = PersonNames.SortKey(orgId.Value, r.FirstName, r.LastName),
                 Email = r.Email ?? string.Empty,
                 Phone = r.Phone,
                 EmployeeNumber = r.EmployeeNumber,
@@ -311,22 +316,22 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
 
         if (!string.IsNullOrEmpty(normalizedPhone))
         {
-            var match = await others.Where(u => u.NormalizedPhone == normalizedPhone).Select(u => new { u.Id, u.FirstName, u.LastName }).FirstOrDefaultAsync();
-            if (match != null) signals.Add(new("Phone", $"The same phone number is on {($"{match.FirstName} {match.LastName}").Trim()}'s account.", match.Id));
+            var match = await others.Where(u => u.NormalizedPhone == normalizedPhone).Select(u => new { u.Id, u.OrganizationId, u.FirstName, u.LastName }).FirstOrDefaultAsync();
+            if (match != null) signals.Add(new("Phone", $"The same phone number is on {PersonNames.Display(match.OrganizationId, match.FirstName, match.LastName)}'s account.", match.Id));
         }
         if (!string.IsNullOrWhiteSpace(employeeNumber))
         {
             var emp = PersonCode.Normalize(employeeNumber)!;
             var empKey = PersonCode.Key(employeeNumber);
-            var match = await others.Where(u => u.EmployeeNumber != null && u.EmployeeNumber.ToUpper() == empKey).Select(u => new { u.Id, u.FirstName, u.LastName }).FirstOrDefaultAsync();
-            if (match != null) signals.Add(new("EmployeeNumber", $"Employee number {emp} belongs to {($"{match.FirstName} {match.LastName}").Trim()}.", match.Id));
+            var match = await others.Where(u => u.EmployeeNumber != null && u.EmployeeNumber.ToUpper() == empKey).Select(u => new { u.Id, u.OrganizationId, u.FirstName, u.LastName }).FirstOrDefaultAsync();
+            if (match != null) signals.Add(new("EmployeeNumber", $"Employee number {emp} belongs to {PersonNames.Display(match.OrganizationId, match.FirstName, match.LastName)}.", match.Id));
         }
         if (!string.IsNullOrWhiteSpace(firstName) && !string.IsNullOrWhiteSpace(lastName))
         {
             var key = RegistrationIdentity.NormalizeOrganizationName($"{firstName} {lastName}");
             var candidates = await others.Where(u => u.LastName != null && u.LastName.ToLower() == lastName.Trim().ToLower())
                 .Select(u => new { u.Id, u.FirstName, u.LastName }).Take(20).ToListAsync();
-            var match = candidates.FirstOrDefault(c => RegistrationIdentity.NormalizeOrganizationName($"{c.FirstName} {c.LastName}") == key);
+            var match = candidates.FirstOrDefault(c => RegistrationIdentity.NormalizeOrganizationName(PersonName.Join(c.FirstName, c.LastName)) == key);
             if (match != null) signals.Add(new("Name", $"An account with the same name already exists.", match.Id));
         }
         return signals;
@@ -432,7 +437,7 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
             (request.ClassTeacherOf ?? new()).SelectMany(TeachingAssignments.SplitClasses), CurrentUserId());
         messages.AddRange(await TeachingAssignments.ApplyTeachesAsync(Db, orgId.Value, branchId.Value, userId, request.Teaches, CurrentUserId()));
 
-        var name = $"{applicant.FirstName} {applicant.LastName}".Trim();
+        var name = PersonNames.Display(applicant.OrganizationId, applicant.FirstName, applicant.LastName);
         await Activity.RecordAsync(ActivityActions.JoinApproved, "User", userId, userId,
             $"Join request approved: {name} as {role.Name}", new { Role = role.Code, Branch = branchId }, branchId, orgId);
 
@@ -527,12 +532,12 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
         var policy = await _policy.GetAsync(orgId.Value);
         var now = DateTime.UtcNow;
 
-        var users = await Db.Users.IgnoreQueryFilters().AsNoTracking()
-            .Where(u => u.OrganizationId == orgId && u.IsActive && u.Role.Code != RoleCodes.SuperAdmin && (branchId == null || u.AssignedBranchId == branchId))
-            .OrderBy(u => u.FirstName).ThenBy(u => u.LastName)
+        var usersQuery = Db.Users.IgnoreQueryFilters().AsNoTracking()
+            .Where(u => u.OrganizationId == orgId && u.IsActive && u.Role.Code != RoleCodes.SuperAdmin && (branchId == null || u.AssignedBranchId == branchId));
+        var users = await PersonNames.OrderByName(usersQuery, orgId.Value)
             .Select(u => new
             {
-                u.Id, u.FirstName, u.LastName, u.Username, u.Email, u.Phone, RoleName = u.Role.Name, u.CreatedAt, u.LastLogin,
+                u.Id, u.OrganizationId, u.FirstName, u.LastName, u.Username, u.Email, u.Phone, RoleName = u.Role.Name, u.CreatedAt, u.LastLogin,
                 u.MustChangePassword, u.TemporaryPasswordExpiresAt, u.PasswordResetToken, u.PasswordResetTokenExpiry
             })
             .ToListAsync();
@@ -553,7 +558,8 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
         var rows = users.Select(u => new OnboardingStatusRowDto
         {
             UserId = u.Id,
-            FullName = $"{u.FirstName} {u.LastName}".Trim(),
+            FullName = PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName, u.Username),
+            SortName = PersonNames.SortKey(u.OrganizationId, u.FirstName, u.LastName),
             Username = u.Username,
             Email = u.Email ?? string.Empty,
             Phone = u.Phone,
@@ -602,6 +608,34 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
 
         var orgName = await OrganizationDisplayNameAsync(orgId.Value);
         var baseUrl = await BaseUrlAsync();
+
+        // ONE PASSWORD FOR THE WHOLE BATCH, when the administrator typed one. Checked BEFORE
+        // anything is written, so a refused password changes nobody — a half-applied re-issue would
+        // leave some people on a password the administrator holds and others on one nobody does.
+        //
+        // The check is StaffImportController's, deliberately: the batch password on an import and
+        // the batch password on a re-issue are the same decision, and two copies of "is this good
+        // enough to hand two hundred people" is how one of them ends up laxer than the other.
+        string? chosen = null;
+        if (!string.IsNullOrWhiteSpace(request.TemporaryPassword)
+            && request.Mode is StaffImportDeliveryMode.Slips or StaffImportDeliveryMode.Sms)
+        {
+            var usernames = users.Select(u => u.Username).Where(u => !string.IsNullOrWhiteSpace(u)).ToList();
+            var check = await _passwords.ValidatePasswordAsync(request.TemporaryPassword, null, null, orgName, usernames);
+            if (!check.IsValid)
+                return BadRequestProblem("That password is refused",
+                    check.ErrorMessage + " Leave it empty to generate a different password for each person, which is safer.");
+
+            foreach (var u in users)
+            {
+                var local = (u.Email ?? string.Empty).Split('@')[0];
+                if ((!string.IsNullOrWhiteSpace(u.Username) && request.TemporaryPassword.Contains(u.Username, StringComparison.OrdinalIgnoreCase))
+                    || (local.Length >= 3 && request.TemporaryPassword.Contains(local, StringComparison.OrdinalIgnoreCase)))
+                    return BadRequestProblem("That password is refused",
+                        "It contains the username or email address of somebody in this group.");
+            }
+            chosen = request.TemporaryPassword;
+        }
         var slips = new List<TemporaryPasswordSlipDto>();
         var messages = new List<string>();
         var reissued = 0;
@@ -644,7 +678,7 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
             }
             else
             {
-                var temporary = TemporaryPasswords.Generate();
+                var temporary = chosen ?? TemporaryPasswords.Generate();
                 var expires = DateTime.UtcNow.Add(TemporaryPasswords.Lifetime);
                 user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(temporary);
                 user.MustChangePassword = true;

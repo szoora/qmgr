@@ -8,7 +8,9 @@
 @inherits BranchAwareComponentBase
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
+@inject IPeopleNamesService PeopleNames
 @using QMgr.Domain.Constants
+@using QMgr.Domain.Identity
 
 @if (!Embedded)
 {
@@ -83,6 +85,47 @@
                             </div>
                         </div>
                     </div>
+
+                    @* PEOPLE'S NAMES (2026-09-23). "Why is the name display starting with first name? … where
+                       is the ui to control name display order?" There was none: the order was fixed in code
+                       in about seventy places. It is the organisation's, not the branch's, so it saves to its
+                       own endpoint — see PeopleNameSettingsDto. *@
+                    <div class="settings-section" id="people-names">
+                        <h3>People's names</h3>
+                        <div class="settings-group">
+                            <div class="setting-item">
+                                <div class="setting-info">
+                                    <label>Show names as</label>
+                                    <p>Everywhere a member of staff is named: lists, registers, reports, exports and emails.</p>
+                                </div>
+                                <QSelect TValue="NameOrder" TItem="NameChoice" Value="@names.DisplayOrder" ValueChanged="@(v => names = names with { DisplayOrder = v })"
+                                         Items="@NameChoices" ValueSelector="@(c => c.Order)" TextSelector="@(c => c.Label)"
+                                         Disabled="@(!canEditNames)" Class="setting-select-wide people-display-order" />
+                            </div>
+                            <div class="setting-item">
+                                <div class="setting-info">
+                                    <label>Sort lists by</label>
+                                    <p>Which name a list of people is in order of.</p>
+                                </div>
+                                <QSelect TValue="string" TItem="SortChoice" Value="@SortKey" ValueChanged="@SetSortKey"
+                                         Items="@SortChoices" ValueSelector="@(c => c.Key)" TextSelector="@(c => c.Label)"
+                                         Disabled="@(!canEditNames)" Class="setting-select-wide people-sort-order"
+                                         Hint="Students are not affected: a student keeps one full name, written as it was entered." />
+                            </div>
+                            <div class="setting-item">
+                                <div class="setting-info">
+                                    <label>For example</label>
+                                    <p>Two members of staff, as a list would show them.</p>
+                                </div>
+                                <div class="people-preview" id="people-preview">
+                                    @foreach (var p in PreviewPeople)
+                                    {
+                                        <span>@p</span>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 }
                 else if (activeSection == "queue")
                 {
@@ -115,18 +158,14 @@
                                     <label>Auto-call Next Token</label>
                                     <p>Automatically call next token when counter becomes free</p>
                                 </div>
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" role="switch" @bind="settings.AutoCallNext" />
-                                </div>
+                                <QSwitch @bind-Value="settings.AutoCallNext" aria-label="Auto-call Next Token" />
                             </div>
                             <div class="setting-item toggle">
                                 <div class="setting-info">
                                     <label>Allow Token Transfer</label>
                                     <p>Allow operators to transfer tokens between counters</p>
                                 </div>
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" role="switch" @bind="settings.AllowTransfer" />
-                                </div>
+                                <QSwitch @bind-Value="settings.AllowTransfer" aria-label="Allow Token Transfer" />
                             </div>
                         </div>
                     </div>
@@ -151,18 +190,14 @@
                                     <label>Play Sound on Call</label>
                                     <p>Play notification sound when token is called</p>
                                 </div>
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" role="switch" @bind="settings.PlaySound" />
-                                </div>
+                                <QSwitch @bind-Value="settings.PlaySound" aria-label="Play Sound on Call" />
                             </div>
                             <div class="setting-item toggle">
                                 <div class="setting-info">
                                     <label>Show Wait Time</label>
                                     <p>Display estimated wait time on screens</p>
                                 </div>
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" role="switch" @bind="settings.ShowWaitTime" />
-                                </div>
+                                <QSwitch @bind-Value="settings.ShowWaitTime" aria-label="Show Wait Time" />
                             </div>
                             <div class="setting-item">
                                 <div class="setting-info">
@@ -209,9 +244,7 @@
                                     <label>Two-Factor Authentication</label>
                                     <p>Require 2FA for admin accounts</p>
                                 </div>
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" role="switch" @bind="settings.TwoFactorEnabled" />
-                                </div>
+                                <QSwitch @bind-Value="settings.TwoFactorEnabled" aria-label="Two-Factor Authentication" />
                             </div>
                             <div class="setting-item">
                                 <div class="setting-info">
@@ -225,9 +258,7 @@
                                     <label>Audit Logging</label>
                                     <p>Log all user actions for compliance</p>
                                 </div>
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" role="switch" @bind="settings.AuditLogging" />
-                                </div>
+                                <QSwitch @bind-Value="settings.AuditLogging" aria-label="Audit Logging" />
                             </div>
                         </div>
                     </div>
@@ -245,6 +276,8 @@
         gap: 12px;
         padding: 80px;
     }
+
+    .people-preview { display: flex; flex-direction: column; gap: 2px; font-size: var(--qm-text-base); color: var(--qm-text-primary); min-width: 0; }
 
     .settings-container {
         display: grid;
@@ -408,6 +441,51 @@
         new() { Key = "notifications", Name = "Notifications", Icon = "bell", RequiresModule = ModuleCodes.EngagementCommunications },
         new() { Key = "security", Name = "Security", Icon = "shield-lock" }
     };
+    // ---- People's names ---------------------------------------------------------------------------
+    private sealed record NameChoice(NameOrder Order, string Label);
+    private sealed record SortChoice(string Key, string Label);
+
+    private static readonly IReadOnlyList<NameChoice> NameChoices = new List<NameChoice>
+    {
+        new(NameOrder.GivenFirst, "First name, then surname — Agatha Ayebare"),
+        new(NameOrder.FamilyFirst, "Surname, then first name — Ayebare Agatha"),
+    };
+
+    private static readonly IReadOnlyList<SortChoice> SortChoices = new List<SortChoice>
+    {
+        new("same", "The name shown first"),
+        new("family", "Surname"),
+        new("given", "First name"),
+    };
+
+    private PeopleNameSettingsDto names = new();
+    private PeopleNameSettingsDto savedNames = new();
+    private bool canEditNames;
+
+    private string SortKey => names.SortOrder switch
+    {
+        null => "same",
+        NameOrder.FamilyFirst => "family",
+        _ => "given",
+    };
+
+    private void SetSortKey(string? key) => names = names with
+    {
+        SortOrder = key switch { "family" => NameOrder.FamilyFirst, "given" => NameOrder.GivenFirst, _ => null }
+    };
+
+    /// <summary>Two example people, shown and sorted exactly as the choices above would.</summary>
+    private IEnumerable<string> PreviewPeople
+    {
+        get
+        {
+            var people = new[] { ("Grace", "Nakato"), ("Agatha", "Ayebare") };
+            return people
+                .OrderBy(p => PersonName.SortKey(p.Item1, p.Item2, names.EffectiveSortOrder), StringComparer.OrdinalIgnoreCase)
+                .Select(p => PersonName.Join(p.Item1, p.Item2, names.DisplayOrder));
+        }
+    }
+
     private List<string> languages = new() { "English", "Spanish", "French", "Arabic", "Chinese" };
     private List<string> timeZones = new() { "UTC", "America/New_York", "Europe/London", "Asia/Dubai", "Asia/Singapore" };
     private List<string> dateFormats = new() { "MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD" };
@@ -428,6 +506,9 @@
         {
             branchId = BranchState.CurrentBranchId;
         }
+
+        canEditNames = await PermissionService.HasPermissionAsync(Permissions.SettingsEdit);
+        names = savedNames = await PeopleNames.GetAsync();
 
         await LoadSettings();
     }
@@ -464,6 +545,18 @@
                 Settings = settings,
                 VoiceLanguage = voiceLanguage
             }, JsonOptions);
+
+            // The name order belongs to the organisation and has its own endpoint; it is saved with
+            // the rest only when it changed, so a branch save never rewrites it.
+            if (response.IsSuccessStatusCode && canEditNames && names != savedNames)
+            {
+                try { names = savedNames = await PeopleNames.SaveAsync(names); }
+                catch (InvalidOperationException ex)
+                {
+                    NotificationService.Notify(ToastSeverity.Error, "Could not save the name order", ex.Message);
+                    return;
+                }
+            }
 
             if (response.IsSuccessStatusCode)
             {

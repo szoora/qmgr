@@ -26,7 +26,13 @@ public enum ReminderSubject
     /// <summary>A duty has ended with its register not taken — the pre-existing chase, moved onto the ladder.</summary>
     RegisterChase = 5,
     /// <summary>An action point out of a meeting's minutes is approaching, or past, its date (2026-09-20).</summary>
-    MinuteActionDue = 6
+    MinuteActionDue = 6,
+    /// <summary>
+    /// A published timetable is running out and nothing follows it (2026-09-22). Reaches the version's
+    /// own named managers as well as the timetable masters — the point of appointing somebody is that the
+    /// chase goes to them.
+    /// </summary>
+    TimetableExpiring = 7
 }
 
 /// <summary>Where a stage goes. Flags: a stage may ring the bell AND send an email.</summary>
@@ -53,7 +59,14 @@ public enum ReminderAudience
     /// <summary>Head and director of studies: a line in their daily digest.</summary>
     Heads = 4,
     /// <summary>Timetable masters (holders of timetable.manage).</summary>
-    TimetableMasters = 8
+    TimetableMasters = 8,
+    /// <summary>
+    /// The named managers of the version a reminder is about (2026-09-22). Distinct from
+    /// <see cref="TimetableMasters"/> on purpose: an appointed manager may hold no permission at all, and a
+    /// permission holder may own no version, so "the people whose job this is" cannot be derived from either
+    /// one alone.
+    /// </summary>
+    TimetableManagers = 16
 }
 
 public record ReminderStageDto
@@ -241,6 +254,16 @@ public static class ReminderLadderDefaults
             new() { Stage = 1, OffsetMinutes = -1 * Day, AtLocalHour = policy.QuietHours?.MorningHour ?? 7, Channels = ReminderChannels.Bell },
             new() { Stage = 2, OffsetMinutes = 0, Channels = ReminderChannels.Bell | ReminderChannels.Email },
             new() { Stage = 3, OffsetMinutes = 3 * Day, Channels = ReminderChannels.Bell | ReminderChannels.Email },
+        } },
+        // A published timetable running out with nothing to follow it (2026-09-22). The offsets are BEFORE
+        // EffectiveTo, and the reminder reaches the version's own managers first: a fortnight out is enough
+        // notice to build the next one, three days out is a problem, and the day it ends the heads hear too.
+        // Never Interruptive — a term ending is a date everybody already knows, not an emergency.
+        new() { Subject = ReminderSubject.TimetableExpiring, Stages = new()
+        {
+            new() { Stage = 1, OffsetMinutes = -14 * Day, AtLocalHour = policy.QuietHours?.MorningHour ?? 7, Channels = ReminderChannels.Bell, Audience = ReminderAudience.TimetableManagers | ReminderAudience.TimetableMasters },
+            new() { Stage = 2, OffsetMinutes = -3 * Day, AtLocalHour = policy.QuietHours?.MorningHour ?? 7, Channels = ReminderChannels.Bell | ReminderChannels.Email, Audience = ReminderAudience.TimetableManagers | ReminderAudience.TimetableMasters },
+            new() { Stage = 3, OffsetMinutes = 0, Channels = ReminderChannels.Bell | ReminderChannels.Email, Audience = ReminderAudience.TimetableManagers | ReminderAudience.TimetableMasters | ReminderAudience.Heads },
         } },
     };
 }
@@ -601,6 +624,45 @@ public record TimetableDto
     public DateOnly EffectiveTo { get; init; }
     public int LessonCount { get; init; }
     public DateTime CreatedAt { get; init; }
+
+    // ---- Ownership (2026-09-22). See TimetableAccess for the one write rule these describe. ----
+
+    /// <summary>The appointed timetable master(s) of THIS version. Empty means nobody is named and only the permission opens it.</summary>
+    public List<Guid> ManagerUserIds { get; init; } = new();
+
+    /// <summary>Their names, in the same order. Filled for anybody who may read the version.</summary>
+    public List<string> ManagerNames { get; init; } = new();
+
+    /// <summary>True when the reader is one of them.</summary>
+    public bool IAmManager { get; init; }
+
+    /// <summary>
+    /// True when the reader may write this version — as a named manager, or through <c>timetable.manage</c>.
+    /// </summary>
+    public bool CanIWrite { get; init; }
+
+    /// <summary>
+    /// True when the reader may write it ONLY through the permission, and somebody else is named. Every
+    /// write they make is recorded as an override and told to the named managers, so the UI says so
+    /// BEFORE they touch it rather than after.
+    /// </summary>
+    public bool WouldBeOverride { get; init; }
+
+    /// <summary>True when the reader may appoint managers: <c>timetable.manage</c>, never a manager themselves.</summary>
+    public bool CanIAppoint { get; init; }
+}
+
+/// <summary>
+/// Appoint the managers of one version. Sent by a holder of <c>timetable.manage</c> only — a named manager
+/// may not add or remove managers, including themselves, or the appointment is self-serve and the control
+/// is decoration. Same asymmetry as RoleAssignmentGuard.
+///
+/// The list REPLACES. An empty list removes every manager, which is legitimate: the version goes back to
+/// being openable by the permission alone.
+/// </summary>
+public record SetTimetableManagersRequest
+{
+    public List<Guid> UserIds { get; set; } = new();
 }
 
 public record TimetableLessonDto
@@ -694,7 +756,15 @@ public record TimetableDetailDto
     public List<TimetableLessonDto> Lessons { get; init; } = new();
     /// <summary>Only for a timetable master.</summary>
     public TimetableDiagnosisDto? Diagnosis { get; init; }
+
+    /// <summary>
+    /// True when this caller may write the version. Since 2026-09-22 that is the ownership rule, not the
+    /// permission alone: see <see cref="TimetableDto.CanIWrite"/> and <see cref="TimetableDto.WouldBeOverride"/>.
+    /// </summary>
     public bool CanManage { get; init; }
+
+    /// <summary>Cover and cancellations falling inside the version's dates from today on. Empty for a draft.</summary>
+    public List<TimetableExceptionDto> Exceptions { get; init; } = new();
 }
 
 public record CreateTimetableRequest
@@ -706,6 +776,17 @@ public record CreateTimetableRequest
     public DateOnly? EffectiveTo { get; set; }
     /// <summary>Copy every lesson of this version: a change to a published timetable is a new draft from it.</summary>
     public Guid? CopyFromTimetableId { get; set; }
+
+    /// <summary>
+    /// The appointed master(s) of the new version. Null INHERITS from the version copied from — a corrected
+    /// draft is the same person's job — and null with nothing copied leaves it unowned, which is how every
+    /// version behaved before ownership existed and is the safe default.
+    ///
+    /// Deliberately NOT defaulted to the creator: that would make every version owned, and then every other
+    /// permission holder's ordinary write would become an override with a notification behind it. Appointing is
+    /// a deliberate act.
+    /// </summary>
+    public List<Guid>? ManagerUserIds { get; set; }
 }
 
 public record PlaceLessonRequest
@@ -738,6 +819,79 @@ public record PublishTimetableRequest
     /// <summary>Soft clashes are published only when acknowledged, with a note (plan §6.2).</summary>
     public bool AcknowledgeSoftClashes { get; set; }
     [MaxLength(500)] public string? Note { get; set; }
+
+    /// <summary>
+    /// ARCHIVE A LIVE TIMETABLE THAT COVERS THE SAME DATES. Off by default since 2026-09-22, and that is the
+    /// point: publishing used to archive every overlapping version SILENTLY, and because every lesson query
+    /// filters on Published over today's date, that stopped every register in the school. Nobody reading
+    /// "published" expects the other one to have stopped.
+    ///
+    /// Re-publishing a corrected version is the genuine case, so the path stays — it just has to be asked for.
+    /// </summary>
+    public bool Replace { get; set; }
+}
+
+// ---- One-day departures from the published timetable (2026-09-22) -----------------------------------------
+
+/// <summary>
+/// One lesson, one date, one departure. See <see cref="LessonExceptionKind"/> for why there are only two
+/// kinds and why a one-off swap is two covers.
+/// </summary>
+public record TimetableExceptionDto
+{
+    public Guid Id { get; init; }
+    public Guid TimetableId { get; init; }
+    public Guid TimetableLessonId { get; init; }
+
+    /// <summary>The branch-local date it applies to.</summary>
+    public DateOnly Date { get; init; }
+
+    public LessonExceptionKind Kind { get; init; }
+
+    /// <summary>Who teaches it instead. Always set for a Cover, never for a Cancelled.</summary>
+    public Guid? CoverUserId { get; init; }
+    public string? CoverUserName { get; init; }
+
+    /// <summary>Whose lesson it normally is, so a list reads without joining back to the timetable.</summary>
+    public Guid TeacherUserId { get; init; }
+    public string TeacherName { get; init; } = string.Empty;
+
+    public int CycleDay { get; init; }
+    public string PeriodKey { get; init; } = string.Empty;
+    public string ClassName { get; init; } = string.Empty;
+    public string? SubjectName { get; init; }
+    public string? Room { get; init; }
+
+    [MaxLength(300)] public string? Reason { get; init; }
+
+    /// <summary>The self-service request it came out of, when it was not entered directly by a master.</summary>
+    public Guid? SourceRequestId { get; init; }
+
+    public string? CreatedByName { get; init; }
+    public DateTime CreatedAt { get; init; }
+
+    /// <summary>True when the reader may withdraw it: the version's write rule, or the person who arranged it.</summary>
+    public bool CanIWithdraw { get; init; }
+
+    /// <summary>A sentence a person can read without opening anything.</summary>
+    public string Summary { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Record a cover or a cancellation directly — the timetable master's own path, beside the self-service one.
+/// It names a LESSON and a DATE, never a teacher and a time, so it cannot describe something that is not on
+/// the timetable.
+/// </summary>
+public record CreateLessonExceptionRequest
+{
+    public Guid TimetableLessonId { get; set; }
+    public DateOnly Date { get; set; }
+    public LessonExceptionKind Kind { get; set; }
+
+    /// <summary>Required for a Cover, refused for a Cancelled.</summary>
+    public Guid? CoverUserId { get; set; }
+
+    [MaxLength(300)] public string? Reason { get; set; }
 }
 
 // ---- Lessons in the day (plan §7) ------------------------------------------------------------------------
@@ -825,6 +979,12 @@ public record MyDayDto
     public DateTime? NextLessonStartsAt { get; init; }
     /// <summary>False when no published timetable covers the date: an empty day then means "no timetable", not "no lessons".</summary>
     public bool HasTimetable { get; init; }
+    /// <summary>
+    /// School events on this date that the caller is part of: staff-audience events, and any event naming them or one
+    /// of their departments as responsible (plan TERM_PROGRAMME_CALENDAR_AND_GATES §9). A whole-school event on a
+    /// teaching day is shown here — lessons still run (decision D6).
+    /// </summary>
+    public List<SchoolEventDto> Events { get; init; } = new();
 }
 
 public record LessonListDto

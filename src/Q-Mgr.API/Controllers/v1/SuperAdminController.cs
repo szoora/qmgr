@@ -1,3 +1,4 @@
+using QMgr.Infrastructure.Services;
 using QMgr.Infrastructure.Services.Billing;
 using QMgr.Application.DTOs;
 using System.Text.Json;
@@ -258,30 +259,27 @@ public class SuperAdminController : ControllerBase
         if (!FeatureOverrideCodes.Contains(code))
             return BadRequest(new { error = "UNKNOWN_FEATURE", message = $"'{code}' is not a feature that can be overridden." });
 
-        var org = await _dbContext.Organizations.FindAsync([id], ct);
-        if (org == null) return NotFound(new { error = "TENANT_NOT_FOUND", message = "Tenant not found" });
+        // Through the one writer of Organization.Settings, re-read under its lock (2026-09-23) — this
+        // merged over a copy read with no lock, so a tenant saving its own settings at the same moment
+        // could lose the override or lose their save.
+        var found = await OrganizationSettingsLock.MutateAsync(_dbContext, id, org =>
+        {
+            var root = string.IsNullOrEmpty(org.Settings)
+                ? new Dictionary<string, JsonElement>()
+                : JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(org.Settings) ?? new();
 
-        var root = string.IsNullOrEmpty(org.Settings)
-            ? new Dictionary<string, JsonElement>()
-            : JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(org.Settings) ?? new();
+            var overrides = root.TryGetValue(FeatureFlagService.OverridesKey, out var existing) && existing.ValueKind == JsonValueKind.Object
+                ? JsonSerializer.Deserialize<Dictionary<string, bool>>(existing.GetRawText()) ?? new()
+                : new Dictionary<string, bool>();
 
-        var overrides = root.TryGetValue(FeatureFlagService.OverridesKey, out var existing) && existing.ValueKind == JsonValueKind.Object
-            ? JsonSerializer.Deserialize<Dictionary<string, bool>>(existing.GetRawText()) ?? new()
-            : new Dictionary<string, bool>();
+            // OFF is a REMOVAL, not a stored false: a stored false reads as "this tenant is refused
+            // this feature", which is not a thing this system has. Absent means "whatever they bought".
+            if (request?.Enabled == true) overrides[code] = true; else overrides.Remove(code);
 
-        // OFF is a REMOVAL, not a stored false: a stored false reads as "this tenant is refused
-        // this feature", which is not a thing this system has. Absent means "whatever they bought".
-        if (request?.Enabled == true) overrides[code] = true; else overrides.Remove(code);
-
-        // Merge back over the whole blob: Organization.Settings also carries IndustryFeatures,
-        // StaffPerformance and DocumentSharing, and a write that replaced the object would drop them.
-        var merged = new Dictionary<string, object>();
-        foreach (var (key, value) in root) merged[key] = value;
-        if (overrides.Count > 0) merged[FeatureFlagService.OverridesKey] = overrides;
-        else merged.Remove(FeatureFlagService.OverridesKey);
-        org.Settings = JsonSerializer.Serialize(merged);
-
-        await _dbContext.SaveChangesAsync(ct);
+            org.Settings = OrganizationSettingsLock.WithKey(org.Settings, FeatureFlagService.OverridesKey, overrides.Count > 0 ? overrides : null);
+            return true;
+        }, ct);
+        if (!found) return NotFound(new { error = "TENANT_NOT_FOUND", message = "Tenant not found" });
 
         // The entitlement cache is five minutes. Without this the administrator who just granted it
         // watches nothing happen and grants it again.

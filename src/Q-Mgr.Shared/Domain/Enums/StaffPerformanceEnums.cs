@@ -49,12 +49,52 @@ public enum ParameterKind
     Wellbeing = 6
 }
 
-/// <summary>Which staff a parameter applies to. Resolved from the role: support-staff is Support, everything else Teaching.</summary>
-public enum StaffGroup
+/// <summary>
+/// THE STAFF GROUP IS A TENANT VOCABULARY, NOT AN ENUM (2026-09-22).
+///
+/// <para>What was here was a three-value enum resolved by
+/// <c>roleCode == "support-staff" ? Support : Teaching</c> — so every custom role a school created,
+/// and <c>admin</c>, <c>manager</c> and <c>viewer</c>, counted as TEACHING staff. A bulk import
+/// defaults a missing role to <c>teacher</c>, so a school's whole list arrived teaching, and the
+/// bursar, matron, driver and cook were then scored on Lesson Attendance and Lesson Observation.</para>
+///
+/// <para>It qualified as data by the test this project now applies: <b>does the value carry
+/// behaviour?</b> One set-membership test read it — no formula, no sign rule, nothing it showed or
+/// hid. Pure taxonomy is data, so it is a <c>VocabularyItemDto</c> list in
+/// <c>StaffPerformancePolicyDto.StaffGroups</c> and a school may add Boarding, Administration or
+/// Ancillary beside the two seeded ones. Contrast <c>ParameterKind</c>, which stays an enum because
+/// each value IS a branch in the scorer and a tenant cannot author arithmetic.</para>
+///
+/// <para>A group is referenced by NAME. <b>Null means every group</b>, which retires the old
+/// <c>AllStaff</c> member deliberately: "applies to everyone" is the absence of a restriction, not a
+/// magic entry in a list somebody could rename or retire.</para>
+/// </summary>
+public static class StaffGroups
 {
-    AllStaff = 0,
-    TeachingStaff = 1,
-    SupportStaff = 2
+    /// <summary>Seeded on first policy read — exactly what the old enum resolved to, so no score moves.</summary>
+    public const string Teaching = "Teaching staff";
+    public const string Support = "Support staff";
+
+    /// <summary>What a null group reads as on screen.</summary>
+    public const string AllLabel = "All staff";
+
+    /// <summary>
+    /// Does something restricted to <paramref name="required"/> apply to somebody in
+    /// <paramref name="actual"/>? A null or blank requirement means everybody.
+    /// </summary>
+    public static bool Applies(string? required, string? actual)
+        => string.IsNullOrWhiteSpace(required)
+        || string.Equals(Key(required), Key(actual), StringComparison.Ordinal);
+
+    /// <summary>
+    /// The comparison form: letters and digits only, upper-cased. The same rule
+    /// <c>ClassName.Key</c> uses, so "Support staff", "support-staff" and "SUPPORT STAFF" are one
+    /// group and a stray space cannot split one in two.
+    /// </summary>
+    public static string Key(string? name)
+        => string.IsNullOrWhiteSpace(name)
+            ? string.Empty
+            : new string(name.Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
 }
 
 /// <summary>
@@ -193,7 +233,35 @@ public enum TimetableStatus
 {
     Draft = 0,
     Published = 1,
-    Archived = 2
+    Archived = 2,
+    /// <summary>
+    /// Published, and past its <c>EffectiveTo</c>. DERIVED ON READ, never stored — the same call as
+    /// StaffEmploymentStatus, so the label and the dates can never disagree.
+    ///
+    /// Nothing about lesson materialisation changes: every query already filters on the dates, so an
+    /// expired version correctly stopped producing lessons before this value existed. What it fixes is
+    /// the REPORTING — the list used to show a dead version exactly as it showed the live one.
+    /// Persisted rows only ever hold 0, 1 or 2.
+    /// </summary>
+    Expired = 3
+}
+
+/// <summary>
+/// A ONE-DAY departure from the published timetable (2026-09-22). The other half of a swap: a permanent
+/// trade is a re-published version, and a one-off is this.
+///
+/// THERE ARE ONLY TWO KINDS, AND DELIBERATELY NO "MOVED". A one-off swap between two teachers is TWO
+/// covers — each takes the other's lesson at its own time — which is both simpler and more honest: a
+/// one-off does not change WHEN a class is taught, only WHO teaches it, so a class, a room and a
+/// cohort's day are never disturbed and the third-party problem a permanent swap has cannot arise.
+/// Moving a lesson to another slot for one day IS a timetable change and goes through a re-publish.
+/// </summary>
+public enum LessonExceptionKind
+{
+    /// <summary>Somebody else teaches it on that date. The duty becomes theirs; the usual teacher has no duty that period.</summary>
+    Cover = 0,
+    /// <summary>It does not happen on that date. The duty is cancelled and the teacher is told.</summary>
+    Cancelled = 1
 }
 
 // ---- Minutes of a meeting (2026-09-20). See Application/DTOs/MinutesDto.cs for the standards these follow. ----

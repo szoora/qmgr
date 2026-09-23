@@ -34,7 +34,7 @@ const measure = `(() => {
 // Hub routes since 2026-09-18: /admin/timetable/settings, /admin/staff/rota and
 // /admin/staff/activity were retired into tabs and 404 now, so the suite measured a page with no
 // h1 and reported null three times over.
-for (const route of ['/admin/timetable', '/admin/timetable?tab=schoolday', '/admin/staff/duties', '/admin/staff/duties?tab=rota', '/admin/students/class-teachers', '/content/library?tab=documents', '/admin/staff/parameters?tab=activity']) {
+for (const route of ['/admin/timetable', '/admin/timetable?tab=schoolday', '/admin/staff/duties', '/admin/staff/duties?tab=rota', '/admin/staff?tab=class-teachers', '/content/library?tab=documents', '/admin/staff/parameters?tab=activity']) {
   await t.goto(BASE + route); await t.waitFor(`!!document.querySelector('.qm-main h1')`, 15000); await t.sleep(2500);
   const m = await t.eval(measure);
   check(`${route}: header buttons 8px apart`, m.gaps.length === 0 || m.gaps.every((g) => g === 8), JSON.stringify(m.gaps));

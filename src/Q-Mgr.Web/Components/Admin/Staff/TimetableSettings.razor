@@ -27,7 +27,7 @@
 <div class="admin-page tts-page">
 <QPageActions Embedded="@Embedded">
     <Title>
-        <h1>School Day<QInfo Text="Teaching days, periods and breaks, the cycle, and when teachers cannot be timetabled." Label="School Day" /></h1>
+        <h1>School Day</h1>
         <p class="subtitle">Teaching days, periods and breaks, the cycle, and when teachers cannot be timetabled.</p>
     </Title>
     <Actions>
@@ -305,7 +305,7 @@
             {
                 try
                 {
-                    staff = (await StaffApi.GetDirectoryAsync(branchId)).Items.Where(s => s.IsActive).OrderBy(s => s.FullName).ToList();
+                    staff = (await StaffApi.GetDirectoryAsync(branchId)).Items.Where(s => s.IsActive).OrderBy(s => s.SortName ?? s.FullName).ToList();
                     staffUnavailable = false;
                 }
                 catch { staff = new(); staffUnavailable = true; }

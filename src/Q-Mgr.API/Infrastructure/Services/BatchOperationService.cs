@@ -1,3 +1,4 @@
+using QMgr.API.Application.Services;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -275,7 +276,7 @@ public class BatchOperationService : IBatchOperationService
         if (request.TargetUserId is { } uid)
         {
             targetName = await _context.Users.AsNoTracking().Where(u => u.Id == uid)
-                .Select(u => (u.FirstName + " " + u.LastName).Trim()).FirstOrDefaultAsync(ct);
+                .Select(u => PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName)).FirstOrDefaultAsync(ct);
             if (string.IsNullOrWhiteSpace(targetName)) return Blocked(request, "That staff member no longer exists.");
         }
 
@@ -432,7 +433,7 @@ public class BatchOperationService : IBatchOperationService
 
         var users = await _context.Users.AsNoTracking()
             .Where(u => u.OrganizationId == orgId && request.Ids.Contains(u.Id))
-            .Select(u => new { u.Id, u.Email, Name = (u.FirstName + " " + u.LastName).Trim(), u.IsActive })
+            .Select(u => new { u.Id, u.Email, Name = PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName), u.IsActive })
             .ToListAsync(ct);
 
         var rows = new List<BatchRowPreviewDto>(users.Count);
@@ -477,7 +478,7 @@ public class BatchOperationService : IBatchOperationService
 
         var users = await _context.Users.AsNoTracking()
             .Where(u => u.OrganizationId == orgId && request.Ids.Contains(u.Id))
-            .Select(u => new { u.Id, u.Email, Name = (u.FirstName + " " + u.LastName).Trim(), u.RoleId, RoleName = u.Role!.Name })
+            .Select(u => new { u.Id, u.Email, Name = PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName), u.RoleId, RoleName = u.Role!.Name })
             .ToListAsync(ct);
 
         var rows = new List<BatchRowPreviewDto>(users.Count);

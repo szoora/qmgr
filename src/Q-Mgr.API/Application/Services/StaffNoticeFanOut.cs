@@ -22,7 +22,7 @@ namespace QMgr.API.Application.Services;
 ///   BranchId            null, or the user's branch (a user with no branch belongs to every branch)
 ///   AudienceDepartmentIds  null/empty, or intersects the user's DepartmentIds
 ///   AudienceRoleCodes      null/empty, or contains the user's role code
-///   AudienceStaffGroup     null / AllStaff, or matches the group derived from the role
+///   AudienceStaffGroup     null (everybody), or matches the group on the person's ROLE row
 /// The reader-side filter ("GET notices — mine") applies exactly this predicate through
 /// <see cref="IsRecipient"/>, so what a person sees and what they were told about is one rule.
 /// </summary>
@@ -31,7 +31,7 @@ public static class StaffNoticeFanOut
     /// <summary>The MetaData key carried on every fan-out notification, so acknowledgement reporting can match rows to their notice without guessing from title text.</summary>
     public const string NoticeIdMetaKey = "noticeId";
 
-    public static bool IsRecipient(StaffNotice notice, Guid? userBranchId, string? roleCode, Guid[]? departmentIds)
+    public static bool IsRecipient(StaffNotice notice, Guid? userBranchId, string? roleCode, Guid[]? departmentIds, string? staffGroup = null)
     {
         if (notice.BranchId.HasValue && userBranchId.HasValue && userBranchId.Value != notice.BranchId.Value) return false;
 
@@ -45,11 +45,10 @@ public static class StaffNoticeFanOut
             if (roleCode == null || !roles.Any(r => string.Equals(r, roleCode, StringComparison.OrdinalIgnoreCase))) return false;
         }
 
-        if (notice.AudienceStaffGroup is { } group && group != StaffGroup.AllStaff)
-        {
-            var mine = RoleCodes.IsSupportStaff(roleCode) ? StaffGroup.SupportStaff : StaffGroup.TeachingStaff;
-            if (mine != group) return false;
-        }
+        // A notice may name one staff group; null means everybody. Matched by NAME through the one
+        // home, StaffGroups.Applies — the role code no longer decides, because it never could (it
+        // made every custom role, and admin, manager and viewer, teaching staff).
+        if (!StaffGroups.Applies(notice.AudienceStaffGroup, staffGroup)) return false;
 
         return true;
     }
@@ -59,12 +58,12 @@ public static class StaffNoticeFanOut
     {
         var candidates = await db.Users.IgnoreQueryFilters().AsNoTracking()
             .Where(u => u.OrganizationId == notice.OrganizationId && u.IsActive && u.Role.Code != RoleCodes.SuperAdmin)
-            .Select(u => new { u.Id, u.FirstName, u.LastName, u.Username, u.AssignedBranchId, RoleCode = u.Role.Code, u.DepartmentIds })
+            .Select(u => new { u.Id, u.FirstName, u.LastName, u.Username, u.AssignedBranchId, RoleCode = u.Role.Code, StaffGroup = u.Role.StaffGroup, u.DepartmentIds })
             .ToListAsync(ct);
 
         return candidates
-            .Where(u => IsRecipient(notice, u.AssignedBranchId, u.RoleCode, u.DepartmentIds))
-            .Select(u => (u.Id, $"{u.FirstName} {u.LastName}".Trim() is { Length: > 0 } n ? n : u.Username))
+            .Where(u => IsRecipient(notice, u.AssignedBranchId, u.RoleCode, u.DepartmentIds, u.StaffGroup))
+            .Select(u => (u.Id, PersonNames.Display(notice.OrganizationId, u.FirstName, u.LastName, u.Username)))
             .ToList();
     }
 

@@ -71,6 +71,117 @@ public class ReminderLadderJob
         await RunAsync("lesson-start", () => LessonStartAsync(now));
         await RunAsync("my-day", () => MyDayAsync(now));
         await RunAsync("minute-action", () => MinuteActionAsync(now));
+        await RunAsync("timetable-expiring", () => TimetableExpiringAsync(now));
+    }
+
+    // ---- A published timetable running out (2026-09-22) ---------------------------------------------------
+
+    /// <summary>
+    /// A published timetable whose last day is coming, with nothing published to follow it.
+    ///
+    /// WHY IT EXISTS. Every lesson query filters on <c>EffectiveTo &gt;= today</c>, so an expired version quietly
+    /// stops producing lessons — no registers, no teaching figures, no portal card — and until this ladder nothing
+    /// anywhere said it was about to happen. The status column even went on reading "Published", which is why
+    /// <see cref="Timetable.StatusOn"/> now derives <see cref="TimetableStatus.Expired"/>.
+    ///
+    /// IT REACHES THE VERSION'S OWN NAMED MANAGERS FIRST. The point of appointing somebody is that the chase goes
+    /// to them rather than to whoever happens to hold the permission; the masters are added as the escalation, and
+    /// the heads only at the last stage.
+    ///
+    /// The stage is CLAIMED with a conditional update before anything is sent, like every other ladder here. That
+    /// claim is why <see cref="Timetable.ReminderStage"/> is a column.
+    /// </summary>
+    internal async Task<int> TimetableExpiringAsync(DateTime now)
+    {
+        // The earliest stage is a fortnight out, so anything ending beyond that window has nothing due yet.
+        var horizon = DateOnly.FromDateTime(now.AddDays(MaxLeadDays));
+        var floor = DateOnly.FromDateTime(now.AddDays(-2));
+        var versions = await _context.Timetables.IgnoreQueryFilters().AsNoTracking()
+            .Where(t => t.Status == TimetableStatus.Published && t.EffectiveTo <= horizon && t.EffectiveTo >= floor)
+            .OrderBy(t => t.EffectiveTo)
+            .Take(500)
+            .ToListAsync();
+        // Timetable has no Branch navigation, so the zones are fetched as a set rather than per row: a school's
+        // "last day" is its own local day, not the server's.
+        var branchIds = versions.Select(t => t.BranchId).Distinct().ToList();
+        var zones = await _context.Branches.IgnoreQueryFilters().AsNoTracking()
+            .Where(b => branchIds.Contains(b.Id)).ToDictionaryAsync(b => b.Id, b => b.Timezone);
+
+        var sent = 0;
+        foreach (var timetable in versions)
+        {
+            try
+            {
+                if (!await ModuleActiveAsync(timetable.OrganizationId)) continue;
+
+                // NOTHING TO CHASE IF A SUCCESSOR IS ALREADY PUBLISHED. This is the whole point of the reminder:
+                // a school that has already built the next term's timetable does not need telling, and a ladder
+                // that fires anyway is one people learn to ignore.
+                var successor = await _context.Timetables.IgnoreQueryFilters().AsNoTracking()
+                    .AnyAsync(t => t.BranchId == timetable.BranchId && t.Id != timetable.Id
+                                   && t.Status == TimetableStatus.Published && t.EffectiveFrom > timetable.EffectiveTo);
+                if (successor) continue;
+
+                var policy = await PolicyAsync(timetable.OrganizationId);
+                var zone = AppointmentScheduling.ResolveTimeZone(zones.GetValueOrDefault(timetable.BranchId));
+                // The ladder's offsets are relative to the END of the last day it covers.
+                var endsAt = TimeZoneInfo.ConvertTimeToUtc(timetable.EffectiveTo.AddDays(1).ToDateTime(TimeOnly.MinValue), zone);
+                var stage = _ladders.DueStage(_policy.LadderFor(policy, ReminderSubject.TimetableExpiring),
+                    endsAt, timetable.ReminderStage, now, zone, policy.QuietHours);
+                if (stage == null) continue;
+
+                var previous = timetable.ReminderStage;
+                var claimed = await _context.Timetables.IgnoreQueryFilters()
+                    .Where(t => t.Id == timetable.Id && t.Status == TimetableStatus.Published && t.ReminderStage == previous)
+                    .ExecuteUpdateAsync(s => s.SetProperty(t => t.ReminderStage, stage.Stage));
+                if (claimed == 0) continue;
+                sent++;
+
+                var channels = _ladders.ChannelsFor(stage);
+                if (channels == NotificationChannel.None) continue;
+
+                var audience = new List<Guid>();
+                if (stage.Audience.HasFlag(ReminderAudience.TimetableManagers)) audience.AddRange(timetable.ManagerUserIds);
+                if (stage.Audience.HasFlag(ReminderAudience.TimetableMasters))
+                    audience.AddRange(await StaffLookups.UsersWithPermissionAsync(_context, timetable.OrganizationId, Permissions.TimetableManage, branchId: timetable.BranchId));
+                if (stage.Audience.HasFlag(ReminderAudience.Heads))
+                    audience.AddRange(await StaffLookups.UsersWithPermissionAsync(_context, timetable.OrganizationId, Permissions.StaffReportsView, branchId: timetable.BranchId));
+
+                var days = timetable.EffectiveTo.DayNumber - DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(now, zone)).DayNumber;
+                var when = days switch
+                {
+                    < 0 => "has ended",
+                    0 => "ends today",
+                    1 => "ends tomorrow",
+                    _ => $"ends in {days} days"
+                };
+
+                foreach (var userId in audience.Where(u => u != Guid.Empty).Distinct())
+                {
+                    await SafeSendAsync(new CreateNotificationRequest
+                    {
+                        UserId = userId,
+                        OrganizationId = timetable.OrganizationId,
+                        BranchId = timetable.BranchId,
+                        Title = days < 0 ? "A timetable has run out" : "A timetable is running out",
+                        Message = string.Create(CultureInfo.InvariantCulture,
+                            $"\"{timetable.Name}\" {when} ({timetable.EffectiveTo:dd MMM yyyy}) and nothing is published to follow it. " +
+                            $"Lessons, registers and teaching figures stop with it."),
+                        Type = NotificationType.StaffPerformance,
+                        Priority = days <= 0 ? NotificationPriority.High : NotificationPriority.Normal,
+                        Channels = channels & ~NotificationChannel.Sms,
+                        EventKey = NotificationEventKeys.StaffTimetableExpiring,
+                        ActionUrl = $"/admin/timetable?t={timetable.Id}",
+                        IconClass = "calendar-x"
+                    }, timetable.Id);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Timetable expiry reminder failed for {TimetableId}", timetable.Id);
+            }
+        }
+        return sent;
     }
 
     private async Task RunAsync(string name, Func<Task<int>> ladder)
@@ -670,8 +781,8 @@ public class ReminderLadderJob
 
                 var userIds = people.Keys.ToList();
                 var already = (await _context.Notifications.IgnoreQueryFilters().AsNoTracking()
-                    .Where(n => n.UserId != null && userIds.Contains(n.UserId.Value) && n.EventKey == NotificationEventKeys.StaffMyDay && n.CreatedAt >= dayStart)
-                    .Select(n => n.UserId!.Value).ToListAsync()).ToHashSet();
+                    .Where(n => userIds.Contains(n.UserId) && n.EventKey == NotificationEventKeys.StaffMyDay && n.CreatedAt >= dayStart)
+                    .Select(n => n.UserId).ToListAsync()).ToHashSet();
                 var active = (await StaffLookups.BranchStaff(_context, b.OrganizationId, b.BranchId).Where(u => userIds.Contains(u.Id)).Select(u => u.Id).ToListAsync()).ToHashSet();
 
                 foreach (var (userId, v) in people)

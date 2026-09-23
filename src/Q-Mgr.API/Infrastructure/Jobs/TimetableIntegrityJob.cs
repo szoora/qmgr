@@ -116,7 +116,7 @@ public class TimetableIntegrityJob
 
         var stage = _policy.LadderFor(policy, ReminderSubject.TimetableClash).Stages.OrderBy(st => st.Stage).FirstOrDefault();
         var channels = stage == null ? NotificationChannel.InApp : _ladders.ChannelsFor(stage);
-        var masters = await StaffLookups.UsersWithPermissionAsync(_context, timetable.OrganizationId, Permissions.TimetableManage);
+        var masters = await StaffLookups.UsersWithPermissionAsync(_context, timetable.OrganizationId, Permissions.TimetableManage, branchId: timetable.BranchId);
         var masterIds = await StaffLookups.BranchStaff(_context, timetable.OrganizationId, timetable.BranchId)
             .Where(u => masters.Contains(u.Id) && (u.Role.StaffScope == StaffDataScope.Organization))
             .Select(u => u.Id).ToListAsync();

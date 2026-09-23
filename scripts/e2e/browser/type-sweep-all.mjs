@@ -17,7 +17,7 @@ const FAMILIES = /^(Poppins|Montserrat|monospace|SFMono-Regular|ui-monospace|Jet
 const TENANT = [
   '/', '/admin/api-clients', '/admin/appearance', '/admin/appointments', '/admin/branches', '/admin/docs',
   '/admin/feedback', '/admin/marketing', '/admin/settings', '/admin/staff', '/admin/staff/appraisals',
-  '/admin/staff/duties', '/admin/staff/parameters', '/admin/staff/records', '/admin/students/class-teachers',
+  '/admin/staff/duties', '/admin/staff/parameters', '/admin/staff/records', '/admin/staff?tab=class-teachers',
   '/admin/students/roster', '/admin/timetable', '/admin/users', '/admin/visitors', '/admin/visitors/audit',
   '/admin/visitors/evacuation', '/admin/visitors/expected', '/admin/visitors/roster', '/admin/visitors/scan',
   '/admin/welfare-categories', '/admin/welfare-my-actions', '/admin/welfare-reports', 

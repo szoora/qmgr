@@ -36,8 +36,8 @@ public class StaffOnboardingPolicyService : IStaffOnboardingPolicyService
 
     public StaffOnboardingPolicyService(QMgrDbContext db) => _db = db;
 
-    /// <summary>The lock every writer of Organization.Settings shares. Kept equal to StaffPolicyController's key on purpose.</summary>
-    public static string SettingsLockKey(Guid organizationId) => $"staff-policy:{organizationId}";
+    /// <summary>The lock every writer of Organization.Settings shares — OrganizationSettingsLock's, the one key.</summary>
+    public static string SettingsLockKey(Guid organizationId) => OrganizationSettingsLock.Key(organizationId);
 
     /// <summary>
     /// 160 random bits as 32 characters of base32 (A–Z, 2–7). Base32 cannot parse as a GUID, so

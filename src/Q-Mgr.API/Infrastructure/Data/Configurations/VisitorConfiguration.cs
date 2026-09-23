@@ -41,6 +41,13 @@ public class VisitorConfiguration : IEntityTypeConfiguration<Visitor>
         builder.HasIndex(v => new { v.BranchId, v.CheckedInAt })
             .HasDatabaseName("idx_visitors_branch_checkedin");
 
+        // Gates (2026-09-23): the report groups by gate within a branch and a period.
+        builder.Property(v => v.EntryGate).HasMaxLength(100);
+        builder.Property(v => v.ExitGate).HasMaxLength(100);
+        builder.HasIndex(v => new { v.BranchId, v.EntryGate })
+            .HasFilter("\"EntryGate\" IS NOT NULL")
+            .HasDatabaseName("idx_visitors_branch_entry_gate");
+
         builder.HasIndex(v => v.VisitorProfileId)
             .HasDatabaseName("idx_visitors_profile");
 

@@ -26,7 +26,13 @@ public class PerformanceParameter : BaseAuditableEntity
 
     public ParameterKind Kind { get; set; } = ParameterKind.Contribution;
 
-    public StaffGroup AppliesTo { get; set; } = StaffGroup.AllStaff;
+    /// <summary>
+    /// The staff group this applies to, by NAME, from StaffPerformancePolicyDto.StaffGroups.
+    /// <b>Null means every group.</b> Was a three-value enum resolved from the role code until
+    /// 2026-09-22 — see StaffGroups for why that made the bursar teaching staff.
+    /// </summary>
+    [MaxLength(60)]
+    public string? AppliesToGroup { get; set; }
 
     /// <summary>Signed default points. Null for Wellbeing, which is never scored. Pre-fills; never locks.</summary>
     public int? DefaultPoints { get; set; }

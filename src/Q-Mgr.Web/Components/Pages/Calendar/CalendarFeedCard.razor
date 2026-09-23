@@ -1,0 +1,171 @@
+@using QMgr.Application.DTOs
+@using QMgr.Web.Services
+@inject ICalendarApiService CalendarApi
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+@*
+    "Calendar on your phone" (plan TERM_PROGRAMME_CALENDAR_AND_GATES §9): a private RFC 5545 feed of my
+    events, meetings and duties, subscribed from Google Calendar, Outlook or the phone's own calendar.
+
+    THE LINK IS SHOWN ONCE. The server keeps only a hash of its secret — the document-share rule — so the
+    card can say a feed exists and when it was made, never what it is. Lost it? Replace it, which also
+    kills the old one wherever it was pasted.
+
+    And it says plainly what a subscription cannot do: Google and Outlook fetch a subscribed calendar on
+    their own schedule, up to a day apart, so a change made this morning still arrives as a notification.
+*@
+
+@if (!unavailable)
+{
+<QCard Title="Calendar on your phone" Icon="phone" Class="@($"calfeed {Class}")" id="calendar-feed">
+    @if (feed == null)
+    {
+        <div class="calfeed__loading"><QSpinner Size="sm" /><span>Checking...</span></div>
+    }
+    else
+    {
+        <p class="calfeed__state" id="calfeed-state">
+            @if (feed.Exists)
+            {
+                <QIcon Name="check-circle" Size="sm" /> <span>Your calendar link is on@(feed.CreatedAt.HasValue ? $", made {QDateFormat.LocalDT(feed.CreatedAt.Value)}" : "").</span>
+            }
+            else
+            {
+                <QIcon Name="calendar-x" Size="sm" /> <span>No link yet. Make one to see your meetings, duties and the school's events in your phone's calendar.</span>
+            }
+        </p>
+
+        @if (!string.IsNullOrEmpty(revealedUrl))
+        {
+            <div class="calfeed__reveal" role="status">
+                <p class="calfeed__warn"><QIcon Name="exclamation-triangle" Size="sm" /> <span>Copy it now — it is shown only once. Anybody holding it can read your calendar.</span></p>
+                <div class="calfeed__url">
+                    <QInput TValue="string" Value="@revealedUrl" ReadOnly="true" id="cal-feed-url" aria-label="Your calendar link" />
+                    <QButton Text="Copy" Icon="clipboard" Variant="secondary" OnClick="@CopyAsync" id="cal-feed-copy" />
+                </div>
+                <p class="calfeed__muted">In Google Calendar: Other calendars → From URL. In Outlook: Add calendar → Subscribe from web.</p>
+            </div>
+        }
+
+        <div class="calfeed__actions">
+            <QButton Text="@(feed.Exists ? "Replace link" : "Create link")" Icon="@(feed.Exists ? "arrow-repeat" : "link-45deg")"
+                     Variant="@(feed.Exists ? "secondary" : "primary")" Loading="@busy" OnClick="@AskCreate" id="cal-feed-create" />
+            @if (feed.Exists)
+            {
+                <QButton Text="Turn off" Icon="x-circle" Variant="ghost" Disabled="@busy" OnClick="@(() => showOff = true)" id="cal-feed-off" />
+            }
+        </div>
+        <p class="calfeed__muted">Google and Outlook refresh a subscribed calendar on their own schedule, up to a day apart, so a same-day change still reaches you as a notification.</p>
+    }
+</QCard>
+}
+
+<ConfirmDialog @bind-IsVisible="showReplace" Title="Replace your calendar link?"
+               Message="The old link stops working at once, wherever it was pasted. You will need to subscribe again with the new one."
+               ConfirmText="Replace" OnClose="@ReplaceConfirmedAsync" />
+
+<ConfirmDialog @bind-IsVisible="showOff" Title="Turn off your calendar link?"
+               Message="The link stops working at once and your phone's calendar stops receiving updates. You can make a new one at any time."
+               ConfirmText="Turn off" ConfirmButtonClass="btn-danger" OnClose="@OffConfirmedAsync" />
+
+<style>
+    .calfeed { grid-column: 1 / -1; }
+    .calfeed__loading { display: flex; align-items: center; gap: 8px; color: var(--qm-text-muted); }
+    .calfeed__state { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; }
+    .calfeed__reveal { border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-warning); border-radius: var(--qm-radius-md); padding: 8px 10px; margin-bottom: 8px; }
+    .calfeed__warn { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; }
+    .calfeed__url { display: flex; align-items: flex-start; gap: var(--q-row-gap, 8px); }
+    .calfeed__url > :first-child { flex: 1 1 auto; min-width: 0; }
+    .calfeed__actions { display: flex; flex-wrap: wrap; gap: var(--q-row-gap, 8px); margin-bottom: 6px; }
+    .calfeed__muted { margin: 0; font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
+</style>
+
+@code {
+    [Parameter] public string? Class { get; set; }
+
+    private CalendarFeedDto? feed;
+    private string? revealedUrl;
+    private bool busy, showReplace, showOff;
+    /// <summary>The feed could not be read at all (a platform account with no organization, an API blip): the card is left out rather than toasting on every visit to the profile.</summary>
+    private bool unavailable;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { feed = await CalendarApi.GetFeedAsync(); }
+        catch
+        {
+            unavailable = true;
+        }
+    }
+
+    private async Task AskCreate()
+    {
+        if (feed?.Exists == true) { showReplace = true; return; }
+        await CreateAsync();
+    }
+
+    private async Task ReplaceConfirmedAsync(bool confirmed)
+    {
+        if (confirmed) await CreateAsync();
+    }
+
+    private async Task CreateAsync()
+    {
+        busy = true;
+        try
+        {
+            var created = await CalendarApi.CreateFeedAsync();
+            revealedUrl = created.Url;
+            feed = created with { Url = null, Exists = true };
+            if (string.IsNullOrEmpty(revealedUrl))
+                Toast.Notify(ToastSeverity.Warning, "Link made, but not shown", "Replace it to see a new one.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not make the link", ex.Message);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task OffConfirmedAsync(bool confirmed)
+    {
+        if (!confirmed) return;
+        busy = true;
+        try
+        {
+            await CalendarApi.DeleteFeedAsync();
+            feed = new CalendarFeedDto { Exists = false };
+            revealedUrl = null;
+            Toast.Notify(ToastSeverity.Success, "Calendar link turned off");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not turn the link off", ex.Message);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    /// <summary>The clipboard needs a secure context and a permission; where it is refused the text is
+    /// selected instead, so a long-press or Ctrl+C still works.</summary>
+    private async Task CopyAsync()
+    {
+        if (string.IsNullOrEmpty(revealedUrl)) return;
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", revealedUrl);
+            Toast.Notify(ToastSeverity.Success, "Link copied");
+        }
+        catch
+        {
+            try { await JS.InvokeVoidAsync("eval", "document.querySelector('#cal-feed-url input, input#cal-feed-url')?.select()"); } catch { }
+            Toast.Notify(ToastSeverity.Info, "Select the link and copy it", "Your browser did not allow copying automatically.");
+        }
+    }
+}

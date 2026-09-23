@@ -36,29 +36,44 @@ await tab.sleep(900);
 // ── 1. The link is on the sign-in page ───────────────────────────────────────────────
 hdr('The link on the sign-in page');
 
+// IT IS A BUTTON ON THE DOORS ROW NOW (2026-09-22). This suite asserted the opposite for two
+// days — that the link was NOT inside .auth-doors — which was the decision at the time; the user
+// overruled it, so the assertion is inverted rather than dropped. A suite still driving the retired
+// shape is the class of failure this project keeps rediscovering: it measures the wrong thing and
+// reports a product bug that is not there.
 const link = await tab.eval(`(() => {
-  const a = document.querySelector('a.get-app-link');
+  const a = document.querySelector('.auth-doors a[href="/getapp"]');
   if (!a) return { found: false };
   const rect = a.getBoundingClientRect();
+  const join = document.querySelector('.auth-doors a[href="/join"]');
+  const joinRect = join ? join.getBoundingClientRect() : null;
   return {
     found: true,
     href: a.getAttribute('href'),
     text: (a.textContent || '').trim(),
     height: Math.round(rect.height),
-    // Is it INSIDE the auth-doors row? It must not be: those two buttons answer "how do I get in",
-    // and a third one there makes downloading an app read as a way of signing in.
-    insideDoors: !!a.closest('.auth-doors'),
+    isDoor: a.classList.contains('auth-door'),
+    // Same row as "Join Using Link", which is what "move it on same line" asked for. Compared by
+    // the top of each box rather than by the DOM, because the row wraps and only the geometry can
+    // say whether they actually landed beside one another.
+    sameLineAsJoin: !!joinRect && Math.abs(Math.round(rect.top) - Math.round(joinRect.top)) <= 2,
+    // Identical height to the join button: "make it a button similar to join using link".
+    sameHeightAsJoin: !!joinRect && Math.abs(Math.round(rect.height) - Math.round(joinRect.height)) <= 1,
   };
 })()`);
 
-check('1.1 the sign-in page carries a "Get the mobile app" link', link?.found === true,
-  'a.get-app-link was not found on /login');
+check('1.1 the sign-in page carries a "Get mobile app" button', link?.found === true,
+  'no a[href="/getapp"] inside .auth-doors on /login');
 check('1.2 it points at /getapp', link?.href === '/getapp', `href=${link?.href}`);
 check('1.3 it says what it is', /mobile app/i.test(link?.text ?? ''), `text="${link?.text}"`);
-check('1.4 it is NOT a third auth-door', link?.insideDoors === false,
-  'the app link was rendered inside .auth-doors');
+check('1.4 it IS an auth-door, beside Join Using Link', link?.isDoor === true,
+  'the app link does not carry .auth-door');
+check('1.5 it sits on the same line as Join Using Link', link?.sameLineAsJoin === true,
+  'the two buttons are on different rows');
+check('1.6 it is the same size as Join Using Link', link?.sameHeightAsJoin === true,
+  `${link?.height}px against the join button`);
 // The project's phone floor is 40px and this is on the screen most people open on a phone.
-check('1.5 it is a real tap target', (link?.height ?? 0) >= 28, `${link?.height}px tall`);
+check('1.7 it is a real tap target', (link?.height ?? 0) >= 28, `${link?.height}px tall`);
 
 // ── 2. The page opens without bouncing to /login ─────────────────────────────────────
 hdr('The page itself');
@@ -79,6 +94,12 @@ const errorBar = await tab.eval(`(() => {
 })()`);
 check('2.2 no unhandled exception on first render', errorBar === 'absent' || errorBar === 'none',
   `#blazor-error-ui display=${errorBar}`);
+
+// The email-or-username sentence lives in the QInfo beside "The address to type" since it moved
+// out of the page's prose, and a QInfo renders its text only once OPENED. Open it first, or 2.8
+// reads the page without it and reports a sentence missing that is one click away.
+await tab.eval(`(() => { const b = document.querySelector('.getapp__card .q-info__btn'); if (b) b.click(); return 1; })()`);
+await tab.sleep(400);
 
 const page = await tab.eval(`(() => {
   const body = document.body.innerText || '';
@@ -109,8 +130,43 @@ check('2.6 it says something definite about downloads, never a blank panel',
   page?.saysSomethingAboutDownloads === true, 'no download, no empty state and no failure message');
 check('2.7 it never says "for this workspace"', page?.noPerWorkspaceWording === true,
   'the per-workspace wording is back');
-check('2.8 it tells people a staff username works', page?.mentionsUsername === true,
-  'the email-or-username sentence is missing');
+check('2.8 it tells people a staff username works (in the address step\'s info)', page?.mentionsUsername === true,
+  'the email-or-username sentence is missing from the address step\'s info');
+check('2.10 the heading is just "Get mobile app", with no tagline under it',
+  await tab.eval(`(() => { const h = document.querySelector('.q-brand-mark h1, .q-brand-mark h2, .login-header h1, .login-header h2');
+    return !!h && h.innerText.trim() === 'Get mobile app' && !document.querySelector('.q-brand-mark__tagline'); })()`) === true,
+  'the heading or its tagline changed');
+check('2.11 the QR step reads "Scan on your phone" and nothing more', await tab.eval(`(() => {
+    const card = [...document.querySelectorAll('.getapp__card')].find(c => /Scan on your phone/.test(c.innerText));
+    return !!card && !/camera/i.test(card.innerText); })()`) === true,
+  'the QR step still carries its explanation, or its heading changed');
+
+// PRESSING DOWNLOAD SHOWS IT IS BUSY (2026-09-23): "when user clicks download, i expect the busy
+// indicator. now it only turns dark". The file downloads and the page stays put, so without this the
+// press looked like nothing. Pressed with real mouse input; downloads are REFUSED first, so the run
+// does not fetch 13 MB, and the page must still behave the same.
+if (await tab.eval(`!!document.querySelector('.getapp__dl')`)) {
+  await tab.send('Browser.setDownloadBehavior', { behavior: 'deny' }).catch(() => {});
+  const at = await tab.eval(`(() => { const a = document.querySelector('.getapp__dl'); a.scrollIntoView({ block: 'center', behavior: 'instant' });
+    const r = a.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+  await tab.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y });
+  await tab.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: at.x, y: at.y, button: 'left', clickCount: 1 });
+  await tab.sleep(80);
+  await tab.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: at.x, y: at.y, button: 'left', clickCount: 1 });
+  await tab.sleep(500);
+  const during = await tab.eval(`(() => { const a = document.querySelector('.getapp__dl');
+    return { spinner: !!a.querySelector('.q-btn__spinner'), text: a.innerText.trim(), busy: a.getAttribute('aria-busy'), path: location.pathname }; })()`);
+  check('2.12 pressing Download shows the busy spinner and says "Downloading…"',
+    during.spinner && /Downloading/.test(during.text) && during.busy === 'true', JSON.stringify(during));
+  check('2.13 …and the page stays where it is', during.path === '/getapp', `now at ${during.path}`);
+  await tab.sleep(4500);
+  const after = await tab.eval(`(() => ({ text: document.querySelector('.getapp__dl').innerText.trim(),
+    note: [...document.querySelectorAll('.getapp__note')].map(n => n.innerText).join(' / ') }))()`);
+  check('2.14 then the button comes back and a line points to the browser\'s downloads',
+    /Download for Android/.test(after.text) && /browser's downloads/.test(after.note), JSON.stringify(after));
+} else {
+  console.log('    SKIP  2.12–2.14 no build is published, so there is no Download button to press');
+}
 check('2.9 the provisioning QR rendered', page?.qrRendered === true,
   '#getapp-qr has no image — qrcodejs may not have loaded');
 

@@ -1,3 +1,4 @@
+using QMgr.API.Application.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using QMgr.API.Authorization;
@@ -28,6 +29,25 @@ namespace QMgr.Infrastructure.Services;
 public interface IStaffProfileChangeNotifier
 {
     Task RoleChangedAsync(Guid organizationId, Guid userId, Guid? oldRoleId, Guid newRoleId, Guid? actorUserId, string via, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// A POST changed — somebody was made, or stopped being, the class teacher of a class or the
+    /// head of a department. Since 2026-09-22 a post grants permissions
+    /// (<c>PostPermissionService</c>), so this is an access change and the cached permission set is
+    /// now stale.
+    ///
+    /// <para><b>THIS CALL IS LOAD-BEARING, NOT COSMETIC.</b> CLAUDE.md's standing rule is "do not
+    /// cache the scope alongside permissions… a teacher removed from a class must lose access on the
+    /// very next request". Deriving permissions from posts puts those two things in one bag, and the
+    /// only thing that makes it safe is invalidating on write rather than waiting out the five-minute
+    /// expiry. <b>A post write that does not call this is a five-minute window in which somebody
+    /// removed from a class can still read its children's welfare records.</b></para>
+    ///
+    /// <para>Deliberately lighter than <see cref="RoleChangedAsync"/>: no notification and no
+    /// activity event, because the caller writes its own — a class-teacher assignment is already
+    /// recorded and already tells the person. This is the cache and the live push only.</para>
+    /// </summary>
+    Task PostChangedAsync(Guid userId, string via, CancellationToken cancellationToken = default);
 }
 
 public class StaffProfileChangeNotifier : IStaffProfileChangeNotifier
@@ -58,6 +78,18 @@ public class StaffProfileChangeNotifier : IStaffProfileChangeNotifier
         _logger = logger;
     }
 
+    /// <inheritdoc/>
+    public async Task PostChangedAsync(Guid userId, string via, CancellationToken cancellationToken = default)
+    {
+        if (userId == Guid.Empty) return;
+
+        try { _cache.InvalidateUserPermissions(userId); }
+        catch (Exception ex) { _logger.LogError(ex, "Permission cache for {UserId} could not be cleared after a post change ({Via})", userId, via); }
+
+        try { await _hub.NotifyPermissionsChangedAsync(userId); }
+        catch (Exception ex) { _logger.LogDebug(ex, "PermissionsChanged push failed for {UserId} after a post change", userId); }
+    }
+
     public async Task RoleChangedAsync(Guid organizationId, Guid userId, Guid? oldRoleId, Guid newRoleId, Guid? actorUserId, string via, CancellationToken cancellationToken = default)
     {
         if (oldRoleId == newRoleId) return;
@@ -76,11 +108,11 @@ public class StaffProfileChangeNotifier : IStaffProfileChangeNotifier
                 .ToDictionaryAsync(r => r.Id, r => r.Name, cancellationToken);
             var user = await _db.Users.IgnoreQueryFilters().AsNoTracking()
                 .Where(u => u.Id == userId)
-                .Select(u => new { u.FirstName, u.LastName, u.Username, u.AssignedBranchId })
+                .Select(u => new { u.OrganizationId, u.FirstName, u.LastName, u.Username, u.AssignedBranchId })
                 .FirstOrDefaultAsync(cancellationToken);
             if (user == null) return;
 
-            var name = $"{user.FirstName} {user.LastName}".Trim() is { Length: > 0 } n ? n : user.Username;
+            var name = PersonNames.Display(user.OrganizationId, user.FirstName, user.LastName, user.Username);
             var oldName = oldRoleId.HasValue ? roles.GetValueOrDefault(oldRoleId.Value, "another role") : "no role";
             var newName = roles.GetValueOrDefault(newRoleId, "a new role");
 

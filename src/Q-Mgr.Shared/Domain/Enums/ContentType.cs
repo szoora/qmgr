@@ -34,5 +34,10 @@ public enum ZoneType
     Ticker = 2,
     Clock = 3,
     Weather = 4,
-    Custom = 5
+    Custom = 5,
+    /// <summary>
+    /// "Coming up": the branch's upcoming PUBLIC school events (plan TERM_PROGRAMME_CALENDAR_AND_GATES §9, decision D5).
+    /// Read anonymously, so only events whose audience includes Public ever reach it.
+    /// </summary>
+    Events = 6
 }

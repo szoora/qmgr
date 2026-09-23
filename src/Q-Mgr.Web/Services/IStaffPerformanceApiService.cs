@@ -59,6 +59,11 @@ public interface IStaffPerformanceApiService
     Task<StaffRecordSearchResultDto> SearchRecordsAsync(Guid branchId, Guid? subjectUserId = null, Guid? parameterId = null, DateTime? from = null, DateTime? to = null, string? status = null, string? q = null, int page = 1, int pageSize = 25);
     /// <summary>Throws <see cref="LateEntryConfirmationRequiredException"/> when the date is past the policy's late-entry threshold and <paramref name="acknowledgeLateEntry"/> is false.</summary>
     Task<StaffPerformanceRecordDto> CreateRecordAsync(Guid branchId, CreateStaffRecordRequest request, bool acknowledgeLateEntry = false);
+    /// <summary>
+    /// The same Contribution or Conduct record for several people in one transaction (POST …/records/bulk). Throws
+    /// <see cref="LateEntryConfirmationRequiredException"/> exactly as <see cref="CreateRecordAsync"/> does, once for the batch.
+    /// </summary>
+    Task<BulkStaffRecordResultDto> BulkCreateStaffRecordsAsync(Guid branchId, BulkStaffRecordRequest request, bool acknowledgeLateEntry = false);
     Task<StaffPerformanceRecordDto> GetRecordAsync(Guid branchId, Guid id);
     Task<StaffPerformanceRecordDto> FinalizeRecordAsync(Guid branchId, Guid id, bool acknowledgeLateEntry = false);
     Task<StaffPerformanceRecordDto> AddNoteAsync(Guid branchId, Guid id, AddStaffNoteRequest request);
@@ -113,8 +118,22 @@ public interface IStaffPerformanceApiService
     Task<LessonChangeResultDto> PlaceLessonAsync(Guid branchId, Guid timetableId, PlaceLessonRequest request);
     Task<LessonChangeResultDto> MoveLessonAsync(Guid branchId, Guid timetableId, Guid lessonId, MoveLessonRequest request);
     Task<LessonChangeResultDto> RemoveLessonAsync(Guid branchId, Guid timetableId, Guid lessonId);
-    /// <summary>Throws <see cref="TimetableClashesException"/> for HARD_CLASHES or SOFT_CLASHES.</summary>
+    /// <summary>
+    /// Throws <see cref="TimetableClashesException"/> for HARD_CLASHES or SOFT_CLASHES, and
+    /// <see cref="TimetableWouldReplaceException"/> when a live version covers the same dates and
+    /// <c>Replace</c> was not asked for — which is a CONFIRMATION, not a failure, and the page has to offer it
+    /// rather than reporting "conflict".
+    /// </summary>
     Task<TimetableDetailDto> PublishTimetableAsync(Guid branchId, Guid id, PublishTimetableRequest request);
+
+    /// <summary>Appoint the master(s) of one version. Needs <c>timetable.manage</c>; a master cannot appoint.</summary>
+    Task<TimetableDetailDto> SetTimetableManagersAsync(Guid branchId, Guid id, SetTimetableManagersRequest request);
+
+    /// <summary>Record cover or a cancellation for one lesson on one date.</summary>
+    Task<TimetableExceptionDto> CreateTimetableExceptionAsync(Guid branchId, Guid timetableId, CreateLessonExceptionRequest request);
+
+    /// <summary>Undo one. Either teacher may, as well as anybody who may write the version.</summary>
+    Task WithdrawTimetableExceptionAsync(Guid branchId, Guid timetableId, Guid exceptionId);
     Task<TimetableDetailDto> ArchiveTimetableAsync(Guid branchId, Guid id);
     Task<RosterImportJobDto> StartTimetableImportAsync(Guid branchId, Guid timetableId, StartTimetableImportRequest request);
     Task<RosterImportJobDto> GetTimetableImportJobAsync(Guid branchId, Guid jobId);
@@ -204,6 +223,18 @@ public class TimetableClashesException : InvalidOperationException
     public TimetableClashesException(bool hard, int count, string message) : base(message) { Hard = hard; Count = count; }
 }
 
+/// <summary>
+/// A live version already covers these dates (2026-09-22). NOT an error — a question: publishing over it takes it
+/// out of service, which stops its lessons, registers and teaching figures. Resubmit with <c>Replace = true</c>
+/// when that is genuinely what is wanted, which it is when re-publishing a corrected version.
+/// </summary>
+public class TimetableWouldReplaceException : InvalidOperationException
+{
+    /// <summary>The versions that would be archived, by name, so the confirmation can say what it is about.</summary>
+    public IReadOnlyList<string> Replaces { get; }
+    public TimetableWouldReplaceException(IReadOnlyList<string> replaces, string message) : base(message) { Replaces = replaces; }
+}
+
 public class StaffPerformanceApiService : IStaffPerformanceApiService
 {
     private readonly HttpClient _http;
@@ -242,7 +273,10 @@ public class StaffPerformanceApiService : IStaffPerformanceApiService
     }
 
     /// <summary>A record write that the API may answer with 409 LATE_ENTRY: surfaced as its own exception so the dialog can ask and resubmit.</summary>
-    private async Task<StaffPerformanceRecordDto> SendLateEntryAwareAsync(HttpMethod method, string url, object? body)
+    private Task<StaffPerformanceRecordDto> SendLateEntryAwareAsync(HttpMethod method, string url, object? body)
+        => SendLateEntryAwareAsync<StaffPerformanceRecordDto>(method, url, body);
+
+    private async Task<T> SendLateEntryAwareAsync<T>(HttpMethod method, string url, object? body)
     {
         using var message = new HttpRequestMessage(method, url);
         if (body != null) message.Content = JsonContent.Create(body, options: _json);
@@ -264,7 +298,7 @@ public class StaffPerformanceApiService : IStaffPerformanceApiService
             throw new InvalidOperationException(ApiErrorService.GetErrorMessageFromBody(text, "This change conflicts with the current state."));
         }
         if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
-        return (await response.Content.ReadFromJsonAsync<StaffPerformanceRecordDto>(_json))!;
+        return (await response.Content.ReadFromJsonAsync<T>(_json))!;
     }
 
     private static string Q(params (string Key, string? Value)[] parts)
@@ -313,11 +347,34 @@ public class StaffPerformanceApiService : IStaffPerformanceApiService
                 catch (JsonException) { }
                 throw new TimetableClashesException(hard, count, ApiErrorService.GetErrorMessageFromBody(text, "Clashes remain."));
             }
+            // A live version covers the same dates. A DIFFERENT exception type because this is a question to put
+            // to the person, not an error to report: publishing over it stops that version's lessons, and until
+            // 2026-09-22 it happened silently.
+            if (text.Contains("WOULD_REPLACE_PUBLISHED", StringComparison.Ordinal))
+            {
+                var names = new List<string>();
+                try
+                {
+                    using var doc = JsonDocument.Parse(text);
+                    if (doc.RootElement.TryGetProperty("replaces", out var list) && list.ValueKind == JsonValueKind.Array)
+                        foreach (var item in list.EnumerateArray())
+                            if (item.TryGetProperty("name", out var n) && n.GetString() is { Length: > 0 } s) names.Add(s);
+                }
+                catch (JsonException) { }
+                throw new TimetableWouldReplaceException(names, ApiErrorService.GetErrorMessageFromBody(text, "Another timetable is already live for these dates."));
+            }
             throw new InvalidOperationException(ApiErrorService.GetErrorMessageFromBody(text, "This change conflicts with the current state."));
         }
         if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
         return (await response.Content.ReadFromJsonAsync<TimetableDetailDto>(_json))!;
     }
+
+    public Task<TimetableDetailDto> SetTimetableManagersAsync(Guid branchId, Guid id, SetTimetableManagersRequest request)
+        => SendAsync<TimetableDetailDto>(HttpMethod.Put, $"{TT(branchId)}/timetables/{id}/managers", request);
+    public Task<TimetableExceptionDto> CreateTimetableExceptionAsync(Guid branchId, Guid timetableId, CreateLessonExceptionRequest request)
+        => SendAsync<TimetableExceptionDto>(HttpMethod.Post, $"{TT(branchId)}/timetables/{timetableId}/exceptions", request);
+    public Task WithdrawTimetableExceptionAsync(Guid branchId, Guid timetableId, Guid exceptionId)
+        => SendAsync(HttpMethod.Delete, $"{TT(branchId)}/timetables/{timetableId}/exceptions/{exceptionId}");
     public Task<TimetableDetailDto> ArchiveTimetableAsync(Guid branchId, Guid id) => SendAsync<TimetableDetailDto>(HttpMethod.Post, $"{TT(branchId)}/timetables/{id}/archive");
     public Task<RosterImportJobDto> StartTimetableImportAsync(Guid branchId, Guid timetableId, StartTimetableImportRequest request) => SendAsync<RosterImportJobDto>(HttpMethod.Post, $"{TT(branchId)}/timetables/{timetableId}/import", request);
     public Task<RosterImportJobDto> GetTimetableImportJobAsync(Guid branchId, Guid jobId) => GetAsync<RosterImportJobDto>($"{TT(branchId)}/import-jobs/{jobId}");
@@ -370,6 +427,8 @@ public class StaffPerformanceApiService : IStaffPerformanceApiService
         => GetAsync<StaffRecordSearchResultDto>($"{B(branchId)}/records{Q(("subjectUserId", subjectUserId?.ToString()), ("parameterId", parameterId?.ToString()), ("from", D(from)), ("to", D(to)), ("status", status), ("q", q), ("page", page.ToString()), ("pageSize", pageSize.ToString()))}");
     public Task<StaffPerformanceRecordDto> CreateRecordAsync(Guid branchId, CreateStaffRecordRequest request, bool acknowledgeLateEntry = false)
         => SendLateEntryAwareAsync(HttpMethod.Post, $"{B(branchId)}/records{Q(("acknowledgeLateEntry", acknowledgeLateEntry ? "true" : null))}", request);
+    public Task<BulkStaffRecordResultDto> BulkCreateStaffRecordsAsync(Guid branchId, BulkStaffRecordRequest request, bool acknowledgeLateEntry = false)
+        => SendLateEntryAwareAsync<BulkStaffRecordResultDto>(HttpMethod.Post, $"{B(branchId)}/records/bulk{Q(("acknowledgeLateEntry", acknowledgeLateEntry ? "true" : null))}", request);
     public Task<StaffPerformanceRecordDto> GetRecordAsync(Guid branchId, Guid id) => GetAsync<StaffPerformanceRecordDto>($"{B(branchId)}/records/{id}");
     public Task<StaffPerformanceRecordDto> FinalizeRecordAsync(Guid branchId, Guid id, bool acknowledgeLateEntry = false)
         => SendLateEntryAwareAsync(HttpMethod.Post, $"{B(branchId)}/records/{id}/finalize{Q(("acknowledgeLateEntry", acknowledgeLateEntry ? "true" : null))}", null);

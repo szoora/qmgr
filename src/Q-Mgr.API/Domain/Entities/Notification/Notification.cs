@@ -9,7 +9,12 @@ namespace QMgr.Domain.Entities.Notification;
 /// </summary>
 public class Notification : BaseEntity
 {
-    public Guid? UserId { get; set; }           // Target user (null for broadcast)
+    /// <summary>
+    /// The ONE person this notification is for. Required, and NOT NULL in the database since
+    /// 2026-09-23: a row with no recipient was read by the whole school and pushed to every tenant.
+    /// A message several people need is one row each (NotificationService.NotifyManyAsync).
+    /// </summary>
+    public Guid UserId { get; set; }
     public Guid? TokenId { get; set; }          // Related token if applicable
     public Guid? BranchId { get; set; }         // Branch scope
     public Guid OrganizationId { get; set; }
@@ -44,7 +49,7 @@ public class Notification : BaseEntity
     public DateTime? PushSentAt { get; set; }
 
     // Navigation
-    public virtual User? User { get; set; }
+    public virtual User User { get; set; } = null!;
 }
 
 /// <summary>

@@ -13,7 +13,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Scan Visitor Badge<QInfo Text="Point the camera at a visitor's QR badge or a group pass" Label="Scan Visitor Badge" /></h1>
+            <h1>Scan Visitor Badge</h1>
             <p class="subtitle">Point the camera at a visitor's QR badge or a group pass</p>
         </div>
         <div class="header-actions">
@@ -45,6 +45,11 @@
                     </button>
                 </div>
                 <p class="direction-hint">Individual visitor badges toggle automatically — this only matters for a shared group pass, which can't tell arrival from departure on its own.</p>
+            </div>
+
+            @* A badge scan is a check-out, so it records the gate this scanner stands at (plan §10). *@
+            <div class="scanner-gate">
+                <VisitorGatePicker BranchId="@branchId" Gates="@gates" @bind-Value="gate" Leaving="true" ShowError="@gateError" />
             </div>
 
             @if (lastResult != null)
@@ -83,6 +88,7 @@
     .scanner-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.5); }
 
     .scanner-side { display: flex; flex-direction: column; gap: 16px; }
+    .scanner-gate:empty { display: none; }
     .direction-toggle { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 16px; }
     .direction-label { font-size: var(--qm-text-base); color: var(--qm-text-muted); display: block; margin-bottom: 10px; }
     .direction-buttons { display: flex; gap: 8px; }
@@ -104,6 +110,9 @@
     private Guid branchId;
     private bool cameraStarted;
     private string direction = "in";
+    private List<VocabularyItemDto> gates = new();
+    private string? gate;
+    private bool gateError;
     private VisitorScanResultDto? lastResult;
     private string? lastError;
     private DotNetObjectReference<VisitorScanner>? dotNetRef;
@@ -120,6 +129,7 @@
 
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
+        gates = await VisitorApi.GetGatesAsync(branchId);
     }
 
     private async Task StartCamera()
@@ -143,9 +153,23 @@
         lastScanAt = DateTime.UtcNow;
 
         lastError = null;
+
+        // The scanner's gate first: a badge scan is a check-out and the server refuses one with no gate where the
+        // branch has a choice. Saying so here costs the visitor nothing — their badge is not consumed.
+        if (VisitorGateRule.Problem(gates, gate, leaving: true) is { } gateProblem)
+        {
+            gateError = true;
+            lastResult = null;
+            lastError = gateProblem;
+            await InvokeAsync(StateHasChanged);
+            await JS.InvokeVoidAsync("visitorBadge.resumeScanner");
+            return;
+        }
+        gateError = false;
+
         try
         {
-            lastResult = await VisitorApi.ScanAsync(branchId, token, direction);
+            lastResult = await VisitorApi.ScanAsync(branchId, token, direction, gate);
         }
         catch (InvalidOperationException ex)
         {
@@ -188,5 +212,7 @@
     protected override async Task OnBranchChangedAsync(Guid branchId)
     {
         this.branchId = branchId;
+        gate = null;
+        gates = await VisitorApi.GetGatesAsync(branchId);
     }
 }

@@ -76,7 +76,10 @@ public class StaffPolicyController : StaffPerformanceControllerBase
         request.LastSummarySentAt = current.LastSummarySentAt;
         // Closures are the close / reopen endpoints' to write, with their own permission and reason.
         request.ClosedPeriods = current.ClosedPeriods ?? new();
-        request.Periods = (request.Periods ?? new()).OrderBy(p => p.Start).ToList();
+        // A term's theme (the calendar plan, 2026-09-23) is prose the school writes; trimmed, blank = none.
+        request.Periods = (request.Periods ?? new())
+            .Select(p => p with { Theme = string.IsNullOrWhiteSpace(p.Theme) ? null : p.Theme.Trim() })
+            .OrderBy(p => p.Start).ToList();
         request.Bands = request.Bands.OrderByDescending(b => b.MinScore).ToList();
         request.DataProtectionOfficerContact = string.IsNullOrWhiteSpace(request.DataProtectionOfficerContact) ? null : request.DataProtectionOfficerContact.Trim();
 
@@ -252,8 +255,8 @@ public class StaffPolicyController : StaffPerformanceControllerBase
         {
             Db.ChangeTracker.Clear();
             await using var tx = await Db.Database.BeginTransactionAsync();
-            var lockKey = $"staff-policy:{organizationId}";
-            await Db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtext({lockKey})::bigint)");
+            // The ONE organization-settings lock — the same key every writer of that column takes.
+            await OrganizationSettingsLock.AcquireAsync(Db, organizationId);
             var policy = await _policy.GetAsync(organizationId);
             if (await mutate(policy))
                 await _policy.SaveAsync(organizationId, policy);
@@ -337,6 +340,8 @@ public class StaffPolicyController : StaffPerformanceControllerBase
                     return BadRequestProblem($"Period key '{period.Key}' is too long", "20 characters at most; it is stored on every appraisal.");
                 if (period.End < period.Start)
                     return BadRequestProblem($"Period '{period.Name}' ends before it starts");
+                if (period.Theme != null && period.Theme.Trim().Length > 200)
+                    return BadRequestProblem($"The theme of '{period.Name}' is too long", "200 characters at most.");
             }
             if (periods.Select(x => x.Key.Trim().ToLowerInvariant()).Distinct().Count() != periods.Count)
                 return BadRequestProblem("Period keys must be unique");

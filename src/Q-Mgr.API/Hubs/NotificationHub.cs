@@ -153,23 +153,21 @@ public class NotificationHubService : INotificationHubService
         _logger.LogDebug("Sent notification {NotificationId} to user {UserId}", notification.Id, userId);
     }
 
-    public async Task SendToBranchAsync(Guid branchId, Notification notification)
-    {
-        var dto = MapToDto(notification);
-        await _hubContext.Clients.Group($"branch-{branchId}").SendAsync("ReceiveNotification", dto);
-        _logger.LogDebug("Sent notification {NotificationId} to branch {BranchId}", notification.Id, branchId);
-    }
+    // THERE IS NO "SEND TO ALL" AND NO "SEND TO BRANCH" FOR A NOTIFICATION (2026-09-23).
+    // SendToAllAsync pushed through Clients.All — every signed-in browser on the PLATFORM, every
+    // tenant — and was what a recipient-less notification fell through to. A payment failure at one
+    // school rang the bell at every other school with a page open. A notification names one person
+    // and goes to that person's group; the branch groups remain for the visitor board, whose join
+    // is authorised per branch.
 
-    public async Task SendToAllAsync(Notification notification)
+    /// <summary>
+    /// The count travels with the moment it was COUNTED, as ticks. Two notifications landing
+    /// together each count and push, and the push counted first can arrive last; the client keeps
+    /// the newest count and ignores an older one, so the badge cannot settle one short.
+    /// </summary>
+    public async Task NotifyUnreadCountAsync(Guid userId, int count, DateTime countedAtUtc)
     {
-        var dto = MapToDto(notification);
-        await _hubContext.Clients.All.SendAsync("ReceiveNotification", dto);
-        _logger.LogDebug("Sent notification {NotificationId} to all clients", notification.Id);
-    }
-
-    public async Task NotifyUnreadCountAsync(Guid userId, int count)
-    {
-        await _hubContext.Clients.Group($"user-{userId}").SendAsync("UnreadCountUpdated", count);
+        await _hubContext.Clients.Group($"user-{userId}").SendAsync("UnreadCountUpdated", count, countedAtUtc.Ticks);
         _logger.LogDebug("Updated unread count for user {UserId}: {Count}", userId, count);
     }
 
@@ -188,6 +186,7 @@ public class NotificationHubService : INotificationHubService
     private static NotificationDto MapToDto(Notification notification) => new()
     {
         Id = notification.Id,
+        UserId = notification.UserId,
         Title = notification.Title,
         Message = notification.Message,
         Type = notification.Type.ToString(),

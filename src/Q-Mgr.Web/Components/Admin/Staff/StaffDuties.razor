@@ -409,7 +409,7 @@
         try
         {
             var dir = await StaffApi.GetDirectoryAsync(branchId);
-            staff = dir.Items.Where(s => s.IsActive).OrderBy(s => s.FullName).ToList();
+            staff = dir.Items.Where(s => s.IsActive).OrderBy(s => s.SortName ?? s.FullName).ToList();
             staffUnavailable = false;
         }
         catch (Exception)

@@ -1,3 +1,5 @@
+using QMgr.Domain.Identity;
+using QMgr.API.Application.Services;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -108,7 +110,7 @@ public class RegistrationReviewController : ControllerBase
             .IgnoreQueryFilters()
             .AsNoTracking()
             .Where(u => reviewerIds.Contains(u.Id))
-            .ToDictionaryAsync(u => u.Id, u => (u.FirstName + " " + u.LastName).Trim(), cancellationToken);
+            .ToDictionaryAsync(u => u.Id, u => PersonNames.Display(u), cancellationToken);
 
         var results = attempts.Select(a => new RegistrationAttemptDto
         {
@@ -118,7 +120,7 @@ public class RegistrationReviewController : ControllerBase
             Phone = a.Phone,
             PhoneWasVerified = a.PhoneWasVerified,
             OrganizationName = a.OrganizationName,
-            ContactName = (a.ContactFirstName + " " + a.ContactLastName).Trim(),
+            ContactName = PersonName.Join(a.ContactFirstName, a.ContactLastName),
             Decision = a.Decision,
             RiskScore = a.RiskScore,
             Signals = string.IsNullOrWhiteSpace(a.Signals)
@@ -213,7 +215,7 @@ public class RegistrationReviewController : ControllerBase
             Phone = attempt.Phone,
             PhoneWasVerified = attempt.PhoneWasVerified,
             OrganizationName = attempt.OrganizationName,
-            ContactName = (attempt.ContactFirstName + " " + attempt.ContactLastName).Trim(),
+            ContactName = PersonName.Join(attempt.ContactFirstName, attempt.ContactLastName),
             Decision = attempt.Decision,
             RiskScore = attempt.RiskScore,
             OrganizationId = attempt.OrganizationId,

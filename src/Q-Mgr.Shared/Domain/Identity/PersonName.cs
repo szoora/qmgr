@@ -163,7 +163,13 @@ public static class PersonName
         return $"user{Guid.NewGuid():N}"[..12];
     }
 
-    /// <summary>The two halves back into one name, in the order asked for. Used by previews and logs.</summary>
+    /// <summary>
+    /// The two halves back into one name, in the order asked for. THE ONE HOME for writing a person's
+    /// name: the API's PersonNames reads the organisation's chosen order and calls this, and so does
+    /// the Web wherever it assembles a name itself (an import preview). Never write
+    /// <c>$"{FirstName} {LastName}"</c> beside the code that needs a name — name-format-check.mjs
+    /// fails the build on it.
+    /// </summary>
 
     public static string Join(string? given, string? family, NameOrder order = NameOrder.GivenFirst)
     {
@@ -173,6 +179,13 @@ public static class PersonName
         if (f.Length == 0) return g;
         return order == NameOrder.FamilyFirst ? $"{f} {g}" : $"{g} {f}";
     }
+
+    /// <summary>
+    /// The key a list of people sorts on: the two halves in the SORT order. The same shape as
+    /// <see cref="Join"/>, named separately because a school may show one order and file by the other.
+    /// </summary>
+    public static string SortKey(string? given, string? family, NameOrder sortOrder)
+        => Join(given, family, sortOrder);
 
     /// <summary>
     /// Trims, collapses runs of whitespace, and removes the zero-width and non-breaking characters a

@@ -11,7 +11,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Visitor Deletion Audit<QInfo Text="Every deleted visit record for this branch — the records themselves were never actually removed, only hidden from the active log" Label="Visitor Deletion Audit" /></h1>
+            <h1>Visitor Deletion Audit</h1>
             <p class="subtitle">Every deleted visit record for this branch — the records themselves were never actually removed, only hidden from the active log</p>
         </div>
         <div class="header-actions">
@@ -75,7 +75,8 @@
                     </tbody>
                 </table>
             </div>
-            <QPager Count="@Visible.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="deletions" />
+            <QPager Count="@Visible.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="visitor-deletions"
+                    PageSizeChanged="@(n => { PageSize = n; pageIndex = 0; })" ItemLabel="deletions" />
         }
     }
 </div>
@@ -92,7 +93,7 @@
 </style>
 
 @code {
-    private const int PageSize = 25;
+    private int PageSize = QPagerDefaults.Size;
 
     private Guid branchId;
     private List<DeletedVisitorDto> entries = new();
@@ -116,8 +117,8 @@
         }
     }
 
-    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (Visible.Count - 1) / PageSize));
-    private IEnumerable<DeletedVisitorDto> Paged => Visible.Skip(SafePageIndex * PageSize).Take(PageSize);
+    private int SafePageIndex => QPaging.SafeIndex(pageIndex, Visible.Count, PageSize);
+    private IEnumerable<DeletedVisitorDto> Paged => QPaging.Page(Visible, SafePageIndex, PageSize);
 
     private void SetSearch(string value)
     {

@@ -111,7 +111,7 @@ public class BatchOperationProcessorJob
                 {
                     try
                     {
-                        await ApplyAsync(request, row);
+                        await ApplyAsync(request, row, job.CreatedByUserId);
                         job.UpdatedCount++;
                     }
                     catch (Exception ex)
@@ -179,7 +179,7 @@ public class BatchOperationProcessorJob
     /// Each branch loads the tracked entity and assigns a single property. Nothing goes through the
     /// full-replace <c>PUT</c>, so no unrelated field can be cleared as a side effect.
     /// </remarks>
-    private async Task ApplyAsync(BatchRequest request, BatchRowPreviewDto row)
+    private async Task ApplyAsync(BatchRequest request, BatchRowPreviewDto row, Guid? actorUserId)
     {
         switch (request.Operation)
         {
@@ -259,6 +259,13 @@ public class BatchOperationProcessorJob
             {
                 var v = await _context.Visitors.FirstAsync(x => x.Id == row.Id);
                 v.CheckedOutAt = DateTime.UtcNow;
+                // FOUND 2026-09-23: this set the departure time and left Status = CheckedIn, so a visitor checked out
+                // in bulk still read as on site everywhere Status is read (the board, the evacuation roll, the report)
+                // AND could never be checked in again — the partial unique index allows one CheckedIn visit per
+                // profile. Status is what everything else reads; the time alone was never a check-out.
+                v.Status = VisitorStatus.CheckedOut;
+                // A bulk check-out has no gate (nobody stood at one); who did it is the person who ran the batch.
+                v.CheckedOutByUserId = actorUserId;
                 v.UpdatedAt = DateTime.UtcNow;
                 break;
             }

@@ -5,7 +5,318 @@ Living list of work requested across sessions. Update status inline as work prog
 Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
 ---
-## ▶▶ HANDOVER — read this first (rewritten 2026-09-21 15:20; 2026-09-22 note prepended)
+## ▶▶ HANDOVER — read this first (newest first; rewritten 2026-09-21 15:20, prepended 2026-09-22 evening)
+
+### 2026-09-23 evening — CALENDAR + DOCUMENT IMPORT + GATES, THE LIST STANDARD, BULK LOGGING (uncommitted; ~325 paths)
+
+**Nothing is committed and nothing is deployed.** The tree is the morning's (notification routing, above) plus
+everything below. **One more migration, `20260923142347_AddCalendarProgrammeImportAndGates`** (additive: table
+`SchoolEvents`; `Visitor.EntryGate/ExitGate/CheckedInByUserId/CheckedOutByUserId`; `StaffDuty.ImportJobId`;
+`User.CalendarFeedTokenHash/CalendarFeedCreatedAt`) — **applied to the dev DB**. Never git-checkout a file here.
+
+**Plans** (both decisions-settled, both saved in `docs/plans/`):
+`TERM_PROGRAMME_CALENDAR_AND_GATES.md` (artifact https://claude.ai/artifact/QmFHYh8MKaAtgC77St4CDT) and
+`STUDENT_ROSTER_AND_LIST_STANDARD.md` (artifact https://claude.ai/artifact/3e4uDfM3eLxrjecydfDhNZ). CLAUDE.md
+carries a section for each.
+
+**The school's five source documents are in `D:\QMGR\DATA` and hold 81 staff phone numbers — NEVER copy
+them into the repo.** Suites read them through `E2E_DOCS_DIR=D:/QMGR/DATA` and skip without it.
+
+- [x] **School calendar** (`/calendar` hub: Calendar · Import · Settings; print `/calendar/print`; events on My
+      School Day and the portal; private RFC 5545 feed card on Profile; national calendar at
+      `/platform/national-calendar`; signage "Coming up" via `?events=1`, switch on Customer Links).
+      Permission `calendar.manage` in all three catalogues. **Section 30, 107/0; browser `calendar-ui` 42/0.**
+- [x] **Programme import from documents** — .docx (BCL), **.doc (hand-written MS-CFB + MS-DOC)**, text PDF
+      (pdf.js), sheets; classifier, date/time parsers, staff-name matcher (phone → word set → initials →
+      Jaro–Winkler → ask), checks, the 02/11→02/12 suggestion, UCE-briefing conflict, preview/commit/undo.
+      The readers also feed `QImportPanel` (staff/student imports take Word/PDF). **Section 31, 80/0** (the
+      counts measured from the real documents, asserted by product code); **browser `programme-import` 24/0 with
+      `E2E_COMMIT=1`**. Found and fixed: a meeting expecting nobody was refused only at submit.
+- [x] **Visitor gates** — branch gate list (one writer), gate + who on check-in/out and scans, device memory,
+      reports/export/evacuation by gate. **Section 29, 59/0; browser `visitor-gates` 22/0.**
+      Found and fixed: **bulk visitor check-out never set Status** (visitor stayed "on site" and could never
+      check in again).
+- [x] **List standard** — `QPager` sizes/All/first-last/jump/remembered + `QPaging`; 23 pages swept;
+      `pager-check` guard (14 guards now); `list-page-audit` no longer fooled by `.Take(`. **Browser `pager` 40/0.**
+- [x] **Student roster** — filters in the address, compact summary line, `QBulkBar`, select-all-matching, tidy
+      names, class teachers open on their classes; **compacted after the user's screenshot** (one filter row,
+      one summary line, one-line rows; select-all row hidden on desktop until a selection, kept on phones).
+      **Browser `student-roster` 31/0.** Found and fixed: **`GET …/students` returned only the first 100** — the
+      roster and the welfare timeline were truncated for every school over 100 (Maryhill: 1,711).
+- [x] **Bulk welfare log** (`POST …/welfare-records/bulk`, Achievement/Behaviour only, one per student or one
+      incident, scoped, coalesced alerts) + **tidy names**. **Section 32, 60/0.**
+- [x] **Bulk STAFF log** (`POST …/staff/records/bulk`, Contribution/Conduct, Standard only, self skipped, one
+      summary per supervisor). **Section 33, 53/0; browser `staff-bulk-log` 11/0** (built and run 2026-09-23 night).
+      Note: the seeded Conduct parameter defaults to Confidential, so in practice only Contribution is
+      bulk-loggable until a school adds a Standard Conduct parameter.
+- [x] **Tenant purge never removed Hangfire jobs** — `LIKE` on the jsonb `arguments` column failed on every
+      purge (logged, skipped), leaving queued emails' recipients and bodies behind; the count returned 0 on its
+      own failure so 20.6c passed vacuously. Fixed (`arguments::text`), the count returns -1 on failure.
+      **Section 20, 35/0 — and the run found the suite had NEVER seeded a job:** its notification posted
+      `type: "Info"`, not a NotificationType, and was refused 400 on every run, unchecked. It posts `Custom` now,
+      asks for Email + Push (a new tenant's settings may drop email), and 20.2e asserts the seed. The purge
+      removed 2 real jobs — the first time its Hangfire half has ever been exercised.
+
+**Where the runs stand (2026-09-23 night).** API full run: **1,542 passed, 65 failed — every failure traced to
+the dev tenant's user cap** (402 on user creation; sections 13, 14, 15, 23 cascade). The nine browser suites
+that failed during the disrupted full run were **re-run one at a time with the web left alone**:
+- clean: `getapp-page` 28/0, `localization` 15/0 (+1 Core Queue skip), `mobile-readiness` 56/0,
+  `student-roster` 31/0, `staff-hub` 15/0, `staff-nav-hubs` 42/0.
+- **ONE REAL REGRESSION, mine, fixed:** the compacted roster summary buttons were **19px** tall on a phone, under
+  WCAG 2.5.8's 24px — `button.roster-sum` now has `min-height: 24px`.
+- **Stale suites fixed:** `staff-hub` / `staff-nav-hubs` expected 4 Staff tabs (there are 6) and counted the
+  timetable editor's axis picker as hub tabs — both now read only the FIRST `.q-tabs` (the hub's strip).
+- **Still failing, all already on the 09-22 list:** `action-location` 219/2 (the overcrowded Staff Directory title
+  row — needs a design answer), `rooms-ui` 7/2 (stale assertions), `import-wizard` 0/0/2 skips (its files were on
+  drive E:, not mounted).
+- **Environment:** `timetable-print` 24/1 — 9a needs a PUBLISHED timetable in force today and the dev branch has
+  none (every suite archives what it publishes). Publish one, or have the suite seed its own.
+
+**NEXT SESSION, in order:**
+1. **User decision still open: the dev tenant's user cap** (260/250) — remove old e2e accounts or raise the
+   limit; until then ~65 API checks fail by construction.
+2. The Staff Directory title row (six buttons, 84px band) needs a design answer — overflow menu or fewer buttons.
+3. `timetable-print` 9a: make the suite seed and archive its own published timetable.
+4. Commit only when the user asks; single branch `master`; no attribution.
+
+**Local tooling left running** (not in the repo): API :5001, Web :5003, headless Chrome :9333, **headed Chrome
+:9334** (`CDP_PORT=9334` makes any browser suite visible), and a **live results viewer on :5010** —
+`scratchpad/viewer.mjs` + `scratchpad/tee-viewer.mjs` (pipe any suite into it). The platform gateway key on dev
+is still the stub's.
+
+### 2026-09-23 — NOTIFICATION ROUTING, NAME ORDER, THE LAST RAW CHECKBOXES (still uncommitted)
+
+Plan: https://claude.ai/artifact/UrKYf6LBcXQn9nuJaePWGb — decisions D1–D6 taken as recommended. Nothing
+committed; the tree is the 2026-09-22 evening one plus this. **One more migration**:
+`20260923050333_NotificationsNameOneRecipient` (deletes recipient-less notifications, makes
+`Notifications.UserId` NOT NULL, adds `organization_modules.TrialReminderSentAt`) — applied to the dev DB.
+
+- [x] **A. Every notification names one person.** A Maryhill teacher read the school's failed payments:
+      payment and trial notices had no recipient, every reader took that as everybody's, and the push went
+      to `Clients.All` (every tenant). `NotificationAudience`, `NotifyManyAsync`, readers on `UserId ==
+      caller` only, no platform/branch push, client-side drop, stamped unread counts, the admin create
+      endpoint needs a recipient, the delivery alert rebuilt (and no longer quotes another person's
+      notification title), trial reminders claimed before sending. Guard: `notification-recipient-check`.
+      **Section 27, 39/0, twice back to back.**
+- [x] **B. Name display order.** `Organization.Settings["People"]`, `PersonNames` (API) +
+      `PersonName.Join/SortKey` (Shared), `SortName` on seven DTOs, Settings → General → People's names.
+      ~60 hand-built names replaced. Guard: `name-format-check`. **Section 28, 22/0.**
+- [x] **One writer for `Organization.Settings`** — found on the way: two lock keys and four unlocked
+      writers. `OrganizationSettingsLock.MutateAsync` / `WithKey`.
+- [x] **C. QCheckbox / new QSwitch** for all 65 raw checkboxes; focus ring + 24px target on QCheckbox.
+      Guard: `raw-checkbox-check`. Browser suite `controls-and-names.mjs`, 27/0 (3 honest skips).
+- [x] `component-param-check` fixed — it ignored lowercase attributes, which is how `<QSelect id>` broke
+      Settings in this very change before a browser caught it.
+- [x] Onboarding Status tab: one list under QBulkBar (`onboarding-status.mjs`, 11/0).
+
+**Not exercised live:** a head of department receiving a post-derived notice (only weekly/monthly sweeps
+send one); the header's name (it shows an avatar). **The dev tenant is over its user cap (260/250)** —
+suites that create users will 402; section 27 borrows `e2e.teacher.s2/s4` instead. **The platform gateway
+key on dev is now the stub's** (sections 16 and 27 both leave it) — re-enter the real one before a real test.
+
+### 2026-09-22 evening — TIMETABLE OWNERSHIP IS BUILT, AND **178 FILES ARE UNCOMMITTED**
+
+**READ THIS BEFORE ANY `git` COMMAND.** The block below now headed *"The tree **was** clean, pushed and
+healthy on 2026-09-21"* was true then and is **NOT TRUE NOW**. `git status` reads **178 entries**, including
+**three migrations**, four new API services and two new plan documents, none of it staged and none of
+it stashed. Nothing has been committed since `66a03db`. **Do not use `git checkout <file>` to undo an
+edit** — that is how this session lost the section-26 wiring out of `class-teacher-e2e.sh` and had to
+write it again. The new files, which a `git clean` would destroy outright:
+
+    docs/plans/TIMETABLE_OWNERSHIP.md            docs/plans/DERIVED_POST_PERMISSIONS.md
+    Application/Services/TimetableAccess.cs      Application/Services/TimetableExceptions.cs
+    Application/Services/TimetableRepublishService.cs
+    Application/Services/PostPermissionService.cs
+    Web/Components/Admin/Staff/LessonSwapCard.razor
+    scripts/e2e/timetable-ownership-e2e.mjs      scripts/e2e/public-branding-check.mjs
+    scripts/e2e/duplicate-prose-check.mjs        Shared/Application/NaturalOrder.cs
+    Shared/Application/DTOs/PasswordRulesDto.cs  Web/Services/PasswordRulesService.cs
+    Migrations/20260922134159_StaffGroupsAsVocabulary
+    Migrations/20260922140521_RetireClassTeacherAndHeadOfDepartmentRoles
+    Migrations/20260922165113_TimetableOwnershipAndCover
+
+**All three migrations are APPLIED to the development database.** A forward migration here is not
+backward compatible, so **do not start an older build against it to get a "before" baseline** — that
+was tried and it re-seeded the two global roles the retirement migration had just deleted. The rule
+and its cleanup are in CLAUDE.md.
+
+**What was built, taking the plan's three §5 recommendations as proposed** (exam supervision is a
+series of Session duties, the administrator override stays and is made visible, a named manager may
+not appoint a co-manager): per-object ownership on `Timetable.ManagerUserIds` with `TimetableAccess`
+as the one home; six write endpoints off `[RequirePermission]` and onto `GuardWriteAsync`; publish
+refusing to archive a live version unless `Replace` is asked for; `TimetableStatus.Expired` derived on
+read and chased on the existing ladder. Then, asked mid-build — *"a staff member talks to another
+staff member for a possible switch of the times allocated"* — **both** shapes: a one-off swap as TWO
+COVERS (`TimetableLessonException`, no `Moved` kind) and a permanent one as a re-publish
+(`ITimetableRepublishService`), with `LessonSwapCard.razor` as the journey nothing in the app had ever
+posted. Every rule worth keeping is already written into CLAUDE.md under *"A timetable has an OWNER
+now"* and *"A one-off swap is TWO COVERS"*; §7 of the plan records what changed while building it.
+
+**Eight product bugs were found that no build and no code read could see.** The two most useful:
+**fourteen readers of "what may this person do" and one knew about posts**, so a derived permission
+passed an endpoint's attribute and then failed the in-code check *inside the same endpoint* — and
+`GET /auth/me`, the refresh path, returned 4 permissions where login returned 12. And **`GroupFor`
+took the role's CODE rather than its group at three call sites**, which silently emptied the teaching
+half of every staff score. Both are in CLAUDE.md with the lesson (*changing what a method TAKES is
+more dangerous than changing what it returns*).
+
+#### What was measured, and what was not
+
+Per-section, run this session against the dev tenant:
+
+    14 296/0   15 208/0   16 121/0   17 47/0   18 25/0   19 46/0   20 32/0
+    21 40/0    22 30/0    23 26/2    24 12/0   25 31/0   26 54/0
+    guards.sh 10/10        full API run: 1166 passed, 28 failed
+
+**Every one of those 28 failures is the 402 user cap cascading**, not a product fault: the dev tenant
+is at **260 users against `MaxUsersPerBranch = 250`**, so any suite that creates an account fails and
+takes its dependants with it. 64 leaked `e2e.ls.*` accounts were part of how it got there.
+**THE DECISION IS WITH THE USER AND WAS ASKED, NOT ANSWERED** — raise the dev tenant's cap, hard-delete
+the inactive `e2e.*` accounts, or accept those sections failing. It is a billing field on the tenant;
+do not pick one unasked.
+
+**THE BROWSER SWEEP IS COMPLETE — headed, 34 suites, `1185 passed, 31 failed`, 13 suites needing a
+look** (run 2026-09-22 22:47–23:35, visible Chrome on CDP 9334; log kept at `/tmp/browser.log`).
+**Not one of the 31 is a defect in the timetable-ownership work.** They sort into four kinds, and the
+kind matters more than the count:
+
+**REAL, and all three are consequences of folding Class Teachers into the Staff Directory hub:**
+
+- **The title row is overcrowded** — six buttons (History · Assign a Class Teacher · Log record · Add
+  staff · Import a list · Export), so the band measures **84px against the 60px ceiling** and two
+  buttons sit left of centre. Caught independently by `uniform-check` (1) and `action-location` (2),
+  which is what makes it a finding rather than a threshold argument. The hub's own actions and the
+  section's now share one row; that needs a design answer (an overflow menu, or fewer), not a looser
+  assertion.
+- **The section lost its `QInfo`** — `density-and-staff` reads 0 beside the title, because the hub owns
+  the title row now. The explanation that page carried is simply gone.
+- **`.ct-card-empty` was never compacted: 159px, 171px and 272px** against the 110px ceiling, eight of
+  them across the Class teachers and Subject teachers tabs. They were invisible to
+  `empty-state-check` before because it walks ROUTES and the old `/admin/students/class-teachers` was
+  not one — **folding the page in is what brought them into scope.** A page's own empty-state variant
+  escaping the 2026-09-19 sweep is exactly what `QEmptyState` exists to prevent.
+
+**STALE ASSERTIONS — the suite measuring the shape this session retired** (fix the suite, not the app):
+
+- `staff-hub` and `staff-nav-hubs` both expect `/admin/staff` to carry **4 tabs**; it carries **6**
+  (`staff-nav-hubs.mjs:63`). CLAUDE.md's "42 checks" for that suite needs the same correction.
+- `staff-nav-hubs` expects the Timetable hub's **5** tabs and counts **9**: its selector takes every
+  `.q-tabs` button, so the editor's own Class/Teacher/Room/School axis picker is counted as tabs.
+- `density-and-staff` looks for the label **"Employee number"**; the person-codes work renamed it to
+  **"Staff number\*"**.
+- `rooms-ui` (2) asserts a Rooms tab is absent from Student Roster and reads `[]` — same class.
+
+**ENVIRONMENT, not the product — and `notification-bell`'s 11 failures are ONE cause.** The account
+`e2e.admin.ct@qmgr.local` carries **thousands of unread notifications and the count MOVES in bursts**:
+the suite read 6,095, saw **+42 arrive within the seconds between its own assertions**, read 4 after
+its mark-all, and the same account measured **2,198 unread and static over 20s** once the sweep ended.
+So every before/after *delta* assertion fails and the two seeded rows are pushed out of the panel's
+top-N. The suite's own comment says it uses the server count so it survives a tenant with *a lot* of
+unread — **it guards against a large count and not against a moving one.** The fix is to assert the
+seeded notification's own read state, or to seed a dedicated account; raising the threshold would hide
+it. The arrivals come from background work (the ladder, fan-out, and the `@qmgr.local`
+delivery-failure alerts), which is the documented Hangfire/email class showing up somewhere new.
+
+**THE RUNNER CANNOT TELL THREE DIFFERENT THINGS APART, AND ONE OF THEM PRINTS GREEN:**
+
+- **`import-wizard` reported `0 passed, 0 failed` and `all.mjs` printed PASS.** Both its inputs are
+  gone — it defaults to `E:\Staff List.xlsx` and `E:\Students_2026-09-21.xls`, and **drive `E:` is not
+  mounted on this machine** (nor are the files under `D:\QMGR`). The 19 checks CLAUDE.md credits it
+  with are not being run, and nothing said so. **A tally of `0 passed, 0 failed` must not read as
+  PASS** — that is the "a suite that cannot fail reports nothing either" rule, one level up in the
+  runner rather than in a suite.
+- **`type-audit` PASSES and reads BROKE**: it prints `PASS: every size is on the scale` and never the
+  `N passed, M failed` line the runner greps. It has therefore read BROKE in every `all.mjs` run.
+- **`timetable-views` refuses on purpose and also reads BROKE** — it exits rather than pass vacuously
+  when the teacher teaches nothing in the version on screen. A principled refusal and a crash are
+  indistinguishable to the runner today.
+
+`type-sweep-all` is the fourth without a tally, and it has something to say: **6 off-scale placements**
+— the evacuation headline at 64px/44px with weight 800, and Radzen's chart legend at 14px (the known
+"Radzen owns its own size" class). Those are findings to judge, not necessarily bugs: a wall-read
+evacuation total may deserve its size, and if so it belongs in the excluded set with a stated reason.
+
+`timetable-print` 24/1 is the known fixture gap: no published timetable is in force **today**, so
+`MyTimetableCard` correctly hides itself and 9a cannot pass. `getapp-page` 22/1 is a real content gap —
+`/getapp` never says a staff **username** works, which is the half of sign-in that matters to the 133
+staff with no email address.
+
+#### Both production packages were built on the user's instruction (2026-09-22 23:35–23:50)
+
+**The server package**: `scripts/deploy/build-linux.ps1` with no arguments, 2m 11s, all nine stages —
+`dist/qmgr-0.2.0-20260922.2335.tar.gz`, 111.8 MB. The local API and Web were stopped first (MSBuild
+cannot overwrite a DLL a running process holds, and that failure reads as a compile error). SMTP
+password came from `secrets.local.json`; `PgPassword` shipped as `__SET_ON_SERVER__`, which is the
+documented convention and harmless on an UPGRADE because `install.sh` preserves the server's own API
+`appsettings.Production.json`. **Nothing was copied anywhere and `install.sh` was not run.**
+
+- **THE VERSION STAMP NAMES A COMMIT THAT DOES NOT CONTAIN THIS CODE.** `Get-RepoBuildVersion` takes
+  `git rev-parse --short HEAD` with **no dirty check**, so the package reads `…66a03db` while carrying
+  ~178 uncommitted files. Nothing in `deploy-manifest.json` says so. Commit first, or make the version
+  carry a `-dirty` suffix — a package nobody can reproduce from git is the worst kind to deploy.
+- Unchecked: the Node pre-compression step reported *"ran but produced no new files"* for BOTH
+  projects. Either the assets were already compressed or nothing was — not established either way.
+
+**The mobile package**: `dotnet publish QMgr.Mobile.csproj -f net10.0-android36.0 -c Release` with the
+signing variables set, from `D:\QMGR\Mobile\QMgr`. Read OUT OF the artefact by the project's own
+`scripts/release-info.ps1`, never off a filename:
+
+    ug.qmgr-Signed.apk   13,600,041 bytes   versionCode 3537560   versionName 1.0
+    ug.qmgr-Signed.aab   14,842,873 bytes   minSdk 24 / targetSdk 36   package ug.qmgr
+    SignerDn  CN=Q-Mgr, OU=Q-Mgr, O=SACC Software Limited, L=Kampala, C=UG
+    Sha256    ef71b615b9a9aa39e48d52912e907de219cd0432261f80ec3abdeccd32fd1015
+
+**THREE DEFECTS CAME OUT OF DOING IT, AND EVERY ONE WOULD HAVE SHIPPED IN SILENCE:**
+
+- **`QMgr.Mobile.sln` still named `CashBook.csproj`** — a rename leftover, so `dotnet build` and
+  `dotnet publish` in that folder resolve the solution and fail with `MSB3202`. **Every build command
+  in that project's own README has been broken since the rebrand. FIXED** (the solution now names
+  `QMgr.Mobile.csproj`; a copy of the original is at `/tmp/QMgr.Mobile.sln.bak`).
+- **The artefacts already in `publish/` were DEBUG-SIGNED while named `-Signed`.** The 18:21 build ran
+  without `QMGR_KEYSTORE`, and the csproj's signing block is inert without it — by design, and it says
+  so. Only `release-info.ps1` caught it, because it reads the CERTIFICATE rather than the filename:
+  *"is DEBUG-SIGNED. Publishing it strands every device on a key you cannot update from."* **A
+  re-publish does NOT fix this**: MSBuild saw the packaging outputs as up to date and never re-ran
+  signing. The package outputs in `bin` and `obj/.../android/bin` have to be DELETED to force it.
+- **The copies in `publish/` were CORRUPT** — `ug.qmgr-Signed.apk` began with four zero bytes instead
+  of `PK\x03\x04`, held no `AndroidManifest.xml`, and had no zip central directory; the signed `.aab`
+  was damaged the same way while the bin-level originals tested clean. So the corruption was in the
+  COPY into `publish/`, which is precisely the folder `release-info.ps1` reads ("*the collection point
+  is the PUBLISH folder specifically*"). **An MSBuild up-to-date check compares timestamps, not
+  content, so a publish over a corrupt artefact is a no-op and reports success.** Cause not
+  established; this machine's abrupt shutdowns are the obvious suspect and that is a guess.
+
+`docs/play-store-checklist.md` in the mobile tree is **still CashBook's**: `ug.cashbook`,
+`cashbook-upload.keystore`, alias `cashbook`, and "currently 1 / 1.0.0" when `versionCode` is now
+derived from the clock. It will mislead whoever does the first upload. The real values are the keystore
+at `C:\Users\SACC\keys\ug.qmgr-upload.jks`, alias **`qmgr-upload`**.
+
+#### Still open, in the order they matter
+
+- **[!] The 402 cap** — the user's call, above. Every other API failure disappears with it.
+- **[ ] The packages are built but the version stamp is not honest** — commit, or teach
+  `Get-RepoBuildVersion` a `-dirty` suffix, before either package goes to a server.
+- **[ ] The mobile tree's `docs/play-store-checklist.md` is still CashBook's** (wrong package id,
+  wrong keystore, wrong alias, wrong version rule).
+- **[ ] The three real findings above**, in one pass: the crowded Staff Directory title row, the lost
+  `QInfo`, and the eight uncompacted `.ct-card-empty` cards.
+- **[ ] Four stale suites** — the two tab counts, the `.q-tabs` selector, the "Employee number" label
+  and `rooms-ui`. Correct the suite; the product moved on purpose.
+- **[ ] Three runner problems**, worst first: a `0 passed, 0 failed` tally must not print PASS
+  (`import-wizard` is silently running nothing — drive `E:` is absent), `type-audit` must print a
+  tally, and a suite's deliberate refusal must be distinguishable from a crash.
+- **[ ] `notification-bell`** — assert the seeded row's own read state rather than a global count
+  delta, or seed a dedicated account. Do not raise a threshold to hide it.
+- **[ ] `timetable-print` and `timetable-views` cannot prove anything today.** The first reports 24/1
+  because the portal card correctly hides itself with no published timetable in force TODAY; the
+  second refuses to run, in its own words, because the teacher it signs in as *"teaches nothing in
+  'E2E self-service …', so the opening flip could never fire and every assertion would pass while
+  proving nothing"*. **Seed a published version covering today** rather than relaxing either suite.
+- **[ ] Nothing in any browser suite touches today's four new UI surfaces**: the appoint-a-manager
+  dialog, the override banner, the replace-a-published-version confirmation, and `LessonSwapCard`.
+  A hub's tab is not verified until something opens it; the same is true of a dialog.
+- **[ ] Then commit.** 178 files is one commit's worth of risk on a machine that has shut down
+  abruptly three times this week.
 
 ### 2026-09-22 — the mobile app is BUILT (every stage but iOS submission)
 
@@ -36,7 +347,7 @@ built and wired with no component injecting `IStringLocalizer`, and the `Resourc
 underneath it made every lookup miss in every language, invisibly, because the resource keys are the
 English text.
 
-### The tree is clean, pushed, and healthy
+### (superseded for 2026-09-22 — see above) The tree was clean, pushed, and healthy on 2026-09-21
 
 **Everything is committed and `origin/master` has it** (through `75b1d0c` on 2026-09-21, plus the two
 2026-09-22 commits above). The previous handover
@@ -82,10 +393,9 @@ finished, verified and written up in its own section below.
 
 ### What to do next, in order
 
-1. **D3 — the full green run.** All three doors exist and have never been run together. The last
-   recorded full run predates the type scale, the billing hub, minutes, the doors, white label, the
-   purge, and workstreams B and C. Record the counts here afterwards, with a stated reason for every
-   SKIP.
+1. **D3 — PART DONE 2026-09-22.** The API suite and the guards ran together (1166/28, all 28 the
+   402 user cap; guards 10/10). **The browser door has NOT been run to the end** — 7 of 34 suites,
+   549/13, and the 13 failure blocks have never been read. See the 2026-09-22 evening section.
 2. **B8 has a live clock.** The shared Sectigo certificate expires **9 October 2026**, it is renewed
    by something outside Q-Mgr, and the product now reads it and matches against it — so every
    `*.cashbook.ug` tenant's fast path fails when it lapses. The renewal owner and date belong in the
@@ -96,9 +406,9 @@ finished, verified and written up in its own section below.
 
 ### The three doors
 
-    bash scripts/e2e/class-teacher-e2e.sh   # the API suite, 21 sections, 7 Node suites inside it
-    bash scripts/e2e/guards.sh              # the 8 static guards - no server, seconds
-    node scripts/e2e/browser/all.mjs        # the 23 browser suites, local headless Chrome
+    bash scripts/e2e/class-teacher-e2e.sh   # the API suite, 26 sections, 13 Node suites inside it
+    bash scripts/e2e/guards.sh              # the 10 static guards - no server, seconds
+    node scripts/e2e/browser/all.mjs        # the 34 browser suites (CDP_PORT=9334 to watch them)
 
 The API needs the two Development-only stubs the suites use:
 

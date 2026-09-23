@@ -131,7 +131,8 @@ public class RolesController : ControllerBase
                 UserCount = r.Users.Count(u => u.IsActive),
                 PermissionCount = r.RolePermissions.Count,
                 DataScope = r.DataScope,
-                StaffScope = r.StaffScope
+                StaffScope = r.StaffScope,
+                StaffGroup = r.StaffGroup
             })
             .ToListAsync();
 
@@ -185,6 +186,7 @@ public class RolesController : ControllerBase
                 CreatedAt = r.CreatedAt,
                 DataScope = r.DataScope,
                 StaffScope = r.StaffScope,
+                StaffGroup = r.StaffGroup,
                 Permissions = r.RolePermissions
                     .Select(rp => rp.Permission.Code)
                     .ToList()
@@ -308,6 +310,7 @@ public class RolesController : ControllerBase
             // student axis; a head of department is AssignedDepartments on the staff axis.
             DataScope = request.DataScope,
             StaffScope = request.StaffScope,
+            StaffGroup = string.IsNullOrWhiteSpace(request.StaffGroup) ? null : request.StaffGroup.Trim(),
             IsActive = true,
             CreatedAt = DateTime.UtcNow
         };
@@ -349,6 +352,7 @@ public class RolesController : ControllerBase
             CreatedAt = role.CreatedAt,
             DataScope = role.DataScope,
             StaffScope = role.StaffScope,
+            StaffGroup = role.StaffGroup,
             Permissions = permissions
         });
     }
@@ -396,6 +400,8 @@ public class RolesController : ControllerBase
             role.SortOrder = request.SortOrder.Value;
         if (request.DataScope.HasValue)
             role.DataScope = request.DataScope.Value;
+        if (request.StaffGroup != null)
+            role.StaffGroup = string.IsNullOrWhiteSpace(request.StaffGroup) ? null : request.StaffGroup.Trim();
         if (request.StaffScope.HasValue)
             role.StaffScope = request.StaffScope.Value;
 
@@ -429,6 +435,7 @@ public class RolesController : ControllerBase
             CreatedAt = role.CreatedAt,
             DataScope = role.DataScope,
             StaffScope = role.StaffScope,
+            StaffGroup = role.StaffGroup,
             Permissions = permissions
         });
     }
@@ -518,6 +525,7 @@ public class RolesController : ControllerBase
             CreatedAt = role.CreatedAt,
             DataScope = role.DataScope,
             StaffScope = role.StaffScope,
+            StaffGroup = role.StaffGroup,
             Permissions = permissions
         });
     }
@@ -668,6 +676,8 @@ public class RolesController : ControllerBase
 public record RoleDetailDto
 {
     public Guid Id { get; init; }
+    /// <summary>Which staff group this role's holders are in, by name. See StaffGroups.</summary>
+    public string? StaffGroup { get; init; }
     public Guid? OrganizationId { get; init; }
     public string Code { get; init; } = string.Empty;
     public string Name { get; init; } = string.Empty;
@@ -696,6 +706,9 @@ public record CreateRoleRequest
     public List<Guid>? PermissionIds { get; init; }
     public RoleDataScope DataScope { get; init; } = RoleDataScope.Organization;
     public StaffDataScope StaffScope { get; init; } = StaffDataScope.Organization;
+
+    /// <summary>Which staff group this role's holders are in, by name. Null = the tenant's first.</summary>
+    public string? StaffGroup { get; init; }
 }
 
 public record UpdateRoleRequest
@@ -707,6 +720,9 @@ public record UpdateRoleRequest
     public int? SortOrder { get; init; }
     public RoleDataScope? DataScope { get; init; }
     public StaffDataScope? StaffScope { get; init; }
+
+    /// <summary>Null leaves the stored group alone; an empty string clears it.</summary>
+    public string? StaffGroup { get; init; }
 }
 
 public record UpdateRolePermissionsRequest

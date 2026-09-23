@@ -233,6 +233,25 @@ public record StaffConfigRequestDto
     public string? CounterpartName { get; set; }
     public bool? CounterpartAgreed { get; set; }
 
+    /// <summary>
+    /// The date a one-off applies to. Null on a swap means PERMANENT — a re-published version with the two
+    /// slots traded. Always set on a LessonCover, which is a one-day thing by definition.
+    /// </summary>
+    public DateOnly? EffectiveOn { get; set; }
+
+    /// <summary>True when approving it writes a dated exception rather than re-publishing the timetable.</summary>
+    public bool IsOneOff { get; set; }
+
+    /// <summary>
+    /// What approving it would do to anybody other than the two teachers, for the decider to read BEFORE
+    /// they press it. Empty on a one-off, which cannot disturb a class; a permanent swap runs
+    /// TimetableChecker, so this is where its soft issues land — the class-side effect neither teacher can see.
+    /// </summary>
+    public List<string> DecisionWarnings { get; set; } = new();
+
+    /// <summary>Set when a permanent swap cannot be applied at all, so the decider is not offered a button that fails.</summary>
+    public string? Blocked { get; set; }
+
     public Guid? DecidedByUserId { get; set; }
     public string? DecidedByName { get; set; }
     public DateTime? DecidedAt { get; set; }
@@ -258,11 +277,25 @@ public record CreateConfigRequestRequest
     [MaxLength(20)] public string? PeriodKey { get; set; }
     [MaxLength(60)] public string? Room { get; set; }
 
-    /// <summary>SlotSwap: the caller's own lesson being offered.</summary>
+    /// <summary>SlotSwap and LessonCover: the caller's own lesson being offered.</summary>
     public Guid? MyLessonId { get; set; }
 
     /// <summary>SlotSwap: the colleague's lesson being asked for.</summary>
     public Guid? TheirLessonId { get; set; }
+
+    /// <summary>
+    /// LessonCover: the colleague asked to take it. A swap takes its counterpart from the lesson named
+    /// above, so this is the one request kind that has to name a person.
+    /// </summary>
+    public Guid? CoverUserId { get; set; }
+
+    /// <summary>
+    /// The date a ONE-OFF applies to — the date of the caller's own lesson.
+    ///
+    /// SlotSwap: null asks for a PERMANENT trade (re-publish); a date asks for a one-off (two covers, the
+    /// colleague's own date worked out from their cycle day in the same week). Required on a LessonCover.
+    /// </summary>
+    public DateOnly? EffectiveOn { get; set; }
 
     [MaxLength(100)] public string? ClassName { get; set; }
     public Guid? SubjectId { get; set; }

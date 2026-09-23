@@ -104,7 +104,8 @@
                 </QCard>
             }
         </div>
-        <QPager Count="@(FilteredDisplays.Count())" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="displays" />
+        <QPager Count="@(FilteredDisplays.Count())" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="display-zones"
+                    PageSizeChanged="@(n => { PageSize = n; pageIndex = 0; })" ItemLabel="displays" />
     }
 </div>
 
@@ -142,7 +143,7 @@
             <QInput TValue="string" @bind-Value="@zoneModel.Name" Label="Zone Name *" />
         </div>
         <div class="form-group">
-            <QSelect TValue="ZoneType" TItem="ZoneType" @bind-Value="@zoneModel.ZoneType" Items="@zoneTypeValues" Label="Zone Type" />
+            <QSelect TValue="ZoneType" TItem="ZoneType" @bind-Value="@zoneModel.ZoneType" Items="@zoneTypeValues" TextSelector="@ZoneTypeLabel" Label="Zone Type" />
         </div>
         <div class="form-row">
             <div class="form-group">
@@ -193,7 +194,7 @@
                     <div class="zone-list-item">
                         <div class="zone-list-item-header">
                             <strong>@zone.Name</strong>
-                            <QBadge Variant="secondary" Text="@zone.ZoneType.ToString()" />
+                            <QBadge Variant="secondary" Text="@ZoneTypeLabel(zone.ZoneType)" />
                         </div>
                         <div class="zone-list-item-detail">
                             <span>Position: @zone.PositionX%, @zone.PositionY% &middot; Size: @zone.Width% &times; @zone.Height%</span>
@@ -458,10 +459,10 @@
     // ---- Paging (list-page sweep, plan Phase 2) --------------------------------------------
     // Every row here is a component subtree Blazor Server diffs and ships down the circuit, so
     // the page renders a page of them rather than the whole list.
-    private const int PageSize = 25;
+    private int PageSize = QPagerDefaults.Size;
     private int pageIndex;
-    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (FilteredDisplays.Count() - 1) / PageSize));
-    private IEnumerable<DisplayDto> PagedDisplays => FilteredDisplays.Skip(SafePageIndex * PageSize).Take(PageSize);
+    private int SafePageIndex => QPaging.SafeIndex(pageIndex, FilteredDisplays.Count(), PageSize);
+    private IEnumerable<DisplayDto> PagedDisplays => QPaging.Page(FilteredDisplays, SafePageIndex, PageSize);
     private List<PlaylistDto> playlists = new();
     private bool isLoading = true;
     private string searchTerm = "";
@@ -482,6 +483,20 @@
 
     private List<DisplayType> displayTypeValues = Enum.GetValues<DisplayType>().ToList();
     private List<ZoneType> zoneTypeValues = Enum.GetValues<ZoneType>().ToList();
+
+    /// <summary>What a person reads for a zone type. Events is the signage "Coming up" list — the branch's
+    /// upcoming PUBLIC school events (TERM_PROGRAMME_CALENDAR_AND_GATES §9); the enum's own name says less.</summary>
+    private static string ZoneTypeLabel(ZoneType type) => type switch
+    {
+        ZoneType.MainQueue => "Main queue",
+        ZoneType.Advertisement => "Advertisement",
+        ZoneType.Ticker => "Ticker",
+        ZoneType.Clock => "Clock",
+        ZoneType.Weather => "Weather",
+        ZoneType.Custom => "Custom",
+        ZoneType.Events => "Coming up (school events)",
+        _ => type.ToString()
+    };
     private List<string> orientations = new() { "landscape", "portrait" };
     private List<string> resolutions = new() { "1920x1080", "3840x2160", "1280x720", "1080x1920", "2160x3840" };
 

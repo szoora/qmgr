@@ -60,7 +60,7 @@ for (const gone of ['Departments & Structure', 'Duty Rota', 'Duty Reports', 'Les
 
 // Every hub opens, and its sections render inside it.
 const hubs = [
-  ['/admin/staff', 'Staff', 4],
+  ['/admin/staff', 'Staff', 6],
   ['/admin/staff/records', 'Records', 2],
   ['/admin/staff/duties', 'Duties', 3],
   ['/admin/timetable', 'Timetable', 5],
@@ -70,7 +70,8 @@ for (const [path, label, tabCount] of hubs) {
   await t.goto(BASE + path);
   const rendered = await t.waitFor(`!!document.querySelector('.qm-main')`, 20000).then(() => true).catch(() => false);
   await t.sleep(2000);
-  const tabs = JSON.parse(await t.eval(`JSON.stringify([...document.querySelectorAll('.q-tabs button, .q-tabs [role=tab]')].map(b => b.innerText.trim()))`));
+  // The HUB's strip only (the first .q-tabs): the timetable editor's own axis picker is a .q-tabs too.
+  const tabs = JSON.parse(await t.eval(`JSON.stringify([...(document.querySelector('.q-tabs')?.querySelectorAll('button, [role=tab]') ?? [])].map(b => b.innerText.trim()))`));
   const errored = await t.eval(`(() => { const e=document.querySelector('#blazor-error-ui'); return (e?getComputedStyle(e).display!=='none':false) || document.body.innerText.includes('An unhandled error has occurred'); })()`);
   check(`${label} hub opens with ${tabCount} tabs`, rendered && !errored && tabs.length === tabCount,
     `rendered=${rendered} errored=${errored} tabs=${JSON.stringify(tabs)}`);

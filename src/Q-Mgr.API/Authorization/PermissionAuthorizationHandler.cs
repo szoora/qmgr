@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using QMgr.Domain.Constants;
+using QMgr.API.Application.Services;
 using QMgr.Infrastructure.Data;
 
 namespace QMgr.API.Authorization;
@@ -156,12 +157,23 @@ public class PermissionAuthorizationHandler : AuthorizationHandler<PermissionReq
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<QMgrDbContext>();
 
-        // Get user's role and its permissions
-        var permissions = await dbContext.Users
-            .Where(u => u.Id == userId && u.IsActive)
-            .SelectMany(u => u.Role.RolePermissions)
-            .Select(rp => rp.Permission.Code)
-            .ToHashSetAsync();
+        // The role's permissions AND what their POSTS grant on top. Being the class teacher of S4B or the head
+        // of Science is an appointment the school makes, and until 2026-09-22 it granted a row-level SCOPE and
+        // not one permission — so every welfare feature refused the person the assignment page showed as
+        // responsible. See PostPermissionService and docs/plans/DERIVED_POST_PERMISSIONS.md.
+        //
+        // THE UNION IS COMPUTED IN ONE PLACE, PostPermissionService.EffectiveCodesAsync, and this delegates to
+        // it rather than writing its own. Five other readers each wrote their own role query and so ignored
+        // posts entirely, which made a derived permission pass an endpoint's attribute and then fail the in-code
+        // check inside it (found 2026-09-22 by e2e section 15: the teaching reports 403'd a department head).
+        //
+        // CACHING THE DERIVED SET IS SAFE ONLY BECAUSE EVERY POST WRITE INVALIDATES IT. CLAUDE.md's standing
+        // rule is "do not cache the scope alongside permissions", written because class membership changes far
+        // more often than a role does and a teacher removed from a class must lose access on the very next
+        // request. The resolution is invalidation on write rather than expiry: IStaffProfileChangeNotifier is
+        // the one home for "this person's access changed" and every path that assigns, ends or moves a post
+        // calls it. The SCOPE itself stays uncached. This cache is the ONLY one over the effective set.
+        var permissions = await PostPermissionService.EffectiveCodesAsync(dbContext, userId);
 
         // Cache the permissions
         _cache.Set(cacheKey, permissions, CacheDuration);

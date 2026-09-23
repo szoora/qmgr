@@ -28,7 +28,7 @@
 <div class="admin-page">
     <QPageActions Embedded="@Embedded">
         <Title>
-            <h1>Join Requests<QInfo Text="Staff who asked to join through your join link. Nobody can sign in until you approve them and choose their role." Label="Join Requests" /></h1>
+            <h1>Join Requests</h1>
             <p class="subtitle">Staff who asked to join through your join link. Nobody can sign in until you approve them and choose their role.</p>
         </Title>
         <Actions>
@@ -83,12 +83,12 @@
                             @* aria-label, never Label: QCheckbox prints Label as visible text. *@
                             <QCheckbox Value="@selected.Contains(r.UserId)" Class="jr-pick"
                                        ValueChanged="@(v => TogglePick(r.UserId, v))"
-                                       aria-label="@($"Select {r.FirstName} {r.LastName}")" />
+                                       aria-label="@($"Select {r.FullName}")" />
                         }
-                        <QAvatar Name="@($"{r.FirstName} {r.LastName}")" Size="md" />
+                        <QAvatar Name="@r.FullName" Size="md" />
                         <div class="jr-main">
                             <div class="jr-name">
-                                @r.FirstName @r.LastName
+                                @r.FullName
                                 @if (r.State == JoinRequestState.Rejected) { <QChip Text="Rejected" Variant="danger" Size="sm" /> }
                                 else if (r.State == JoinRequestState.Expired) { <QChip Text="Expired" Variant="muted" Size="sm" /> }
                             </div>
@@ -125,12 +125,13 @@
                 </QCard>
             }
         </div>
-        <QPager Count="@Visible.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="requests" />
+        <QPager Count="@Visible.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="join-requests"
+                    PageSizeChanged="@(n => { PageSize = n; pageIndex = 0; })" SelectedCount="@selected.Count" ItemLabel="requests" />
         }
     }
 </div>
 
-<QModal @bind-Visible="showApprove" Title="@(bulkMode ? $"Approve {selected.Count} people" : $"Approve {approving?.FirstName} {approving?.LastName}")" Icon="person-check" Size="md">
+<QModal @bind-Visible="showApprove" Title="@(bulkMode ? $"Approve {selected.Count} people" : $"Approve {approving?.FullName}")" Icon="person-check" Size="md">
     <ChildContent>
         @if (bulkMode)
         {
@@ -164,7 +165,7 @@
     </FooterContent>
 </QModal>
 
-<QModal @bind-Visible="showReject" Title="@(bulkMode ? $"Reject {selected.Count} requests" : $"Reject {rejecting?.FirstName} {rejecting?.LastName}")" Icon="x-circle" Size="sm">
+<QModal @bind-Visible="showReject" Title="@(bulkMode ? $"Reject {selected.Count} requests" : $"Reject {rejecting?.FullName}")" Icon="x-circle" Size="sm">
     <ChildContent>
         <p class="jr-lede">They will be emailed that the request was not approved. The request is deleted after @purgeDays days.</p>
         <QInput TValue="string" Type="textarea" Rows="3" Label="Reason (optional, included in the email)" @bind-Value="@rejectReason" MaxLength="500" />
@@ -197,7 +198,7 @@
     /// way — see CLAUDE.md, "A hub owns the route; its sections own nothing".</summary>
     [Parameter] public bool Embedded { get; set; }
 
-    private const int PageSize = 25;
+    private int PageSize = QPagerDefaults.Size;
 
     private bool isLoading = true, saving, showClosed, canApprove, moduleMissing, showApprove, showReject;
     private string search = string.Empty;
@@ -290,12 +291,12 @@
             var q = search.Trim();
             bool Has(string? s) => (s ?? string.Empty).Contains(q, StringComparison.OrdinalIgnoreCase);
             return requests.Where(r => Has(r.FirstName) || Has(r.LastName) || Has(r.Email) || Has(r.Phone)
-                                       || Has($"{r.FirstName} {r.LastName}")).ToList();
+                                       || Has(r.FullName)).ToList();
         }
     }
 
-    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (Visible.Count - 1) / PageSize));
-    private IEnumerable<JoinRequestDto> Paged => Visible.Skip(SafePageIndex * PageSize).Take(PageSize);
+    private int SafePageIndex => QPaging.SafeIndex(pageIndex, Visible.Count, PageSize);
+    private IEnumerable<JoinRequestDto> Paged => QPaging.Page(Visible, SafePageIndex, PageSize);
     private bool AllVisibleSelected => Visible.Count > 0 && Visible.All(r => selected.Contains(r.UserId));
 
     private void SetSearch(string value)
@@ -357,7 +358,7 @@
         classNames = new();
         if (form.BranchId is not { } b) return;
         try { departments = await StaffApi.GetDepartmentsAsync(b); } catch { }
-        try { lineManagers = (await StaffApi.GetDirectoryAsync(b)).Items.Where(m => m.IsActive).OrderBy(m => m.FullName).ToList(); } catch { }
+        try { lineManagers = (await StaffApi.GetDirectoryAsync(b)).Items.Where(m => m.IsActive).OrderBy(m => m.SortName ?? m.FullName).ToList(); } catch { }
         try { classNames = (await StudentApi.GetVocabulariesAsync(b)).Classes.Select(c => c.Name).OrderBy(n => n).ToList(); } catch { }
     }
 
@@ -407,7 +408,7 @@
         foreach (var r in SelectedRequests)
         {
             try { await act(r); done++; }
-            catch (Exception ex) { bulkProblems.Add($"{r.FirstName} {r.LastName}: {ex.Message}"); }
+            catch (Exception ex) { bulkProblems.Add($"{r.FullName}: {ex.Message}"); }
         }
         return done;
     }
@@ -432,7 +433,7 @@
                         ClassTeacherOf = new List<string>(),
                         Teaches = string.IsNullOrWhiteSpace(form.Teaches) ? null : form.Teaches.Trim()
                     });
-                    foreach (var n in notes) bulkProblems.Add($"{r.FirstName} {r.LastName}: {n}");
+                    foreach (var n in notes) bulkProblems.Add($"{r.FullName}: {n}");
                 });
                 approveMessages = bulkProblems;
                 Toast.Notify(bulkProblems.Count == 0 ? ToastSeverity.Success : ToastSeverity.Warning,
@@ -459,7 +460,7 @@
                 ClassTeacherOf = form.ClassTeacherOf.ToList(),
                 Teaches = string.IsNullOrWhiteSpace(form.Teaches) ? null : form.Teaches.Trim()
             });
-            Toast.Notify(ToastSeverity.Success, $"{approving.FirstName} {approving.LastName} approved", approveMessages.Count == 0 ? "They have been emailed that they can sign in." : "Approved, with notes about the assignments.");
+            Toast.Notify(ToastSeverity.Success, $"{approving.FullName} approved", approveMessages.Count == 0 ? "They have been emailed that they can sign in." : "Approved, with notes about the assignments.");
             if (approveMessages.Count == 0) showApprove = false;
             await LoadAsync();
         }

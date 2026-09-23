@@ -137,7 +137,7 @@
 
     protected override async Task OnParametersSetAsync()
     {
-        directory = Directory.OrderBy(m => m.FullName).ToList();
+        directory = Directory.OrderBy(m => m.SortName ?? m.FullName).ToList();
         if (!Visible || loaded) return;
         loaded = true;
         await LoadLookupsAsync();

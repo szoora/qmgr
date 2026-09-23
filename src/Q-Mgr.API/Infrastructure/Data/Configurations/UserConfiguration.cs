@@ -70,6 +70,13 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
             .HasFilter("\"EmployeeNumber\" IS NOT NULL")
             .HasDatabaseName("idx_users_employee_number_unique");
 
+        // The personal calendar feed (2026-09-23): the anonymous feed request finds its person by the secret's hash.
+        builder.Property(u => u.CalendarFeedTokenHash).HasMaxLength(64);
+        builder.HasIndex(u => u.CalendarFeedTokenHash)
+            .IsUnique()
+            .HasFilter("\"CalendarFeedTokenHash\" IS NOT NULL")
+            .HasDatabaseName("ux_users_calendar_feed_token");
+
         builder.HasOne(u => u.Organization)
             .WithMany()
             .HasForeignKey(u => u.OrganizationId)

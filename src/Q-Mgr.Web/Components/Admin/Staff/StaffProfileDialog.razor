@@ -19,7 +19,7 @@
     than being the thing that decides it.
 *@
 
-<QModal @bind-Visible="Visible" Title="@(profile is null ? "Staff record" : profile.FullName)" Size="lg">
+<QModal @bind-Visible="Visible" Title="@(profile is null ? "Staff record" : profile.FullName)" Size="xl">
     <ChildContent>
         @if (isLoading)
         {
@@ -38,7 +38,7 @@
                     <strong>@profile.FullName</strong>
                     <span>@profile.RoleName@(string.IsNullOrWhiteSpace(profile.Email) ? "" : " · " + profile.Email)</span>
                 </div>
-                <QChip Text="@(profile.StaffGroup == StaffGroup.SupportStaff ? "Support staff" : "Teaching staff")" Size="sm" />
+                <QChip Text="@(string.IsNullOrWhiteSpace(profile.StaffGroup) ? StaffGroups.Teaching : profile.StaffGroup)" Size="sm" />
             </div>
 
             <h4 class="sp-head">

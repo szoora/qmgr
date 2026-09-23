@@ -6,8 +6,20 @@
 // Run: API=http://127.0.0.1:5001 BRANCH=<guid> node scripts/e2e/minutes-e2e.mjs
 const API = process.env.API ?? "http://127.0.0.1:5001";
 const BRANCH = process.env.BRANCH ?? "a805ba99-ef62-4685-a1ad-b11b2ea7747f";
-const AD_USER = process.env.SA_USER ?? "e2e.admin.ct@qmgr.local";
-const AD_PASS = process.env.SA_PASS ?? "E2eTeacher!2026";
+// A TENANT ADMINISTRATOR, AND SA_USER MUST NOT REACH IT (fixed 2026-09-22).
+//
+// This read process.env.SA_USER, so it worked standalone — where nothing sets it and the default
+// applies — and BROKE the moment class-teacher-e2e.sh ran it, because the runner passes
+// SA_USER=superadmin. The platform SuperAdmin's tenant CONTEXT is the platform organization, while
+// every branch route resolves the organization from the BRANCH. So the parameters list came back from
+// one organization and the duty POST looked the id up in another: "Parameter not found. Choose an
+// active parameter for this duty", and section 17 aborted at its first setup step.
+//
+// EXACTLY the trap already recorded for section 21, which signs in as a tenant administrator for this
+// reason. The lesson generalises: a suite that is only ever run standalone is not the suite the runner
+// runs, and an env var named for one role must not be able to hijack another.
+const AD_USER = process.env.AD_USER ?? "e2e.admin.ct@qmgr.local";
+const AD_PASS = process.env.AD_PASS ?? "E2eTeacher!2026";
 const RUN = Date.now().toString(36);
 
 let pass = 0, fail = 0;

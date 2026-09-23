@@ -62,9 +62,12 @@ public class StaffScoringService : IStaffScoringService
         var policy = await _policy.GetAsync(organizationId, cancellationToken);
         var parameters = await LoadParametersAsync(organizationId, cancellationToken);
 
-        var roleCode = await _db.Users.IgnoreQueryFilters().AsNoTracking()
-            .Where(u => u.Id == userId).Select(u => u.Role.Code).FirstOrDefaultAsync(cancellationToken);
-        var group = _policy.GroupFor(roleCode);
+        // The role's StaffGroup, NOT its Code — see the note on the branch projection below. Passing the code
+        // here made StaffGroups.Applies false for every group-restricted parameter, so a person's own score and
+        // breakdown silently left out Lesson Attendance, Lesson Observation, Exam Supervision and the rest.
+        var staffGroup = await _db.Users.IgnoreQueryFilters().AsNoTracking()
+            .Where(u => u.Id == userId).Select(u => u.Role.StaffGroup).FirstOrDefaultAsync(cancellationToken);
+        var group = _policy.GroupFor(staffGroup);
 
         var (start, end) = Bounds(period);
         var records = await _db.StaffPerformanceRecords.AsNoTracking()
@@ -99,7 +102,9 @@ public class StaffScoringService : IStaffScoringService
         return await ComputeBranchCoreAsync(organizationId, branchId, period, policy, parameters, cancellationToken);
     }
 
-    private record StaffRow(Guid Id, string? RoleCode);
+    // The role's STAFF GROUP, not its code. GroupFor takes the group — passing the code made every
+    // group-restricted parameter vanish from every score (see the note on the projection below).
+    private record StaffRow(Guid Id, string? StaffGroup);
 
     /// <summary>
     /// The whole branch's scores, shared between requests (2026-09-17). The portal needs them for every
@@ -141,7 +146,15 @@ public class StaffScoringService : IStaffScoringService
                         && (u.AssignedBranchId == branchId || u.AssignedBranchId == null)
                         && u.Role.Code != RoleCodes.SuperAdmin)
             .OrderBy(u => u.Id)
-            .Select(u => new StaffRow(u.Id, u.Role.Code))
+            // THE ROLE'S StaffGroup, NOT ITS Code. When StaffGroup replaced the StaffGroup enum on 2026-09-22,
+            // IStaffPerformancePolicyService.GroupFor changed from taking a role CODE to taking the role's group —
+            // and these two call sites went on passing the code. So a teacher's group resolved to "teacher",
+            // StaffGroups.Applies("Teaching staff", "teacher") was false, and EVERY parameter with a group
+            // silently vanished from EVERY staff score and breakdown: Lesson Attendance, Lesson Observation,
+            // Exam Supervision, Records & Schemes of Work — the teaching half of the appraisal evidence.
+            // Nothing errored; the breakdown simply came back short, and an appraisal froze the wrong score.
+            // Found by e2e section 14's recovery assertions reading `undefined` where a score should have been.
+            .Select(u => new StaffRow(u.Id, u.Role.StaffGroup))
             .ToListAsync(cancellationToken);
 
         // Every status and rung, deliberately: an annulment or a visibility change moves UpdatedAt even
@@ -157,7 +170,7 @@ public class StaffScoringService : IStaffScoringService
             fingerprint?.Count ?? 0, fingerprint?.Latest.Ticks ?? 0,
             Stamp(JsonSerializer.Serialize(policy)),
             Stamp(string.Join(',', parameters.Select(p => $"{p.Id}:{(p.UpdatedAt ?? p.CreatedAt).Ticks}"))),
-            Stamp(string.Join(',', staff.Select(s => $"{s.Id}:{s.RoleCode}"))));
+            Stamp(string.Join(',', staff.Select(s => $"{s.Id}:{s.StaffGroup}"))));
 
         var lazy = _cache.GetOrCreate(key, entry =>
         {
@@ -203,7 +216,7 @@ public class StaffScoringService : IStaffScoringService
 
         var bySubject = records.ToLookup(r => r.SubjectUserId);
         return staff
-            .Select(s => Build(s.Id, period, policy, parameters, _policy.GroupFor(s.RoleCode), bySubject[s.Id].ToList()))
+            .Select(s => Build(s.Id, period, policy, parameters, _policy.GroupFor(s.StaffGroup), bySubject[s.Id].ToList()))
             .ToList();
     }
 
@@ -220,7 +233,7 @@ public class StaffScoringService : IStaffScoringService
     private record RecordRow(Guid SubjectUserId, Guid ParameterId, DutyOutcome Outcome, int? Points, int? Rating, DateTime OccurredAt);
 
     private StaffScoreDto Build(Guid userId, PerformancePeriodDto period, StaffPerformancePolicyDto policy,
-        List<PerformanceParameter> parameters, StaffGroup group, List<RecordRow> records)
+        List<PerformanceParameter> parameters, string? group, List<RecordRow> records)
     {
         var byParameter = records.ToLookup(r => r.ParameterId);
         var breakdown = new List<ParameterScoreDto>();
@@ -229,7 +242,7 @@ public class StaffScoringService : IStaffScoringService
         foreach (var p in parameters)
         {
             if (p.Kind == ParameterKind.Wellbeing) continue;
-            if (p.AppliesTo != StaffGroup.AllStaff && p.AppliesTo != group) continue;
+            if (!StaffGroups.Applies(p.AppliesToGroup, group)) continue;
 
             var rows = byParameter[p.Id].ToList();
             // An automatic-credit parameter with automatic credit switched off can never gain evidence;
@@ -244,7 +257,7 @@ public class StaffScoringService : IStaffScoringService
                     .SelectMany(q => byParameter[q.Id])
                     .Count(r => r.Outcome is not (DutyOutcome.Absent or DutyOutcome.NotCompleted or DutyOutcome.Excused))
                 : 0;
-            var item = ScoreParameter(p, rows, offsetting);
+            var item = ScoreParameter(p, rows, offsetting, policy);
             breakdown.Add(item);
 
             if (item.Score.HasValue && p.Weight > 0)
@@ -282,7 +295,7 @@ public class StaffScoringService : IStaffScoringService
         };
     }
 
-    private static ParameterScoreDto ScoreParameter(PerformanceParameter p, List<RecordRow> rows, int offsettingRecovered = 0)
+    private static ParameterScoreDto ScoreParameter(PerformanceParameter p, List<RecordRow> rows, int offsettingRecovered, StaffPerformancePolicyDto policy)
     {
         var present = rows.Count(r => r.Outcome is DutyOutcome.Present or DutyOutcome.Completed);
         var late = rows.Count(r => r.Outcome == DutyOutcome.Late);
@@ -302,7 +315,13 @@ public class StaffScoringService : IStaffScoringService
                 var denominator = present + late + absent;
                 if (denominator > 0)
                 {
-                    var numerator = Math.Min(denominator, present + 0.5m * late + recovered);
+                    // What a late arrival is worth is the SCHOOL's decision, not arithmetic: some
+                    // count three lates as an absence, some count late as absent outright. Clamped
+                    // to 0–1 here because a late worth more than a present would score somebody up
+                    // for being late. Excused stays out of the denominator and is NOT configurable —
+                    // it is the MoES "organisational factors do not constitute a performance gap".
+                    var lateCredit = Math.Clamp(policy.LateCreditFraction, 0m, 1m);
+                    var numerator = Math.Min(denominator, present + lateCredit * late + recovered);
                     score = Math.Round(numerator / denominator * 100m, 1);
                 }
                 break;
@@ -323,9 +342,17 @@ public class StaffScoringService : IStaffScoringService
             {
                 if (rows.Count > 0)
                 {
-                    var cap = p.MaxPointsPerPeriod ?? Math.Max(1, p.MaxPointsPerEntry * 10);
+                    // Both dials are the school's: how many entries a term this is expected to
+                    // attract when no explicit cap is set, and where a parameter with evidence sits
+                    // before that evidence pushes it either way.
+                    var perPeriod = Math.Max(1, policy.DefaultEntriesPerPeriod);
+                    var neutral = Math.Clamp(policy.NeutralScore, 0m, 100m);
+                    var cap = p.MaxPointsPerPeriod ?? Math.Max(1, p.MaxPointsPerEntry * perPeriod);
                     var clamped = Math.Clamp(points, -cap, cap);
-                    score = Math.Round(50m + 50m * clamped / cap, 1);
+                    // Asymmetric on purpose: the distance to 100 above neutral and to 0 below it, so
+                    // a school that moves neutral does not get a scale that runs past either end.
+                    var span = clamped >= 0 ? 100m - neutral : neutral;
+                    score = Math.Round(neutral + span * clamped / cap, 1);
                     score = Math.Clamp(score.Value, 0m, 100m);
                 }
                 break;

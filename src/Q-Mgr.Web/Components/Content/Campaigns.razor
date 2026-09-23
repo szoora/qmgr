@@ -86,7 +86,8 @@
                 </QCard>
             }
         </div>
-        <QPager Count="@(FilteredCampaigns.Count())" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="campaigns" />
+        <QPager Count="@(FilteredCampaigns.Count())" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="signage-campaigns"
+                    PageSizeChanged="@(n => { PageSize = n; pageIndex = 0; })" ItemLabel="campaigns" />
     }
 </div>
 
@@ -482,10 +483,10 @@
     // ---- Paging (list-page sweep, plan Phase 2) --------------------------------------------
     // Every row here is a component subtree Blazor Server diffs and ships down the circuit, so
     // a page of them is drawn rather than the whole list.
-    private const int PageSize = 24;
+    private int PageSize = QPagerDefaults.Size;
     private int pageIndex;
-    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (FilteredCampaigns.Count() - 1) / PageSize));
-    private IEnumerable<CampaignDto> PagedCampaigns => FilteredCampaigns.Skip(SafePageIndex * PageSize).Take(PageSize);
+    private int SafePageIndex => QPaging.SafeIndex(pageIndex, FilteredCampaigns.Count(), PageSize);
+    private IEnumerable<CampaignDto> PagedCampaigns => QPaging.Page(FilteredCampaigns, SafePageIndex, PageSize);
 
     protected override async Task OnInitializedAsync()
     {

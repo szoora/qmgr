@@ -13,8 +13,15 @@
 // Run: API=http://127.0.0.1:5001 node scripts/e2e/registration-doors-e2e.mjs
 const API = process.env.API ?? "http://127.0.0.1:5001";
 const BRANCH = process.env.BRANCH ?? "a805ba99-ef62-4685-a1ad-b11b2ea7747f";
-const AD_USER = process.env.SA_USER ?? "e2e.admin.ct@qmgr.local";
-const AD_PASS = process.env.SA_PASS ?? "E2eTeacher!2026";
+// A TENANT ADMINISTRATOR, AND SA_USER MUST NOT REACH IT (fixed 2026-09-22).
+//
+// This read process.env.SA_USER, so it passed standalone and failed inside class-teacher-e2e.sh, which
+// passes SA_USER=superadmin. The organisation this suite then set a join link and allowed domains on was
+// the PLATFORM organization rather than the tenant, so 18.4b compared the hint's answer against the wrong
+// school and reported "Q-Mgr Platform vs Platform Administration" — a mismatch that was entirely the
+// suite's own doing. Same trap as section 17 and the one section 21 already documents.
+const AD_USER = process.env.AD_USER ?? "e2e.admin.ct@qmgr.local";
+const AD_PASS = process.env.AD_PASS ?? "E2eTeacher!2026";
 const RUN = Date.now().toString(36);
 const DOMAIN = `doors-${RUN}.sch.ug`;
 

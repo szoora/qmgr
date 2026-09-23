@@ -81,6 +81,16 @@ public static class NotificationEventKeys
     public const string StaffTimetablePublished = "staff.timetable-published";
     /// <summary>New clashes in a published timetable (timetable masters).</summary>
     public const string StaffTimetableClash = "staff.timetable-clash";
+    /// <summary>
+    /// Somebody who is not a named manager changed a timetable I manage (2026-09-22). The administrator
+    /// override stays — a school cannot be locked out of its own timetable by one person's absence — so the
+    /// abuse concern is answered by never letting it be silent.
+    /// </summary>
+    public const string StaffTimetableOverride = "staff.timetable-override";
+    /// <summary>A timetable I manage is running out and nothing follows it.</summary>
+    public const string StaffTimetableExpiring = "staff.timetable-expiring";
+    /// <summary>A lesson of mine is covered by somebody else, or I am covering one, on one date.</summary>
+    public const string StaffLessonCover = "staff.lesson-cover";
     /// <summary>The Monday lesson analysis for lesson supervisors and report readers (plan §11).</summary>
     public const string StaffLessonAnalysis = "staff.lesson-analysis";
 
@@ -96,6 +106,14 @@ public static class NotificationEventKeys
 
     /// <summary>An action point minuted for me is due, or overdue.</summary>
     public const string StaffMinuteAction = "staff.minute-action";
+
+    // ---- Billing (2026-09-23). Sent only to holders of billing.view — see NotificationAudience. ----
+
+    /// <summary>A payment was received, is being checked, or did not go through.</summary>
+    public const string BillingPayment = "billing.payment";
+
+    /// <summary>A module trial is ending soon, or has ended.</summary>
+    public const string BillingTrial = "billing.trial";
 
     /// <summary>Everything else — system alerts, queue events, and anything sent without a key.</summary>
     public const string General = "general";
@@ -189,6 +207,15 @@ public static class NotificationEventKeys
         new(StaffTimetableClash, "New timetable clashes",
             "For timetable masters: new clashes found in a published timetable.",
             "Lessons", DefaultEmail: true, DefaultSms: false, DefaultPush: true),
+        new(StaffTimetableOverride, "Somebody else changed a timetable I manage",
+            "An administrator changed a timetable you are the appointed master of.",
+            "Lessons", DefaultEmail: true, DefaultSms: false),
+        new(StaffTimetableExpiring, "A timetable I manage is running out",
+            "A published timetable you manage ends soon and nothing follows it.",
+            "Lessons", DefaultEmail: true, DefaultSms: false),
+        new(StaffLessonCover, "Cover for a lesson",
+            "A lesson of yours is covered by a colleague, or you are asked to cover one.",
+            "Lessons", DefaultEmail: true, DefaultSms: false),
         new(StaffLessonAnalysis, "The weekly lesson analysis",
             "Mondays, for lesson supervisors and report readers: last week's lessons taught, missed, recovered and unrecorded for the staff you oversee.",
             "Lessons", DefaultEmail: true, DefaultSms: false),
@@ -201,6 +228,12 @@ public static class NotificationEventKeys
         new(StaffMinuteAction, "An action minuted for me",
             "An action point the minutes gave you, as its date approaches and after it passes.",
             "Staff Performance", DefaultEmail: true, DefaultSms: false, DefaultPush: true),
+        new(BillingPayment, "A payment for this school",
+            "A payment was received, is being checked, or did not go through. Only for people who can open Billing.",
+            "Billing", DefaultEmail: false, DefaultSms: false, Permission: "billing.view"),
+        new(BillingTrial, "A trial is ending",
+            "A module's free trial ends soon, or has ended. Only for people who can open Billing.",
+            "Billing", DefaultEmail: false, DefaultSms: false, Permission: "billing.view"),
         new(General, "Everything else",
             "System alerts and anything not covered above.",
             "General", DefaultEmail: false, DefaultSms: false),
@@ -229,7 +262,15 @@ public record NotificationEventDefinition(
     /// duty about to start, an action point falling due. Digests, points movements and
     /// acknowledgements stay in the bell where they can be read when convenient.</para>
     /// </summary>
-    bool DefaultPush = false);
+    bool DefaultPush = false,
+
+    /// <summary>
+    /// The permission a person needs to be SENT this kind of notification, when it is not everyone's.
+    /// The preferences panel shows the row only to its holders — offering a teacher a switch for
+    /// "a payment for this school" would say such notices exist and invite them to expect one.
+    /// The sender decides the audience; this only keeps the panel honest about it.
+    /// </summary>
+    string? Permission = null);
 
 /// <summary>
 /// One person's channel choices for one event category. The in-app bell is deliberately NOT

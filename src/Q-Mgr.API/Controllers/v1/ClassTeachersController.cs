@@ -37,6 +37,7 @@ public class ClassTeachersController : ControllerBase
     private readonly INotificationHubService _hubService;
     private readonly IStaffScopeService _staffScope;
     private readonly IActivityLogger _activity;
+    private readonly IStaffProfileChangeNotifier _accessChanged;
     private readonly ILogger<ClassTeachersController> _logger;
 
     public ClassTeachersController(
@@ -46,9 +47,11 @@ public class ClassTeachersController : ControllerBase
         INotificationHubService hubService,
         IStaffScopeService staffScope,
         IActivityLogger activity,
+        IStaffProfileChangeNotifier accessChanged,
         ILogger<ClassTeachersController> logger)
     {
         _staffScope = staffScope;
+        _accessChanged = accessChanged;
         _activity = activity;
         _context = context;
         _tenantAccessor = tenantAccessor;
@@ -100,15 +103,21 @@ public class ClassTeachersController : ControllerBase
     /// </summary>
     internal static string NormalizeClassName(string? name) => (name ?? string.Empty).Trim().ToLowerInvariant();
 
+    /// <summary>
+    /// Role AND posts, through <see cref="PostPermissionService.EffectiveCodesAsync"/> — the one home for that
+    /// union. It used to read <c>u.Role.RolePermissions</c> alone, so a derived permission passed this
+    /// endpoint's <c>[RequirePermission]</c> attribute and then failed the in-code check inside it.
+    /// </summary>
     private async Task<bool> HasPermissionAsync(string code)
     {
         if (RoleCodes.IsSuperAdmin(_tenantAccessor.TenantContext?.UserRole)) return true;
         var userId = CurrentUserId();
-        return userId != Guid.Empty && await _context.Users
-            .Where(u => u.Id == userId && u.IsActive)
-            .SelectMany(u => u.Role.RolePermissions)
-            .AnyAsync(rp => rp.Permission.Code == code);
+        if (userId == Guid.Empty) return false;
+        _effectiveCodes ??= await PostPermissionService.EffectiveCodesAsync(_context, userId);
+        return _effectiveCodes.Contains(code);
     }
+
+    private HashSet<string>? _effectiveCodes;
 
     // ---------------------------------------------------------------------
     // Reads
@@ -264,7 +273,7 @@ public class ClassTeachersController : ControllerBase
                 .Select(u => new ClassTeacherOrphanUserDto
                 {
                     UserId = u.Id,
-                    FullName = $"{u.FirstName} {u.LastName}".Trim(),
+                    FullName = PersonNames.Display(organizationId, u.FirstName, u.LastName),
                     Email = u.Email ?? string.Empty
                 })
                 .ToList(),
@@ -584,7 +593,7 @@ public class ClassTeachersController : ControllerBase
             .Where(u => userIds.Contains(u.Id))
             .Select(u => new
             {
-                u.Id, u.FirstName, u.LastName, u.Username, u.Email, u.Phone,
+                u.Id, u.OrganizationId, u.FirstName, u.LastName, u.Username, u.Email, u.Phone,
                 u.AlternatePhone, u.OfficeLocation, u.JobTitle, u.EmployeeNumber,
                 u.IsActive, RoleCode = u.Role.Code
             })
@@ -626,7 +635,7 @@ public class ClassTeachersController : ControllerBase
                 SubjectName = a.SubjectId is { } sid && subjects.TryGetValue(sid, out var subject) ? subject.Name : null,
                 SubjectCode = a.SubjectId is { } sid2 && subjects.TryGetValue(sid2, out var subject2) ? subject2.Code : null,
                 PeriodsPerWeek = a.PeriodsPerWeek,
-                FullName = u == null ? "Unknown" : $"{u.FirstName} {u.LastName}".Trim(),
+                FullName = u == null ? "Unknown" : PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName, u.Username),
                 Username = u?.Username ?? "",
                 Email = u?.Email ?? "",
                 Phone = u?.Phone,
@@ -637,9 +646,9 @@ public class ClassTeachersController : ControllerBase
                 RoleCode = u?.RoleCode ?? "",
                 UserIsActive = u?.IsActive ?? false,
                 AssignedAt = a.AssignedAt,
-                AssignedByName = assignedBy == null ? "Unknown" : $"{assignedBy.FirstName} {assignedBy.LastName}".Trim(),
+                AssignedByName = assignedBy == null ? "Unknown" : PersonNames.Display(assignedBy.OrganizationId, assignedBy.FirstName, assignedBy.LastName, assignedBy.Username),
                 EndedAt = a.EndedAt,
-                EndedByName = endedBy == null ? null : $"{endedBy.FirstName} {endedBy.LastName}".Trim(),
+                EndedByName = endedBy == null ? null : PersonNames.Display(endedBy.OrganizationId, endedBy.FirstName, endedBy.LastName, endedBy.Username),
                 EndReason = a.EndReason,
                 StudentCount = counts.GetValueOrDefault(NormalizeClassName(a.ClassName))
             };
@@ -652,15 +661,29 @@ public class ClassTeachersController : ControllerBase
     /// the assignment has already been committed, so under this project's standing rule it must not
     /// be able to fail the request.
     /// </summary>
+    /// <summary>
+    /// An assignment was made or ended, so this person's access changed.
+    ///
+    /// <para>This used to push a live signal and nothing else, which was right while the assignment
+    /// granted only a row-level SCOPE — the scope is read per request and never cached. Since
+    /// 2026-09-22 the assignment also grants PERMISSIONS (<c>PostPermissionService</c>), and those
+    /// ARE cached for five minutes. <b>Dropping that cache is the load-bearing half</b>: without it
+    /// a teacher removed from a class keeps reading its children's welfare records until the entry
+    /// expires. <c>IStaffProfileChangeNotifier</c> is the one home for both, so this delegates
+    /// rather than calling the hub directly.</para>
+    ///
+    /// <para>Never throws — the assignment is already committed, and a signal that did not land is
+    /// a degraded success rather than a failure.</para>
+    /// </summary>
     private async Task SafePushPermissionsChangedAsync(Guid userId)
     {
         try
         {
-            await _hubService.NotifyPermissionsChangedAsync(userId);
+            await _accessChanged.PostChangedAsync(userId, "class-teacher assignment");
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Could not push a permissions-changed signal to user {UserId}; their client will pick the change up on its next request", userId);
+            _logger.LogWarning(ex, "Could not clear or push the access change for user {UserId}; their client will pick it up within five minutes", userId);
         }
     }
 }

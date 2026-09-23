@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using QMgr.Domain.Common;
 using QMgr.Domain.Enums;
 
@@ -64,6 +65,22 @@ public class Role : BaseAuditableEntity
     /// department is AssignedDepartments. Enforced by StaffScopeService, the only reader.
     /// </summary>
     public StaffDataScope StaffScope { get; set; } = StaffDataScope.Organization;
+
+    /// <summary>
+    /// Which staff group this role's holders belong to, by NAME, from
+    /// <c>StaffPerformancePolicyDto.StaffGroups</c> — teaching, support, or whatever else the school
+    /// recognises. Null falls back to the tenant's first group.
+    ///
+    /// <para><b>Why it lives on the ROLE.</b> Until 2026-09-22 the answer was computed as
+    /// <c>roleCode == "support-staff" ? Support : Teaching</c>, so every custom role a school created
+    /// — and admin, manager and viewer — counted as teaching staff, and since a bulk import defaults
+    /// a missing role to <c>teacher</c>, an imported staff list arrived entirely teaching. The
+    /// bursar, matron and driver were then scored on Lesson Attendance. Putting it here means the
+    /// answer is set where a school already decides what a role IS, beside
+    /// <see cref="DataScope"/> and <see cref="StaffScope"/>.</para>
+    /// </summary>
+    [MaxLength(60)]
+    public string? StaffGroup { get; set; }
 
     /// <summary>
     /// Display order in lists

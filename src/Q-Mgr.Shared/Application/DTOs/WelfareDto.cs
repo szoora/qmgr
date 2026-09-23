@@ -168,6 +168,53 @@ public record CreateWelfareRecordRequest
 }
 
 /// <summary>
+/// One record for a group of students (plan STUDENT_ROSTER_AND_LIST_STANDARD §3, 2026-09-23). The server runs the
+/// SAME single-record creation per student, so every rule a single record obeys (scope, late entry, closed
+/// periods, category rules) still binds. Welfare case type is refused outright (decision L7): a confidential
+/// concern is each child's own. Synchronous, one transaction, at most 200 students.
+/// </summary>
+public record BulkWelfareRecordRequest
+{
+    public List<Guid> StudentIds { get; set; } = new();
+
+    /// <summary>
+    /// False (default, L1): one record per student. True: ONE record — the first student as its subject and the rest
+    /// in AdditionalStudentIds — for a single behaviour incident with several students in it. Behaviour only.
+    /// </summary>
+    public bool OneIncident { get; set; }
+
+    /// <summary>The record written for each student; its StudentId and AdditionalStudentIds are ignored.</summary>
+    public CreateWelfareRecordRequest Record { get; set; } = new();
+}
+
+/// <summary>
+/// The group log's limits and refusals, in ONE place so the dialog and the server say the same words
+/// (plan STUDENT_ROSTER_AND_LIST_STANDARD §3).
+/// </summary>
+public static class WelfareBulkLimits
+{
+    /// <summary>At most this many students in one group log. Synchronous and one transaction, so it is capped.</summary>
+    public const int MaxStudents = 200;
+
+    public const string CapMessage = "A record can be logged for at most 200 students at a time. Select fewer and log the rest separately.";
+
+    /// <summary>Decision L7.</summary>
+    public const string WelfareRefusal = "A welfare concern is logged for one student at a time — it is that child's own record.";
+}
+
+public record BulkWelfareRecordResultDto
+{
+    /// <summary>Records written (1 for one incident; one per student otherwise).</summary>
+    public int Created { get; init; }
+    public int Students { get; init; }
+    public List<Guid> RecordIds { get; init; } = new();
+    /// <summary>Groups the batch on the welfare activity log (one line, not forty).</summary>
+    public Guid BatchId { get; init; }
+    /// <summary>People told, after coalescing — one message each (L5).</summary>
+    public int PeopleAlerted { get; init; }
+}
+
+/// <summary>
 /// The answer to "what was tried before this?", computed for one student in the current term.
 /// Drives the escalation prompt — guidance, never a barrier, because a member of staff dealing
 /// with a real emergency must not be argued with by a form.

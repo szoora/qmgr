@@ -196,7 +196,7 @@ public class StaffPortalController : StaffPerformanceControllerBase
 
             JobTitle = me.JobTitle,
             EmployeeNumber = me.EmployeeNumber,
-            StaffGroup = _policy.GroupFor(me.Role?.Code),
+            StaffGroup = me.Role?.StaffGroup,
             EmploymentStartDate = me.EmploymentStartDate,
             EmploymentEndDate = me.EmploymentEndDate,
             EmploymentType = me.EmploymentType,
@@ -238,7 +238,7 @@ public class StaffPortalController : StaffPerformanceControllerBase
         var mayManageDuties = await HasPermissionAsync(Permissions.StaffDutiesManage);
         var myDepartments = me.DepartmentIds ?? Array.Empty<Guid>();
         var myRole = me.Role?.Code ?? string.Empty;
-        var myGroup = _policy.GroupFor(myRole);
+        var myGroup = _policy.GroupFor(me.Role?.StaffGroup, policy);
 
         // ---- Coming up: duties I am expected at or record, not yet over ----
         // Rota slots have their own card and lessons have My Day, so Coming up is sessions only.
@@ -259,6 +259,13 @@ public class StaffPortalController : StaffPerformanceControllerBase
             .Take(8)
             .ToListAsync();
         var onDuty = await MapDutiesAsync(rotaSlots, me.Id, organizationId, branchId, mayManageDuties);
+
+        // ---- Upcoming events (calendar plan §9): the next ten of MY events within 30 days, from the branch's today ----
+        // Personal, as My School Day is: staff-audience or mine to run, never the calendar-keeper's whole calendar.
+        var branchZone = AppointmentScheduling.ResolveTimeZone(await Db.Branches.Where(b => b.Id == branchId).Select(b => b.Timezone).FirstOrDefaultAsync());
+        var branchToday = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(now, branchZone));
+        var upcomingEvents = await SchoolEventQueries.PersonalAsync(Db, organizationId, branchId, me.Id, myDepartments,
+            branchToday, branchToday.AddDays(30), await HasPermissionAsync(Permissions.CalendarManage), take: 10);
 
         // ---- Reports to write (plan §4.3): my started, unwritten duty reports on slots under way or recently over ----
         var myRotaSlots = await Db.StaffDuties.AsNoTracking()
@@ -529,7 +536,8 @@ public class StaffPortalController : StaffPerformanceControllerBase
             LeaderboardMode = policy.LeaderboardMode,
             DepartmentBoard = departmentBoard,
             Leaderboard = leaderboard,
-            Onboarding = await BuildOnboardingChecklistAsync(me, organizationId)
+            Onboarding = await BuildOnboardingChecklistAsync(me, organizationId),
+            UpcomingEvents = upcomingEvents
         });
     }
 
@@ -600,17 +608,19 @@ public class StaffPortalController : StaffPerformanceControllerBase
         var self = await ResolveSelfAsync();
         if (self.Error != null) return self.Error;
 
+        var byFamily = PersonNames.SortsByFamilyName(self.OrganizationId);
         var colleagues = await Db.Users.AsNoTracking()
             .Where(u => u.OrganizationId == self.OrganizationId && u.IsActive && u.Id != self.User!.Id && u.Role.Code != RoleCodes.SuperAdmin)
-            .OrderBy(u => u.FirstName).ThenBy(u => u.LastName)
-            .Select(u => new { u.Id, u.FirstName, u.LastName, u.Username, u.JobTitle, u.DepartmentIds })
+            .OrderBy(u => byFamily ? u.LastName : u.FirstName)
+            .ThenBy(u => byFamily ? u.FirstName : u.LastName)
+            .Select(u => new { u.Id, u.OrganizationId, u.FirstName, u.LastName, u.Username, u.JobTitle, u.DepartmentIds })
             .ToListAsync();
         var departmentNames = await DepartmentNamesAsync(self.OrganizationId);
 
         return Ok(colleagues.Select(c => new StaffColleagueDto
         {
             UserId = c.Id,
-            FullName = $"{c.FirstName} {c.LastName}".Trim() is { Length: > 0 } n ? n : c.Username,
+            FullName = PersonNames.Display(c.OrganizationId, c.FirstName, c.LastName, c.Username),
             JobTitle = c.JobTitle,
             DepartmentNames = c.DepartmentIds == null || c.DepartmentIds.Length == 0
                 ? null
@@ -733,7 +743,7 @@ public class StaffPortalController : StaffPerformanceControllerBase
         var me = self.User!;
         var now = DateTime.UtcNow;
 
-        var notice = await NoticesForMeQuery(self.OrganizationId, self.BranchId, me.Id, me.DepartmentIds ?? Array.Empty<Guid>(), me.Role?.Code ?? string.Empty, _policy.GroupFor(me.Role?.Code), now)
+        var notice = await NoticesForMeQuery(self.OrganizationId, self.BranchId, me.Id, me.DepartmentIds ?? Array.Empty<Guid>(), me.Role?.Code ?? string.Empty, me.Role?.StaffGroup, now)
             .FirstOrDefaultAsync(n => n.Id == id);
         if (notice == null) return NotFoundProblem("Notice not found");
 
@@ -807,14 +817,14 @@ public class StaffPortalController : StaffPerformanceControllerBase
     /// SQL — the fan-out decides who is TOLD, this decides who can SEE, and the two must agree or a
     /// person is notified about a notice their portal then hides.
     /// </summary>
-    private IQueryable<StaffNotice> NoticesForMeQuery(Guid organizationId, Guid branchId, Guid me, Guid[] myDepartments, string myRole, StaffGroup myGroup, DateTime now)
+    private IQueryable<StaffNotice> NoticesForMeQuery(Guid organizationId, Guid branchId, Guid me, Guid[] myDepartments, string myRole, string? myGroup, DateTime now)
         => Db.StaffNotices
             .Where(n => n.OrganizationId == organizationId && n.IsActive
                         && n.PublishAt <= now && (n.ExpiresAt == null || n.ExpiresAt > now)
                         && (n.BranchId == null || n.BranchId == branchId)
                         && (n.AudienceDepartmentIds == null || n.AudienceDepartmentIds.Length == 0 || n.AudienceDepartmentIds.Any(id => myDepartments.Contains(id)))
                         && (n.AudienceRoleCodes == null || n.AudienceRoleCodes.Length == 0 || n.AudienceRoleCodes.Contains(myRole))
-                        && (n.AudienceStaffGroup == null || n.AudienceStaffGroup == StaffGroup.AllStaff || n.AudienceStaffGroup == myGroup));
+                        && (n.AudienceStaffGroup == null || n.AudienceStaffGroup == myGroup));
 
     private async Task<List<StaffNoticeDto>> MapNoticesAsync(IReadOnlyCollection<StaffNotice> notices, Guid me)
     {

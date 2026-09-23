@@ -107,11 +107,78 @@ public static class BranchSettingsLock
 /// <para><b>Take it inside the transaction and re-read the blob under it</b> — acquiring it and then
 /// using a copy of the settings fetched beforehand reintroduces exactly the race it prevents.</para>
 /// </summary>
+/// <para><b>Finished 2026-09-23.</b> The 2026-09-18 note above said this was "the one key they all
+/// share" — and one writer took it. The staff policy and onboarding kept their own
+/// <c>staff-policy:</c> key, and the industry features, feature overrides, visitor retention and
+/// module-billing writers took no lock at all, so any of them could silently drop another's key. Every
+/// writer now goes through <see cref="MutateAsync"/>, which is the only way this column is written.
+/// PostgreSQL advisory locks are re-entrant within a session, so a caller that already holds this lock
+/// (the staff policy editor, around a read-modify-write of its own key) may call MutateAsync inside it.</para>
 public static class OrganizationSettingsLock
 {
+    public static string Key(Guid organizationId) => $"organization-settings:{organizationId}";
+
     public static Task AcquireAsync(QMgrDbContext db, Guid organizationId, CancellationToken ct = default)
     {
-        var lockKey = $"organization-settings:{organizationId}";
+        var lockKey = Key(organizationId);
         return db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtext({lockKey})::bigint)", ct);
+    }
+
+    /// <summary>
+    /// THE ONE WAY <c>Organization.Settings</c> IS WRITTEN. Takes the lock, re-reads the organization
+    /// under it (reloading a tracked copy rather than trusting it), hands it to <paramref name="mutate"/>
+    /// and saves only when that returns true. Joins a transaction the caller already has; otherwise opens
+    /// one through the execution strategy, as every user transaction here must.
+    ///
+    /// <para>Change other columns of the organization INSIDE the mutation, not before calling: the
+    /// re-read under the lock discards whatever the caller had changed on a tracked copy.</para>
+    /// </summary>
+    /// <summary>
+    /// <paramref name="json"/> with one top-level key set to <paramref name="value"/> (removed when it is
+    /// null), every other key carried across untouched. The merge each writer used to hand-roll.
+    /// </summary>
+    public static string WithKey(string? json, string key, object? value)
+    {
+        Dictionary<string, JsonElement> root;
+        try
+        {
+            root = string.IsNullOrWhiteSpace(json)
+                ? new Dictionary<string, JsonElement>()
+                : JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json) ?? new Dictionary<string, JsonElement>();
+        }
+        catch (JsonException) { root = new Dictionary<string, JsonElement>(); }
+
+        if (value == null) root.Remove(key);
+        else root[key] = JsonSerializer.SerializeToElement(value);
+        return JsonSerializer.Serialize(root);
+    }
+
+    /// <returns>False when the organization does not exist.</returns>
+    public static async Task<bool> MutateAsync(QMgrDbContext db, Guid organizationId,
+        Func<QMgr.Domain.Entities.Organization.Organization, bool> mutate, CancellationToken ct = default)
+    {
+        async Task<bool> Body()
+        {
+            await AcquireAsync(db, organizationId, ct);
+
+            var org = db.Organizations.Local.FirstOrDefault(o => o.Id == organizationId);
+            if (org != null) await db.Entry(org).ReloadAsync(ct);
+            else org = await db.Organizations.IgnoreQueryFilters().FirstOrDefaultAsync(o => o.Id == organizationId, ct);
+            if (org == null) return false;
+
+            if (mutate(org)) await db.SaveChangesAsync(ct);
+            return true;
+        }
+
+        if (db.Database.CurrentTransaction != null) return await Body();
+
+        var strategy = db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            var found = await Body();
+            await tx.CommitAsync(ct);
+            return found;
+        });
     }
 }

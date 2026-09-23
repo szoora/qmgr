@@ -32,7 +32,8 @@ public static class StaffPerformanceMapping
         public static readonly NameLookup Empty = new(new Dictionary<Guid, string>());
     }
 
-    public static string FullName(User u) => $"{u.FirstName} {u.LastName}".Trim() is { Length: > 0 } n ? n : u.Username;
+    /// <summary>The person's name in their organisation's order, or the username when both halves are blank. See PersonNames.</summary>
+    public static string FullName(User u) => PersonNames.Display(u);
 
     // ---- Structure -----------------------------------------------------------------------------
 
@@ -58,6 +59,7 @@ public static class StaffPerformanceMapping
         {
             UserId = u.Id,
             FullName = FullName(u),
+            SortName = PersonNames.SortKey(u),
             Email = u.Email ?? string.Empty,
             Username = u.Username,
             RoleCode = u.Role?.Code ?? string.Empty,
@@ -71,7 +73,7 @@ public static class StaffPerformanceMapping
             DepartmentNames = deptIds.Select(id => departmentNames.TryGetValue(id, out var n) ? n : null).Where(n => n != null).Select(n => n!).ToList(),
             LineManagerUserId = u.LineManagerUserId,
             LineManagerName = names.Optional(u.LineManagerUserId),
-            StaffGroup = RoleCodes.IsSupportStaff(u.Role?.Code) ? StaffGroup.SupportStaff : StaffGroup.TeachingStaff,
+            StaffGroup = u.Role?.StaffGroup,
             IsActive = u.IsActive,
             CurrentBand = score?.Band,
             CurrentBandName = score?.BandName,
@@ -88,7 +90,7 @@ public static class StaffPerformanceMapping
         Name = p.Name,
         Description = p.Description,
         Kind = p.Kind,
-        AppliesTo = p.AppliesTo,
+        AppliesToGroup = p.AppliesToGroup,
         DefaultPoints = p.DefaultPoints,
         MaxPointsPerEntry = p.MaxPointsPerEntry,
         MaxPointsPerPeriod = p.MaxPointsPerPeriod,
@@ -109,7 +111,7 @@ public static class StaffPerformanceMapping
         p.Name = r.Name.Trim();
         p.Description = string.IsNullOrWhiteSpace(r.Description) ? null : r.Description.Trim();
         p.Kind = r.Kind;
-        p.AppliesTo = r.AppliesTo;
+        p.AppliesToGroup = string.IsNullOrWhiteSpace(r.AppliesToGroup) ? null : r.AppliesToGroup.Trim();
         // Wellbeing is never scored: no points, no weight, whatever the client sent.
         p.DefaultPoints = r.Kind == ParameterKind.Wellbeing ? null : r.DefaultPoints;
         p.MaxPointsPerEntry = r.Kind == ParameterKind.Wellbeing ? 0 : Math.Max(0, r.MaxPointsPerEntry);

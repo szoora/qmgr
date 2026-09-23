@@ -77,7 +77,8 @@
                 </div>
             }
         </div>
-        <QPager Count="@Visible.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="actions" />
+        <QPager Count="@Visible.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="welfare-open-actions"
+                    PageSizeChanged="@(n => { PageSize = n; pageIndex = 0; })" ItemLabel="actions" />
         }
     }
 </div>
@@ -100,7 +101,7 @@
 </style>
 
 @code {
-    private const int PageSize = 25;
+    private int PageSize = QPagerDefaults.Size;
 
     private Guid branchId;
     private bool isLoading = true;
@@ -141,8 +142,8 @@
         }
     }
 
-    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (Visible.Count - 1) / PageSize));
-    private IEnumerable<WelfareRecordDto> Paged => Visible.Skip(SafePageIndex * PageSize).Take(PageSize);
+    private int SafePageIndex => QPaging.SafeIndex(pageIndex, Visible.Count, PageSize);
+    private IEnumerable<WelfareRecordDto> Paged => QPaging.Page(Visible, SafePageIndex, PageSize);
 
     private void SetFilter(string key) { filter = key; pageIndex = 0; }
     private void SetSearch(string value) { search = value ?? string.Empty; pageIndex = 0; }

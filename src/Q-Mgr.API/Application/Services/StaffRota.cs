@@ -126,7 +126,6 @@ public static class StaffRota
         {
             Name = TeacherOnDutyParameter,
             Kind = ParameterKind.Duty,
-            AppliesTo = StaffGroup.AllStaff,
             DefaultPoints = 2,
             MaxPointsPerEntry = 2,
             Weight = 1,

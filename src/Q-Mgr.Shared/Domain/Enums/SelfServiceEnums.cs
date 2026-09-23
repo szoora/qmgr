@@ -34,8 +34,24 @@ public enum ConfigRequestKind
     /// self-approved, whatever the requester holds.
     /// </summary>
     ClassAssignment = 1,
-    /// <summary>Swap two placed lessons between two teachers. Needs the other teacher AND a decider.</summary>
-    SlotSwap = 2
+    /// <summary>
+    /// Swap two placed lessons between two teachers. Needs the other teacher AND a decider.
+    ///
+    /// <see cref="StaffConfigRequest.EffectiveOn"/> decides which kind of swap it is: null is PERMANENT
+    /// (applied by re-publishing the version with the two slots traded), a date is ONE-OFF (applied as
+    /// two <see cref="LessonExceptionKind.Cover"/> exceptions, one on each teacher's own date).
+    /// </summary>
+    SlotSwap = 2,
+    /// <summary>
+    /// Ask a named colleague to take ONE of my lessons on ONE date, with nothing in return — the funeral,
+    /// the hospital appointment, the course. Needs that colleague's agreement and a decider, exactly as a
+    /// swap does, because it hands a class to somebody for a period.
+    ///
+    /// It grants no access: cover is a duty, and the covering teacher gets the register for that lesson
+    /// and nothing else. A colleague who does not already teach the class still may not read the children's
+    /// records, which is why this is not a ClassAssignment in disguise.
+    /// </summary>
+    LessonCover = 3
 }
 
 public enum ConfigRequestState

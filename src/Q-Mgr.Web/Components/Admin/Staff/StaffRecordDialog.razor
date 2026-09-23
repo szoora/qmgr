@@ -271,7 +271,7 @@
             var group = Subject?.StaffGroup;
             return allParameters
                 .Where(p => p.IsActive && p.Kind != ParameterKind.Recognition && !p.IsSystemSource)
-                .Where(p => group == null || p.AppliesTo == StaffGroup.AllStaff || p.AppliesTo == group)
+                .Where(p => group == null || StaffGroups.Applies(p.AppliesToGroup, group))
                 .OrderBy(p => p.SortOrder).ThenBy(p => p.Name)
                 .ToList();
         }

@@ -1,3 +1,5 @@
+using QMgr.API.Application.Services;
+using QMgr.Infrastructure.Services;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
@@ -272,6 +274,52 @@ public class OrganizationsController : ControllerBase
         _logger.LogInformation("Display theme updated to '{DisplayTheme}' for organization {OrganizationId}", org.DisplayTheme, organizationId);
 
         return Ok(ToDto(org));
+    }
+
+    /// <summary>
+    /// How this organisation writes a person's name (PeopleNameSettingsDto). Readable by everyone
+    /// signed in to the organisation: the Web writes a name itself in one or two places (an import
+    /// preview), and a name written in the wrong order there is the inconsistency the setting exists
+    /// to remove. Nothing here is sensitive — it is two display choices.
+    /// </summary>
+    [HttpGet("organizations/{organizationId:guid}/people-names")]
+    [ProducesResponseType(typeof(PeopleNameSettingsDto), StatusCodes.Status200OK)]
+    public IActionResult GetPeopleNames(Guid organizationId)
+    {
+        var ownershipError = VerifyOrganizationOwnership(organizationId);
+        if (ownershipError != null) return ownershipError;
+        return Ok(PersonNames.For(organizationId));
+    }
+
+    /// <summary>
+    /// Saves the name order (2026-09-23). Through the one writer of Organization.Settings, and the
+    /// cache is dropped so the very next name the API writes follows the choice.
+    /// </summary>
+    [HttpPut("organizations/{organizationId:guid}/people-names")]
+    [RequirePermission(Permissions.SettingsEdit)]
+    [ProducesResponseType(typeof(PeopleNameSettingsDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> UpdatePeopleNames(Guid organizationId, [FromBody] PeopleNameSettingsDto request,
+        [FromServices] PersonNameSettingsCache names)
+    {
+        var ownershipError = VerifyOrganizationOwnership(organizationId);
+        if (ownershipError != null) return ownershipError;
+
+        if (!Enum.IsDefined(request.DisplayOrder) || (request.SortOrder is { } so && !Enum.IsDefined(so)))
+            return BadRequest(new ProblemDetails { Title = "Unknown name order", Status = StatusCodes.Status400BadRequest });
+
+        var stored = JsonSerializer.SerializeToElement(request, PersonNames.SettingsJson);
+        var found = await OrganizationSettingsLock.MutateAsync(_dbContext, organizationId, org =>
+        {
+            org.Settings = OrganizationSettingsLock.WithKey(org.Settings, PersonNames.SettingsKey, stored);
+            return true;
+        });
+        if (!found) return NotFound();
+
+        names.Forget(organizationId);
+        _logger.LogInformation("Name order set to {Display} (sorted by {Sort}) for organization {OrganizationId}",
+            request.DisplayOrder, request.EffectiveSortOrder, organizationId);
+        return Ok(PersonNames.For(organizationId));
     }
 
     // =========================================================================================
@@ -578,30 +626,22 @@ public class OrganizationsController : ControllerBase
         var ownershipError = VerifyOrganizationOwnership(organizationId);
         if (ownershipError != null) return ownershipError;
 
-        var org = await _dbContext.Organizations.FindAsync(organizationId);
-        if (org == null)
+        // Through the one writer of Organization.Settings (2026-09-23): this read-modify-wrote the
+        // whole blob with no lock, so a save here could drop a key another writer set a moment before.
+        var found = await OrganizationSettingsLock.MutateAsync(_dbContext, organizationId, org =>
+        {
+            org.IndustryType = request.IndustryType;
+            org.Settings = OrganizationSettingsLock.WithKey(org.Settings, "IndustryFeatures", request.Features);
+            return true;
+        });
+        if (!found)
             return NotFound();
 
-        org.IndustryType = request.IndustryType;
-
-        var settingsRoot = string.IsNullOrEmpty(org.Settings)
-            ? new Dictionary<string, JsonElement>()
-            : JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(org.Settings) ?? new();
-        var merged = new Dictionary<string, object>();
-        foreach (var (key, value) in settingsRoot)
-        {
-            merged[key] = value;
-        }
-        merged["IndustryFeatures"] = request.Features;
-        org.Settings = JsonSerializer.Serialize(merged);
-
-        await _dbContext.SaveChangesAsync();
-
-        _logger.LogInformation("Industry settings updated to '{IndustryType}' for organization {OrganizationId}", org.IndustryType, organizationId);
+        _logger.LogInformation("Industry settings updated to '{IndustryType}' for organization {OrganizationId}", request.IndustryType, organizationId);
 
         return Ok(new IndustrySettingsDto
         {
-            IndustryType = org.IndustryType,
+            IndustryType = request.IndustryType,
             Features = request.Features
         });
     }

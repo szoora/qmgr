@@ -1,3 +1,4 @@
+using QMgr.API.Application.Services;
 using System.Globalization;
 using System.Text.Json;
 using Hangfire;
@@ -128,11 +129,16 @@ public class WelfareController : ControllerBase
         var userId = CurrentUserId();
         if (userId == Guid.Empty) return false;
 
-        return await _context.Users
-            .Where(u => u.Id == userId && u.IsActive)
-            .SelectMany(u => u.Role.RolePermissions)
-            .AnyAsync(rp => rp.Permission.Code == code);
+        // Role AND posts, through PostPermissionService.EffectiveCodesAsync — the one home for that union, and
+        // THE MOST IMPORTANT OF THE FOURTEEN readers that had to move: the whole derived-post feature exists so
+        // that being the class teacher of S4B confers welfare.view, and this is the gate the welfare endpoints
+        // ask. Reading the role alone meant the attribute let a class teacher in and the checks inside then
+        // behaved as though they held nothing.
+        _effectiveCodes ??= await PostPermissionService.EffectiveCodesAsync(_context, userId);
+        return _effectiveCodes.Contains(code);
     }
+
+    private HashSet<string>? _effectiveCodes;
 
     private async Task<bool> CanViewConfidentialAsync()
         => _canViewConfidential ??= await HasPermissionAsync(Permissions.WelfareConfidentialView);
@@ -517,35 +523,243 @@ public class WelfareController : ControllerBase
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
-        // --- Identity & ownership ---
-        var student = await _context.Students.FirstOrDefaultAsync(s => s.Id == request.StudentId && s.BranchId == branchId && s.IsActive);
-        // A class-scoped caller may only file against a student they hold. Reads were scoped from
-        // Phase 77 but this WRITE was not, so a form tutor could log a safeguarding record against
-        // any child in the school by ID -- and learn their name from the response. Deliberately the
-        // SAME message as an unknown student: an out-of-scope child must read as one that is not
-        // there, or the error itself confirms the student exists.
-        // REPORTING A CONCERN IS NOT READING ONE (duty rota plan §5.3, CPOMS's model): a SUBJECT teacher may
-        // log a concern about a student they teach when the tenant allows it (default on). The pastoral scope
-        // still governs everything they could READ; the author rule on GetRecord gives back only this record.
-        var concernByTeachingTier = false;
-        if (student != null && !await _scope.CanSeeStudentAsync(branchId, student.Id))
+        // Every rule a record obeys lives in BuildRecordAsync, which the group log calls too — so a
+        // rule added here binds both, and neither can drift into a second copy.
+        var (error, built) = await BuildRecordAsync(branchId, request, acknowledgeLateEntry);
+        if (error != null) return error;
+
+        var record = built!.Record;
+        _context.WelfareRecords.Add(record);
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation("Welfare record {RecordId} ({CaseType}/{Category}, {Status}) logged for student {StudentId} in branch {BranchId}",
+            record.Id, record.CaseType, built.Category.Name, record.Status, built.Student.Id, branchId);
+
+        // Tell the class teacher. AFTER the commit, and by a service that never throws — this
+        // project's standing rule is that a side effect running after a committed transaction must
+        // not be able to fail the request (the ProtectSystem=strict badge-token bug). A draft
+        // alerts nobody; so does anything above Standard visibility. Both are decided inside.
+        await _alerts.NotifyRecordLoggedAsync(record.Id);
+
+        // Staff Performance system award (policy-gated, off by default; never throws). A draft earns
+        // nothing — FinalizeRecord credits it when it becomes real.
+        if (record.Status != WelfareStatus.Draft)
+            await _systemAwards.CreditAsync(record.OrganizationId, branchId, record.ReportedByUserId, StaffSystemAwards.WelfareRecordFiled,
+                $"Filed a {built.Category.Name} record. Credited automatically.");
+
+        record.Student = built.Student;
+        record.Category = built.Category;
+        var userNames = await ResolveUserNamesAsync(new[] { record });
+        var studentNames = await ResolveStudentNamesAsync(new[] { record });
+        return CreatedAtAction(nameof(GetRecord), new { branchId, recordId = record.Id }, MapToDto(record, userNames, new Dictionary<Guid, string>(), studentNames));
+    }
+
+    private const string AdditionalStudentsNotFoundTitle = "One or more additional students not found";
+
+    /// <summary>
+    /// Logs the same Achievement or Behaviour record for a group of students — a merit for a whole class, or a
+    /// behaviour incident several students were part of (plan STUDENT_ROSTER_AND_LIST_STANDARD §3).
+    ///
+    /// The rules, each deliberate:
+    /// <list type="bullet">
+    /// <item>A WELFARE CONCERN IS NEVER BULK (decision L7): a confidential concern is that child's own record.</item>
+    /// <item>SCOPE, THE WHOLE BATCH: every student is checked exactly as the single create checks its student,
+    /// and one that is unknown or out of the caller's scope refuses the batch with the SAME unknown-student
+    /// wording — a distinct "not your class" message would confirm the child is on the roll.</item>
+    /// <item>SYNCHRONOUS, ONE TRANSACTION, AT MOST 200. The Hangfire batch path refuses a scoped caller because
+    /// the scope service does not exist in a worker; this runs in the request, so a class teacher can log a merit
+    /// for their own class, and it is all or nothing.</item>
+    /// <item>THE SAME CREATION CODE per record (<see cref="BuildRecordAsync"/>): late entry, category, points,
+    /// visibility and the rest bind exactly as they do for one.</item>
+    /// <item>ALERTS COALESCED (L5): one message per recipient, never forty. No guardian message — a category
+    /// carries no "tell the guardians" setting, and the single create sends none either.</item>
+    /// </list>
+    /// </summary>
+    [HttpPost("branches/{branchId:guid}/welfare-records/bulk")]
+    [RequirePermission(Permissions.WelfareCreate)]
+    [ProducesResponseType(typeof(BulkWelfareRecordResultDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> CreateRecordsBulk(Guid branchId, [FromBody] BulkWelfareRecordRequest request, [FromQuery] bool acknowledgeLateEntry = false)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        if (request?.Record == null)
+            return FieldProblem("Record", "Describe the record to log.");
+
+        var ids = (request.StudentIds ?? new List<Guid>()).Where(id => id != Guid.Empty).Distinct().ToList();
+        if (ids.Count == 0)
+            return FieldProblem("StudentIds", "Choose at least one student.");
+        if (ids.Count > WelfareBulkLimits.MaxStudents)
+            return FieldProblem("StudentIds", WelfareBulkLimits.CapMessage);
+
+        var caseType = request.Record.CaseType;
+        if (caseType == WelfareCaseType.Welfare)
+            return FieldProblem("Record.CaseType", WelfareBulkLimits.WelfareRefusal);
+        if (caseType != WelfareCaseType.Achievement && caseType != WelfareCaseType.Behavior)
+            return FieldProblem("Record.CaseType", "Only an achievement or a behaviour record can be logged for a group.");
+        if (request.OneIncident && caseType != WelfareCaseType.Behavior)
+            return FieldProblem("OneIncident", "One incident involving all of them is for a behaviour record only.");
+        if (request.Record.SaveAsDraft)
+            return FieldProblem("Record.SaveAsDraft", "A record for a group cannot be saved as a draft.");
+
+        // --- SCOPE, THE WHOLE BATCH, BEFORE ANYTHING ELSE ---
+        var resolved = new List<(Student Student, bool ByTeachingTier)>(ids.Count);
+        foreach (var id in ids)
         {
-            concernByTeachingTier = await _scope.GetTierAsync(branchId, student.Id) == StudentAccessTier.Teaching
-                && (await _staffPolicy.GetAsync(await ResolveOrganizationIdAsync(branchId))).SubjectTeachersMayLogConcerns;
-            if (!concernByTeachingTier) student = null;
+            var (student, byTeachingTier) = await ResolveStudentForWriteAsync(branchId, id);
+            if (student == null) return StudentNotFound();
+            resolved.Add((student, byTeachingTier));
         }
-        if (student == null)
-            return BadRequest(new ProblemDetails { Title = "Student not found", Detail = "The selected student does not exist in this branch, or is no longer active.", Status = StatusCodes.Status400BadRequest });
+
+        // --- Build every record through the one creation path. Nothing is written until all have passed. ---
+        var built = new List<BuiltWelfareRecord>();
+        if (request.OneIncident)
+        {
+            var incident = request.Record with { StudentId = ids[0], AdditionalStudentIds = ids.Skip(1).ToList() };
+            var (error, one) = await BuildRecordAsync(branchId, incident, acknowledgeLateEntry, resolved[0]);
+            // The linked-students check words its refusal differently; every student already passed the
+            // primary check above, so any refusal about who is in the incident reads as the unknown student.
+            if (error is ObjectResult { Value: ProblemDetails { Title: AdditionalStudentsNotFoundTitle } }) return StudentNotFound();
+            if (error != null) return error;
+            built.Add(one!);
+        }
+        else
+        {
+            foreach (var r in resolved)
+            {
+                var single = request.Record with { StudentId = r.Student.Id, AdditionalStudentIds = new List<Guid>() };
+                var (error, one) = await BuildRecordAsync(branchId, single, acknowledgeLateEntry, r);
+                if (error != null) return error;
+                built.Add(one!);
+            }
+        }
+
+        // --- One transaction, through the execution strategy: all or nothing. ---
+        var strategy = _context.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _context.Database.BeginTransactionAsync();
+            foreach (var b in built)
+                if (_context.Entry(b.Record).State == EntityState.Detached)
+                    _context.WelfareRecords.Add(b.Record);
+            await _context.SaveChangesAsync();
+            await tx.CommitAsync();
+        });
+
+        var batchId = Guid.NewGuid();
+        var category = built[0].Category;
+        var organizationId = built[0].Record.OrganizationId;
+        var recordIds = built.Select(b => b.Record.Id).ToList();
+
+        _logger.LogInformation("Welfare batch {BatchId}: {Records} {CaseType}/{Category} record(s) logged for {Students} student(s) in branch {BranchId}",
+            batchId, recordIds.Count, caseType, category.Name, ids.Count, branchId);
+
+        // --- After the commit: nothing below may fail the request. ---
+        var peopleAlerted = await _alerts.NotifyRecordsLoggedAsync(recordIds);
+
+        // ONE award for ONE act of filing. Crediting per record would let a single press on a class of forty
+        // move a member of staff's score forty times, which is a lever nobody should be handed.
+        await _systemAwards.CreditAsync(organizationId, branchId, CurrentUserId(), StaffSystemAwards.WelfareRecordFiled,
+            $"Filed {category.Name} for a group of {ids.Count}. Credited automatically.");
+
+        // ONE line on the welfare activity log for the batch, at the highest rung of what was written, naming no
+        // child — who was in it is in the DetailJson, which no endpoint returns.
+        var rung = built.Max(b => b.Record.Visibility);
+        var kind = caseType == WelfareCaseType.Behavior ? "behaviour" : "achievement";
+        var what = request.OneIncident
+            ? $"one {kind} incident ({category.Name}) involving {ids.Count} students"
+            : $"{category.Name} ({kind}) for {ids.Count} student{(ids.Count == 1 ? "" : "s")}";
+        await _activity.RecordAsync(WelfareActivityActions.RecordsBulkLogged, "welfare-record-batch", batchId, null,
+            "Logged " + what,
+            new { BatchId = batchId, CaseType = caseType.ToString(), Category = category.Name, request.OneIncident, Students = ids, RecordIds = recordIds },
+            branchId, organizationId, visibility: rung);
+
+        return StatusCode(StatusCodes.Status201Created, new BulkWelfareRecordResultDto
+        {
+            Created = recordIds.Count,
+            Students = ids.Count,
+            RecordIds = recordIds,
+            BatchId = batchId,
+            PeopleAlerted = peopleAlerted
+        });
+    }
+
+    private static IActionResult FieldProblem(string field, string message)
+        => new BadRequestObjectResult(new ValidationProblemDetails(new Dictionary<string, string[]> { [field] = new[] { message } })
+        {
+            Title = message,
+            Status = StatusCodes.Status400BadRequest
+        });
+
+    /// <summary>
+    /// The ONE refusal for a student the caller may not write about. Deliberately the same for an unknown
+    /// student and an out-of-scope one: an out-of-scope child must read as one that is not there, or the
+    /// error itself confirms the student exists.
+    /// </summary>
+    private static IActionResult StudentNotFound()
+        => new BadRequestObjectResult(new ProblemDetails
+        {
+            Title = "Student not found",
+            Detail = "The selected student does not exist in this branch, or is no longer active.",
+            Status = StatusCodes.Status400BadRequest
+        });
+
+    /// <summary>A record that has passed every rule and has not been saved.</summary>
+    private sealed record BuiltWelfareRecord(WelfareRecord Record, Student Student, WelfareCategory Category);
+
+    private bool? _subjectTeachersMayLogConcerns;
+
+    /// <summary>
+    /// The student a record may be filed against, or null. A class-scoped caller may only file against a
+    /// student they hold. Reads were scoped from Phase 77 but the single create's WRITE was not, so a form
+    /// tutor could log a safeguarding record against any child in the school by ID — and learn their name
+    /// from the response.
+    /// REPORTING A CONCERN IS NOT READING ONE (duty rota plan §5.3, CPOMS's model): a SUBJECT teacher may log
+    /// a concern about a student they teach when the tenant allows it (default on). The pastoral scope still
+    /// governs everything they could READ; the author rule on GetRecord gives back only this record.
+    /// </summary>
+    private async Task<(Student? Student, bool ByTeachingTier)> ResolveStudentForWriteAsync(Guid branchId, Guid studentId)
+    {
+        var student = await _context.Students.FirstOrDefaultAsync(s => s.Id == studentId && s.BranchId == branchId && s.IsActive);
+        if (student == null) return (null, false);
+        if (await _scope.CanSeeStudentAsync(branchId, student.Id)) return (student, false);
+
+        if (await _scope.GetTierAsync(branchId, student.Id) != StudentAccessTier.Teaching) return (null, false);
+        _subjectTeachersMayLogConcerns ??= (await _staffPolicy.GetAsync(await ResolveOrganizationIdAsync(branchId))).SubjectTeachersMayLogConcerns;
+        return _subjectTeachersMayLogConcerns.Value ? (student, true) : (null, false);
+    }
+
+    /// <summary>
+    /// EVERY RULE ONE WELFARE RECORD OBEYS, in one place: the student and its scope, the category, the linked
+    /// students, the content, late entry, points, the graduated response, visibility — and the entity built from
+    /// them. Writes nothing. The single create and the group log both call it, so a rule added here binds both.
+    /// <paramref name="resolvedStudent"/> lets a caller that has already run <see cref="ResolveStudentForWriteAsync"/>
+    /// for this student skip running it twice.
+    /// </summary>
+    private async Task<(IActionResult? Error, BuiltWelfareRecord? Built)> BuildRecordAsync(
+        Guid branchId, CreateWelfareRecordRequest request, bool acknowledgeLateEntry,
+        (Student Student, bool ByTeachingTier)? resolvedStudent = null)
+    {
+        static IActionResult Fail(string title, string? detail = null)
+            => new BadRequestObjectResult(new ProblemDetails { Title = title, Detail = detail, Status = StatusCodes.Status400BadRequest });
+
+        // --- Identity & ownership ---
+        Student? student;
+        bool concernByTeachingTier;
+        if (resolvedStudent is { } pre) (student, concernByTeachingTier) = (pre.Student, pre.ByTeachingTier);
+        else (student, concernByTeachingTier) = await ResolveStudentForWriteAsync(branchId, request.StudentId);
+        if (student == null) return (StudentNotFound(), null);
 
         var organizationId = await ResolveOrganizationIdAsync(branchId);
         var category = await _context.WelfareCategories.FirstOrDefaultAsync(c => c.Id == request.CategoryId && c.OrganizationId == organizationId && c.IsActive);
         if (category == null)
-            return BadRequest(new ProblemDetails { Title = "Category not found", Detail = "The selected category does not exist, or is no longer active.", Status = StatusCodes.Status400BadRequest });
+            return (Fail("Category not found", "The selected category does not exist, or is no longer active."), null);
 
         if (category.CaseType != request.CaseType)
             // Article agreement matters here because the case-type names are shown verbatim and
             // "a Achievement record" is what an operator sees on a validation they hit often.
-            return BadRequest(new ProblemDetails { Title = "Category does not match case type", Detail = $"'{category.Name}' is {Article(category.CaseType)} {category.CaseType} category and can't be used for {Article(request.CaseType)} {request.CaseType} record.", Status = StatusCodes.Status400BadRequest });
+            return (Fail("Category does not match case type", $"'{category.Name}' is {Article(category.CaseType)} {category.CaseType} category and can't be used for {Article(request.CaseType)} {request.CaseType} record."), null);
 
         // --- Additional linked students (optional) — a fight or a group incident that touches
         // several students at once. StudentId above stays "who this was primarily filed against";
@@ -565,7 +779,7 @@ public class WelfareController : ControllerBase
             validQuery = concernByTeachingTier ? await _scope.ApplyAnyTierAsync(validQuery, branchId) : await _scope.ApplyAsync(validQuery, branchId);
             var validCount = await validQuery.CountAsync();
             if (validCount != additionalStudentIds.Count)
-                return BadRequest(new ProblemDetails { Title = "One or more additional students not found", Detail = "Every linked student must exist in this branch and be active.", Status = StatusCodes.Status400BadRequest });
+                return (Fail(AdditionalStudentsNotFoundTitle, "Every linked student must exist in this branch and be active."), null);
         }
 
         // --- Content ---
@@ -574,53 +788,49 @@ public class WelfareController : ControllerBase
         // a finished record isn't, so a teacher can save a half-typed thought and come back to it.
         // FinalizeRecord re-runs both checks for real once the author returns to complete it.
         if (!request.SaveAsDraft && description.Length < MinDescriptionLength)
-            return BadRequest(new ProblemDetails { Title = "Description is too short", Detail = $"Describe what happened in at least {MinDescriptionLength} characters.", Status = StatusCodes.Status400BadRequest });
+            return (Fail("Description is too short", $"Describe what happened in at least {MinDescriptionLength} characters."), null);
         if (description.Length > MaxDescriptionLength)
-            return BadRequest(new ProblemDetails { Title = "Description is too long", Detail = $"Keep the description under {MaxDescriptionLength} characters — use a follow-up note for more detail once the record exists.", Status = StatusCodes.Status400BadRequest });
+            return (Fail("Description is too long", $"Keep the description under {MaxDescriptionLength} characters — use a follow-up note for more detail once the record exists."), null);
 
         var occurredAt = request.OccurredAt == default ? DateTime.UtcNow : request.OccurredAt.ToUniversalTime();
         if (occurredAt > DateTime.UtcNow.AddMinutes(5)) // small clock-skew allowance, not a loophole
-            return BadRequest(new ProblemDetails { Title = "Date can't be in the future", Status = StatusCodes.Status400BadRequest });
+            return (Fail("Date can't be in the future"), null);
         if (!request.SaveAsDraft && occurredAt < DateTime.UtcNow.AddDays(-LateEntryThresholdDays) && !acknowledgeLateEntry)
-            return BadRequest(new ProblemDetails
-            {
-                Title = "This looks like a late entry",
-                Detail = $"The date you entered is more than {LateEntryThresholdDays} days ago. If that's correct, resubmit with acknowledgeLateEntry=true.",
-                Status = StatusCodes.Status400BadRequest
-            });
+            return (Fail("This looks like a late entry",
+                $"The date you entered is more than {LateEntryThresholdDays} days ago. If that's correct, resubmit with acknowledgeLateEntry=true."), null);
 
         var pointsError = ValidatePointsSign(request.CaseType, request.Points);
-        if (pointsError != null) return pointsError;
+        if (pointsError != null) return (pointsError, null);
 
         // --- The graduated response ---
         if (request.ResponseStage is { } stage && !Enum.IsDefined(stage))
-            return BadRequest(new ProblemDetails { Title = "Unrecognised response stage", Status = StatusCodes.Status400BadRequest });
+            return (Fail("Unrecognised response stage"), null);
         if (request.PerceivedFunction is { } fn && !Enum.IsDefined(fn))
-            return BadRequest(new ProblemDetails { Title = "Unrecognised perceived function", Status = StatusCodes.Status400BadRequest });
+            return (Fail("Unrecognised perceived function"), null);
 
         // An achievement is not a response to anything, so a stage on one is meaningless and
         // would pollute the very reports the stage exists to make possible.
         if (request.ResponseStage.HasValue && request.CaseType == WelfareCaseType.Achievement)
-            return BadRequest(new ProblemDetails { Title = "An achievement has no response stage", Status = StatusCodes.Status400BadRequest });
+            return (Fail("An achievement has no response stage"), null);
 
         // A support plan IS the corrective rung — it needs an owner and a review date, because a
         // plan with neither is a sentence in a text box that nobody will ever come back to.
         if (request.CaseType == WelfareCaseType.SupportPlan)
         {
             if (request.AssignedToUserId is null || request.AssignedToUserId == Guid.Empty)
-                return BadRequest(new ProblemDetails { Title = "A support plan needs an owner", Detail = "Assign the plan to the member of staff responsible for it.", Status = StatusCodes.Status400BadRequest });
+                return (Fail("A support plan needs an owner", "Assign the plan to the member of staff responsible for it."), null);
             if (request.ActionDueDate is null)
-                return BadRequest(new ProblemDetails { Title = "A support plan needs a review date", Detail = "Set the date the plan will be reviewed — assess, plan, do, review.", Status = StatusCodes.Status400BadRequest });
+                return (Fail("A support plan needs a review date", "Set the date the plan will be reviewed — assess, plan, do, review."), null);
         }
 
         if (request.ActionDueDate is { } due && due.Date < DateTime.UtcNow.Date.AddDays(-1))
-            return BadRequest(new ProblemDetails { Title = "A review date in the past would be overdue immediately", Status = StatusCodes.Status400BadRequest });
+            return (Fail("A review date in the past would be overdue immediately"), null);
 
         if (request.AssignedToUserId is { } assignee && assignee != Guid.Empty)
         {
             var assigneeExists = await _context.Users.AnyAsync(u => u.Id == assignee && u.OrganizationId == organizationId && u.IsActive);
             if (!assigneeExists)
-                return BadRequest(new ProblemDetails { Title = "The assigned member of staff was not found", Status = StatusCodes.Status400BadRequest });
+                return (Fail("The assigned member of staff was not found"), null);
         }
 
         // --- Visibility: server wins, never trusted from the client ---
@@ -632,24 +842,16 @@ public class WelfareController : ControllerBase
         // including themselves.
         var requested = request.Visibility;
         if (!Enum.IsDefined(requested))
-            return BadRequest(new ProblemDetails { Title = "Unrecognised visibility", Status = StatusCodes.Status400BadRequest });
+            return (Fail("Unrecognised visibility"), null);
 
         if (requested == WelfareVisibility.Restricted && !await CanViewRestrictedAsync())
-            return BadRequest(new ProblemDetails
-            {
-                Title = "You cannot mark a record restricted",
-                Detail = "Restricted records are administrator-only. Log it normally and ask an administrator to restrict it.",
-                Status = StatusCodes.Status400BadRequest
-            });
+            return (Fail("You cannot mark a record restricted",
+                "Restricted records are administrator-only. Log it normally and ask an administrator to restrict it."), null);
 
         if (requested == WelfareVisibility.Confidential && !await CanViewConfidentialAsync()
             && request.CaseType != WelfareCaseType.Welfare)
-            return BadRequest(new ProblemDetails
-            {
-                Title = "You cannot mark a record confidential",
-                Detail = "Log it as a Welfare concern instead — those are made confidential automatically.",
-                Status = StatusCodes.Status400BadRequest
-            });
+            return (Fail("You cannot mark a record confidential",
+                "Log it as a Welfare concern instead — those are made confidential automatically."), null);
 
         var visibility = request.CaseType == WelfareCaseType.Welfare && requested < WelfareVisibility.Confidential
             ? WelfareVisibility.Confidential
@@ -682,29 +884,8 @@ public class WelfareController : ControllerBase
             AssignedToUserId = request.AssignedToUserId == Guid.Empty ? null : request.AssignedToUserId,
             ActionDueDate = request.ActionDueDate
         };
-        _context.WelfareRecords.Add(record);
-        await _context.SaveChangesAsync();
 
-        _logger.LogInformation("Welfare record {RecordId} ({CaseType}/{Category}, {Status}) logged for student {StudentId} in branch {BranchId}",
-            record.Id, record.CaseType, category.Name, record.Status, student.Id, branchId);
-
-        // Tell the class teacher. AFTER the commit, and by a service that never throws — this
-        // project's standing rule is that a side effect running after a committed transaction must
-        // not be able to fail the request (the ProtectSystem=strict badge-token bug). A draft
-        // alerts nobody; so does anything above Standard visibility. Both are decided inside.
-        await _alerts.NotifyRecordLoggedAsync(record.Id);
-
-        // Staff Performance system award (policy-gated, off by default; never throws). A draft earns
-        // nothing — FinalizeRecord credits it when it becomes real.
-        if (record.Status != WelfareStatus.Draft)
-            await _systemAwards.CreditAsync(record.OrganizationId, branchId, record.ReportedByUserId, StaffSystemAwards.WelfareRecordFiled,
-                $"Filed a {category.Name} record. Credited automatically.");
-
-        record.Student = student;
-        record.Category = category;
-        var userNames = await ResolveUserNamesAsync(new[] { record });
-        var studentNames = await ResolveStudentNamesAsync(new[] { record });
-        return CreatedAtAction(nameof(GetRecord), new { branchId, recordId = record.Id }, MapToDto(record, userNames, new Dictionary<Guid, string>(), studentNames));
+        return (null, new BuiltWelfareRecord(record, student, category));
     }
 
     /// <summary>
@@ -1138,7 +1319,7 @@ public class WelfareController : ControllerBase
 
         var staffIds = records.Select(r => r.ReportedByUserId).Distinct().ToList();
         var staffNames = await _context.Users.Where(u => staffIds.Contains(u.Id))
-            .Select(u => new { u.Id, Name = (u.FirstName + " " + u.LastName).Trim() })
+            .Select(u => new { u.Id, Name = PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName) })
             .ToDictionaryAsync(u => u.Id, u => string.IsNullOrWhiteSpace(u.Name) ? "Unknown" : u.Name);
         var byStaff = records.GroupBy(r => r.ReportedByUserId)
             .Select(g => new WelfareStaffCountDto { StaffName = staffNames.GetValueOrDefault(g.Key, "Unknown"), Count = g.Count() })
@@ -1198,7 +1379,7 @@ public class WelfareController : ControllerBase
         _context.WelfareNotes.Add(note);
         await _context.SaveChangesAsync();
 
-        var author = await _context.Users.Where(u => u.Id == note.AuthorUserId).Select(u => u.FirstName + " " + u.LastName).FirstOrDefaultAsync();
+        var author = await _context.Users.Where(u => u.Id == note.AuthorUserId).Select(u => PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName)).FirstOrDefaultAsync();
         return CreatedAtAction(nameof(GetRecord), new { branchId, recordId }, new WelfareNoteDto
         {
             Id = note.Id,
@@ -1590,7 +1771,7 @@ public class WelfareController : ControllerBase
         // the username here, not the display name, and every other "who did this" field in this
         // controller (ReportedByName, note AuthorName) is resolved the same DB-backed way.
         var senderName = await _context.Users.Where(u => u.Id == notification.SentByUserId)
-            .Select(u => (u.FirstName + " " + u.LastName).Trim()).FirstOrDefaultAsync();
+            .Select(u => PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName)).FirstOrDefaultAsync();
 
         return CreatedAtAction(nameof(GetRecord), new { branchId, recordId }, new WelfareNotificationDto
         {
@@ -1620,7 +1801,7 @@ public class WelfareController : ControllerBase
 
         return await _context.Users
             .Where(u => userIds.Contains(u.Id))
-            .Select(u => new { u.Id, Name = (u.FirstName + " " + u.LastName).Trim() })
+            .Select(u => new { u.Id, Name = PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName) })
             .ToDictionaryAsync(u => u.Id, u => string.IsNullOrWhiteSpace(u.Name) ? "Unknown" : u.Name);
     }
 
@@ -2144,7 +2325,8 @@ public class WelfareController : ControllerBase
         {
             WelfareActivityActions.ReportPublished,
             WelfareActivityActions.ListExported,
-            WelfareActivityActions.TimelineExported
+            WelfareActivityActions.TimelineExported,
+            WelfareActivityActions.RecordsBulkLogged
         };
 
         var query = _context.ActivityEvents
@@ -2182,7 +2364,7 @@ public class WelfareController : ControllerBase
         var actorIds = rows.Where(r => r.ActorUserId != null).Select(r => r.ActorUserId!.Value).Distinct().ToList();
         var actorNames = await _context.Users
             .Where(u => actorIds.Contains(u.Id))
-            .Select(u => new { u.Id, Name = (u.FirstName + " " + u.LastName).Trim() })
+            .Select(u => new { u.Id, Name = PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName) })
             .ToDictionaryAsync(u => u.Id, u => u.Name);
 
         var studentIds = rows.Where(r => r.SubjectStudentId != null).Select(r => r.SubjectStudentId!.Value).Distinct().ToList();

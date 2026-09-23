@@ -43,7 +43,7 @@ public static class TeachingReportBuilder
         var teacherIds = assignments.Select(a => a.UserId).Concat(placed.Keys.Select(k => k.UserId)).Distinct().Where(InScope).ToList();
         var users = await db.Users.IgnoreQueryFilters().AsNoTracking().Where(u => teacherIds.Contains(u.Id))
             .Select(u => new { u.Id, u.FirstName, u.LastName, u.Username, u.DepartmentIds }).ToListAsync(ct);
-        string NameOf(Guid id) => users.FirstOrDefault(u => u.Id == id) is { } u ? ($"{u.FirstName} {u.LastName}".Trim() is { Length: > 0 } n ? n : u.Username) : "A former member of staff";
+        string NameOf(Guid id) => users.FirstOrDefault(u => u.Id == id) is { } u ? PersonNames.Display(organizationId, u.FirstName, u.LastName, u.Username) : "A former member of staff";
         List<string> DepartmentsOf(Guid id) => (users.FirstOrDefault(u => u.Id == id)?.DepartmentIds ?? Array.Empty<Guid>()).Select(d => departments.GetValueOrDefault(d)).Where(n => n != null).Select(n => n!).ToList();
         string LevelOf(string className) => levels.TryGetValue(TimetableCycle.Normalize(className), out var l) && !string.IsNullOrWhiteSpace(l) ? l! : (SuggestLevel(className) ?? "Other");
 

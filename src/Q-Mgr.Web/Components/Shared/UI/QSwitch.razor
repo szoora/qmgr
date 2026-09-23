@@ -1,0 +1,71 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+@*
+    THE ON/OFF CONTROL FOR A SETTING (2026-09-23). Forty Bootstrap switches — `form-check form-switch`
+    around a raw `<input role="switch">` — sat on eleven settings pages, drawn by the browser and
+    Bootstrap rather than by this app: the wrong size against the control scale, a focus ring from
+    Bootstrap's own blue, and a knob that followed the theme only through one !important override in
+    qm-theme.css.
+
+    A SWITCH, NOT A TICK BOX, on purpose: flipping it changes the setting, and the shape says so. A
+    tick box is for choosing — rows to act on, an option in a form that is then submitted. That is
+    why this is its own component rather than QCheckbox with a flag.
+
+    Same parameters as QCheckbox, so moving a control between the two is a rename. The input stays a
+    real `<input type="checkbox" role="switch">`, so a screen reader announces "switch, on" and the
+    space bar works. The track and knob take the tenant's --qm-primary, so a rebranded school's
+    switches follow its brand.
+*@
+
+<span class="q-field__label-row q-switch-row @Class">
+<label class="q-switch @(Disabled ? "q-switch--disabled" : "") @(Value ? "q-switch--on" : "")">
+    <input type="checkbox"
+           role="switch"
+           class="q-switch__input"
+           checked="@Value"
+           disabled="@Disabled"
+           aria-checked="@(Value ? "true" : "false")"
+           @onchange="HandleChange"
+           @attributes="AdditionalAttributes" />
+    <span class="q-switch__track" aria-hidden="true"><span class="q-switch__knob"></span></span>
+    @if (!string.IsNullOrEmpty(Label) || ChildContent != null)
+    {
+        <span class="q-switch__label">
+            @if (ChildContent != null) { @ChildContent } else { @Label }
+        </span>
+    }
+</label>
+@if (!string.IsNullOrWhiteSpace(Hint))
+{
+    <QInfo Text="@Hint" Label="@Label" />
+}
+</span>
+
+@code {
+    /// <summary>Whether the setting is on.</summary>
+    [Parameter] public bool Value { get; set; }
+    [Parameter] public EventCallback<bool> ValueChanged { get; set; }
+
+    /// <summary>What the switch turns on, as a short phrase. Omit it when the setting's own label sits beside the switch.</summary>
+    [Parameter] public string? Label { get; set; }
+
+    /// <summary>What switching this on DOES, in a QInfo beside it. A warning still belongs on the page.</summary>
+    [Parameter] public string? Hint { get; set; }
+
+    [Parameter] public bool Disabled { get; set; }
+
+    /// <summary>A layout class for the wrapper — the element a parent flex row lays out.</summary>
+    [Parameter] public string? Class { get; set; }
+
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private async Task HandleChange(ChangeEventArgs e)
+    {
+        if (Disabled) return;
+        Value = (bool)(e.Value ?? false);
+        await ValueChanged.InvokeAsync(Value);
+    }
+}

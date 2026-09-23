@@ -11,10 +11,12 @@
     EmailTemplates a ninth. A white-labelled tenant met our name on whichever of them nobody had
     remembered to check.
 
-    PoweredBy is the sibling of this and answers a different question: whether to show
-    "Powered by SACC Software" at all, which is a paid entitlement. This one answers who the
-    copyright BELONGS to, which is a different decision and is never hidden — a document has to
-    carry one.
+    IT SWAPS THE NAME; IT NEVER HIDES THE LINE. There used to be a sibling, PoweredBy, which
+    answered the other half — whether "Powered by SACC Software" appears at all — by rendering
+    nothing when the entitlement was held. It was deleted on 2026-09-22 once the nine public pages
+    moved onto this component and it had no callers left. A copyright is not the same decision: it
+    is never hidden, because a document has to carry one. The paid entitlement still decides, through
+    the same AttributionRemoved flag PoweredBy read — set, the line credits the TENANT; unset, us.
 
     THE FUTURE HOOK IS ALREADY HERE. `Text` overrides the whole line, so when a privileged tenant
     is allowed to set their own wording it arrives through that one parameter and every surface
@@ -26,7 +28,8 @@
 @code {
     /// <summary>
     /// Which host the browser arrived on. On a public page nobody is signed in, so the host is the
-    /// only thing that can say whose name belongs at the foot — the same split PoweredBy makes.
+    /// only thing that can say whose name belongs at the foot; the signed-in shell passes the
+    /// organisation instead, which is the split described above.
     /// </summary>
     [CascadingParameter] public TenantHostContext Host { get; set; } = TenantHostContext.Platform;
 
@@ -34,6 +37,10 @@
     /// The name to credit, when the caller already knows it — the signed-in shell passes the
     /// ORGANISATION's name, because most tenants sign in on the platform address and should not
     /// need a domain of their own to see themselves here.
+    ///
+    /// A PUBLIC page leaves it null and the host answers instead (below). Requiring every caller
+    /// to pass it would put the same rule in eight places, and the one that forgot would credit US
+    /// at the foot of a page the tenant had paid to clear — with nothing looking broken.
     /// </summary>
     [Parameter] public string? Owner { get; set; }
 
@@ -73,9 +80,23 @@
             if (!string.IsNullOrWhiteSpace(Text)) return Text!;
 
             var removed = Attributed ?? Host.AttributionRemoved;
-            var who = removed && !string.IsNullOrWhiteSpace(Owner)
-                ? Owner!
-                : "SACC Software Limited";
+
+            // Whose name goes here, in the order the answer is most reliable: what the caller
+            // said, then the host it arrived on, then ours. The host branch is what lets a public
+            // page render this with no parameters at all — Host.AppName is the tenant's own brand
+            // name, and IsTenantHost is checked so a blank Owner in the SHELL cannot quietly turn
+            // "SACC" into the platform's own product name.
+            //
+            // "SACC", not "SACC Software Limited" (user decision 2026-09-23): the line is a
+            // copyright notice, not a legal identification — Terms and Privacy name the company in
+            // full, because there it is the contracting party. The mobile sign-in screen and the
+            // email footer say the same, so the three cannot drift.
+            var who = "SACC";
+            if (removed)
+            {
+                if (!string.IsNullOrWhiteSpace(Owner)) who = Owner!;
+                else if (Host.IsTenantHost) who = Host.AppName;
+            }
 
             var line = $"© {DateTime.Now.Year} {who}";
             if (!string.IsNullOrWhiteSpace(Suffix)) line += $" · {Suffix}";

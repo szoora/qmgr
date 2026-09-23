@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
 
-namespace QMgr.Web.Services;
+namespace QMgr.Application.Branding;
 
 /// <summary>
 /// Turns an organization's three chosen colours into the FULL set of <c>--qm-*</c> custom
@@ -66,6 +66,55 @@ public static class BrandPalette
         return string.Join("; ", overrides);
     }
 
+    /// <summary>
+    /// The SAME derivation as <see cref="StyleFor"/>, returned as values rather than as a CSS
+    /// string, so a caller that is not a browser can use it.
+    ///
+    /// <para><b>Why this exists.</b> The native shell was sent three colours — primary, secondary,
+    /// accent — and had to guess everything else: the hover, the tint behind a chip, the text
+    /// colour that sits ON the brand. That is precisely the bug this class was written to fix on
+    /// the web, where setting three tokens left seven hardcoded wine literals behind and a school
+    /// that chose green got green buttons with wine hovers. Shipping three colours to the app
+    /// recreated it one platform over.</para>
+    ///
+    /// <para>Returning it from here rather than deriving it again in the app is the point: one
+    /// implementation, so the web chrome and the native chrome cannot drift. A null result means
+    /// the caller supplied nothing usable and should keep its own default palette.</para>
+    /// </summary>
+    public static BrandColors? ColorsFor(string? primary, string? secondary, string? accent)
+    {
+        if (Parse(primary) is not { } p) return null;
+        var s = Parse(secondary);
+        var a = Parse(accent);
+
+        return new BrandColors
+        {
+            Primary = p.Hex,
+            PrimaryDark = Darken(p, 0.22),
+            // A pale brand with a light-mixed hover is how a "branded" surface ends up invisible.
+            // Mixing toward white by the same amount keeps the pair symmetrical.
+            PrimaryLight = Lighten(p, 0.22),
+            PrimaryRgb = $"{p.R}, {p.G}, {p.B}",
+            // The one value the app cannot compute without the WCAG formula, and the one that makes
+            // a yellow-branded school readable rather than white-on-white.
+            TextOnPrimary = IsLight(p) ? "#1f1f1f" : "#ffffff",
+            Secondary = s?.Hex,
+            SecondaryDark = s is { } sv ? Darken(sv, 0.22) : null,
+            Accent = a?.Hex,
+            // The app paints a full-bleed ground behind its sign-in screen; a mid-tone brand is too
+            // loud for that, so it gets the darkened form rather than the brand itself.
+            Ground = Darken(p, 0.35)
+        };
+    }
+
+    /// <summary>Mixed toward white, the mirror of <see cref="Darken"/>.</summary>
+    private static string Lighten(Rgb c, double amount)
+    {
+        var k = Math.Clamp(amount, 0, 1);
+        int Mix(int v) => (int)(v + (255 - v) * k);
+        return $"#{Mix(c.R):x2}{Mix(c.G):x2}{Mix(c.B):x2}";
+    }
+
     private readonly record struct Rgb(int R, int G, int B, string Hex);
 
     private static Rgb? Parse(string? value)
@@ -105,4 +154,33 @@ public static class BrandPalette
         }
         return 0.2126 * Channel(c.R) + 0.7152 * Channel(c.G) + 0.0722 * Channel(c.B) > 0.45;
     }
+}
+
+/// <summary>
+/// A tenant's palette, fully derived. Every field here exists because something rendered wrong
+/// without it: <see cref="PrimaryDark"/> is every hover, <see cref="PrimaryLight"/> every chip and
+/// tint, <see cref="PrimaryRgb"/> every <c>rgba(var(--qm-primary-rgb), α)</c> wash, and
+/// <see cref="TextOnPrimary"/> is what stops white text on a yellow brand.
+///
+/// <para>Hex strings rather than numbers, because every consumer — CSS, MAUI, Android XML — parses
+/// hex, and a platform-specific numeric form would have to be converted back anyway.</para>
+/// </summary>
+public record BrandColors
+{
+    public string Primary { get; init; } = string.Empty;
+    public string PrimaryDark { get; init; } = string.Empty;
+    public string PrimaryLight { get; init; } = string.Empty;
+
+    /// <summary>"122, 40, 71" — the triple, for building an rgba() at any alpha.</summary>
+    public string PrimaryRgb { get; init; } = string.Empty;
+
+    /// <summary>Black or white, chosen by WCAG relative luminance against the brand.</summary>
+    public string TextOnPrimary { get; init; } = string.Empty;
+
+    public string? Secondary { get; init; }
+    public string? SecondaryDark { get; init; }
+    public string? Accent { get; init; }
+
+    /// <summary>The full-bleed background behind the app's sign-in screen.</summary>
+    public string Ground { get; init; } = string.Empty;
 }

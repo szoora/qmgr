@@ -1,11 +1,13 @@
 @page "/profile"
+@using System.Net.Http.Json
 @inject IAuthService AuthService
 @inject HttpClient Http
 @inject NavigationManager NavigationManager
 @inject IToastService NotificationService
-@inject JsonSerializerOptions JsonOptions
+@inject JsonSerializerOptions JsonOptions
 @using Microsoft.AspNetCore.Components.Forms
 @inject IStaffOnboardingApiService Onboarding
+@inject IPasswordRulesService PasswordRules
 @using System.Text.Json
 
 <QPageTitle Text="My Profile" />
@@ -181,6 +183,9 @@
                     </button>
                 </div>
             </div>
+
+            @* The private calendar feed (TERM_PROGRAMME_CALENDAR_AND_GATES §9). Spans the grid. *@
+            <QMgr.Web.Components.Pages.Calendar.CalendarFeedCard />
         </div>
     }
 </div>
@@ -220,8 +225,10 @@
         </div>
         <div class="form-group mb-3">
             <label class="form-label">New Password</label>
-            <input type="password" class="form-control" @bind="passwordModel.NewPassword" placeholder="Enter new password" />
-            <small class="qm-text-muted">Minimum 6 characters</small>
+            <input type="password" class="form-control" @bind="passwordModel.NewPassword" placeholder="@PasswordRules.Placeholder" />
+            @* This said "Minimum 6 characters" — typed into the markup, and the fifth different
+               number this product claimed while the server enforced a sixth. *@
+            <small class="qm-text-muted">@PasswordRules.Summary</small>
         </div>
         <div class="form-group mb-3">
             <label class="form-label">Confirm New Password</label>
@@ -582,6 +589,15 @@
 </style>
 
 @code {
+    /// <summary>
+    /// What the SERVER will judge a password by, fetched rather than retyped. Three pages used to
+    /// hardcode three different minimums (12, 8 and 6) while the server enforced a fourth, so a
+    /// form could promise what the API then refused. The defaults on the record only stand for the
+    /// moment before the fetch lands.
+    /// </summary>
+    // The rules come from IPasswordRulesService — the ONE home. See Register.razor.
+    private async Task LoadPasswordRulesAsync() => await PasswordRules.LoadAsync();
+
     private ProfileDto? profile;
     private bool isLoading = true;
     private bool isSaving = false;
@@ -598,6 +614,7 @@
 
     protected override async Task OnInitializedAsync()
     {
+        await LoadPasswordRulesAsync();
         await LoadProfile();
     }
 
@@ -765,9 +782,9 @@
             return;
         }
 
-        if (passwordModel.NewPassword.Length < 6)
+        if (PasswordRules.LengthProblem(passwordModel.NewPassword) is not null)
         {
-            passwordError = "New password must be at least 6 characters";
+            passwordError = $"New password must be {PasswordRules.LengthProblem(passwordModel.NewPassword)!.ToLowerInvariant()}";
             return;
         }
 

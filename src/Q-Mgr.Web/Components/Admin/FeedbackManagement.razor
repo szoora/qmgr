@@ -76,7 +76,7 @@
                      Label="Rating" Placeholder="All Ratings" AllowClear="true" Class="filter-select" />
         </div>
         <div class="filter-group">
-            <QSelect TValue="FeedbackCategory?" TItem="(string Label, FeedbackCategory? Value)" Value="@filterCategory" ValueChanged="@OnCategoryChanged" Items="@categoryOptions"
+            <QSelect TValue="FeedbackCategory?" TItem="(string Label, FeedbackCategory? Value)" Value="@filterCategory" ValueChanged="@OnCategoryChanged" Items="@categoryOptions" Sorted="true"
                      TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)"
                      Label="Category" Placeholder="All Categories" AllowClear="true" Class="filter-select" />
         </div>
@@ -366,11 +366,7 @@
                          Value="@questionForm.ServiceTypeId" ValueChanged="@(v => questionForm.ServiceTypeId = v)" />
             </div>
             <div class="settings-toggle-group">
-                <div class="form-check form-switch">
-                    <input class="form-check-input" type="checkbox" role="switch" id="q-required"
-                           checked="@questionForm.IsRequired"
-                           @onchange="@(e => questionForm.IsRequired = (bool)(e.Value ?? false))" />
-                </div>
+                <QSwitch Value="@questionForm.IsRequired" ValueChanged="@(v => questionForm.IsRequired = v)" id="q-required" />
                 <div class="settings-toggle-info">
                     <label class="settings-toggle-label" for="q-required">Answer required</label>
                     <small>The customer cannot submit without answering. Use sparingly.</small>

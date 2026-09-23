@@ -313,13 +313,23 @@ public static class StaffSelfService
     {
         ConfigRequestKind.TimetableSlot =>
             $"{requesterName} asks to teach {r.ClassName} {subjectName} at {dayLabel} {r.PeriodKey}.",
+        // A swap says WHICH KIND it is, because the two are different decisions: one changes the timetable for
+        // the rest of term and the other changes one afternoon.
+        ConfigRequestKind.SlotSwap when r.EffectiveOn is { } once =>
+            $"{requesterName} asks to swap a lesson at {dayLabel} {r.PeriodKey} on {Day(once)} only.",
         ConfigRequestKind.SlotSwap =>
-            $"{requesterName} asks to swap a lesson at {dayLabel} {r.PeriodKey}.",
+            $"{requesterName} asks to swap a lesson at {dayLabel} {r.PeriodKey} for the rest of the term.",
+        ConfigRequestKind.LessonCover =>
+            $"{requesterName} asks a colleague to cover {r.ClassName} {subjectName} at {dayLabel} {r.PeriodKey}" +
+            (r.EffectiveOn is { } on ? $" on {Day(on)}." : "."),
         ConfigRequestKind.ClassAssignment =>
             $"{requesterName} asks to teach {subjectName} to {r.ClassName}" +
             (r.PeriodsPerWeek is { } n ? $", {n} period(s) a week." : "."),
         _ => $"{requesterName} has made a request.",
     };
+
+    /// <summary>Invariant, because the dev machine is en-GB and the server is not — the standing rule for API-built text.</summary>
+    private static string Day(DateOnly d) => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{d:dd MMM yyyy}");
 
     /// <summary>
     /// Why this request cannot be decided by this person. Null means they may.
@@ -329,20 +339,40 @@ public static class StaffSelfService
     /// their own request; this is what says no. NIST SP 800-53 AC-5, and the same rule as "nobody
     /// marks their own register entry" and "a meeting cannot adopt its own minutes".
     /// </summary>
-    public static string? RefuseDecision(StaffConfigRequest request, Guid deciderId, bool holdsTimetableManage)
+    public static string? RefuseDecision(StaffConfigRequest request, Guid deciderId, bool mayDecide)
     {
-        if (!holdsTimetableManage)
-            return "Deciding a request needs the timetable permission.";
+        if (!mayDecide)
+            return "Deciding a request needs the timetable permission, or being the appointed master of the timetable it is about.";
 
         if (request.RequestedByUserId == deciderId)
-            return "You cannot decide your own request. Somebody else with the timetable permission has to.";
+            return "You cannot decide your own request. Somebody else has to.";
 
         if (request.State != ConfigRequestState.Pending)
             return "That request has already been decided.";
 
-        if (request.Kind == ConfigRequestKind.SlotSwap && request.CounterpartAgreedAt == null)
-            return "The other teacher has not agreed to the swap yet.";
+        if (NeedsCounterpart(request.Kind) && request.CounterpartAgreedAt == null)
+            return request.Kind == ConfigRequestKind.LessonCover
+                ? "The colleague has not agreed to cover it yet."
+                : "The other teacher has not agreed to the swap yet.";
 
         return null;
     }
+
+    /// <summary>
+    /// The kinds that cannot be decided until the OTHER teacher has said yes. A decider moving somebody's lesson
+    /// without their agreement is exactly the corridor negotiation this feature exists to replace rather than to
+    /// automate — so cover is on this list for the same reason a swap is.
+    /// </summary>
+    public static bool NeedsCounterpart(ConfigRequestKind kind)
+        => kind is ConfigRequestKind.SlotSwap or ConfigRequestKind.LessonCover;
+
+    /// <summary>
+    /// True when approving this writes a dated exception rather than re-publishing the timetable.
+    ///
+    /// The difference matters to the DECIDER, not only to the code: a one-off cannot disturb a class, a room or a
+    /// cohort's day, because nothing moves — only who stands in front of it. A permanent swap does move lessons,
+    /// so it runs TimetableChecker and its warnings are what the decider is actually being asked about.
+    /// </summary>
+    public static bool IsOneOff(StaffConfigRequest r)
+        => r.Kind == ConfigRequestKind.LessonCover || (r.Kind == ConfigRequestKind.SlotSwap && r.EffectiveOn != null);
 }

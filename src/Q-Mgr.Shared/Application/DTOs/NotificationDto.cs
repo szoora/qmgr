@@ -3,6 +3,13 @@ namespace QMgr.Application.DTOs;
 public class NotificationDto
 {
     public Guid Id { get; set; }
+
+    /// <summary>
+    /// Who this notification is FOR. Every notification names one person (2026-09-23), and the
+    /// Web client drops a live push whose recipient is not the signed-in user — a second line
+    /// behind the server's own routing, so a wrong push can never reach a bell.
+    /// </summary>
+    public Guid UserId { get; set; }
     public string Title { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
     public string Type { get; set; } = string.Empty;

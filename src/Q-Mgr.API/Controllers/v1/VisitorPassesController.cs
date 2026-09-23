@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using QMgr.API.Application.Services;
 using QMgr.API.Authorization;
 using QMgr.Filters;
 using QMgr.Application.DTOs;
@@ -190,11 +191,11 @@ public class VisitorPassesController : ControllerBase
             return BadRequest(new ProblemDetails { Title = "Wrong branch", Detail = "This badge was issued for a different branch.", Status = StatusCodes.Status400BadRequest });
 
         return payload.Kind == VisitorBadgeTokenKind.Visit
-            ? await ScanVisitBadge(branchId, payload.Id)
+            ? await ScanVisitBadge(branchId, payload.Id, request.Gate)
             : await ScanPassBadge(branchId, payload.Id, request.Direction);
     }
 
-    private async Task<IActionResult> ScanVisitBadge(Guid branchId, Guid visitorId)
+    private async Task<IActionResult> ScanVisitBadge(Guid branchId, Guid visitorId, string? gate)
     {
         var visitor = await _context.Visitors.Include(v => v.VisitorProfile)
             .FirstOrDefaultAsync(v => v.Id == visitorId && v.BranchId == branchId && v.DeletedAt == null);
@@ -222,13 +223,20 @@ public class VisitorPassesController : ControllerBase
                 Status = StatusCodes.Status400BadRequest
             });
 
+        // A badge scan is a check-out, so it records the gate the scanner stands at and who held it (plan §10).
+        // The same rule as the desk: refused before the badge is consumed, so a refusal costs nothing to retry.
+        var (exitGate, gateError) = await VisitorGates.ResolveAsync(_context, branchId, gate, leaving: true);
+        if (gateError != null) return VisitorGates.Refusal(gateError);
+
         visitor.Status = VisitorStatus.CheckedOut;
         visitor.CheckedOutAt = DateTime.UtcNow;
         visitor.BadgeConsumedAt = DateTime.UtcNow;
+        visitor.ExitGate = exitGate;
+        visitor.CheckedOutByUserId = CurrentUserId();
         visitor.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
 
-        var dto = VisitorsController.MapToDto(visitor, profile);
+        var dto = VisitorsController.MapToDto(visitor, profile, staffNames: await VisitorGates.StaffNamesAsync(_context, new[] { visitor }));
         await _activityBroadcaster.BroadcastAsync(branchId, VisitorActivityKind.CheckedOut, dto);
 
         return Ok(new VisitorScanResultDto

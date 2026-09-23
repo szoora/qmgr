@@ -8,38 +8,54 @@
 
 <QPageTitle Text="Verify Email" />
 
-<div class="verify-container">
-    <div class="verify-card">
-        <div class="verify-header">
-            <div class="logo-circle">
-                <QIcon Name="@(state == VerifyState.Success ? "check-circle-fill" : state == VerifyState.Failed ? "exclamation-circle-fill" : "envelope-fill")" Size="32" />
-            </div>
-        </div>
+@*
+    THE SAME SHELL AS EVERY OTHER IDENTITY PAGE (2026-09-22). This page had a card of its own —
+    .verify-container / .verify-card / its own .logo-circle — and was wrong twice for it, the same
+    two ways GetApp was before it was reused onto this shell:
 
+      * UNBRANDED. It never applied Host.BrandingStyle, which is the inline style that points
+        --qm-primary at the TENANT's colour. So a school arriving from its own verification email
+        met the vendor's wine disc one click from its own crest, and the Host it had cascaded all
+        along was read by nothing on the page.
+      * A SECOND SET OF CARD STYLES, which is what drifts. login-container / login-card /
+        QBrandMark cannot.
+
+    QBrandMark shows the school's logo where there is one and falls back to this page's own state
+    icon where there is not — the pattern ResetPassword and JoinStaff already use for their success
+    and failure states. On a tenant host the crest wins over the tick, deliberately: the HEADING
+    says which state this is, and the mark says whose site it is.
+*@
+<div class="login-container" style="@Host.BrandingStyle">
+    <AmbientBackground />
+    <div class="login-card">
         @if (state == VerifyState.Verifying)
         {
-            <h1>Verifying your email...</h1>
-            <p class="verify-subtext">This will just take a moment.</p>
+            <div class="login-header">
+                <QBrandMark Heading="Verifying your email…" FallbackIcon="envelope-fill"
+                            Tagline="This will just take a moment." />
+            </div>
         }
         else if (state == VerifyState.Success)
         {
-            <h1>Email verified!</h1>
-            <p class="verify-subtext">@message</p>
+            <div class="login-header">
+                <QBrandMark Heading="Email verified" FallbackIcon="check-circle-fill" Tagline="@message" />
+            </div>
             <QButton Text="Continue to Login" Variant="primary" Block="true" OnClick="@GoToLogin" />
         }
         else if (state == VerifyState.MissingLink)
         {
-            <h1>Invalid verification link</h1>
-            <p class="verify-subtext">
-                This link is missing the information needed to verify your account. If you copied
-                it from an email, make sure the whole link came through.
-            </p>
+            <div class="login-header">
+                <QBrandMark Heading="Invalid link" FallbackIcon="exclamation-circle-fill"
+                            Tagline="This link is missing the information needed to verify your account. If you copied it from an email, make sure the whole link came through." />
+            </div>
             <QButton Text="Go to Login" Variant="primary" Block="true" OnClick="@GoToLogin" />
         }
         else
         {
-            <h1>Verification failed</h1>
-            <p class="verify-subtext">@message</p>
+            <div class="login-header">
+                <QBrandMark Heading="Verification failed" FallbackIcon="exclamation-circle-fill"
+                            Tagline="@message" />
+            </div>
 
             @if (!resendComplete)
             {
@@ -60,77 +76,47 @@
             }
             else
             {
-                <p class="verify-subtext resend-confirm">
+                <p class="resend-confirm">
                     If an account exists with that email, a new verification link is on its way.
                 </p>
             }
 
             <QButton Text="Back to Login" Variant="link" Class="back-link" OnClick="@GoToLogin" />
         }
+
+        @* The footer every sibling carries. No auth-doors row: the button above it already IS the
+           way back to sign-in in all three states, and a second copy one line down would be the
+           duplication the two-doors fix was about. *@
+        <div class="login-footer">
+            <div class="footer-links">
+                <a href="/privacy">Privacy Policy</a>
+                <span>•</span>
+                <a href="/terms">Terms of Service</a>
+                <span>•</span>
+                <a href="/support">Support</a>
+            </div>
+            @* The copyright, not the attribution line — see Login.razor. QCopyright reads the host itself. *@
+            <QCopyright Class="login-copyright" />
+        </div>
     </div>
 </div>
 
 <style>
-    .verify-container {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 100vh;
-        padding: 24px;
-    }
-
-    .verify-card {
-        width: 100%;
-        max-width: 420px;
-        background: var(--qm-bg-card);
-        border-radius: var(--qm-radius-xl);
-        box-shadow: var(--qm-shadow-lg);
-        padding: 40px;
-        text-align: center;
-    }
-
-    .verify-header {
-        display: flex;
-        justify-content: center;
-        margin-bottom: 20px;
-    }
-
-    .logo-circle {
-        width: 72px;
-        height: 72px;
-        border-radius: 50%;
-        background: var(--qm-primary);
-        color: var(--qm-text-on-primary);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .verify-card h1 {
-        font-size: 22px;
-        font-weight: 700;
-        color: var(--qm-text-primary);
-        margin: 0 0 8px 0;
-    }
-
-    .verify-subtext {
-        color: var(--qm-text-muted);
-        font-size: 14px;
-        line-height: 1.5;
-        margin: 0 0 24px 0;
-    }
-
-    /* Buttons are QButton (q-components.css) — only page-specific spacing lives here. */
-    .back-link {
+    /* Everything here is scoped under .login-container, like the rest of auth-pages.css and for the
+       same reason GetApp states: these names are generic enough to collide with the dashboard's own.
+       The card, the header, the heading and the form control are all gone from this file — they are
+       auth-pages.css's now, which is the whole point of moving onto the shared shell. Dropping the
+       local .form-control mattered most: unscoped, it would have fought the sign-in pages' own. */
+    .login-container .back-link {
         margin-top: 16px;
     }
 
-    .resend-section {
+    .login-container .resend-section {
         text-align: left;
         margin-bottom: 8px;
     }
 
-    .resend-section label {
+    .login-container .resend-section label {
         display: block;
         font-size: 13px;
         font-weight: 600;
@@ -138,27 +124,31 @@
         margin-bottom: 8px;
     }
 
-    .resend-row {
+    .login-container .resend-row {
         display: flex;
         gap: 8px;
     }
 
-    .form-control {
+    .login-container .resend-row .form-control {
         flex: 1;
-        padding: 10px 12px;
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-md);
-        font-size: 14px;
-        color: var(--qm-text-primary);
-        background: var(--qm-bg-card);
     }
 
-    .resend-confirm {
-        margin-top: 0;
+    .login-container .resend-confirm {
+        margin: 0;
+        color: var(--qm-text-muted);
+        font-size: var(--qm-text-base);
+        line-height: 1.5;
     }
 </style>
 
 @code {
+    /// <summary>
+    /// Which host the browser arrived on, cascaded by App.razor. On a public page the branding comes
+    /// from the HOST and never from a session — there is nobody signed in to ask.
+    /// </summary>
+    [CascadingParameter] public QMgr.Web.Services.TenantHostContext Host { get; set; }
+        = QMgr.Web.Services.TenantHostContext.Platform;
+
     private enum VerifyState { Verifying, Success, Failed, MissingLink }
 
     private VerifyState state = VerifyState.Verifying;

@@ -1,0 +1,178 @@
+@using QMgr.Application.DTOs
+@inject IVisitorApiService VisitorApi
+@inject IToastService Toasts
+
+@*
+    The branch's gates (plan TERM_PROGRAMME_CALENDAR_AND_GATES §10), edited through their ONE writer,
+    PUT …/visitors/gates. The Rooms editor's shape: add, rename, retire or reactivate, reorder, then one save.
+
+    A rename is tracked as old → new and changes the LIST only — every visit keeps the name its gate had that day.
+    Removing a gate a visit has used is refused by the server; retiring it is the way to stop offering it. The form
+    refuses a blank or repeated name first, in the server's own words.
+*@
+
+<QModal Visible="@Visible" VisibleChanged="@VisibleChanged" Title="Gates" Icon="signpost-split" Size="md" Class="visitor-gates-editor">
+    <ChildContent>
+        <p class="visitor-gates-editor__lead">
+            The gates visitors come in and leave by. With two or more in use, check-in and check-out ask which one;
+            with one, it is filled in; with none, nothing is asked.
+            <QInfo Label="Gates" Text="A gate a visit has used can be retired but not removed: it stays on the visits that name it and stops being offered. Renaming a gate changes the list, not the visits already recorded." />
+        </p>
+
+        @if (loading)
+        {
+            <div class="loading-container"><QSpinner Size="sm" /> <span>Loading gates…</span></div>
+        }
+        else
+        {
+            @if (rows.Count == 0)
+            {
+                <QEmptyState Icon="signpost-split" Title="No gates yet" Text="Check-in asks nothing about gates until one is added." />
+            }
+            @for (var i = 0; i < rows.Count; i++)
+            {
+                var row = rows[i];
+                var index = i;
+                <div class="visitor-gates-editor__row @(row.IsActive ? "" : "visitor-gates-editor__row--retired")" data-gate-row="@index">
+                    <QInput TValue="string" Value="@row.Name" ValueChanged="@(v => { row.Name = v ?? string.Empty; problem = null; })"
+                            Placeholder="e.g. Main gate" MaxLength="100" Class="visitor-gates-editor__name" data-gate-name="@index" />
+                    @if (!row.IsActive)
+                    {
+                        <QChip Text="Retired" Size="sm" />
+                    }
+                    <div class="visitor-gates-editor__actions">
+                        <QButton Icon="arrow-up" Size="sm" Variant="ghost" Disabled="@(index == 0)" OnClick="@(() => Move(index, -1))" aria-label="Move up" />
+                        <QButton Icon="arrow-down" Size="sm" Variant="ghost" Disabled="@(index == rows.Count - 1)" OnClick="@(() => Move(index, 1))" aria-label="Move down" />
+                        <QButton Text="@(row.IsActive ? "Retire" : "Reactivate")" Size="sm" Variant="ghost"
+                                 OnClick="@(() => { row.IsActive = !row.IsActive; problem = null; })" data-gate-toggle="@index" />
+                        <QButton Icon="trash" Size="sm" Variant="ghost" OnClick="@(() => Remove(index))" aria-label="Remove" data-gate-remove="@index" />
+                    </div>
+                </div>
+            }
+            <QButton Text="Add a gate" Icon="plus-lg" Size="sm" Variant="secondary" OnClick="@Add" data-gate-action="add" />
+
+            @if (problem != null)
+            {
+                <p class="form-error" data-gate-problem>@problem</p>
+            }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => VisibleChanged.InvokeAsync(false))" />
+        <QButton Text="Save gates" Icon="check-lg" Variant="primary" Loading="@saving" Disabled="@loading" OnClick="@SaveAsync" data-gate-action="save" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .visitor-gates-editor__lead { margin: 0 0 var(--qm-field-gap, 12px); font-size: var(--qm-text-base); color: var(--qm-text-secondary); }
+    .visitor-gates-editor__row { display: flex; align-items: center; gap: var(--q-row-gap, 8px); padding: 6px 0; border-bottom: 1px solid var(--qm-border); flex-wrap: wrap; }
+    .visitor-gates-editor__row--retired .visitor-gates-editor__name { opacity: 0.6; }
+    .visitor-gates-editor__name { flex: 1 1 200px; min-width: 0; }
+    .visitor-gates-editor__actions { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public Guid BranchId { get; set; }
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
+
+    /// <summary>Raised with the saved list, so the page's pickers follow at once.</summary>
+    [Parameter] public EventCallback<List<VocabularyItemDto>> OnSaved { get; set; }
+
+    private sealed class Row
+    {
+        public string Name { get; set; } = string.Empty;
+        /// <summary>The name as it was stored — null for a gate added in this sitting. What a rename is FROM.</summary>
+        public string? OriginalName { get; init; }
+        public bool IsActive { get; set; } = true;
+    }
+
+    private List<Row> rows = new();
+    private bool loading;
+    private bool saving;
+    private string? problem;
+    private bool wasVisible;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Visible && !wasVisible) await LoadAsync();
+        wasVisible = Visible;
+    }
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        problem = null;
+        var gates = await VisitorApi.GetGatesAsync(BranchId);
+        rows = gates.OrderBy(g => g.SortOrder)
+            .Select(g => new Row { Name = g.Name, OriginalName = g.Name, IsActive = g.IsActive })
+            .ToList();
+        loading = false;
+    }
+
+    private void Add()
+    {
+        rows.Add(new Row());
+        problem = null;
+    }
+
+    private void Remove(int index)
+    {
+        rows.RemoveAt(index);
+        problem = null;
+    }
+
+    private void Move(int index, int by)
+    {
+        var to = index + by;
+        if (to < 0 || to >= rows.Count) return;
+        (rows[index], rows[to]) = (rows[to], rows[index]);
+    }
+
+    /// <summary>What the server would refuse, in its words — so a press never costs a round trip to be told.</summary>
+    private string? PreSubmitProblem()
+    {
+        var names = rows.Select(r => QMgr.Domain.Identity.ClassName.Display(r.Name) ?? string.Empty).ToList();
+        if (names.Any(n => n.Length == 0)) return "Every gate needs a name.";
+        if (names.FirstOrDefault(n => VisitorGateRule.Key(n) == null) is { } noKey) return $"“{noKey}” needs at least one letter or digit.";
+        if (names.GroupBy(n => VisitorGateRule.Key(n)).FirstOrDefault(g => g.Count() > 1) is { } dup) return $"“{dup.First()}” is listed twice.";
+        return null;
+    }
+
+    private async Task SaveAsync()
+    {
+        problem = PreSubmitProblem();
+        if (problem != null) return;
+
+        var request = new UpdateVisitorGatesRequest
+        {
+            Gates = rows.Select((r, i) => new VocabularyItemDto
+            {
+                Name = QMgr.Domain.Identity.ClassName.Display(r.Name) ?? string.Empty,
+                IsActive = r.IsActive,
+                SortOrder = i
+            }).ToList(),
+            Renames = rows
+                .Where(r => r.OriginalName != null && VisitorGateRule.Key(r.OriginalName) != VisitorGateRule.Key(r.Name))
+                .GroupBy(r => r.OriginalName!, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => QMgr.Domain.Identity.ClassName.Display(g.First().Name) ?? string.Empty)
+        };
+
+        saving = true;
+        try
+        {
+            var saved = await VisitorApi.SaveGatesAsync(BranchId, request);
+            Toasts.Notify(ToastSeverity.Success, "Gates saved", $"{saved.Count(g => g.IsActive)} in use, {saved.Count(g => !g.IsActive)} retired.");
+            await OnSaved.InvokeAsync(saved);
+            await VisibleChanged.InvokeAsync(false);
+        }
+        catch (InvalidOperationException ex)
+        {
+            problem = ex.Message;
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}

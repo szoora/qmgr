@@ -2,6 +2,7 @@
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Web.Services
+@using QMgr.Application.Import.Documents
 @inject IJSRuntime JS
 @inject IToastService Toast
 @inject INotificationClientService NotificationClient
@@ -45,9 +46,9 @@
             <label class="q-import__drop" for="@InputId">
                 <QIcon Name="file-earmark-spreadsheet" />
                 <span class="q-import__drop-main">@(preview == null ? "Choose an Excel or CSV file" : FileName)</span>
-                <span class="q-import__drop-sub">.xlsx, .xls, .csv, .json or .ndjson — read in your browser, nothing is uploaded until you press Import</span>
+                <span class="q-import__drop-sub">.xlsx, .xls, .csv, .json, .ndjson, or a table in a .docx, .doc or text .pdf — read here, nothing is sent until you press Import</span>
             </label>
-            <InputFile id="@InputId" OnChange="OnFileSelected" accept=".csv,.xlsx,.xls,text/csv" class="q-import__file" />
+            <InputFile id="@InputId" OnChange="OnFileSelected" accept="@ImportDocumentReading.Accept" class="q-import__file" />
 
             @if (TemplateRows.Count > 0 || Columns.Count > 0)
             {
@@ -251,10 +252,8 @@
                         <li class="qi-changes__more">and @(existing.PossibleDuplicates.Count - 8) more</li>
                     }
                 </ul>
-                <label class="q-import__radio qi-confirm">
-                    <input type="checkbox" checked="@duplicatesConfirmed" @onchange="@(e => duplicatesConfirmed = (bool)(e.Value ?? false))" />
-                    <span>I have checked these — they are different @(Noun)s, or the same one and I mean to update them.</span>
-                </label>
+                <QCheckbox Value="@duplicatesConfirmed" ValueChanged="@(v => duplicatesConfirmed = v)" Class="qi-confirm q-checkbox-row--top"
+                           Label="@($"I have checked these — they are different {Noun}s, or the same one and I mean to update them.")" />
             </div>
         }
 
@@ -620,6 +619,8 @@
     private Stage stage = Stage.Pick;
     private ImportGrid? grid;
     private List<string> sheetNames = new();
+    /// <summary>The chosen file read as a document (.docx, .doc, .pdf); null for a sheet, which SheetJS reads.</summary>
+    private ImportDocument? document;
     private string? sheetName;
     private List<ColumnOption> columnOptions = new();
     private List<ColumnOption> headerRowOptions = new();
@@ -703,6 +704,21 @@
             FileName = e.File.Name;
             await OnFileChosen.InvokeAsync(FileName);
 
+            // A Word document or a text PDF: its tables are offered as the "sheets", the one that best matches this
+            // import's columns first, and the chosen table becomes CSV for the unchanged path below (plan §4).
+            document = null;
+            if (DocumentReader.IsDocumentName(FileName))
+            {
+                document = await ImportDocumentReading.ReadAsync(JS, InputId, FileName);
+                if (document.Tables.Count == 0)
+                    throw new ImportDocumentException($"\"{FileName}\" has no table in it. The rows to import must be in a table.");
+                sheetNames = ImportDocumentReading.TableLabels(document);
+                var best = DocumentReader.BestTable(document, cell => Columns.Any(c => c.Matches(cell)));
+                sheetName = sheetNames[Math.Max(0, best)];
+                await ReadSheetAsync();
+                return;
+            }
+
             // Excel, CSV and JSON alike are read in the BROWSER; only text comes back, which is why
             // this product needs no server-side Excel library (a standing constraint) and why nothing
             // leaves the machine until Import is pressed.
@@ -723,7 +739,9 @@
     /// <summary>Reads the chosen sheet, finds its header row, guesses the mapping and offers it.</summary>
     private async Task ReadSheetAsync()
     {
-        lastCsv = await JS.InvokeAsync<string>("rosterImport.sheetToCsv", InputId, sheetName);
+        lastCsv = document != null
+            ? ImportDocumentReading.ToCsv(document, Math.Max(0, sheetNames.IndexOf(sheetName ?? string.Empty)))
+            : await JS.InvokeAsync<string>("rosterImport.sheetToCsv", InputId, sheetName);
         grid = ImportParsing.ReadGrid(lastCsv, Columns);
         mapping = ImportParsing.AutoMap(grid, Columns);
         await RestoreRememberedMappingAsync();
@@ -1076,7 +1094,7 @@
         job = null; preview = null; entries = new();
         showEntries = false; FileName = null; liveSince = null; completedRaised = false;
         stage = Stage.Pick; grid = null; lastCsv = null; existing = null; updateExisting = true; duplicatesConfirmed = false;
-        sheetNames = new(); sheetName = null; mappingProblems = new(); mapping = new();
+        sheetNames = new(); sheetName = null; mappingProblems = new(); mapping = new(); document = null;
     }
 
     private static bool IsTerminal(RosterImportStatus s)

@@ -149,6 +149,13 @@ public class PlatformSettingsController : ControllerBase
             return BadRequest(new { error = "USE_PAYMENTS_PAGE", message = "Payment gateway settings are edited on the platform Payments page." });
         }
 
+        // The national calendar (calendar plan D9, 2026-09-23) is a list of dated entries with its own validated
+        // endpoint, PUT api/v1/platform/national-calendar. A raw JSON edit here would bypass that validation.
+        if (category == QMgr.API.Application.Services.NationalCalendarStore.Category)
+        {
+            return BadRequest(new { error = "USE_NATIONAL_CALENDAR_PAGE", message = "The national calendar is edited on its own page." });
+        }
+
         // Update based on category (with validation)
         bool success = category switch
         {
@@ -266,7 +273,9 @@ public class PlatformSettingsController : ControllerBase
             return BadRequest(new { message = "Max login attempts must be at least 3." });
         }
 
-        if (flat.PasswordMinLength < 6)
+        // Four, not six. The floor has to admit the DEFAULT, or a fresh install cannot save its own
+        // settings page unchanged — see PasswordPolicySettings for why the default is four.
+        if (flat.PasswordMinLength < 4)
         {
             return BadRequest(new { message = "Minimum password length cannot be less than 6 characters." });
         }

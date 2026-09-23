@@ -17,7 +17,14 @@ public interface IVisitorApiService
     Task<VisitorDto> PreRegisterAsync(Guid branchId, PreRegisterVisitorRequest request);
     Task<VisitorDto> CheckInAsync(Guid branchId, CheckInVisitorRequest request);
     Task<VisitorDto> CheckInExistingAsync(Guid branchId, Guid visitorId, CheckInVisitorRequest? request = null);
-    Task<VisitorDto?> CheckOutAsync(Guid branchId, Guid visitorId);
+    /// <summary>Checks a visitor out by <paramref name="gate"/> (plan §10). Throws with the server's own words on a refusal.</summary>
+    Task<VisitorDto> CheckOutAsync(Guid branchId, Guid visitorId, string? gate = null);
+
+    /// <summary>The branch's gates, active and retired, in order. Empty on failure — the desk then offers none.</summary>
+    Task<List<VocabularyItemDto>> GetGatesAsync(Guid branchId);
+
+    /// <summary>Saves the gate list through its one writer. Throws with the server's own words on a refusal.</summary>
+    Task<List<VocabularyItemDto>> SaveGatesAsync(Guid branchId, UpdateVisitorGatesRequest request);
     Task<VisitorDto?> ReissueBadgeTokenAsync(Guid branchId, Guid visitorId);
 
     /// <summary>Uploads a check-in headshot (JPEG bytes) and returns its stored URL, or null on failure.</summary>
@@ -34,7 +41,7 @@ public interface IVisitorApiService
     Task<List<VisitorPassDto>> GetPassesAsync(Guid branchId);
     Task<VisitorPassDto> CreatePassAsync(Guid branchId, CreateVisitorPassRequest request);
     Task<VisitorPassDto?> RevokePassAsync(Guid branchId, Guid passId);
-    Task<VisitorScanResultDto> ScanAsync(Guid branchId, string token, string? direction = null);
+    Task<VisitorScanResultDto> ScanAsync(Guid branchId, string token, string? direction = null, string? gate = null);
 
     Task<VisitorConsentSettingsDto> GetConsentSettingsAsync(Guid branchId);
     Task<VisitorConsentSettingsDto?> UpdateConsentSettingsAsync(Guid branchId, VisitorConsentSettingsDto settings);
@@ -171,19 +178,41 @@ public class VisitorApiService : IVisitorApiService
         return (await response.Content.ReadFromJsonAsync<VisitorDto>(_jsonOptions))!;
     }
 
-    public async Task<VisitorDto?> CheckOutAsync(Guid branchId, Guid visitorId)
+    public async Task<VisitorDto> CheckOutAsync(Guid branchId, Guid visitorId, string? gate = null)
+    {
+        HttpResponseMessage response;
+        try
+        {
+            response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/visitors/{visitorId}/checkout",
+                new CheckOutVisitorRequest { Gate = gate }, _jsonOptions);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "Failed to check out visitor {VisitorId}", visitorId);
+            throw new InvalidOperationException("The server could not be reached. Try again.");
+        }
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return (await response.Content.ReadFromJsonAsync<VisitorDto>(_jsonOptions))!;
+    }
+
+    public async Task<List<VocabularyItemDto>> GetGatesAsync(Guid branchId)
     {
         try
         {
-            var response = await _httpClient.PostAsync($"api/v1/branches/{branchId}/visitors/{visitorId}/checkout", null);
-            if (!response.IsSuccessStatusCode) return null;
-            return await response.Content.ReadFromJsonAsync<VisitorDto>(_jsonOptions);
+            return await _httpClient.GetFromJsonAsync<List<VocabularyItemDto>>($"api/v1/branches/{branchId}/visitors/gates", _jsonOptions) ?? new();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to check out visitor {VisitorId}", visitorId);
-            return null;
+            _logger.LogError(ex, "Failed to get visitor gates for branch {BranchId}", branchId);
+            return new();
         }
+    }
+
+    public async Task<List<VocabularyItemDto>> SaveGatesAsync(Guid branchId, UpdateVisitorGatesRequest request)
+    {
+        var response = await _httpClient.PutAsJsonAsync($"api/v1/branches/{branchId}/visitors/gates", request, _jsonOptions);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return await response.Content.ReadFromJsonAsync<List<VocabularyItemDto>>(_jsonOptions) ?? new();
     }
 
     public async Task<string?> UploadPhotoAsync(Guid branchId, byte[] jpegBytes)
@@ -313,9 +342,9 @@ public class VisitorApiService : IVisitorApiService
         }
     }
 
-    public async Task<VisitorScanResultDto> ScanAsync(Guid branchId, string token, string? direction = null)
+    public async Task<VisitorScanResultDto> ScanAsync(Guid branchId, string token, string? direction = null, string? gate = null)
     {
-        var request = new VisitorScanRequest { Token = token, Direction = direction };
+        var request = new VisitorScanRequest { Token = token, Direction = direction, Gate = gate };
         var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/visitors/scan", request, _jsonOptions);
         if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
         return (await response.Content.ReadFromJsonAsync<VisitorScanResultDto>(_jsonOptions))!;
@@ -463,6 +492,7 @@ public class VisitorApiService : IVisitorApiService
         if (!string.IsNullOrWhiteSpace(filter.Company)) parts.Add($"company={Uri.EscapeDataString(filter.Company)}");
         if (filter.WatchlistOnly) parts.Add("watchlistOnly=true");
         if (filter.RosterOnly) parts.Add("rosterOnly=true");
+        if (!string.IsNullOrWhiteSpace(filter.Gate)) parts.Add($"gate={Uri.EscapeDataString(filter.Gate)}");
         return parts.Count == 0 ? "" : "?" + string.Join("&", parts);
     }
 

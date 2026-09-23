@@ -24,7 +24,7 @@ acceptance test, not an illustration.
 | Header row | **row 2** | row 1 |
 | Name | **one column**, `Staff Name`, `Abaho Jude`, `Ahabyoona Katah Egidious` — **surname first** | one column, `Student Name`, `ABAASA BARBRA` — **surname first, shouted** |
 | Class | — | **two columns**, `Class` = `S1` and `Stream` = `A`; Q-Mgr stores one `S1A` |
-| Other | `Sex`, `Department`, `Mobile` (`0772945515`), `Email` (missing on many rows), `PAYE` (`▲ 40% Govt`), `Status` | `Type`, `Gender`, `Status`, `Payment Code` |
+| Other | `Sex`, `Department`, `Mobile` (`0770000000`), `Email` (missing on many rows), `PAYE` (`▲ 40% Govt`), `Status` | `Type`, `Gender`, `Status`, `Payment Code` |
 
 Four separate reasons today's importer cannot read them, each of which is a design requirement:
 
@@ -164,7 +164,7 @@ person is imported twice); drop entirely blank rows; drop rows that are a repeat
 | Switch | What it does | Default |
 |---|---|---|
 | Fix SHOUTING | `ABAASA BARBRA` → `Abaasa Barbra`, never touching a name that is already mixed case, so `McDonald`, `O'Brien` and `van der Berg` survive | on |
-| Normalise phone numbers | `0772945515`, `256 772 945515`, `+256-772-945515` → `+256772945515` | on |
+| Normalise phone numbers | `0770000000`, `256 770 000000`, `+256-770-000000` → `+256770000000` | on |
 | Lower-case email addresses | trim and case-fold | on |
 | Day-first dates | `03/04/2026` is 3 April, the same precedence the welfare import already uses | on |
 

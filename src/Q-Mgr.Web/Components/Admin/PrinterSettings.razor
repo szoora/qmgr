@@ -16,7 +16,7 @@
 <div class="admin-page">
     <QPageActions Embedded="@Embedded">
         <Title>
-            <h1>Printer Settings<QInfo Text="Configure ticket printing for kiosk and counter terminals" Label="Printer Settings" /></h1>
+            <h1>Printer Settings</h1>
             <p class="subtitle">Configure ticket printing for kiosk and counter terminals</p>
         </Title>
         <Actions>
@@ -139,9 +139,7 @@
                             <span class="option-label">Print Logo</span>
                             <span class="option-desc">Include company logo on tickets</span>
                         </div>
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" role="switch" @bind="settings.PrintLogo" />
-                        </div>
+                        <QSwitch @bind-Value="settings.PrintLogo" aria-label="Print logo" />
                     </div>
 
                     @if (settings.PrintLogo)
@@ -158,9 +156,7 @@
                             <span class="option-label">Print QR Code</span>
                             <span class="option-desc">Include QR code for digital ticket tracking</span>
                         </div>
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" role="switch" @bind="settings.PrintQrCode" />
-                        </div>
+                        <QSwitch @bind-Value="settings.PrintQrCode" aria-label="Print QR code" />
                     </div>
 
                     <div class="option-item">
@@ -168,9 +164,7 @@
                             <span class="option-label">Print Feedback URL</span>
                             <span class="option-desc">Include feedback code on tickets</span>
                         </div>
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" role="switch" @bind="settings.PrintFeedbackUrl" />
-                        </div>
+                        <QSwitch @bind-Value="settings.PrintFeedbackUrl" aria-label="Print feedback URL" />
                     </div>
 
                     <div class="option-item">
@@ -178,9 +172,7 @@
                             <span class="option-label">Auto-Print on Token Create</span>
                             <span class="option-desc">Automatically print when customer gets a ticket</span>
                         </div>
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" role="switch" @bind="settings.AutoPrintOnTokenCreate" />
-                        </div>
+                        <QSwitch @bind-Value="settings.AutoPrintOnTokenCreate" aria-label="Auto-print on token create" />
                     </div>
                 </div>
             </QCard>

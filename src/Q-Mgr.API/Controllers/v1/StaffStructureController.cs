@@ -41,6 +41,7 @@ public class StaffStructureController : StaffPerformanceControllerBase
     private readonly IStaffPerformancePolicyService _policy;
     private readonly IStaffScoringService _scoring;
     private readonly INotificationService _notifications;
+    private readonly IStaffProfileChangeNotifier _accessChanged;
     private readonly ILogger<StaffStructureController> _logger;
 
     public StaffStructureController(
@@ -51,12 +52,14 @@ public class StaffStructureController : StaffPerformanceControllerBase
         IStaffPerformancePolicyService policy,
         IStaffScoringService scoring,
         INotificationService notifications,
+        IStaffProfileChangeNotifier accessChanged,
         ILogger<StaffStructureController> logger)
         : base(db, tenantAccessor, staffScope, activity)
     {
         _policy = policy;
         _scoring = scoring;
         _notifications = notifications;
+        _accessChanged = accessChanged;
         _logger = logger;
     }
 
@@ -111,6 +114,10 @@ public class StaffStructureController : StaffPerformanceControllerBase
         Db.Departments.Add(department);
         await Db.SaveChangesAsync();
 
+        // Heading a department GRANTS PERMISSIONS since 2026-09-22 (PostPermissionService), so the
+        // new head's and deputy's cached permission set is stale the moment this row exists.
+        await DropPostCacheAsync(department.HeadUserId, department.DeputyHeadUserId);
+
         if (department.HeadUserId is { } newHead)
             await NotifyProfileChangedAsync(newHead, organizationId, branchId, "You are now head of department", $"You have been made head of {department.Name}. Its staff now appear on your staff pages.");
         if (department.DeputyHeadUserId is { } newDeputy && newDeputy != department.HeadUserId)
@@ -151,6 +158,12 @@ public class StaffStructureController : StaffPerformanceControllerBase
         department.UpdatedAt = DateTime.UtcNow;
         department.UpdatedBy = CurrentUserId();
         await Db.SaveChangesAsync();
+
+        // BOTH SIDES OF THE CHANGE, and the one being REMOVED is the one that matters: a head who
+        // has just been replaced keeps the department's staff records for the cache's five minutes
+        // unless their entry is dropped here. Four ids, deduped and null-skipped downstream.
+        await DropPostCacheAsync(department.HeadUserId, department.DeputyHeadUserId,
+                                 before.HeadUserId, before.DeputyHeadUserId);
 
         var names = await BuildNamesAsync(new[] { department.HeadUserId, department.DeputyHeadUserId, before.HeadUserId });
         var headChanged = before.HeadUserId != department.HeadUserId;
@@ -233,7 +246,7 @@ public class StaffStructureController : StaffPerformanceControllerBase
         var periodDto = _policy.FindPeriod(policy, period) ?? _policy.PeriodFor(policy, DateOnly.FromDateTime(DateTime.UtcNow));
 
         var staffQuery = await StaffScope.ApplyToStaffAsync(BranchStaffQuery(organizationId, branchId), branchId);
-        var staff = await staffQuery.OrderBy(u => u.FirstName).ThenBy(u => u.LastName).ToListAsync();
+        var staff = await PersonNames.OrderByName(staffQuery, organizationId).ToListAsync();
         var ids = staff.Select(u => u.Id).ToList();
 
         var scores = (await _scoring.ComputeBranchAsync(organizationId, branchId, periodDto)).ToDictionary(s => s.SubjectUserId);
@@ -614,7 +627,9 @@ public class StaffStructureController : StaffPerformanceControllerBase
             JobTitle = user.JobTitle,
             EmployeeNumber = user.EmployeeNumber,
             // Derived from the role, never stored — see the note on the DTO.
-            StaffGroup = _policy.GroupFor(user.Role?.Code),
+            // The role's StaffGroup, not its Code. GroupFor takes the group (2026-09-22), so this showed the
+            // role code — "teacher" — where the staff record should read "Teaching staff".
+            StaffGroup = _policy.GroupFor(user.Role?.StaffGroup),
             EmploymentStartDate = user.EmploymentStartDate,
             EmploymentEndDate = user.EmploymentEndDate,
             EmploymentType = user.EmploymentType,
@@ -731,6 +746,27 @@ public class StaffStructureController : StaffPerformanceControllerBase
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Drops the cached permission set for everybody whose department post just changed, on either
+    /// side of the change.
+    ///
+    /// <para>Nulls and duplicates are skipped, so callers pass the before and after ids straight in
+    /// without sorting out which actually moved — getting that arithmetic wrong at the call site is
+    /// how somebody keeps access they no longer hold, and the cost of an unnecessary drop is one
+    /// extra query on that person's next request.</para>
+    ///
+    /// <para>Never throws: the department is already saved, and a cache entry that outlived its row
+    /// by five minutes is a degraded success, not a reason to fail a committed write.</para>
+    /// </summary>
+    private async Task DropPostCacheAsync(params Guid?[] userIds)
+    {
+        foreach (var id in userIds.Where(i => i.HasValue).Select(i => i!.Value).Distinct())
+        {
+            try { await _accessChanged.PostChangedAsync(id, "department head"); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Could not clear the access change for user {UserId} after a department change", id); }
+        }
     }
 
     private async Task NotifyProfileChangedAsync(Guid userId, Guid organizationId, Guid branchId, string title, string message)

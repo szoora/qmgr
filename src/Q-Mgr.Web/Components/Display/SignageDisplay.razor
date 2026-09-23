@@ -42,7 +42,11 @@ else if (branchState == BranchResolveState.InvalidBranch)
 }
 else
 {
-    <div class="signage-display">
+    <div class="signage-display @(ShowEvents ? "signage-display--events" : "")">
+        @* ?events=1 adds the "Coming up" zone (ZoneType.Events) beside the playlist: the branch's upcoming
+           PUBLIC school events. Decided by the link, because this screen is anonymous and cannot read
+           which zones its Display row carries. *@
+        <div class="signage-main">
         <AdSignagePlayer BranchId="@branchId" CssClass="signage-fill">
             <LoadingContent>
                 <div class="signage-empty">
@@ -56,6 +60,11 @@ else
                 </div>
             </EmptyContent>
         </AdSignagePlayer>
+        @if (ShowEvents)
+        {
+            <ComingUpEvents BranchId="@branchId" Class="signage-events" />
+        }
+        </div>
         <DisplayBanner BranchId="@branchId" />
     </div>
 }
@@ -74,6 +83,27 @@ else
         width: 100%;
         flex: 1;
         min-height: 0;
+    }
+
+    .signage-main {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+    }
+
+    .signage-main > .signage-fill {
+        min-width: 0;
+    }
+
+    /* The Coming up zone takes a third of the width beside the playlist; on a portrait screen, the bottom third. */
+    .signage-events {
+        flex: 0 0 34%;
+        min-width: 0;
+    }
+
+    @@media (orientation: portrait) {
+        .signage-display--events .signage-main { flex-direction: column; }
+        .signage-display--events .signage-events { flex: 0 0 38%; }
     }
 
     .signage-empty {
@@ -154,6 +184,12 @@ else
 
     [SupplyParameterFromQuery(Name = "branch")]
     public Guid? BranchQuery { get; set; }
+
+    /// <summary>?events=1 shows the "Coming up" zone of upcoming PUBLIC school events beside the playlist.</summary>
+    [SupplyParameterFromQuery(Name = "events")]
+    public string? EventsQuery { get; set; }
+
+    private bool ShowEvents => EventsQuery is "1" or "true" or "yes";
 
     protected override async Task OnInitializedAsync()
     {

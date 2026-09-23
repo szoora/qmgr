@@ -103,7 +103,8 @@
                 </div>
             }
         </div>
-        <QPager Count="@FilteredMedia.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="items" />
+        <QPager Count="@FilteredMedia.Count" PageSize="@PageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" PageSizeOptions="@QPagerDefaults.Sizes" AllowAll="true" StorageKey="media-library"
+                    PageSizeChanged="@(n => { PageSize = n; pageIndex = 0; })" ItemLabel="items" />
     }
 </div>
 
@@ -309,7 +310,7 @@
                     @if (isValidatingUrl)
                     {
                         <div class="url-spinner">
-                            <span class="spinner-border spinner-border-sm"></span>
+                            <QSpinner Size="sm" />
                         </div>
                     }
                     else if (detectedPlatform != null)
@@ -1224,11 +1225,11 @@
     // the browser has to fetch. Rendering the lot is a wall of network requests for a page whose
     // reader wants the six most recent. The CARD is deliberately kept — a cover image is not a table
     // cell, so the sweep's "row" rule does not apply here.
-    private const int PageSize = 24;
+    private int PageSize = QPagerDefaults.Size;
     private int pageIndex;
 
-    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (FilteredMedia.Count - 1) / PageSize));
-    private IEnumerable<MediaContentDto> PagedMedia => FilteredMedia.Skip(SafePageIndex * PageSize).Take(PageSize);
+    private int SafePageIndex => QPaging.SafeIndex(pageIndex, FilteredMedia.Count, PageSize);
+    private IEnumerable<MediaContentDto> PagedMedia => QPaging.Page(FilteredMedia, SafePageIndex, PageSize);
 
     protected override async Task OnInitializedAsync()
     {
