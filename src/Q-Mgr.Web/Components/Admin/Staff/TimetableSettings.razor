@@ -92,10 +92,13 @@
                             {
                                 var p = period;
                                 var pIndex = pi;
-                                <tr>
+                                var dayType = t;
+                                @* @key: a row that moves because its start time changed is MOVED in the DOM, not
+                                   rebuilt, so the time input somebody is typing in keeps its focus. *@
+                                <tr @key="p">
                                     <td><QInput TValue="string" @bind-Value="@p.Key" MaxLength="20" Disabled="@(!canManage || savedKeys.Contains(p.Key))" /></td>
                                     <td><QInput TValue="string" @bind-Value="@p.Label" MaxLength="40" Disabled="@(!canManage)" /></td>
-                                    <td><QInput TValue="string" @bind-Value="@p.Start" Type="time" Disabled="@(!canManage)" /></td>
+                                    <td><QInput TValue="string" @bind-Value="@p.Start" @bind-Value:after="@(() => SortByStart(dayType))" Type="time" Disabled="@(!canManage)" /></td>
                                     <td><QInput TValue="string" @bind-Value="@p.End" Type="time" Disabled="@(!canManage)" /></td>
                                     <td>
                                         <QSelect TValue="BellPeriodKind" TItem="BellPeriodKind" Value="@p.Kind" ValueChanged="@(k => p.Kind = k)" Items="@Kinds"
@@ -377,6 +380,23 @@
     /// were not"), but the reader still lost the room edit and had no idea which row was at fault.
     /// Refused here instead, naming the row, before either call goes out.
     /// </summary>
+    /// <summary>
+    /// THE TIMES DECIDE THE ORDER (2026-09-24). A school day is a sequence in time, so the rows follow their start
+    /// times the moment one changes — moving P4 to 10:00 puts it above a break at 10:40 there and then, rather than
+    /// only after a save. The API sorts the same way (TimetableCycle.Validate), so what is shown is what is stored.
+    /// A row with no start yet stays where it is, at the end, until it has one. Keys never change: every lesson
+    /// placed in P4 moves with P4.
+    /// </summary>
+    private static void SortByStart(BellDayTypeDto dayType)
+    {
+        dayType.Periods = dayType.Periods
+            .Select((p, i) => (p, i))
+            .OrderBy(x => TimeOnly.TryParse(x.p.Start, System.Globalization.CultureInfo.InvariantCulture, out var s) ? s : TimeOnly.MaxValue)
+            .ThenBy(x => x.i)
+            .Select(x => x.p)
+            .ToList();
+    }
+
     private string? PreSubmitProblem()
     {
         var blankRoom = rooms.FindIndex(r => string.IsNullOrWhiteSpace(r.Name));

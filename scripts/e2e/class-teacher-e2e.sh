@@ -1329,5 +1329,19 @@ else
   printf '  \033[33mSKIP\033[0m  node is not installed; section 38 did not run\n'
 fi
 
+hdr "39. Moving a period on the school day"
+# 2026-09-24: a period moved before the one ahead of it is accepted and comes back in time order, and a lesson already
+# on a teacher's calendar moves to the new time without anybody pressing Generate. Restores the school day.
+if command -v node > /dev/null 2>&1; then
+  SD_OUT=$(API="$API" BRANCH="$BRANCH" node "$(dirname "$0")/school-day-order-e2e.mjs" 2>&1)
+  echo "$SD_OUT" | sed 's/^/  /'
+  SD_PASS=$(echo "$SD_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  SD_FAIL=$(echo "$SD_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$SD_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 39 did not report a summary\n'
+  else PASS=$((PASS+SD_PASS)); FAIL=$((FAIL+SD_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 39 did not run\n'
+fi
+
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 exit "$FAIL"

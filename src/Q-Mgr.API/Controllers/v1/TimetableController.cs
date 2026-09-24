@@ -129,6 +129,14 @@ public class TimetableController : StaffPerformanceControllerBase
             $"Bell schedule saved: {request.DayTypes.Count} day type(s), {TimetableCycle.CycleDayCount(request)}-day cycle, {request.Unavailability.Count} unavailability line(s)",
             new { request.CycleWeeks, DayTypes = request.DayTypes.Select(d => new { d.Name, Periods = d.Periods.Count }) }, branchId, organizationId);
 
+        // RE-TIME WHAT IS ALREADY ON CALENDARS, NOW (2026-09-24). A lesson's time is copied into its duty when it is
+        // generated, so moving P4 before break changed nothing on anybody's day until the 01:00 run — a teacher's My
+        // School Day went on saying 10:20 for the rest of the day. Publishing already enqueues this; saving the school
+        // day is the other act that moves lessons. The run cancels the old duty, makes the new one and tells the
+        // teacher "A lesson today moved" — MaterialiseAsync's own rule, nothing new here.
+        try { Hangfire.BackgroundJob.Enqueue<QMgr.Infrastructure.Jobs.LessonGenerationJob>(job => job.RunForBranchAsync(branchId)); }
+        catch (Exception ex) { _logger.LogError(ex, "Could not enqueue lesson generation after the school day changed for branch {BranchId}; the nightly run will do it", branchId); }
+
         return await GetSettings(branchId);
     }
 

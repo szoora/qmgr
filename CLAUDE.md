@@ -2832,6 +2832,11 @@ The plan is `docs/plans/DUTY_ROTA_AND_TIMETABLE.md`; progress and the resume poi
 - **A timetable import resolves rows the way a hand placement would, into a draft only, one import per draft at a time**
   (`ProcessTimetableJobAsync`); what it cannot place it refuses per row with a reason, and clashes it may place are left to
   the diagnosis. CSV text on the Web is split by `CsvText` only.
+- **THE TIMES DECIDE A SCHOOL DAY'S ORDER (2026-09-24).** `TimetableCycle.Validate` sorts periods by start time and
+  stores them that way; the School Day page re-sorts its rows the moment a start changes (`SortByStart`, rows keyed so
+  focus follows); and **saving the school day enqueues `LessonGenerationJob`**, as publishing does — a lesson's time is
+  copied into its duty when generated, so without that a moved period left every teacher's day at the old time until
+  01:00. Keys never change, so every lesson placed in P4 moves with P4. Section 39 and `browser/school-day-order.mjs`.
 - **Rooms have one writer: `PUT …/timetable/rooms` (the Bell Schedule page).** They are stored in `BranchVocabulariesDto.Rooms`,
   but `UpdateVocabularies` keeps the stored rooms whatever it is sent. A rename moves draft and published lessons and upcoming
   lesson duties; a room with live lessons is retired, never removed.

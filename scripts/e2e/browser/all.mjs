@@ -54,6 +54,8 @@ SUITES.push('timetable-ownership-ui', 'exam-series-ui');
 SUITES.push('access-ui');
 // The rebrand to SACC Dashboard (2026-09-24): the name a person sees, on every surface (section 38 is the API half).
 SUITES.push('product-name');
+// The School Day's rows follow their start times (2026-09-24); section 39 is the API half.
+SUITES.push('school-day-order');
 
 // Measurement, not assertion: density-check runs an A/B in one page load, furniture-check tallies
 // the space a page spends before any data. Neither has a pass state, so failing the run on one

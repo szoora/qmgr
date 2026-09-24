@@ -30,6 +30,7 @@ remote, so it still exists on this disk alone until one is added.
 - [x] **Tracker audit:** 29 open items; 25 closed with the reason (done in code, superseded, or yours — marked
       "Yours, not code"). **Two remain genuinely open:** a security review against the real production
       configuration, and whether the `AdvancedAnalytics` / `WebhookIntegration` feature flags should gate anything.
+- [x] **School Day ordering — BUILT the same afternoon** (the diagnosis above was wrong: the server always sorted; the page did not follow, and a save never re-timed generated lessons). Section 39 8/0, browser school-day-order 5/0.
 - **Waiting on the user:** Firebase — a service-account key for the server, and a `google-services.json` that lists
   `ug.qmgr` (the one in the app lists only com.sacc.erp, com.sacc.ezycom and ug.cashbook, so push cannot register).
   And the School Day ordering recommendation (the check compares periods in LIST order, so P4 cannot be moved
