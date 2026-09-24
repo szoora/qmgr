@@ -18,6 +18,7 @@
 // Run: node scripts/e2e/browser/timetable-views.mjs   (headless Chrome on 9333; see CLAUDE.md)
 import { openTab } from './cdp.mjs';
 import { login } from './login.mjs';
+import { seedLiveTimetable } from './seed-timetable.mjs';
 
 const BASE = process.env.WEB ?? 'http://127.0.0.1:5003';
 const API = process.env.API ?? 'http://127.0.0.1:5001';
@@ -58,6 +59,18 @@ const get = async (url) => {
   const r = await fetch(url, { headers: { Authorization: `Bearer ${admin.token}` } });
   return r.ok ? r.json() : null;
 };
+
+// ---- make sure the page opens on a version this teacher teaches in (2026-09-24) -----------------
+// Every API suite archives what it publishes, so the branch has nothing in force on most days and the page opens on
+// whatever draft happens to exist — the full run of 2026-09-24 found a stray draft from a crashed run and refused.
+// seed-timetable.mjs is the one home for making a live week; a version that already qualifies is used as it is.
+const seeded = await seedLiveTimetable({ API, BRANCH, token: admin.token, teacherId: teacher.id, label: 'views' });
+if (!seeded.target) {
+  const l = `  SKIP  timetable-views: no version this teacher teaches in could be put in force (${seeded.reason})`;
+  console.log(l); post(l);
+  console.log('  timetable-views: 0 passed, 0 failed');
+  process.exit(0);
+}
 
 // ---- the version the page will open on, resolved the way LoadAsync resolves it ------------------
 const today = new Date().toISOString().slice(0, 10);
@@ -165,6 +178,7 @@ try {
     check('the seeded draft is removed', gone.ok, `${gone.status}`);
   }
   t.close();
+  await seeded.cleanup();
 }
 
 const line = `  timetable-views: ${pass} passed, ${fail} failed`;

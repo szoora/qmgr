@@ -116,7 +116,7 @@ const hubSections = [
   ['/content/signage',   'Signage',       [['Playlists', null], ['Campaigns', null], ['Display Zones', null], ['Schedules', null]]],
   ['/admin/feedback',    'Feedback',      [['Responses', null], ['Survey questions', null], ['Reports', null]]],
   ['/admin/branches',    'Branches',      [['Branches', null], ['Counters', CORE], ['Service Types', CORE]]],
-  ['/admin/users',       'Users & Roles', [['Users', null], ['Roles', null], ['Join Requests', WELFARE], ['Onboarding', WELFARE]]],
+  ['/admin/users',       'Users & Roles', [['Users', null], ['Roles', null], ['Join Requests', WELFARE], ['Onboarding', WELFARE], ['Access', null]]],
   ['/admin/appearance',  'Appearance',    [['Branding', null], ['Kiosk', CORE], ['Printing', CORE], ['Customer Links', CORE]]],
   ['/admin/settings',    'Settings',      [['General', null], ['Notifications', null], ['Industry', CORE], ['Integrations', API]]],
 ];

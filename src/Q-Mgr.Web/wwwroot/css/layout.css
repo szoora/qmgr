@@ -2041,6 +2041,11 @@
     --rz-grid-filter-font-size: var(--qm-text-base);
     --rz-pager-summary-font-size: var(--qm-text-sm);
     --rz-body-font-size: var(--qm-text-base);
+    /* Chart text too (2026-09-24): the legend and the axis ticks carried Radzen's own 14px — found by
+       type-sweep-all on the feedback and staff-records charts. */
+    --rz-chart-legend-font-size: var(--qm-text-sm);
+    --rz-chart-axis-font-size: var(--qm-text-sm);
+    --rz-chart-tooltip-font-size: var(--qm-text-sm);
 }
 
 /* ==========================================================================

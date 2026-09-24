@@ -42,6 +42,10 @@ const COLLECT = `(() => {
     const el = n.parentElement;
     if (!el || el.offsetParent === null) continue;
     if (el.closest('.q-modal, .q-datepicker__popover, [role=dialog]')) continue;
+    // A DECLARED exception, the kind the size scale has always carried (the kiosk, signage, print sheets): the
+    // evacuation roll call's two headline figures are read at an assembly point, on a phone held at arm's length,
+    // in an emergency. They are large and heavy on purpose — the same reasoning as the signage pulses.
+    if (el.closest('.evac-headline')) continue;
     const cs = getComputedStyle(el);
     const px = Math.round(parseFloat(cs.fontSize) * 10) / 10;
     const fam = cs.fontFamily.split(',')[0].replace(/["']/g, '').trim();
@@ -100,4 +104,6 @@ for (const r of rows) {
   console.log(`${r.kind.padEnd(6)} ${String(r.value).padEnd(10)} ${r.sel.padEnd(60).slice(0, 60)} "${r.sample}"  [${[...r.pages].slice(0, 3).join(' ')}${r.pages.size > 3 ? ` +${r.pages.size - 3}` : ''}]`);
 }
 console.log(`\n${rows.length} distinct off-scale placements`);
+// A tally the runner (all.mjs) can read, or the suite reports as having printed none.
+console.log(`type-sweep-all: ${rows.length ? 0 : 1} passed, ${rows.length} failed`);
 process.exit(rows.length ? 1 : 0);

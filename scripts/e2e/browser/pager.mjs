@@ -42,7 +42,9 @@ async function chooseSize(label) {
   if (!await press(await center(`document.querySelector('.q-pager__size .q-select')`))) return false;
   if (!await t.waitFor(`!!document.querySelector('.q-pager__size .q-select__dropdown')`, 3000)) return false;
   const opt = `[...document.querySelectorAll('.q-pager__size .q-select__option')].find(o => o.innerText.trim() === ${JSON.stringify(label)})`;
-  const p = await t.eval(`(() => { const e = ${opt}; if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+  // The option is scrolled into view before its position is read: under All the size list sits at the foot of a long
+  // (virtualised) page and opens below the window, where a press at its unscrolled position lands on nothing.
+  const p = await t.eval(`(() => { const e = ${opt}; if (!e) return null; e.scrollIntoView({ block: 'center', behavior: 'instant' }); const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
   if (!p) return false;
   await press(p);
   await t.sleep(400);
@@ -107,7 +109,10 @@ try {
     ok(restored, `${pg.name}: All survives a reload`, await caption());
 
     // back to 25 — the bar must still be there under All, or the reader could never leave it
-    ok(await chooseSize('25'), `${pg.name}: 25 can be chosen again from All`);
+    // Let a long virtualised list finish drawing after the reload before pressing at its foot; a press that lands
+    // while <Virtualize> is still re-rendering rows under a scroll can be swallowed. One retry, then it counts.
+    await t.sleep(1200);
+    ok(await chooseSize('25') || (await t.sleep(800), await chooseSize('25')), `${pg.name}: 25 can be chosen again from All`);
     ok(await rowCount() === 25, `${pg.name}: and 25 rows come back`, String(await rowCount()));
     ok(await noError(), `${pg.name}: no error bar`);
 

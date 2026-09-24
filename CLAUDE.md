@@ -4310,7 +4310,13 @@ next to DOS is Deputy, then head."*
   given. That is ResetPassword's rule; one's own account is exempt. The bulk role change also had no
   target-role guard at all, only a SuperAdmin check, and now runs `RoleAssignmentGuard`.
   **`IBatchOperationService.ResolveAsync` takes the actor**; the job passes `CreatedByUserId`.
-- Verified by **section 36 (`school-roles-e2e.mjs`, 23 checks)**, wired into `class-teacher-e2e.sh`.
+- Verified by **section 36 (`school-roles-e2e.mjs`, 24 checks)**, wired into `class-teacher-e2e.sh`.
+- **`PUT /users/{id}` REPLACES the branch and counter (found by the full run, 2026-09-24).** Names, phone and staff
+  number are "leave alone if not sent", but `AssignedBranchId`/`AssignedCounterId` are always written — the edit
+  form sends them every time and choosing "no branch" must be able to clear one. So a caller that sends only
+  `roleId` takes the person OFF their branch. Sections 36 and 37 did exactly that to three `e2e.sp.*` accounts,
+  and a teacher then opened the timetable on "Choose a branch". **Any role change through that endpoint carries the
+  person's placement.** The endpoint was left as it is on purpose; a partial update would need a separate route.
 
 ## The RBAC review, built: posts that grant and expire, a review, leavers, governors (2026-09-24)
 

@@ -93,4 +93,6 @@ for (const [size, v] of off) {
 }
 console.log(off.length ? `\nFAIL: ${off.length} size(s) off the scale` : '\nPASS: every size is on the scale');
 await t.close();
+// A tally the runner (all.mjs) can read, or the suite reports as having printed none.
+console.log(`type-audit: ${off.length ? 0 : 1} passed, ${off.length} failed`);
 process.exit(off.length ? 1 : 0);

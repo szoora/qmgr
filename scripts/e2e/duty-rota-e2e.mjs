@@ -801,7 +801,10 @@ hdr("15.6 LESSONS — materialised from the timetable, My Day, Taught / Not taug
       const v2 = copy.json?.timetable; if (v2?.id) drafts.push(v2.id);
       const ld = (copy.json?.lessons ?? []).find((l) => l.periodKey === "LD");
       await put(AD, `${T}/timetables/${v2?.id}/lessons/${ld?.id}`, { cycleDay, periodKey: "LE", room: null });
-      const pub2 = await post(AD, `${T}/timetables/${v2?.id}/publish`, { acknowledgeSoftClashes: true, note: `E2E ${RUN}` });
+      // replace: true — publishing over a live version refuses without it since 2026-09-22 (WOULD_REPLACE_PUBLISHED);
+      // this call predates that rule, was refused, and moved nothing, which read as the republish being broken.
+      const pub2 = await post(AD, `${T}/timetables/${v2?.id}/publish`, { acknowledgeSoftClashes: true, note: `E2E ${RUN}`, replace: true });
+      eq("REPUBLISH: the replacement version publishes over the live one (asked to replace)", pub2.json?.timetable?.status, "Published");
       if (pub2.json?.timetable?.status === "Published") { published.push(v2.id); drafts.splice(drafts.indexOf(v2.id), 1); }
       const regen = await post(AD, `${LS}/generate`);
       // Publishing enqueues its own run, which usually beats this one: assert the outcome, not who produced it.

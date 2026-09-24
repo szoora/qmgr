@@ -71,7 +71,12 @@ const restoreRoles = [[dos.id, dos.roleId], [aa.id, aa.roleId], [math1.id, math1
 const leadershipBefore = (await get(AD, "/api/v1/leadership")).json;
 const postsBefore = (await get(AD, `${B}/pastoral-posts`)).json;
 let vocabBefore = null, scratchStudentId = null;
-const setRole = (token, userId, code) => put(token, `/api/v1/users/${userId}`, { roleId: byCode[code].id });
+// PUT /users/{id} REPLACES the branch and counter (the edit form always sends them, and "no branch" must be able
+// to clear one), so a role change that sends only roleId silently took the person OFF their branch — found by the
+// full run of 2026-09-24, when e2e.sp.math1 opened the timetable on "Choose a branch". Every PUT here carries the
+// person's placement; an account an earlier run already emptied is put back on the test branch.
+const placement = Object.fromEntries([dos, aa, math1].map((u) => [u.id, { assignedBranchId: u.assignedBranchId ?? BRANCH, assignedCounterId: u.assignedCounterId ?? null }]));
+const setRole = (token, userId, code) => put(token, `/api/v1/users/${userId}`, { roleId: byCode[code].id, ...placement[userId] });
 
 try {
   // -------------------------------------------------------------------------------------------------
@@ -251,7 +256,7 @@ try {
     v.houses = (v.houses ?? []).map((h) => (h.name.startsWith("E2E House ") ? { ...h, isActive: false } : h));
     console.log(`  test house retired (${(await put(AD, `${B}/students/vocabularies`, { vocabularies: v, classRenames: {}, houseRenames: {}, dormitoryRenames: {} })).status})`);
   }
-  for (const [userId, roleId] of restoreRoles) console.log(`  role restored (${(await put(AD, `/api/v1/users/${userId}`, { roleId })).status})`);
+  for (const [userId, roleId] of restoreRoles) console.log(`  role restored (${(await put(AD, `/api/v1/users/${userId}`, { roleId, ...placement[userId] })).status})`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -47,6 +47,7 @@ async function login(id) {
 const AD = await login(TENANT_ADMIN);
 if (!AD) { console.error("the tenant administrator could not sign in"); process.exit(1); }
 const restore = [];
+const placement = {};
 
 try {
   hdr("36.1 The roles a school is shown, and what each one reads as");
@@ -80,8 +81,14 @@ try {
   const list = Array.isArray(users) ? users : users?.items ?? [];
   const dosUser = list.find((u) => u.username === "e2e.sp.dos"), aaUser = list.find((u) => u.username === "e2e.sp.aa");
   if (!dosUser || !aaUser) throw new Error("e2e.sp.dos / e2e.sp.aa do not exist — run section 14 first");
+  // PUT /users/{id} REPLACES the branch and counter (the edit form always sends them, and "no branch" must be able
+  // to clear one), so a role change that sends only roleId silently took the person OFF their branch — found by the
+  // full run of 2026-09-24, when e2e.sp.math1 opened the timetable on "Choose a branch". Every PUT here carries the
+  // person's placement; an account an earlier run already emptied is put back on the test branch.
+  const placeOf = (u) => ({ assignedBranchId: u.assignedBranchId ?? process.env.BRANCH ?? null, assignedCounterId: u.assignedCounterId ?? null });
+  placement[dosUser.id] = placeOf(dosUser); placement[aaUser.id] = placeOf(aaUser);
   restore.push([dosUser.id, dosUser.roleId], [aaUser.id, aaUser.roleId]);
-  const setRole = (token, userId, code) => call(token, "PUT", `/api/v1/users/${userId}`, { roleId: byCode[code].id });
+  const setRole = (token, userId, code) => call(token, "PUT", `/api/v1/users/${userId}`, { roleId: byCode[code].id, ...placement[userId] });
 
   eq("the Administrator makes somebody Head Teacher", (await setRole(AD, dosUser.id, "head-teacher")).status, 200);
   const HEAD = await login("e2e.sp.dos@qmgr.local");
@@ -125,7 +132,7 @@ try {
 } finally {
   hdr("36.9 Put things back");
   for (const [userId, roleId] of restore) {
-    const r = await call(AD, "PUT", `/api/v1/users/${userId}`, { roleId });
+    const r = await call(AD, "PUT", `/api/v1/users/${userId}`, { roleId, ...(placement[userId] ?? {}) });
     console.log(`  role restored (${r.status})`);
   }
 }

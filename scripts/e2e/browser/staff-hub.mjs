@@ -36,7 +36,8 @@ await t.waitFor(`!!document.querySelector('.qm-main')`, 20000);
 await t.sleep(2500);
 
 const tabs = JSON.parse(await tabNames());
-check('the hub shows six tabs', tabs.length === 6, JSON.stringify(tabs));
+// Seven since 2026-09-24: Houses joined People, Class teachers, Subject teachers, Departments, Coverage and Import.
+check('the hub shows seven tabs', tabs.length === 7, JSON.stringify(tabs));
 for (const want of ['People', 'Departments', 'Coverage', 'Import']) {
   check(`tab "${want}" is present`, tabs.some(x => x.toLowerCase() === want.toLowerCase()), JSON.stringify(tabs));
 }

@@ -60,9 +60,9 @@ for (const gone of ['Departments & Structure', 'Duty Rota', 'Duty Reports', 'Les
 
 // Every hub opens, and its sections render inside it.
 const hubs = [
-  ['/admin/staff', 'Staff', 6],
+  ['/admin/staff', 'Staff', 7],   // + Houses (2026-09-24)
   ['/admin/staff/records', 'Records', 2],
-  ['/admin/staff/duties', 'Duties', 3],
+  ['/admin/staff/duties', 'Duties', 4],   // + Exams (2026-09-23)
   ['/admin/timetable', 'Timetable', 5],
   ['/admin/staff/parameters', 'Setup', 4],
 ];
