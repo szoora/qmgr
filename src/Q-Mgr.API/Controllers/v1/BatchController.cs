@@ -79,7 +79,7 @@ public class BatchController : ControllerBase
         var guard = await GuardAsync(branchId, request.Operation);
         if (guard != null) return guard;
 
-        return Ok(await _resolver.ResolveAsync(branchId, request, ct));
+        return Ok(await _resolver.ResolveAsync(branchId, request, CurrentUserId(), ct));
     }
 
     /// <summary>
@@ -99,7 +99,7 @@ public class BatchController : ControllerBase
         var guard = await GuardAsync(branchId, request.Operation);
         if (guard != null) return guard;
 
-        var preview = await _resolver.ResolveAsync(branchId, request, ct);
+        var preview = await _resolver.ResolveAsync(branchId, request, CurrentUserId(), ct);
         if (preview.BlockingError != null)
             return BadRequest(new ProblemDetails { Title = preview.BlockingError, Status = StatusCodes.Status400BadRequest });
 

@@ -109,7 +109,7 @@
                                 </div>
 
                                 <div class="qm-admin-form-group">
-                                    <QInput TValue="string" @bind-Value="@settings.SmsSenderId" Label="Sender ID" Placeholder="Q-Mgr"
+                                    <QInput TValue="string" @bind-Value="@settings.SmsSenderId" Label="Sender ID" Placeholder="@ProductBrand.Company"
                                             HelperText="Name shown as SMS sender"
                                             Disabled="@(!settings.SmsEnabled)" />
                                 </div>
@@ -204,7 +204,7 @@
                                 </div>
 
                                 <div class="qm-admin-form-group">
-                                    <QInput TValue="string" @bind-Value="@settings.EmailFromName" Label="From Name" Placeholder="Q-Mgr Queue System"
+                                    <QInput TValue="string" @bind-Value="@settings.EmailFromName" Label="From Name" Placeholder="@ProductBrand.Name"
                                             Disabled="@(!settings.EmailEnabled)" />
                                 </div>
 
@@ -1008,7 +1008,7 @@
         public string? SmsApiKey { get; set; }
         public string? SmsUsername { get; set; }
         public string? SmsPassword { get; set; }
-        public string? SmsSenderId { get; set; } = "Q-Mgr";
+        public string? SmsSenderId { get; set; } = ProductBrand.Company;
         public string? SmsCustomerId { get; set; }
         public int SmsLeadTokens { get; set; } = 3;
 
@@ -1020,7 +1020,7 @@
         public string? SmtpUsername { get; set; }
         public string? SmtpPassword { get; set; }
         public string? EmailFromAddress { get; set; }
-        public string? EmailFromName { get; set; } = "Q-Mgr";
+        public string? EmailFromName { get; set; } = ProductBrand.Name;
 
         // Telegram
         public bool TelegramEnabled { get; set; }

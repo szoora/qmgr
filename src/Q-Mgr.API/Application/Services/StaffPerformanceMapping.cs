@@ -228,6 +228,7 @@ public static class StaffPerformanceMapping
             MyOutcome = myOutcome,
             Kind = d.Kind,
             SeriesId = d.SeriesId,
+            SeriesName = d.SeriesName,
             // Names only resolve for ids the caller put in the lookup; an expected list of "everyone" has none.
             ExpectedNames = expected?.Select(id => names[id]).Where(n => n.Length > 0).ToList() ?? new List<string>(),
             SupervisorUserIds = supervisors,

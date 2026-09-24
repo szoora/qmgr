@@ -38,24 +38,12 @@ public static class StaffFieldParsing
     public static bool Unreadable(string? s) => !string.IsNullOrWhiteSpace(s) && Date(s) is null;
 
     /// <summary>
-    /// "Permanent", "contract", "PART TIME", "part-time", "probation"… Anything unrecognised returns
-    /// null and is warned about rather than refused: an employment type is not worth losing a row over.
+    /// The school's own name for the employment type a cell names, from its ACTIVE list, or null — warned about, never
+    /// refused: an employment type is not worth losing a row over. Renamed from
+    /// <c>EmploymentType</c> on 2026-09-23, when the enum became the school's list: a changed meaning behind an
+    /// unchanged name compiles at every wrong caller (the <c>GroupFor</c> lesson), so the old name is gone.
     /// </summary>
-    public static StaffEmploymentType? EmploymentType(string? s)
-    {
-        if (string.IsNullOrWhiteSpace(s)) return null;
-        var t = new string(s.Where(char.IsLetter).ToArray()).ToLowerInvariant();
-        return t switch
-        {
-            "permanent" or "fulltime" or "full" => StaffEmploymentType.Permanent,
-            "contract" or "fixedterm" or "pta" or "board" => StaffEmploymentType.Contract,
-            "probation" or "probationary" => StaffEmploymentType.Probation,
-            "parttime" or "part" => StaffEmploymentType.PartTime,
-            "volunteer" or "voluntary" or "intern" => StaffEmploymentType.Volunteer,
-            "seconded" or "secondment" => StaffEmploymentType.Seconded,
-            _ => null
-        };
-    }
+    public static string? EmploymentTypeName(string? s, IEnumerable<string> activeTypes) => EmploymentTypes.Resolve(s, activeTypes);
 
     /// <summary>"F", "Female", "M", "Male", "Other". Unrecognised returns null and is warned about.</summary>
     public static PersonSex? Sex(string? s)

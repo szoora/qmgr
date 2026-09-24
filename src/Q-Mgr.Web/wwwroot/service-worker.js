@@ -1,25 +1,18 @@
 // Q-Mgr Service Worker
 // Handles caching, offline support, and update notifications
 
-const CACHE_NAME = 'qmgr-cache-v3';
-const CACHE_VERSION = '1.2.0';
+const CACHE_NAME = 'qmgr-cache-v4';
+const CACHE_VERSION = '1.3.0';
 
 // Resources to cache immediately on install.
 // Deliberately does NOT include '/' (or any navigation/document URL) — see
 // the fetch handler below for why.
+// The rebrand (2026-09-24) found this list naming four stylesheets deleted on 2026-09-19 and three
+// images deleted with the old mark. cache.addAll is all-or-nothing, so ONE missing file failed the
+// install outright. Only what exists: stylesheets are fingerprinted by @Assets and cached on fetch.
 const PRECACHE_URLS = [
-    '/css/layout.css',
-    '/css/qm-theme.css',
-    '/css/app.css',
-    '/css/components/admin.css',
-    '/css/components/shared.css',
-    '/css/components/queue.css',
-    '/css/components/content.css',
-    '/css/components/reports.css',
-    '/images/logo.svg',
-    '/images/icon-512.svg',
-    '/favicon.svg',
-    '/manifest.json'
+    '/brand/favicon.svg',
+    '/brand/app-icon.svg'
 ];
 
 // Install event - precache static assets
@@ -209,9 +202,11 @@ self.addEventListener('push', event => {
 
     const data = event.data.json();
     const options = {
-        body: data.body || 'New notification from Q-Mgr',
-        icon: '/images/icon-512.svg',
-        badge: '/favicon.svg',
+        // A worker cannot know which app it serves (a school's own name, or ours), so it never
+        // names one: the push carries its own title.
+        body: data.body || 'You have a new notification',
+        icon: '/brand/app-icon.svg',
+        badge: '/brand/favicon.svg',
         vibrate: [100, 50, 100],
         data: {
             url: data.url || '/'
@@ -220,7 +215,7 @@ self.addEventListener('push', event => {
     };
 
     event.waitUntil(
-        self.registration.showNotification(data.title || 'Q-Mgr', options)
+        self.registration.showNotification(data.title || 'Notification', options)
     );
 });
 

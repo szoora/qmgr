@@ -280,6 +280,7 @@ public static class Permissions
     /// teacher without touching a manager's (2026-09-18). A page guard accepts EITHER code.
     /// </summary>
     public const string WelfareReportsOwn = "welfare.reports.own";
+    public const string WelfareReportsAggregate = "welfare.reports.aggregate";
 
     // Staff Performance Monitor (2026-09-16) — mirrors Permissions.cs and RbacSeeder.AllPermissions
     public const string StaffRecordsView = "staff.records.view";
@@ -380,6 +381,10 @@ public static class RoleCodes
     public const string Viewer = "viewer";
 
     // Staff Performance Monitor hierarchy (2026-09-16); all rank below Manager, as on the API side.
+    // The school chain's top two (2026-09-24): Head Teacher, then Deputy, then Director of Studies.
+    public const string HeadTeacher = "head-teacher";
+    public const string BoardMember = "board-member";
+    public const string DeputyHeadTeacher = "deputy-head-teacher";
     public const string DirectorOfStudies = "director-of-studies";
     public const string AcademicAssistant = "academic-assistant";
     /// <summary><b>RETIRED 2026-09-22</b>, for the same reason: heading a department is a post.</summary>
@@ -410,11 +415,13 @@ public static class RoleCodes
 
     // Mirrors the API RoleCodes.All ordering, which is load-bearing there. Removing class-teacher
     // and head-of-department shifted nothing: Rank is relative and both sat below Manager.
+    // Head and Deputy ABOVE Manager since 2026-09-24 (R1). This copy lacked the two school roles entirely for a
+    // day, which ranked a head below Viewer here while the API ranked them second.
     private static readonly string[] TierOrder =
     {
-        SuperAdmin, Admin, Manager,
+        SuperAdmin, Admin, HeadTeacher, DeputyHeadTeacher, Manager,
         DirectorOfStudies, AcademicAssistant,
-        Staff, Teacher, SupportStaff, Viewer
+        Staff, Teacher, SupportStaff, BoardMember, Viewer
     };
 
     /// <summary>

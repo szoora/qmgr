@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -35,7 +36,7 @@ public class ProductLogoController : ControllerBase
     /// single source of truth for every <c>--qm-*</c> token — the standing colour decision of
     /// 2026-08-19, and not to be reverted to blue.
     /// </summary>
-    private const string Wine = "#7a2847";
+    private const string Wine = ProductMark.WineLight;
 
     /// <summary>
     /// <c>GET /api/v1/branding/product-logo</c> — the mark in LIGHT ink, for a dark ground.
@@ -51,25 +52,15 @@ public class ProductLogoController : ControllerBase
     public IActionResult ProductLogo([FromQuery] string? ink = null)
     {
         var dark = string.Equals(ink, "dark", StringComparison.OrdinalIgnoreCase);
-        var stroke = dark ? Wine : "#ffffff";
 
-        // The same geometry as wwwroot/images/icon-512.svg, with no plate: a stroked circle (the
-        // queue — people cycling through service) and a rotated arrow (next). Emitted rather than
-        // read off disk so this route cannot 404 because a file moved, and so the ink is a parameter
-        // rather than two files that can fall out of step.
-        var svg = $"""
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Q-Mgr">
-              <circle cx="256" cy="256" r="120" fill="none" stroke="{stroke}" stroke-width="40"/>
-              <g transform="rotate(45 256 256)">
-                <rect x="376" y="236" width="50" height="40" rx="5" fill="{stroke}"/>
-                <polygon points="426,220 426,292 470,256" fill="{stroke}"/>
-              </g>
-            </svg>
-            """;
+        // The mark's geometry has one home, ProductMark (Q-Mgr.Shared), which the Web's /brand/*.svg
+        // are drawn from too — so the app and the site can never show two different logos. No plate:
+        // the app lays the mark on its own ground, which is why the ink is a parameter.
+        var svg = ProductMark.Mono(dark ? Wine : "#ffffff");
 
         // image/svg+xml, and the bytes are ours rather than a caller's, so there is nothing here for
         // the SVG-carries-script problem to act on: `ink` never reaches the document — it only
-        // chooses between two constants above.
+        // chooses between two constants.
         return Content(svg, "image/svg+xml");
     }
 }

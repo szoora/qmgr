@@ -54,7 +54,7 @@ else if (settings != null)
         <QCard Title="Settings" Icon="sliders">
             <HeaderActions>
                 <QInfo Label="Gateway settings" Align="right"
-                       Text="The API key is issued to Q-Mgr in CRMPro (Settings → API keys). It needs payments:collect, payments:status and webhooks:manage — and nothing that sends money out. It is never shown again: the field shows dots when a key is saved. Leave the dots to keep it." />
+                       Text="The API key is issued to this platform in CRMPro (Settings → API keys). It needs payments:collect, payments:status and webhooks:manage — and nothing that sends money out. It is never shown again: the field shows dots when a key is saved. Leave the dots to keep it." />
             </HeaderActions>
             <ChildContent>
                 <p class="form-required-note"><span class="q-input__required">*</span> Required to switch the gateway on</p>
@@ -98,7 +98,7 @@ else if (settings != null)
         <QCard Title="Webhook" Icon="broadcast">
             <HeaderActions>
                 <QInfo Label="Webhook" Align="right"
-                       Text="The gateway calls this address, signed with a secret it issues, the moment a payment moves. Q-Mgr then asks the gateway for the payment's status with its own key, so nothing in a callback is trusted on its own. Without a webhook, payments still settle — the reconciliation job asks the gateway every five minutes." />
+                       Text="The gateway calls this address, signed with a secret it issues, the moment a payment moves. This server then asks the gateway for the payment's status with its own key, so nothing in a callback is trusted on its own. Without a webhook, payments still settle — the reconciliation job asks the gateway every five minutes." />
             </HeaderActions>
             <ChildContent>
                 <QInput TValue="string" Value="@settings.CallbackUrl" Label="Callback address" ReadOnly="true" IconLeft="link-45deg"

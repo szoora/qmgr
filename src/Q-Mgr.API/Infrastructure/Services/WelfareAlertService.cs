@@ -50,14 +50,24 @@ public interface IWelfareAlertService
     Task<int> NotifyRecordsLoggedAsync(IReadOnlyCollection<Guid> recordIds, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// The live class teachers for a student, primary and assistants, excluding the given user IDs.
-    /// Exposed because the overdue-reminder sweeps need the same recipient list and must not grow
-    /// a second copy of the resolution rule.
+    /// Everybody who holds pastoral responsibility for a student, excluding the given user IDs: the live class
+    /// teachers (primary and assistants) of the student's class, and — since 2026-09-24 — the holders of a HOUSE or
+    /// DORMITORY post matching the student's house or dormitory. Exposed because the overdue-reminder sweeps need
+    /// the same recipient list and must not grow a second copy of the resolution rule.
+    ///
+    /// <para>RENAMED from GetClassTeachersForStudentAsync when its meaning widened, so every caller had to be
+    /// revisited rather than silently inheriting the new recipients (the GroupFor lesson).</para>
+    ///
+    /// <para><b>It matches EXACTLY as StudentScopeService does</b> — Trim().ToLower() on class, house and dormitory
+    /// — never more loosely. A notification names a child; alerting somebody the scope would not let open the
+    /// record is a disclosure, however helpful the looser match looks.</para>
     /// </summary>
-    Task<List<ClassTeacherRecipient>> GetClassTeachersForStudentAsync(Guid studentId, IEnumerable<Guid>? exclude = null, CancellationToken cancellationToken = default);
+    Task<List<PastoralRecipient>> GetPastoralRecipientsForStudentAsync(Guid studentId, IEnumerable<Guid>? exclude = null, CancellationToken cancellationToken = default);
 }
 
-public record ClassTeacherRecipient(Guid UserId, string FullName, string ClassName, ClassTeacherRole Role);
+/// <summary>A person told about a student, and the pastoral unit that makes it their business — "S4B",
+/// "House Nile", "Dormitory Kagera". The unit is what an alert's title names.</summary>
+public record PastoralRecipient(Guid UserId, string FullName, string Unit);
 
 public class WelfareAlertService : IWelfareAlertService
 {
@@ -75,24 +85,40 @@ public class WelfareAlertService : IWelfareAlertService
         _logger = logger;
     }
 
-    public async Task<List<ClassTeacherRecipient>> GetClassTeachersForStudentAsync(
+    public async Task<List<PastoralRecipient>> GetPastoralRecipientsForStudentAsync(
         Guid studentId, IEnumerable<Guid>? exclude = null, CancellationToken cancellationToken = default)
     {
         var student = await _context.Students
             .AsNoTracking()
             .Where(s => s.Id == studentId)
-            .Select(s => new { s.BranchId, s.ClassName })
+            .Select(s => new { s.BranchId, s.OrganizationId, s.ClassName, s.House, s.DormitoryOrStream })
             .FirstOrDefaultAsync(cancellationToken);
 
-        if (student == null || string.IsNullOrWhiteSpace(student.ClassName))
-            return new List<ClassTeacherRecipient>();
+        if (student == null) return new List<PastoralRecipient>();
+
+        var excluded = (exclude ?? Enumerable.Empty<Guid>()).ToHashSet();
+        var recipients = new List<PastoralRecipient>();
+        if (!string.IsNullOrWhiteSpace(student.ClassName))
+            recipients.AddRange(await ClassTeachersAsync(student.BranchId, student.ClassName!, cancellationToken));
+        recipients.AddRange(await PastoralUnitHoldersAsync(student.OrganizationId, student.BranchId, student.House, student.DormitoryOrStream, cancellationToken));
+
+        return recipients
+            .Where(r => !excluded.Contains(r.UserId))
+            // One person holding two posts over the same child (the class teacher who is also the housemaster)
+            // is told once, under the first unit found — the class, since that is the closer relationship.
+            .DistinctBy(r => r.UserId)
+            .ToList();
+    }
+
+    private async Task<List<PastoralRecipient>> ClassTeachersAsync(Guid branchId, string className, CancellationToken cancellationToken)
+    {
+        var student = new { BranchId = branchId, ClassName = className };
 
         // Same normalization rule as ClassTeachersController and StudentScopeService: Student.ClassName
         // is free text and the vocabulary is user-typed, so "S4B" and "s4b " are one class. A student
         // silently unreachable by their own class teacher because of a stray space is a safeguarding
         // failure, which is why the coverage endpoint surfaces class names that match nothing.
         var key = student.ClassName.Trim().ToLowerInvariant();
-        var excluded = (exclude ?? Enumerable.Empty<Guid>()).ToHashSet();
 
         var rows = await _context.ClassTeacherAssignments
             .AsNoTracking()
@@ -107,7 +133,6 @@ public class WelfareAlertService : IWelfareAlertService
             {
                 a.UserId,
                 a.ClassName,
-                a.Role,
                 UserActive = a.User!.IsActive,
                 a.User.OrganizationId,
                 a.User.FirstName,
@@ -119,13 +144,49 @@ public class WelfareAlertService : IWelfareAlertService
             // A deactivated account cannot read the notification, and mailing a departed member of
             // staff about a child is its own disclosure. The coverage report is where a class left
             // uncovered this way becomes visible.
-            .Where(r => r.UserActive && !excluded.Contains(r.UserId))
-            .Select(r => new ClassTeacherRecipient(
+            .Where(r => r.UserActive)
+            .Select(r => new PastoralRecipient(
                 r.UserId,
                 PersonNames.Display(r.OrganizationId, r.FirstName, r.LastName),
-                r.ClassName,
-                r.Role))
-            .DistinctBy(r => r.UserId)
+                r.ClassName.Trim()))
+            .ToList();
+    }
+
+    /// <summary>
+    /// The holders of a house or dormitory post that reaches this student (LeadershipPosts, 2026-09-24). Until
+    /// this existed a housemaster could READ their house's welfare records but was never TOLD one had been logged.
+    /// </summary>
+    private async Task<List<PastoralRecipient>> PastoralUnitHoldersAsync(
+        Guid organizationId, Guid branchId, string? house, string? dormitory, CancellationToken cancellationToken)
+    {
+        var houseKey = house?.Trim().ToLower();
+        var dormKey = dormitory?.Trim().ToLower();
+        if (string.IsNullOrEmpty(houseKey) && string.IsNullOrEmpty(dormKey)) return new List<PastoralRecipient>();
+
+        var posts = await LeadershipPosts.ReadAsync(_context, organizationId, cancellationToken);
+        var matching = posts.PastoralUnitPosts
+            .Where(p => p.BranchId == branchId
+                        && ((p.Kind == PastoralUnitKind.House && !string.IsNullOrEmpty(houseKey) && p.Name.Trim().ToLower() == houseKey)
+                            || (p.Kind == PastoralUnitKind.Dormitory && !string.IsNullOrEmpty(dormKey) && p.Name.Trim().ToLower() == dormKey)))
+            .ToList();
+        if (matching.Count == 0) return new List<PastoralRecipient>();
+
+        var ids = matching.Select(p => p.UserId).Distinct().ToList();
+        // Active people only, for the same reason as a class teacher: a departed member of staff is not told.
+        var people = (await _context.Users.AsNoTracking()
+                .Where(u => ids.Contains(u.Id) && u.IsActive)
+                .Select(u => new { u.Id, u.OrganizationId, u.FirstName, u.LastName })
+                .ToListAsync(cancellationToken))
+            .ToDictionary(u => u.Id);
+
+        return matching
+            .Where(p => people.ContainsKey(p.UserId))
+            .Select(p =>
+            {
+                var u = people[p.UserId];
+                var unit = p.Kind == PastoralUnitKind.House ? $"House {p.Name.Trim()}" : $"Dormitory {p.Name.Trim()}";
+                return new PastoralRecipient(p.UserId, PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName), unit);
+            })
             .ToList();
     }
 
@@ -138,6 +199,9 @@ public class WelfareAlertService : IWelfareAlertService
         public readonly Dictionary<Guid, WelfareRecord> Records = new();
         public readonly HashSet<Guid> StudentIds = new();
         public readonly SortedSet<string> Classes = new(NaturalOrder.Comparer!);
+
+        /// <summary>The unit that made each record this recipient's business, for a single record's title.</summary>
+        public readonly List<string> Units = new();
     }
 
     public async Task<int> NotifyRecordsLoggedAsync(IReadOnlyCollection<Guid> recordIds, CancellationToken cancellationToken = default)
@@ -166,7 +230,7 @@ public class WelfareAlertService : IWelfareAlertService
             if (alertable.Count == 0) return 0;
 
             // Class teachers per student, looked up once however many records name the student.
-            var teachersByStudent = new Dictionary<Guid, List<ClassTeacherRecipient>>();
+            var teachersByStudent = new Dictionary<Guid, List<PastoralRecipient>>();
             var digests = new Dictionary<Guid, RecipientDigest>();
 
             foreach (var record in alertable)
@@ -184,7 +248,7 @@ public class WelfareAlertService : IWelfareAlertService
                 foreach (var studentId in studentIds.Distinct())
                 {
                     if (!teachersByStudent.TryGetValue(studentId, out var teachers))
-                        teachersByStudent[studentId] = teachers = await GetClassTeachersForStudentAsync(studentId, null, cancellationToken);
+                        teachersByStudent[studentId] = teachers = await GetPastoralRecipientsForStudentAsync(studentId, null, cancellationToken);
 
                     foreach (var t in teachers.Where(t => !exclude.Contains(t.UserId)))
                     {
@@ -192,7 +256,8 @@ public class WelfareAlertService : IWelfareAlertService
                             digests[t.UserId] = digest = new RecipientDigest();
                         digest.Records.TryAdd(record.Id, record);
                         digest.StudentIds.Add(studentId);
-                        if (!string.IsNullOrWhiteSpace(t.ClassName)) digest.Classes.Add(t.ClassName.Trim());
+                        if (!string.IsNullOrWhiteSpace(t.Unit)) digest.Classes.Add(t.Unit);
+                        digest.Units.Add(t.Unit);
                     }
                 }
             }
@@ -222,7 +287,9 @@ public class WelfareAlertService : IWelfareAlertService
                 {
                     // ONE record: exactly the message a single log has always sent.
                     var studentName = first.Student?.FullName ?? "A student";
-                    var className = first.Student?.ClassName;
+                    // The unit that makes it THIS person's business: the class for a class teacher, the house for a
+                    // housemaster — a housemaster told "New behaviour record — S2C" would not know why.
+                    var className = digest.Units.FirstOrDefault() ?? first.Student?.ClassName;
                     var categoryName = first.Category?.Name ?? first.CaseType.ToString();
                     var reporterName = reporterNames.GetValueOrDefault(first.ReportedByUserId);
 

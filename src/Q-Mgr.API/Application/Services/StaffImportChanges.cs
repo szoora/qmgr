@@ -48,7 +48,7 @@ public static class StaffImportChanges
     /// left blank never changes anything: a sheet exported from a system that does not hold national
     /// IDs must not blank the school's.
     /// </summary>
-    public static List<StaffFieldChange> Compute(StaffImportRow row, string? firstName, string? lastName, User user)
+    public static List<StaffFieldChange> Compute(StaffImportRow row, string? firstName, string? lastName, User user, IReadOnlyCollection<string> employmentTypes)
     {
         var changes = new List<StaffFieldChange>();
 
@@ -76,7 +76,7 @@ public static class StaffImportChanges
             changes.Add(new StaffFieldChange("end date", u => u.EmploymentEndDate = end));
         if (StaffFieldParsing.Date(row.DateOfBirth) is { } dob && user.DateOfBirth != dob)
             changes.Add(new StaffFieldChange("date of birth", u => u.DateOfBirth = dob));
-        if (StaffFieldParsing.EmploymentType(row.EmploymentType) is { } terms && user.EmploymentType != terms)
+        if (StaffFieldParsing.EmploymentTypeName(row.EmploymentType, employmentTypes) is { } terms && user.EmploymentType != terms)
             changes.Add(new StaffFieldChange("employment terms", u => u.EmploymentType = terms));
         if (StaffFieldParsing.Sex(row.Sex) is { } sex && user.Sex != sex)
             changes.Add(new StaffFieldChange("sex", u => u.Sex = sex));

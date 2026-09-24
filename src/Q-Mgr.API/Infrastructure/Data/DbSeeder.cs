@@ -50,7 +50,7 @@ public class DbSeeder
             {
                 Id = orgId,
                 Name = "Demo Organization",
-                BrandName = "Q-Mgr Demo",
+                BrandName = null,
                 ContactEmail = "admin@qmgr.demo",
                 Slug = "demo",
                 Status = TenantStatus.Active,
@@ -502,7 +502,7 @@ public class DbSeeder
                     {
                         Id = Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"),
                         Name = "Platform Administration",
-                        BrandName = "Q-Mgr Platform",
+                        BrandName = null,
                         ContactEmail = "admin@qmgr.platform",
                         Slug = "platform",
                         Status = TenantStatus.Active,

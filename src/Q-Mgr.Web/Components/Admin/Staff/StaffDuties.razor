@@ -51,6 +51,10 @@
     {
         <DutyReportsQueue Embedded="true" />
     }
+    else if (hubTab == "exams")
+    {
+        <ExamSeries Embedded="true" />
+    }
     else
     {
     <QFilterBar Wrap="true">
@@ -273,6 +277,9 @@
         new(new QTab("registers", "Registers", "calendar-check")),
         new(new QTab("rota", "Rota", "calendar-week")),
         new(new QTab("reports", "Reports", "journal-text")),
+        // Exam supervision (2026-09-23): no permission of its own either — a teacher appointed to run a series has to
+        // reach it, and the API lists only the series the caller runs, invigilates, or may manage.
+        new(new QTab("exams", "Exams", "pencil-square")),
     };
 
     private static readonly IReadOnlyList<QTab> hubTabs = Sections.Select(s => s.Tab).ToList();

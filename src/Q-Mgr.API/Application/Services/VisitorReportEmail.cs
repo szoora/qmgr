@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using System.Globalization;
 using System.Net;
 using System.Text;
@@ -34,7 +35,7 @@ public static class VisitorReportEmail
     private static string Plural(int count, string noun) => count == 1 ? $"1 {noun}" : $"{count} {noun}s";
 
     private static string Shell(string title, string subtitle, string body)
-        => EmailTemplates.ReportShell(title, subtitle, body, "Sent by Q-Mgr Visitor Management. Times are shown in the branch's local timezone.");
+        => EmailTemplates.ReportShell(title, subtitle, body, "Sent by " + ProductBrand.Name + " Visitor Management. Times are shown in the branch's local timezone.");
 
     private static string Table(string[] headers, IEnumerable<string[]> rows, int totalCount)
         => EmailTemplates.ReportTable(headers, rows, totalCount);
@@ -234,7 +235,7 @@ public static class VisitorReportEmail
         body.Append(Stat("Unique visitors", report.UniqueVisitors.ToString("N0")));
         body.Append($@"<p style=""margin:14px 0 0;font-size:13px"">
             The full row-per-visit register for this period is available from
-            <strong>Reports &rsaquo; Visitors</strong> in Q-Mgr, where it downloads as CSV or Excel.
+            <strong>Reports &rsaquo; Visitors</strong> in the app, where it downloads as CSV or Excel.
             It is not attached here because it carries names, phone numbers and email addresses for
             every visitor in the period, and email is the wrong place to scatter that.
         </p>");

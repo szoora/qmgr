@@ -91,14 +91,14 @@ public class WelfareReminderJob
                 if (record.Visibility == WelfareVisibility.Standard)
                 {
                     var exclude = new[] { record.AssignedToUserId!.Value, record.ReportedByUserId };
-                    foreach (var teacher in await _alerts.GetClassTeachersForStudentAsync(record.StudentId, exclude))
+                    foreach (var teacher in await _alerts.GetPastoralRecipientsForStudentAsync(record.StudentId, exclude))
                     {
                         await _notificationService.CreateInAppNotificationAsync(new CreateNotificationRequest
                         {
                             UserId = teacher.UserId,
                             OrganizationId = record.OrganizationId,
                             BranchId = record.BranchId,
-                            Title = $"Overdue follow-up — {teacher.ClassName}",
+                            Title = $"Overdue follow-up — {teacher.Unit}",
                             Message = $"The follow-up for {studentName} ({categoryName}) was due {daysOverdue} day{(daysOverdue == 1 ? "" : "s")} ago and is still open.",
                             Type = NotificationType.SystemAlert,
                             Priority = NotificationPriority.Normal,

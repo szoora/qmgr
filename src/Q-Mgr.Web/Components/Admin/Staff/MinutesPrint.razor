@@ -153,7 +153,7 @@
                 <div><span class="mp-sign__rule"></span>Date</div>
             </section>
 
-            <footer class="mp-foot">Printed @QDateFormat.DT(DateTime.Now)@(string.IsNullOrWhiteSpace(generatedBy) ? "" : $" by {generatedBy}"). The copy in Q-Mgr is the current one.</footer>
+            <footer class="mp-foot">Printed @QDateFormat.DT(DateTime.Now)@(string.IsNullOrWhiteSpace(generatedBy) ? "" : $" by {generatedBy}"). The copy in @(branding?.ProductName ?? ProductBrand.Name) is the current one.</footer>
         }
     </ChildContent>
 </QPrintSheet>
@@ -209,7 +209,7 @@ else if (loadError != null)
     private DutyMinutesDto? minutes;
     private OrganizationBrandingDto? branding;
 
-    private string OrganizationName => !string.IsNullOrWhiteSpace(branding?.BrandName) ? branding!.BrandName! : BranchState.CurrentBranchName ?? "Minutes";
+    private string OrganizationName => !string.IsNullOrWhiteSpace(branding?.OrganizationName) ? branding!.OrganizationName! : BranchState.CurrentBranchName ?? "Minutes";
     private string DocTitle => minutes == null ? "Minutes" : $"Minutes — {minutes.DutyTitle}{(minutes.Status == MinutesStatus.Approved ? "" : " (draft)")}";
 
     private static DateTime Local(DateTime value) => value.Kind == DateTimeKind.Utc ? value.ToLocalTime() : value;
@@ -280,7 +280,7 @@ else if (loadError != null)
                 OrganizationId = organizationId,
                 FileName = $"minutes-{Local(minutes.StartsAt):yyyy-MM-dd}.pdf",
                 DocumentName = name,
-                Summary = $"{minutes.DutyTitle}, {QDateFormat.D(Local(minutes.StartsAt))}. {(minutes.Status == MinutesStatus.Approved ? "Adopted" : "Draft, not yet adopted")}. Generated {QDateFormat.D(DateTime.UtcNow)} by {generatedBy ?? "Q-Mgr"}.",
+                Summary = $"{minutes.DutyTitle}, {QDateFormat.D(Local(minutes.StartsAt))}. {(minutes.Status == MinutesStatus.Approved ? "Adopted" : "Draft, not yet adopted")}. Generated {QDateFormat.D(DateTime.UtcNow)} by {generatedBy ?? (branding?.ProductName ?? ProductBrand.Name)}.",
                 PublishedFrom = $"Minutes — {BranchState.CurrentBranchName}",
                 SubjectNoun = "minutes",
                 Audit = async doc =>

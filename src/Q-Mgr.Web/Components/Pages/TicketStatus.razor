@@ -27,7 +27,7 @@
         <div class="ts-brand">
             <QIcon Name="ticket-perforated-fill" aria-hidden="true" />
             <div class="ts-brand-text">
-                <span class="ts-org">@(branchInfo?.OrganizationName ?? "Q-Mgr")</span>
+                <span class="ts-org">@(branchInfo?.OrganizationName ?? ProductBrand.Name)</span>
                 @if (!string.IsNullOrWhiteSpace(branchInfo?.Name))
                 {
                     <span class="ts-branch">@branchInfo!.Name</span>

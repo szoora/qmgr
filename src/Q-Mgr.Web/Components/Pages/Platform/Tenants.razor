@@ -171,9 +171,19 @@
                         <label>Slug:</label>
                         <span>@tenantDetails.Slug</span>
                     </div>
+                    @* The school's app name (rebrand 2026-09-24): set here for a school that asks support,
+                       otherwise on its own Appearance page. Same rule, same sentence as there. *@
                     <div class="tenant-row">
-                        <label>Brand Name:</label>
-                        <span>@(tenantDetails.BrandName ?? "N/A")</span>
+                        <label for="tenant-brand-name">App name:</label>
+                        <div class="tenant-brand-edit">
+                            <QInput id="tenant-brand-name" @bind-Value="brandNameEdit" Placeholder="@ProductBrand.Name"
+                                    MaxLength="@ProductBrand.MaxBrandNameLength"
+                                    HasError="@(ProductBrand.ValidateBrandName(brandNameEdit) != null)"
+                                    ErrorMessage="@ProductBrand.ValidateBrandName(brandNameEdit)" />
+                            <QButton Text="Save" Size="sm" Variant="secondary" Loading="@isSavingBrandName"
+                                     Disabled="@(ProductBrand.ValidateBrandName(brandNameEdit) != null || (brandNameEdit ?? "").Trim() == (tenantDetails.BrandName ?? ""))"
+                                     OnClick="@(() => SaveBrandName(tenantDetails.Id))" />
+                        </div>
                     </div>
                     <div class="tenant-row">
                         <label>Status:</label>
@@ -842,6 +852,8 @@
         padding-bottom: 8px;
     }
 
+    .tenant-brand-edit { display: flex; align-items: flex-start; gap: var(--q-row-gap); flex-wrap: wrap; }
+    .tenant-brand-edit .q-input-wrapper { flex: 1 1 220px; min-width: 0; }
     .tenant-row {
         display: grid;
         grid-template-columns: minmax(96px, auto) minmax(0, 1fr);
@@ -1049,7 +1061,7 @@
     private static readonly OverridableFeature[] OverridableFeatures =
     [
         new("white_label", "White-label branding", "The tenant's own name, logo and colours across the whole app, its kiosk and display screens, and its outbound email."),
-        new("remove_attribution", "Remove SACC attribution", "Takes \"Powered by SACC Software\" off their sign-in pages, the Q-Mgr line out of the app footer, and our name out of the email they send. Needs white-label branding switched on as well, or it removes our name from a product that still says Q-Mgr everywhere.")
+        new("remove_attribution", "Remove SACC attribution", "Puts their organisation's name on the copyright line of their sign-in pages, the app footer and their emails, in place of ours. Needs white-label branding switched on as well, or it removes our name from a product that still carries it everywhere.")
     ];
 
     private static string DomainStateLabel(CustomDomainState state) => state switch
@@ -1120,6 +1132,31 @@
         finally
         {
             isSavingDomain = false;
+        }
+    }
+
+    private string? brandNameEdit;
+    private bool isSavingBrandName;
+
+    private async Task SaveBrandName(Guid tenantId)
+    {
+        isSavingBrandName = true;
+        try
+        {
+            var response = await Http.PutAsJsonAsync($"api/v1/admin/tenants/{tenantId}/brand-name", new { brandName = brandNameEdit });
+            if (response.IsSuccessStatusCode)
+                NotificationService.Notify(ToastSeverity.Success, "Saved", string.IsNullOrWhiteSpace(brandNameEdit) ? $"The app is called {ProductBrand.Name} again." : $"The app is now called {brandNameEdit!.Trim()} once white-labelling is on.");
+            else
+                NotificationService.Notify(ToastSeverity.Error, "Not saved", await ApiErrorService.GetErrorMessageAsync(response));
+            await ViewTenant(tenantId);
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", ex.Message);
+        }
+        finally
+        {
+            isSavingBrandName = false;
         }
     }
 
@@ -1209,6 +1246,7 @@
         try
         {
             tenantDetails = await Http.GetFromJsonAsync<TenantDetails>($"api/v1/admin/tenants/{id}", JsonOptions);
+            brandNameEdit = tenantDetails?.BrandName;
             storageQuotaInput = tenantDetails?.Usage?.StorageQuotaOverrideMb;
             showDetailsModal = true;
         }

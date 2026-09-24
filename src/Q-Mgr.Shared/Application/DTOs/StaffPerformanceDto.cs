@@ -384,6 +384,8 @@ public record StaffDutyDto
     // ---- Duty rota (plan §4) ----
     public DutyKind Kind { get; init; }
     public Guid? SeriesId { get; init; }
+    /// <summary>Set on the slots of a named (exam-supervision) series; null on a rota series.</summary>
+    public string? SeriesName { get; init; }
     /// <summary>The people on duty, by name, in list order. Empty when the duty expects everyone.</summary>
     public List<string> ExpectedNames { get; init; } = new();
     public List<Guid> SupervisorUserIds { get; init; } = new();
@@ -429,6 +431,77 @@ public record SaveStaffDutyRequest
     public ReportCadence? ReportCadence { get; set; }
     /// <summary>"HH:mm"; null uses the policy default.</summary>
     [MaxLength(5)] public string? ReportDueLocalTime { get; set; }
+}
+
+// ---- Exam-supervision series (2026-09-23, plan TIMETABLE_OWNERSHIP §1 / Phase 3) ----------------------------------
+// "Three timetables in a term" is one teaching timetable plus exam supervision, and exam supervision is a set of dated
+// Session duties with invigilators, rooms and times — not a cycle of lessons. What it lacked was a name to group the
+// slots under and an owner for the group. A series is the Session duties sharing a SeriesId; the name and the managers
+// are carried on every row. Managers may add, change and cancel slots and take their registers without holding
+// staff.duties.manage; appointing them is the permission holder's act alone, the timetable master rule.
+
+public record DutySeriesDto
+{
+    public Guid SeriesId { get; init; }
+    public string Name { get; init; } = string.Empty;
+    public Guid ParameterId { get; init; }
+    public string ParameterName { get; init; } = string.Empty;
+    public List<Guid> ManagerUserIds { get; init; } = new();
+    public List<string> ManagerNames { get; init; } = new();
+    public int SlotCount { get; init; }
+    public DateTime? FirstStartsAt { get; init; }
+    public DateTime? LastEndsAt { get; init; }
+    /// <summary>Slots that have ended with their register still open — the thing a manager has to chase.</summary>
+    public int RegistersOutstanding { get; init; }
+    public bool IAmManager { get; init; }
+    /// <summary>May the caller add, change and cancel slots (a manager, or a holder of staff.duties.manage).</summary>
+    public bool CanWrite { get; init; }
+    /// <summary>May the caller appoint managers and create series (the permission alone).</summary>
+    public bool CanAppoint { get; init; }
+}
+
+public record DutySeriesDetailDto
+{
+    public DutySeriesDto Series { get; init; } = new();
+    public List<StaffDutyDto> Slots { get; init; } = new();
+}
+
+/// <summary>One sitting of an exam: when, where, who invigilates.</summary>
+public record DutySeriesSlotRequest
+{
+    /// <summary>"S.4 Mathematics Paper 1". Blank takes the series name.</summary>
+    [MaxLength(200)] public string? Title { get; set; }
+    public DateTime StartsAt { get; set; }
+    public DateTime EndsAt { get; set; }
+    [MaxLength(200)] public string? Location { get; set; }
+    /// <summary>The invigilators — the slot's expected people, marked on its register. At least one.</summary>
+    public List<Guid> InvigilatorUserIds { get; set; } = new();
+    [MaxLength(2000)] public string? Description { get; set; }
+}
+
+public record CreateDutySeriesRequest
+{
+    [Required, MaxLength(200)] public string Name { get; set; } = string.Empty;
+    /// <summary>Null takes the organization's "Exam Supervision" parameter.</summary>
+    public Guid? ParameterId { get; set; }
+    public List<Guid> ManagerUserIds { get; set; } = new();
+    /// <summary>At least one: the name and the managers are carried on the slots, so a series cannot exist empty.</summary>
+    public List<DutySeriesSlotRequest> Slots { get; set; } = new();
+}
+
+public record UpdateDutySeriesRequest
+{
+    [Required, MaxLength(200)] public string Name { get; set; } = string.Empty;
+    /// <summary>Null leaves the managers as they are. A change is refused unless the caller holds staff.duties.manage.</summary>
+    public List<Guid>? ManagerUserIds { get; set; }
+}
+
+/// <summary>What adding slots did, and what it noticed: an invigilator already somewhere else at that time is a
+/// WARNING, never a refusal — a school may double up on purpose, and it is the person running the series who knows.</summary>
+public record DutySeriesWriteResultDto
+{
+    public DutySeriesDetailDto Detail { get; init; } = new();
+    public List<string> Warnings { get; init; } = new();
 }
 
 public record DuplicateStaffDutyRequest
@@ -647,6 +720,20 @@ public record StaffPerformancePolicyDto
     /// <para>Empty means "not configured yet"; the reader seeds the two defaults.</para>
     /// </summary>
     public List<VocabularyItemDto> StaffGroups { get; set; } = new();
+
+    /// <summary>
+    /// How the school's staff are engaged — Permanent, Contract, or "Government-paid" and "PTA-paid" for a school
+    /// whose MoES return separates them. <b>A vocabulary, not an enum</b>, for the reasons on
+    /// <see cref="QMgr.Domain.Enums.EmploymentTypes"/>: nothing branches on a value. <c>User.EmploymentType</c> holds
+    /// the NAME. Seeded on first read with the six the enum had. A type somebody holds is RETIRED, never removed —
+    /// the server refuses the removal — because a stored name the list no longer carries reads as nothing at all.
+    /// </summary>
+    public List<VocabularyItemDto> EmploymentTypes { get; set; } = new();
+
+    /// <summary>The names a person may be GIVEN now, in the school's order — what every picker, import preview and
+    /// import job offers and resolves against. A retired type stays on the people who hold it but is not offered.</summary>
+    public List<string> ActiveEmploymentTypeNames()
+        => (EmploymentTypes ?? new()).Where(t => t.IsActive && !string.IsNullOrWhiteSpace(t.Name)).OrderBy(t => t.SortOrder).Select(t => t.Name).ToList();
 
     /// <summary>The MET ceiling: no single parameter above this share of the composite.</summary>
     public int MaxParameterWeightPercent { get; set; } = 50;

@@ -133,10 +133,11 @@ else
                             <div class="invoice-document-header">
                                 <div class="invoice-from">
                                     <div class="invoice-from-logo">
-                                        <QIcon Name="collection-fill" />
-                                        <span>Q-Mgr</span>
+                                        @* Our invoice: the issuer is the company, the product is what was bought. *@
+                                        <img src="@ProductBrand.Assets.Mark" alt="" width="28" height="28" />
+                                        <span>@ProductBrand.LegalEntity</span>
                                     </div>
-                                    <p class="invoice-from-tagline">Front Office</p>
+                                    <p class="invoice-from-tagline">@ProductBrand.Name</p>
                                 </div>
 
                                 <div class="invoice-to">

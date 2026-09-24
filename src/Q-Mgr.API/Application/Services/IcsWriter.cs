@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using System.Globalization;
 using System.Text;
 
@@ -26,7 +27,7 @@ public sealed class IcsWriter
     private const int MaxOctets = 75;
     private readonly StringBuilder _sb = new();
 
-    public IcsWriter(string calendarName, string prodId = "-//SACC//Q-Mgr Front Office//EN")
+    public IcsWriter(string calendarName, string prodId = ProductBrand.CalendarProductId)
     {
         Line("BEGIN:VCALENDAR");
         Line("VERSION:2.0");

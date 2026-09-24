@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
@@ -224,13 +225,13 @@ public sealed class SaccGateway : ISaccGateway
                     $"The gateway rejected the request (400): {FirstProblem(text)}",
                     $"The payment could not be started: {FirstProblem(text)}"),
                 HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => Refused("UNAUTHORISED",
-                    $"The gateway refused Q-Mgr's API key ({code}). Check the key, and that it holds payments:collect and allows this server's IP address."),
+                    $"The gateway refused our API key ({code}). Check the key, and that it holds payments:collect and allows this server's IP address."),
                 HttpStatusCode.NotFound => Refused("NOT_FOUND",
                     $"The gateway address {config.BaseUrl} has no {CollectPath} (404). Check the Gateway URL — it should be https://sacc.ug."),
                 HttpStatusCode.Conflict => new GatewayCollectResult(false, PaymentStates.Failed, true, null, null, "CONFLICT",
                     "The gateway already holds a different payment under this reference (409).",
                     "This payment was already started. Refresh to see where it stands."),
-                (HttpStatusCode)429 => Refused("RATE_LIMITED", "The gateway is rate-limiting Q-Mgr (429)."),
+                (HttpStatusCode)429 => Refused("RATE_LIMITED", "The gateway is rate-limiting us (429)."),
                 _ => Refused("GATEWAY_ERROR", $"The gateway answered {code}: {Truncate(text)}")
             };
         }
@@ -285,7 +286,7 @@ public sealed class SaccGateway : ISaccGateway
 
             if (response.StatusCode == HttpStatusCode.NotFound)
                 return new GatewayStatusResult(false, PaymentStates.Pending, false, null, null, null, "NOT_FOUND",
-                    "The gateway has no payment with this reference for Q-Mgr's key.");
+                    "The gateway has no payment with this reference for our key.");
 
             if (!response.IsSuccessStatusCode)
                 return new GatewayStatusResult(true, PaymentStates.Pending, false, null, null, null, "GATEWAY_ERROR",
@@ -315,7 +316,7 @@ public sealed class SaccGateway : ISaccGateway
     {
         var (config, apiKey) = await ResolveAsync();
         if (!config.HasValidBaseUrl) return new GatewayCheckResult(false, false, null, "Enter the gateway address, e.g. https://sacc.ug.");
-        if (!config.HasApiKey) return new GatewayCheckResult(false, false, null, "Enter the API key issued to Q-Mgr in CRMPro.");
+        if (!config.HasApiKey) return new GatewayCheckResult(false, false, null, $"Enter the API key issued to {ProductBrand.Name} in CRMPro.");
 
         try
         {
@@ -363,8 +364,8 @@ public sealed class SaccGateway : ISaccGateway
             using var message = Request(HttpMethod.Post, config, apiKey, WebhooksPath);
             message.Content = JsonContent.Create(new
             {
-                name = "Q-Mgr",
-                description = "Q-Mgr module purchases and renewals",
+                name = ProductBrand.Name,
+                description = ProductBrand.Name + " module purchases and renewals",
                 callbackUrl,
                 events = WebhookEvents
             });

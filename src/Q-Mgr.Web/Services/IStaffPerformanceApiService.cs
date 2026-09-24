@@ -152,6 +152,14 @@ public interface IStaffPerformanceApiService
     Task<StaffDutyDto> UpdateDutyAsync(Guid branchId, Guid id, SaveStaffDutyRequest request);
     Task CancelDutyAsync(Guid branchId, Guid id);
     Task<StaffDutyDto> DuplicateDutyAsync(Guid branchId, Guid id, DuplicateStaffDutyRequest request);
+    // Exam-supervision series (2026-09-23).
+    Task<List<DutySeriesDto>> GetDutySeriesAsync(Guid branchId);
+    Task<DutySeriesDetailDto> GetDutySeriesDetailAsync(Guid branchId, Guid seriesId);
+    Task<DutySeriesWriteResultDto> CreateDutySeriesAsync(Guid branchId, CreateDutySeriesRequest request);
+    Task<DutySeriesDetailDto> UpdateDutySeriesAsync(Guid branchId, Guid seriesId, UpdateDutySeriesRequest request);
+    Task<DutySeriesWriteResultDto> AddSeriesSlotsAsync(Guid branchId, Guid seriesId, List<DutySeriesSlotRequest> slots);
+    Task<DutySeriesWriteResultDto> UpdateSeriesSlotAsync(Guid branchId, Guid seriesId, Guid dutyId, DutySeriesSlotRequest slot);
+    Task CancelSeriesSlotAsync(Guid branchId, Guid seriesId, Guid dutyId);
     Task<StaffRegisterDto> GetRegisterAsync(Guid branchId, Guid id);
     Task<StaffRegisterDto> SubmitRegisterAsync(Guid branchId, Guid id, SubmitRegisterRequest request);
     Task<StaffDutyDto> AttachMinutesAsync(Guid branchId, Guid id, AttachMinutesRequest request);
@@ -470,6 +478,13 @@ public class StaffPerformanceApiService : IStaffPerformanceApiService
     public Task<StaffDutyDto> UpdateDutyAsync(Guid branchId, Guid id, SaveStaffDutyRequest request) => SendAsync<StaffDutyDto>(HttpMethod.Put, $"{B(branchId)}/duties/{id}", request);
     public Task CancelDutyAsync(Guid branchId, Guid id) => SendAsync(HttpMethod.Delete, $"{B(branchId)}/duties/{id}");
     public Task<StaffDutyDto> DuplicateDutyAsync(Guid branchId, Guid id, DuplicateStaffDutyRequest request) => SendAsync<StaffDutyDto>(HttpMethod.Post, $"{B(branchId)}/duties/{id}/duplicate", request);
+    public Task<List<DutySeriesDto>> GetDutySeriesAsync(Guid branchId) => SendAsync<List<DutySeriesDto>>(HttpMethod.Get, $"{B(branchId)}/duty-series");
+    public Task<DutySeriesDetailDto> GetDutySeriesDetailAsync(Guid branchId, Guid seriesId) => SendAsync<DutySeriesDetailDto>(HttpMethod.Get, $"{B(branchId)}/duty-series/{seriesId}");
+    public Task<DutySeriesWriteResultDto> CreateDutySeriesAsync(Guid branchId, CreateDutySeriesRequest request) => SendAsync<DutySeriesWriteResultDto>(HttpMethod.Post, $"{B(branchId)}/duty-series", request);
+    public Task<DutySeriesDetailDto> UpdateDutySeriesAsync(Guid branchId, Guid seriesId, UpdateDutySeriesRequest request) => SendAsync<DutySeriesDetailDto>(HttpMethod.Put, $"{B(branchId)}/duty-series/{seriesId}", request);
+    public Task<DutySeriesWriteResultDto> AddSeriesSlotsAsync(Guid branchId, Guid seriesId, List<DutySeriesSlotRequest> slots) => SendAsync<DutySeriesWriteResultDto>(HttpMethod.Post, $"{B(branchId)}/duty-series/{seriesId}/slots", slots);
+    public Task<DutySeriesWriteResultDto> UpdateSeriesSlotAsync(Guid branchId, Guid seriesId, Guid dutyId, DutySeriesSlotRequest slot) => SendAsync<DutySeriesWriteResultDto>(HttpMethod.Put, $"{B(branchId)}/duty-series/{seriesId}/slots/{dutyId}", slot);
+    public Task CancelSeriesSlotAsync(Guid branchId, Guid seriesId, Guid dutyId) => SendAsync(HttpMethod.Delete, $"{B(branchId)}/duty-series/{seriesId}/slots/{dutyId}");
     public Task<StaffRegisterDto> GetRegisterAsync(Guid branchId, Guid id) => GetAsync<StaffRegisterDto>($"{B(branchId)}/duties/{id}/register");
     public Task<StaffRegisterDto> SubmitRegisterAsync(Guid branchId, Guid id, SubmitRegisterRequest request) => SendAsync<StaffRegisterDto>(HttpMethod.Post, $"{B(branchId)}/duties/{id}/register", request);
     public Task<StaffDutyDto> AttachMinutesAsync(Guid branchId, Guid id, AttachMinutesRequest request) => SendAsync<StaffDutyDto>(HttpMethod.Put, $"{B(branchId)}/duties/{id}/minutes", request);

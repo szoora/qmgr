@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using QMgr.Application.Branding;
 using QMgr.Application.Interfaces.Billing;
 using QMgr.Infrastructure.Data;
 
@@ -65,7 +66,10 @@ public sealed class EmailBrandService : IEmailBrandService
                 var features = await _features.GetFeaturesAsync(id);
                 brand = features.WhiteLabel
                     ? new EmailTemplates.EmailBrand(
-                        Name: string.IsNullOrWhiteSpace(org.BrandName) ? org.Name : org.BrandName!,
+                        // The app's name exactly as the school typed it, or ours; the organisation beside it.
+                        // It used to be "brand name, else organisation name" — one field meaning two things.
+                        Name: ProductBrand.NameFor(org.BrandName, whiteLabelActive: true),
+                        OrganizationName: org.Name,
                         // A colour from the database ends up inside an inline style attribute in an
                         // email body. Validated on write; re-checked here because a row predating
                         // that check must not be able to close the attribute.

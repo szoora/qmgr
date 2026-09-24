@@ -77,7 +77,7 @@ public class BatchOperationProcessorJob
             var request = JsonSerializer.Deserialize<BatchRequest>(job.RowsJson)
                           ?? throw new InvalidOperationException("The batch's own request could not be read back.");
 
-            var resolved = await _resolver.ResolveAsync(job.BranchId, request);
+            var resolved = await _resolver.ResolveAsync(job.BranchId, request, job.CreatedByUserId);
 
             if (resolved.BlockingError != null)
             {

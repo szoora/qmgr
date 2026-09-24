@@ -37,6 +37,30 @@ public class UsersController : ControllerBase
         return Guid.TryParse(raw, out var id) ? id : null;
     }
 
+    /// <summary>
+    /// A ROLE HAS TWO GATES, AND SO DOES A PERSON (2026-09-24). RoleAssignmentGuard already bounded the role being
+    /// GIVEN; nothing bounded the person being CHANGED. So anybody holding users.edit could move a superior DOWN,
+    /// switch them off, delete them, or change the email address a password-reset link goes to — which is taking
+    /// over their account by the side door ResetPassword closed. The rule is ResetPassword's: somebody else's
+    /// account may be changed only when their CURRENT role is one the caller could have given them. One's own
+    /// account is always one's own. Answers null when the change may go ahead.
+    /// </summary>
+    private async Task<IActionResult?> SubjectRefusalAsync(User subject, string title)
+    {
+        var actorId = GetCurrentUserIdOrNull();
+        if (actorId is null) return Unauthorized();
+        if (subject.Id == actorId.Value) return null;
+        var role = subject.Role ?? await _dbContext.Roles.FindAsync(subject.RoleId);
+        if (role == null) return null;
+        var refusal = await RoleAssignmentGuard.RefusalAsync(_dbContext, actorId.Value, role);
+        return refusal == null ? null : BadRequest(new ProblemDetails
+        {
+            Title = title,
+            Detail = $"{role.Name} is above what you may change. {refusal}",
+            Status = StatusCodes.Status400BadRequest
+        });
+    }
+
     public UsersController(
         QMgrDbContext dbContext,
         ITenantContextAccessor tenantAccessor,
@@ -518,6 +542,9 @@ public class UsersController : ControllerBase
                 Status = StatusCodes.Status404NotFound
             });
 
+        if (await SubjectRefusalAsync(user, "You cannot change this person's account") is { } subjectRefusal)
+            return subjectRefusal;
+
         // Check for duplicate email if changed within organization
         if (!string.IsNullOrWhiteSpace(request.Email) && request.Email.ToLowerInvariant() != user.Email)
         {
@@ -739,6 +766,9 @@ public class UsersController : ControllerBase
                 Status = StatusCodes.Status404NotFound
             });
 
+        if (await SubjectRefusalAsync(user, "You cannot switch this person's account on or off") is { } subjectRefusal)
+            return subjectRefusal;
+
         // Re-enabling somebody takes a seat: the limit counts ACTIVE users (see UserSeats), so without this
         // disable-then-enable would be a way round it. Disabling never needs room.
         if (!user.IsActive)
@@ -831,6 +861,9 @@ public class UsersController : ControllerBase
                 Detail = $"User with ID '{userId}' was not found in your organization.",
                 Status = StatusCodes.Status404NotFound
             });
+
+        if (await SubjectRefusalAsync(user, "You cannot remove this person's account") is { } subjectRefusal)
+            return subjectRefusal;
 
         // Soft delete
         user.IsActive = false;

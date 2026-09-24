@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using System.Net;
 using System.Net.Http.Json;
 using System.Net.Mail;
@@ -129,9 +130,9 @@ public class NotificationSettingsService : INotificationSettingsService
 
             var testMessage = new
             {
-                Message = "Q-Mgr SMS Test: Your notification settings are configured correctly!",
+                Message = ProductBrand.Name + " SMS test: your notification settings are configured correctly.",
                 Recipient = testPhoneNumber,
-                Sender = settings.SmsSenderId ?? "Q-Mgr"
+                Sender = settings.SmsSenderId ?? ProductBrand.Company
             };
 
             var customerId = settings.SmsCustomerId ?? "default";
@@ -187,12 +188,12 @@ public class NotificationSettingsService : INotificationSettingsService
             var mailMessage = new MailMessage
             {
                 From = new MailAddress(profile.FromEmail, profile.FromName),
-                Subject = "Q-Mgr Email Test",
-                Body = @"<html>
+                Subject = ProductBrand.Name + " email test",
+                Body = $@"<html>
 <body style='font-family: Arial, sans-serif;'>
-<h2 style='color: #00d4ff;'>Email Test Successful!</h2>
-<p>Your Q-Mgr email notification settings are configured correctly.</p>
-<p style='color: #666;'>This is a test email sent from the Q-Mgr notification system.</p>
+<h2 style='color: {ProductMark.WineLight};'>Email test successful</h2>
+<p>Your {ProductBrand.Name} email notification settings are configured correctly.</p>
+<p style='color: #666;'>This is a test email sent from the {ProductBrand.Name} notification system.</p>
 </body>
 </html>",
                 IsBodyHtml = true

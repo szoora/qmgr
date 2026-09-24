@@ -187,7 +187,7 @@ check('25.20 it is FLAT, not wrapped in { data } — the app reads it before it 
   'a data envelope was found');
 
 check('25.21 on the shared host it names the PLATFORM and invents no school',
-  infoBody?.product === 'Q-Mgr' && (infoBody?.tenant === null || infoBody?.tenant === undefined),
+  infoBody?.product === 'SACC Dashboard' && (infoBody?.tenant === null || infoBody?.tenant === undefined),
   `product=${infoBody?.product} tenant=${infoBody?.tenant}`);
 
 check('25.22 it advertises its capabilities so the app need not probe for 404s',

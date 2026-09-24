@@ -26,7 +26,7 @@
         <div class="join-brand">
             <QIcon Name="people-fill" aria-hidden="true" />
             <div class="join-brand-text">
-                <span class="join-org">@(branchInfo?.OrganizationName ?? "Q-Mgr")</span>
+                <span class="join-org">@(branchInfo?.OrganizationName ?? ProductBrand.Name)</span>
                 @if (!string.IsNullOrWhiteSpace(branchInfo?.Name))
                 {
                     <span class="join-branch">@branchInfo!.Name</span>

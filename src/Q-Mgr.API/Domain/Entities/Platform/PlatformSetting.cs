@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using QMgr.Domain.Common;
 using System.Text.Json;
 using QMgr.Application.DTOs;
@@ -215,7 +216,7 @@ public class EmailSettings
     public string SmtpUsername { get; set; } = string.Empty;
     public string SmtpPassword { get; set; } = string.Empty;
     public string FromEmail { get; set; } = string.Empty;
-    public string FromName { get; set; } = "Q-Mgr";
+    public string FromName { get; set; } = ProductBrand.Name;
     public bool UseSsl { get; set; } = true;
 }
 

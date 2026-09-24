@@ -305,7 +305,7 @@ else if (loadError != null)
 
     private string SubjectName => timeline?.Subject.FullName ?? "Staff member";
     private string OrganizationName =>
-        !string.IsNullOrWhiteSpace(branding?.BrandName) ? branding!.BrandName!
+        !string.IsNullOrWhiteSpace(branding?.OrganizationName) ? branding!.OrganizationName!
         : !string.IsNullOrWhiteSpace(BranchState.CurrentBranchName) ? BranchState.CurrentBranchName!
         : "Staff Performance";
     private string PeriodCaption => range.IsAllTime ? "Complete record" : range.Caption;
@@ -390,7 +390,7 @@ else if (loadError != null)
                 OrganizationId = organizationId,
                 FileName = $"staff-report-{QDateFormat.Iso8601(DateOnly.FromDateTime(DateTime.UtcNow))}.pdf",
                 DocumentName = name,
-                Summary = $"Staff performance report for {SubjectName}, {PeriodCaption}. Generated {stamp} by {generatedBy ?? "Q-Mgr"}.",
+                Summary = $"Staff performance report for {SubjectName}, {PeriodCaption}. Generated {stamp} by {generatedBy ?? (branding?.ProductName ?? ProductBrand.Name)}.",
                 PublishedFrom = $"Staff timeline — {SubjectName} ({timeline?.Subject.EmployeeNumber ?? "no employee number"}), {PeriodCaption}, generated {stamp}",
                 Audit = doc => StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest
                 {

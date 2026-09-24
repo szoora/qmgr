@@ -1,6 +1,9 @@
-# Q-Mgr Web
+# SACC Dashboard (repository: Q-Mgr Web)
 
-Multi-tenant front-office SaaS — queues, visitors, signage, student welfare, secure documents (the customer-facing descriptor is "Front-Office" — "Platform" was dropped as redundant on 2026-09-22; the descriptor itself was decided 2026-09-15; the queue is one module, not the product). ASP.NET Core API (`src/Q-Mgr.API`) + Blazor Server web app
+**The product is "SACC Dashboard" since 2026-09-24; it was Q-Mgr.** Multi-tenant SaaS for staff, student welfare
+and the front office — queues, visitors, signage, secure documents. The repository, projects, namespaces, schema and
+every other wire format keep the old "qmgr" name on purpose; see "The product's name has ONE home" below before
+renaming anything. (The earlier descriptor "Front Office" is retired; the tagline is "Staff, welfare and front office".) ASP.NET Core API (`src/Q-Mgr.API`) + Blazor Server web app
 (`src/Q-Mgr.Web`), Postgres via EF Core, CQRS via the `Mediator` source-generator library (not
 MediatR). **Git was adopted 2026-08-25**, and **there is a GitHub remote:
 `origin` → `https://github.com/szoora/qmgr.git`** — this line said "local-only, no remote" until
@@ -22,6 +25,51 @@ Claude …` and `Claude-Session: …`) from all 108 commits, then force-pushed. 
 date in older tracker entries therefore no longer resolve — the entries were left as written rather
 than rewritten, so treat any pre-2026-09-06 SHA as a historical label, not a lookup key. New commits
 carry no attribution: it is turned off in the user's `~/.claude/settings.json`.
+
+## The product's name has ONE home: `ProductBrand` (rebrand 2026-09-24)
+
+Asked as *"rebranding the platform as The Dashboard or simply Dashboard?"*, settled as **SACC Dashboard** (a generic
+word cannot be registered or searched; SACC carries the distinctiveness). Plan: `docs/plans/SACC_DASHBOARD_REBRAND.md`
+and https://claude.ai/artifact/F21ZYLMNNsGtTRt1KxViqN — decisions B1–B10 all taken as recommended.
+
+- **`Q-Mgr.Shared/Application/Branding/ProductBrand.cs` is the one home**: `Name` ("SACC Dashboard"), `Company`,
+  `Descriptor`, `LegalEntity`, `Tagline`, `MessagePrefix`, asset paths, `NameFor`, `ShortNameFor`,
+  `ValidateBrandName`, `SuggestFor`. **`scripts/e2e/brand-literal-check.mjs` (in `guards.sh`) fails on "Q-Mgr",
+  "SACC Dashboard", "SACC Software" or "Powered by" typed anywhere else in `src/`** (comments and Migrations aside).
+  It reported 152 on the commit before the rebrand. A future rename edits ProductBrand and nothing else.
+- **`Organization.BrandName` IS A SCHOOL'S WHOLE APP NAME, exactly as typed** (user direction: *"why do we have to
+  force the dashboard word on to the tenant?"*). Nothing is added to it; we only SUGGEST "WORD Dashboard"
+  (`SuggestFor`). Shown only while white-labelling is entitled AND on (`NameFor`), otherwise "SACC Dashboard".
+  Rule: 2–40 characters, one line, must not contain "SACC", not unique across tenants. A stored value that fails the
+  rule is ignored, never rewritten. Set at registration (optional), on Appearance, or by the platform
+  (`PUT admin/tenants/{id}/brand-name`).
+- **`Organization.Name` is the organisation.** Twenty-one readers used `BrandName ?? Name` as the school's name on
+  printed sheets, emails, SMS and the mobile app; they read `Name` now. Printed headers name the organisation;
+  footers say "Printed from {app name}". SMS to guardians and staff are headed by the ORGANISATION's name.
+- **DTOs carry the resolved name**: `ProductName`/`ProductShortName`/`OrganizationName` on `OrganizationBrandingDto`
+  and `TenantHostBrandingDto` (the latter's old `BrandName` was removed so every reader had to be revisited);
+  `EmailBrand` has `Name` (the app) and `OrganizationName` (the signatory and, with attribution removed, the copyright).
+- **The only credit is "© YEAR SACC"** — never "Powered by" (user, 2026-09-24). With attribution removal it credits
+  the ORGANISATION, not its app name.
+- **The mark is `ProductMark`** (same folder): an S of eleven lit dashboard tiles on a 3×5 grid, wine, flat. The Web
+  serves every `/brand/*.svg` from it (`Program.cs`), the API's `branding/product-logo` emits it, and the PNGs in
+  `wwwroot/brand/` are rendered from the served SVGs by `scripts/brand/render-brand-assets.mjs` — re-run it whenever
+  ProductMark changes. The mobile app's `artwork/build-brand-assets.py` mirrors the geometry; change both together.
+  The old queue-loop files (`images/*.svg`, `favicon.svg`, the static `manifest.json`) are deleted; `/app-manifest.json`
+  serves every host.
+- **NEVER RENAMED, and each is load-bearing:** `SetApplicationName("QMgr")` (Data Protection purpose — payloads stop
+  decrypting), JWT issuer `qmgr-api`/audience `qmgr-clients` (everyone signed out), Android `applicationId ug.qmgr`
+  (a different app; every phone reinstalls), the `qmgr` schema, namespaces and projects, `qmgr-*` localStorage keys,
+  service names and install paths, the `X-QMgr-Signature` webhook header.
+- **SMS sender IDs were deliberately not rewritten** by `RebrandToSaccDashboard`: the gateway may accept only a
+  registered sender. The fallback when a tenant has none is now `ProductBrand.Company` ("SACC") — confirm that sender
+  is registered with the sacc.ug SMS gateway before relying on it.
+- The home page is labelled **Home** (route `/` unchanged), so nobody reads "SACC Dashboard → Dashboard".
+- Found on the way: the service worker's precache named four stylesheets deleted on 2026-09-19, and `cache.addAll` is
+  all-or-nothing, so the worker had not installed since. Once it could, its update banner sat under the phone bar —
+  `layout.css` now lifts it clear.
+- Verified by **section 38** (`product-brand-e2e.mjs`, 35 checks) and **`browser/product-name.mjs`** (31 checks),
+  both 0 failed, plus the mobile app's `verify-brand-assets.py` (14/14).
 
 ## Design system reference
 
@@ -3233,13 +3281,10 @@ school that chose green got green buttons on wine hovers with wine tints behind 
   public pages), `EmailTemplates`, `SharedDocument` and the mobile shell's `TenantInfoController`.
   A tenant who pays and then reads "Q-Mgr" at the foot of their own password-reset mail has not got
   what they bought.
-- **The catalogue's own description is the one place the old wording survives, and it is now wrong.**
-  The `white-label-plus` row in `ModuleCatalogDefaults` sells "Removes \"Powered by SACC Software\"
-  from your sign-in pages" and those pages no longer carry that string. Correcting it is a seeder edit
-  **and** a migration that rewrites only where the row still holds the value it shipped with — the
-  `FoldStaffPerformanceIntoWelfareModule` rule, because an administrator who has edited the row owns
-  it. Left open deliberately rather than half-done in the seeder, where an existing install would
-  never pick it up.
+- **The catalogue's description was corrected on 2026-09-23** — it still sold removing "Powered by SACC
+  Software" a day after those pages stopped carrying it. `ModuleCatalogDefaults.WhiteLabelPlusDescription`
+  and the migration `ExamSeriesEmploymentTypesAndCatalogWording`, which rewrites only a row still holding
+  the shipped text (the `FoldStaffPerformanceIntoWelfareModule` rule).
 - **`AttributionRemoved` defaults to FALSE**, unlike `WhiteLabelEntitled` beside it, and the asymmetry
   is deliberate: a dropped request would otherwise REMOVE the attribution. On the public pages the
   source is the HOST; in the shell and in email it is the ORGANISATION, because most tenants sign in
@@ -4075,7 +4120,7 @@ files: forty Bootstrap `form-switch`es on eleven settings pages and twenty-five 
 - A page's own `(ChangeEventArgs e)` handler for a checkbox became `(bool on)`, never a faked event.
 - **`scripts/e2e/raw-checkbox-check.mjs`** fails on any raw checkbox or `form-switch` outside the three
   shared components. `controls-and-names.mjs` presses them with real mouse input on five pages.
-- **Radio buttons were not in this sweep**: Schedules still has three Bootstrap `form-check` radios.
+- **Radio buttons followed on 2026-09-23** — see "Every one-of-a-few choice is `QRadioGroup`".
 
 **`component-param-check.mjs` was blind to lowercase attributes, and that cost a broken page.** It
 skipped them as "an html attribute, never a parameter" — but Blazor hands EVERY attribute on a component
@@ -4184,6 +4229,146 @@ Plan `docs/plans/STUDENT_ROSTER_AND_LIST_STANDARD.md`; decisions L1–L7 settled
   name with ANY lower-case letter is skipped outright.
 - Verified: section **32** (bulk log + tidy names, 60/0), browser `pager` (40/0), `student-roster` (31/0 — it
   seeds 60 scratch students and deactivates them; a list that fits on one page proves nothing about paging).
+
+## Exam supervision is a named series of duties, never a second timetable (built 2026-09-23)
+
+The Phase 3 the timetable-ownership plan left open. A series is the Session duties sharing a `SeriesId`, with
+`StaffDuty.SeriesName` and `StaffDuty.SeriesManagerUserIds` carried on every row (no new table). The Duties hub's
+**Exams** tab (`ExamSeries.razor`) and `StaffDutiesController.Series.cs`; section 35 and `browser/exam-series-ui.mjs`.
+
+- **`DutySeriesAccess` is the one home**: a manager or a holder of `staff.duties.manage` writes; only the holder
+  appoints (a manager asking to change managers gets 403 in words). Reading is managers, invigilators and holders;
+  anybody else 404. The generic duty editor still refuses a manager — the series endpoints are their only door.
+- **Managers are kept IN every slot's `RecorderUserIds`**, and a manager change rewrites that across the series
+  (`DutySeriesAccess.Recorders`), so every existing reader of recorders — the register, the portal to-do, the chase,
+  the digest — treats a manager as the person who takes the register without being taught about series.
+- **Every sitting goes through `ApplyAsync`**, the rules a hand-made duty obeys; an error names the sitting.
+- **A double-booked invigilator is WARNED, never refused**, and **each invigilator gets ONE notice per write**
+  (`staff.invigilation-assigned`), never one per sitting.
+- **A manager usually holds no duty permission, so the sidebar has no Duties entry for them** —
+  `ExamSeriesCard` on My Workspace's My teaching tab is their door. A new delegated role needs a door, not just a rule.
+- **A series' sittings NAME their invigilators** (the duty mapper named only rota slots' people). The browser suite
+  found the Invigilators column reading "—" on every sitting.
+
+## Employment type is the school's own list (2026-09-23)
+
+`StaffEmploymentType` is gone: nothing branched on its six values, so by the behaviour test it is data.
+`StaffPerformancePolicyDto.EmploymentTypes` (seeded with the six) and `User.EmploymentType` holds the NAME.
+
+- **`EmploymentTypes.Resolve` is the one reader** (Shared) — the import preview, the job, the precheck and the profile
+  save all resolve a cell against the ACTIVE list with it. `StaffFieldParsing.EmploymentType` was RENAMED to
+  `EmploymentTypeName` because its meaning changed: a changed meaning behind an unchanged name compiles at every
+  wrong caller (the `GroupFor` lesson).
+- **A type somebody holds cannot be removed — the server refuses, naming it — only retired.** A person keeps a retired
+  type on an unrelated save; nobody new can be given one.
+- **The migration is add, backfill, drop, rename** (`ExamSeriesEmploymentTypesAndCatalogWording`). EF scaffolded an
+  ALTER COLUMN from integer to varchar, which PostgreSQL does by implicit cast — every "Permanent" would have become
+  "0". Checked on seeded rows before trusting it: 1 → Contract, 3 → Part time.
+- The server now also refuses duplicate staff-group names; the editor had been the only check.
+
+## Every one-of-a-few choice is `QRadioGroup` (2026-09-23)
+
+Five pages drew radios five ways, three with Bootstrap's `form-check`. `QRadioGroup<TValue>` takes a list of
+`QRadioOption(Value, Label, Description?)` — native radios sharing one name (arrow keys, "1 of 3"), the QCheckbox
+family's look, a 24px target, a focus ring. `raw-checkbox-check.mjs` now fails a raw radio too; the one exception,
+Register's module CARD picker, is named in the guard with its reason. A long or data-driven list is a `QSelect`.
+
+## A Web client reads JSON with the app's options, or an enum breaks it AFTER the write (2026-09-23)
+
+`ISelfServiceApiService` read with the framework defaults, which cannot read an enum sent as a string — and the API
+sends every enum that way. "Ask a colleague → Send the request" therefore created the cover request and then told the
+teacher it had failed. **`json-options-check.mjs` (in `guards.sh`) fails any `ReadFromJsonAsync<T>()` in `Services/`
+without options.** Found by `browser/timetable-ownership-ui.mjs`, which also found that an **appointed timetable master
+could not see Publish**: `TimetableDetailDto.CanManage` asked `IsUnscopedAsync` alone, while the write path had always
+exempted a master (`NeedsUnscopedStaffView`). A rule the API applies must reach the flag the page reads.
+
+## The school chain is seeded, and a PERSON has a gate as well as a role (2026-09-24)
+
+*"seed head teacher and deputy head teacher roles. fix the display labels. a school may not use manager.
+next to DOS is Deputy, then head."*
+
+- **The order is Administrator → Head Teacher → Deputy → Front Office Manager → Director of Studies**
+  (R1, user instruction "implement your recommendations and decisions", 2026-09-24). The head may assign
+  Front Office Manager and takes the "manager or above" visitor override; the deputy may not change a Front
+  Office Manager's account. Manager moved down only past the two roles seeded that morning, so no older pair
+  of roles changed order. **The Web keeps its own copy of the order** (`IPermissionService.TierOrder`), and it
+  lacked both school roles for a day — change both or neither.
+- **Both permission sets live in `Permissions.cs`, read by BOTH seeders.** `DbSeeder` ADDS role
+  permissions too, so two lists would hand the role their union. The head is derived:
+  `HeadTeacherPermissions` = every visible tenant code minus `HeadTeacherWithheld` (billing, settings, API
+  keys, role design, branch create/delete). A new school permission therefore reaches the head without
+  anyone remembering. The deputy is an explicit list: the DoS's set plus welfare to CONFIDENTIAL (never
+  restricted), the roll, class teachers, visitors and onboarding.
+- **Labels: Manager → "Front Office Manager", Staff → "Front Desk Staff".** The codes are wire formats
+  and did not move. `UsersSetup` picked a new user's default role by DISPLAY NAME ("Staff"), and now
+  picks it by code.
+- **THE PERSON-SIDE GATE.** `RoleAssignmentGuard` bounded the role being GIVEN; nothing bounded the
+  person being CHANGED. So anyone with `users.edit` could demote a superior, switch them off, delete
+  them, or re-point the email their password-reset link goes to. `UsersController.SubjectRefusalAsync`
+  (update, toggle, delete) and `BatchOperationService.SubjectRefusalAsync` (bulk role and on/off, one
+  Failed row per refused person) now refuse an account whose CURRENT role the caller could not have
+  given. That is ResetPassword's rule; one's own account is exempt. The bulk role change also had no
+  target-role guard at all, only a SuperAdmin check, and now runs `RoleAssignmentGuard`.
+  **`IBatchOperationService.ResolveAsync` takes the actor**; the job passes `CreatedByUserId`.
+- Verified by **section 36 (`school-roles-e2e.mjs`, 23 checks)**, wired into `class-teacher-e2e.sh`.
+
+## The RBAC review, built: posts that grant and expire, a review, leavers, governors (2026-09-24)
+
+The review is https://claude.ai/artifact/QRHKYKfyvVxGPGGAF2c8wU; *"implement your recommendations and decisions"*
+took all eight. Verified by **section 37 (`leadership-e2e.mjs`, 60 checks)** and **`browser/access-ui.mjs`
+(12 checks)**, both wired in.
+
+- **`Organization.Settings["Leadership"]` holds three kinds of post, and `LeadershipPosts` is its ONE reader and
+  writer** (API `Application/Services`): the designated safeguarding lead and up to three deputies, an acting head
+  for a dated period, and house/dormitory posts per branch. Writes go through `OrganizationSettingsLock`. Each is
+  a POST in the `PostPermissionService` sense, so `GrantsForAsync` reads it and every one of the six readers of
+  "what may this person do" follows with no change.
+- **YOU MAY DELEGATE ONLY WHAT YOUR ROLE HOLDS.** Appointing the safeguarding lead or an acting head needs the
+  appointer's ROLE (never their posts) to hold every permission the post grants — so the Administrator or the Head
+  Teacher, and a deputy safeguarding lead cannot appoint another. The RoleAssignmentGuard rule, for posts.
+- **Safeguarding lead**: holder must be `RoleCodes.SeniorLeadership` (Admin, Head, Deputy, DoS — an explicit
+  list, because the front office ranks among them and is not the SLT; KCSIE). Grants
+  `LeadershipPosts.SafeguardingLeadPost` including `welfare.restricted.view`, **whole school**:
+  `PostGrants.HasOrganizationWidePost` makes `IsUnscopedOnStudents` true whatever the role's own scope.
+  `GET api/v1/leadership` is readable by everybody — staff must know who the lead is.
+- **Acting head**: a Deputy or the DoS (`ActingHeadEligible`), never oneself, end date REQUIRED and within 120
+  days, a reason of ten characters. Grants exactly `HeadTeacherPermissions` **only while the period covers today**,
+  checked on read, so it lapses on its own. The permission cache means up to five minutes' lag at a boundary.
+  **`RoleAssignmentGuard` still reads the ROLE**, so an acting head cannot assign a role above their own.
+- **House and dormitory posts** (`PUT branches/{b}/pastoral-posts`, `classes.teachers.manage`, Staff Directory's
+  Houses tab): the class teacher's pastoral grant, reaching the students whose `House` / `DormitoryOrStream`
+  match. `StudentScopeService.FilterByClasses` and `GetTiersAsync` match all three; a house post is always the
+  pastoral tier. **They are NOT in `ClassTeacherAssignments`**: six listings key that table on ClassName (the
+  roster of who teaches what, coverage, history, mine…) and a house would have leaked into all of them.
+  `GetPastoralScopeLabelsAsync` is what the welfare summary's "these figures cover…" line reads now, so a
+  housemaster is told "House Nile", not nothing. **Welfare ALERTS reach house and dormitory post holders too
+  (2026-09-24)**: `WelfareAlertService.GetPastoralRecipientsForStudentAsync` (renamed from
+  `GetClassTeachersForStudentAsync` when its meaning widened) adds them, and the alert's title names the HOUSE for a
+  housemaster. It matches EXACTLY as `StudentScopeService` does (`Trim().ToLower()`), never more loosely: an alert
+  names a child, and telling somebody the scope would not let open the record is a disclosure. (Both still compare
+  classes that way rather than through `ClassName.Key`, so "S1 A" and "S1A" are two classes to the scope — a
+  scope-wide change, deliberately not made in passing.)
+- **`NotificationAudience.HoldersAsync` includes all three**, filtered through the same people query.
+- **Every leadership write names the people on BOTH sides to `PostChangedAsync`** and tells them
+  (`access.post-changed`); writes are logged at Confidential.
+- **The leaver sweep** (`AccountLifecycleJobs`, `deactivate-leavers`, 02:15 UTC): an account whose
+  `EmploymentEndDate` has PASSED is switched off, its class assignments ended, its department seats cleared and
+  its leadership posts removed; account managers are told by name (`access.leavers-deactivated`). **An
+  organisation's last active Administrator is never switched off** — named in the notice instead. Timetable and
+  exam-series manager lists are left as they are; an inactive person in one can do nothing.
+- **The access review** (`GET api/v1/access-review`, `users.edit` + `roles.view`; Users & Roles → Access): one
+  row per active person with the six sensitive capabilities, computed from role plus every post in bulk (no
+  per-person query). **Recording it** needs `users.edit` AND `welfare.restricted.view` effective — the
+  Administrator, the Head or an acting head — a note of ten characters, and is an `access.reviewed` activity event.
+- **`welfare.reports.aggregate`** (three catalogues): the welfare summary and cohorts ONLY, with `ByStaff` blanked
+  for a caller who holds neither `welfare.reports.view` nor `.own`. Every other welfare report code also opens
+  the record search, which names children. **The Board Member role** (`board-member`, below Support Staff) holds
+  dashboard, notifications and this. **A figures-only reader's welfare SUMMARY counts Standard AND Confidential, never
+  Restricted (2026-09-24)** — every Welfare-type record is forced to Confidential, so a board used to read zero welfare
+  cases; counts by category with nobody named are what KCSIE expects the safeguarding lead to report to governors.
+  **The cohort breakdown stays at Standard**: house × sex × residency cuts small enough to point at a child. A Board Member account is a user, so it appears in staff lists.
+- **Front Office Manager and Front Desk Staff are offered only to a tenant holding Core Queue or Visitor
+  Management** (`RoleCodes.ModulesFor`, which replaced `ModuleFor`). Visibility only; holders keep the role.
 
 ## Process note for future sessions
 
@@ -4322,9 +4507,7 @@ bursar, matron and driver were scored on Lesson Attendance. One set-membership t
 - **The migration ADDS, BACKFILLS, THEN DROPS.** EF scaffolded drop-then-add, which would have reset
   every parameter to "all staff" silently — a Lesson Observation applying to the bursar, with
   nothing anywhere saying so. Same class as `AddClassTeachersAndWelfareVisibility`.
-- **`User.EmploymentType` is the next candidate and is NOT yet converted**: nothing in the codebase
-  branches on its six values, and the MoES return separates government-paid from PTA-paid teachers
-  while both squash into *Contract*.
+- **`User.EmploymentType` followed on 2026-09-23** — see "Employment type is the school's own list".
 
 **`GroupFor` TAKES THE ROLE'S GROUP, NOT ITS CODE — and three call sites went on passing the code
 (found 2026-09-22 by e2e section 14).** When `StaffGroup` stopped being an enum, the signature changed

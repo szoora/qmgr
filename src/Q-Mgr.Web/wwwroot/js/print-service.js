@@ -303,5 +303,5 @@ window.QMgrPrint = {
 
 // Auto-initialize when document is ready
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('Q-Mgr Print Service loaded');
+    console.log('Print service loaded');
 });

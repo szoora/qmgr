@@ -1,3 +1,5 @@
+using QMgr.Application.Branding;
+
 namespace QMgr.Web.Services;
 
 /// <summary>
@@ -17,7 +19,7 @@ namespace QMgr.Web.Services;
 /// </summary>
 public interface IBrandContext
 {
-    /// <summary>The product's name here. "Q-Mgr" until something better is known.</summary>
+    /// <summary>The app's name here. <see cref="ProductBrand.Name"/> until something better is known.</summary>
     string AppName { get; }
 
     /// <summary>The tab icon for this session, or null to leave the document's own.</summary>
@@ -44,7 +46,7 @@ public interface IBrandContext
 
 public sealed class BrandContext : IBrandContext
 {
-    private string _appName = "Q-Mgr";
+    private string _appName = ProductBrand.Name;
 
     public string AppName => _appName;
 
@@ -63,7 +65,7 @@ public sealed class BrandContext : IBrandContext
     /// </summary>
     public void Set(string? appName, string? faviconUrl)
     {
-        var name = string.IsNullOrWhiteSpace(appName) ? "Q-Mgr" : appName.Trim();
+        var name = string.IsNullOrWhiteSpace(appName) ? ProductBrand.Name : appName.Trim();
         var favicon = string.IsNullOrWhiteSpace(faviconUrl) ? null : faviconUrl.Trim();
 
         if (name == _appName && favicon == FaviconUrl) return;

@@ -45,8 +45,10 @@ public class TenantInfoController : ControllerBase
     /// two words by decision (2026-09-22): the hyphen went, and "Platform" went before it as
     /// redundant. The app displays what it is told and never composes this itself.
     /// </summary>
-    private const string ProductName = "Q-Mgr";
-    private const string ProductDescriptor = "Front Office";
+    private const string ProductName = ProductBrand.Name;
+
+    /// <summary>"Front Office" was retired as a descriptor with the rebrand (2026-09-24, B10).</summary>
+    private const string ProductDescriptor = ProductBrand.Tagline;
 
     public TenantInfoController(QMgrDbContext db, IFeatureFlagService features,
                                ILogger<TenantInfoController> log)
@@ -94,8 +96,10 @@ public class TenantInfoController : ControllerBase
 
         return new TenantInfoResponse
         {
-            CompanyName = branded && !string.IsNullOrWhiteSpace(org.BrandName) ? org.BrandName! : org.Name,
-            Product = ProductName,
+            // The ORGANISATION here, and the APP beside it: "Maryhill High School" on "MARYHILL Dashboard".
+            // Before the rebrand the brand name stood in for the organisation, meaning two things at once.
+            CompanyName = org.Name,
+            Product = ProductBrand.NameFor(org.BrandName, branded),
             Descriptor = ProductDescriptor,
             Tenant = org.Slug,
             OrganizationId = org.Id,

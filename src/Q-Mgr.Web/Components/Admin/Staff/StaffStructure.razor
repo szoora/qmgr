@@ -187,9 +187,10 @@
                                 the import gives them and a temporary password on their slip.</li>
                             <li><strong>Departments</strong> — separated by semicolons: <code>MATH;PHYS</code>.</li>
                             <li><strong>Role</strong> — <code>teacher</code>, <code>support-staff</code>,
-                                <code>class-teacher</code>, <code>head-of-department</code>,
-                                <code>academic-assistant</code>, <code>director-of-studies</code>, or a custom
-                                role's own code.</li>
+                                <code>academic-assistant</code>, <code>director-of-studies</code>,
+                                <code>deputy-head-teacher</code>, <code>head-teacher</code>, or a custom role's own
+                                code. A class teacher or a head of department is a post, not a role: use
+                                <strong>ClassTeacherOf</strong>, or name them head on the department.</li>
                             <li><strong>ClassTeacherOf</strong> — the classes they hold: <code>S2A;S2B</code>.</li>
                             <li><strong>Teaches</strong> — subjects with their classes:
                                 <code>MATH:S2A,S2B; PHY:S3A</code>.</li>
@@ -225,22 +226,14 @@
                         {
                             <fieldset class="ss-delivery">
                                 <legend>How the name column is written</legend>
-                                <label class="ss-radio"><input type="radio" name="ss-name-order" checked="@(nameOrder == NameOrder.FamilyFirst)" @onchange="@(() => SetNameOrder(NameOrder.FamilyFirst))" />
-                                    <span><strong>Surname first</strong> — @NameExample(NameOrder.FamilyFirst)</span></label>
-                                <label class="ss-radio"><input type="radio" name="ss-name-order" checked="@(nameOrder == NameOrder.GivenFirst)" @onchange="@(() => SetNameOrder(NameOrder.GivenFirst))" />
-                                    <span><strong>First name first</strong> — @NameExample(NameOrder.GivenFirst)</span></label>
+                                <QRadioGroup TValue="NameOrder" Value="@nameOrder" ValueChanged="@((NameOrder o) => SetNameOrder(o))" Options="@NameOrderOptions" />
                                 <p class="ss-sub">Taken from the first name in your file. A cell written
                                     <em>Surname, First</em> with a comma is read that way whichever of these is chosen.</p>
                             </fieldset>
                         }
                         <fieldset class="ss-delivery">
                             <legend>How people get in</legend>
-                            <label class="ss-radio"><input type="radio" name="ss-delivery" checked="@(deliveryMode == StaffImportDeliveryMode.Slips)" @onchange="@(() => deliveryMode = StaffImportDeliveryMode.Slips)" />
-                                <span><strong>Temporary password slips</strong> (recommended for schools) — each person gets their own temporary password, printed once on a slip you hand out. It expires in 72 hours and they choose their own at first sign-in.</span></label>
-                            <label class="ss-radio"><input type="radio" name="ss-delivery" checked="@(deliveryMode == StaffImportDeliveryMode.Invitation)" @onchange="@(() => deliveryMode = StaffImportDeliveryMode.Invitation)" />
-                                <span><strong>Invitation email</strong> — a link valid for 7 days to set their own password. For staff with working email.</span></label>
-                            <label class="ss-radio"><input type="radio" name="ss-delivery" checked="@(deliveryMode == StaffImportDeliveryMode.Sms)" @onchange="@(() => deliveryMode = StaffImportDeliveryMode.Sms)" />
-                                <span><strong>Temporary password by SMS</strong> — the same temporary password, sent to each person's own phone. Needs SMS switched on for your organization; anyone without a phone number gets a slip.</span></label>
+                            <QRadioGroup TValue="StaffImportDeliveryMode" @bind-Value="deliveryMode" Options="@DeliveryOptions" />
                             @if (deliveryMode != StaffImportDeliveryMode.Invitation)
                             {
                                 <QCheckbox @bind-Value="@useBatchPassword" Label="Type one temporary password for this whole batch instead" />
@@ -356,8 +349,6 @@
     .ss-import-input { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
     .ss-delivery { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 10px 14px; margin: 12px 0 0; display: grid; gap: 8px; }
     .ss-delivery legend { font-size: var(--q-control-font-sm); font-weight: 600; padding: 0 4px; width: auto; float: none; margin: 0; }
-    .ss-radio { display: flex; gap: 8px; align-items: flex-start; font-size: var(--qm-text-base); cursor: pointer; }
-    .ss-radio input { margin-top: 3px; }
     .ss-warn { color: var(--qm-warning); }
     .ss-slips-cta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px; margin: 8px 0; border: 1px solid var(--qm-warning); border-radius: var(--qm-radius-md); font-size: var(--qm-text-base); }
     .ss-coverage { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 14px; }
@@ -464,6 +455,8 @@
     /// <summary>How this school writes a name — the import preview shows each row the way the directory will.</summary>
     private NameOrder displayOrder = NameOrder.GivenFirst;
 
+    private List<string> employmentTypes = new();
+
     protected override async Task OnInitializedAsync()
     {
         if (!await PermissionService.HasPermissionAsync(Permissions.StaffStructureManage))
@@ -473,6 +466,10 @@
         }
 
         displayOrder = (await PeopleNames.GetAsync()).DisplayOrder;
+        // The school's own employment types: the preview warns about a cell the import job will not recognise, using
+        // the SAME list and the same resolver (EmploymentTypes.Resolve), so the two cannot disagree.
+        try { employmentTypes = (await StaffApi.GetPolicyAsync()).ActiveEmploymentTypeNames(); }
+        catch { employmentTypes = QMgr.Domain.Enums.EmploymentTypes.Defaults.ToList(); }
 
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
@@ -815,8 +812,8 @@
         if (end is { } e2 && e2 < DateOnly.FromDateTime(DateTime.UtcNow))
             warnings.Add("This person has already left — they will be imported, but kept out of registers and rotas.");
 
-        if (!string.IsNullOrWhiteSpace(row.EmploymentType) && StaffFieldParsing.EmploymentType(row.EmploymentType) == null)
-            warnings.Add($"\"{row.EmploymentType}\" is not an employment type — it will be left blank.");
+        if (!string.IsNullOrWhiteSpace(row.EmploymentType) && StaffFieldParsing.EmploymentTypeName(row.EmploymentType, employmentTypes) == null)
+            warnings.Add($"\"{row.EmploymentType}\" is not one of this school's employment types — it will be left blank.");
         if (!string.IsNullOrWhiteSpace(row.Sex) && StaffFieldParsing.Sex(row.Sex) == null)
             warnings.Add($"\"{row.Sex}\" is not F, M or Other — it will be left blank.");
 
@@ -875,6 +872,22 @@
     private string? FirstFullName => importPanel?.FirstValueOf("FullName") ?? firstFullName;
 
     private string? firstFullName;
+
+    private IReadOnlyList<QRadioOption<NameOrder>> NameOrderOptions => new[]
+    {
+        new QRadioOption<NameOrder>(NameOrder.FamilyFirst, "Surname first", NameExample(NameOrder.FamilyFirst)),
+        new QRadioOption<NameOrder>(NameOrder.GivenFirst, "First name first", NameExample(NameOrder.GivenFirst)),
+    };
+
+    private static readonly IReadOnlyList<QRadioOption<StaffImportDeliveryMode>> DeliveryOptions = new[]
+    {
+        new QRadioOption<StaffImportDeliveryMode>(StaffImportDeliveryMode.Slips, "Temporary password slips (recommended for schools)",
+            "each person gets their own temporary password, printed once on a slip you hand out. It expires in 72 hours and they choose their own at first sign-in."),
+        new QRadioOption<StaffImportDeliveryMode>(StaffImportDeliveryMode.Invitation, "Invitation email",
+            "a link valid for 7 days to set their own password. For staff with working email."),
+        new QRadioOption<StaffImportDeliveryMode>(StaffImportDeliveryMode.Sms, "Temporary password by SMS",
+            "the same temporary password, sent to each person's own phone. Needs SMS switched on for your organization; anyone without a phone number gets a slip."),
+    };
 
     private void SetNameOrder(NameOrder order)
     {

@@ -107,7 +107,7 @@ public class DocumentSharesController : ControllerBase
             return BadRequest(new ProblemDetails { Title = "Only PDF documents can be shared", Detail = "Sharing is for documents. Images, video and audio stay on the signage side of the Library.", Status = StatusCodes.Status400BadRequest });
 
         if (request.IsShareable && string.IsNullOrEmpty(media.FilePath))
-            return BadRequest(new ProblemDetails { Title = "Only uploaded documents can be shared", Detail = "A document linked by URL is hosted elsewhere; Q-Mgr cannot gate it.", Status = StatusCodes.Status400BadRequest });
+            return BadRequest(new ProblemDetails { Title = "Only uploaded documents can be shared", Detail = "A document linked by URL is hosted elsewhere, so it cannot be gated here.", Status = StatusCodes.Status400BadRequest });
 
         // The other half of the §1 invariant, mirroring ContentController.AddPlaylistItem: a document
         // already on a playlist cannot be made shareable, because a shared document's bytes are gated

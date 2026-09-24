@@ -48,6 +48,12 @@ SUITES.push('pager');
 SUITES.push('student-roster');
 // Logging one record for a group of staff from the Staff Directory (the API half is section 33), wired in the same commit that creates it.
 SUITES.push('staff-bulk-log');
+// 2026-09-23: the four timetable-ownership screens section 26 cannot see, and exam supervision + employment types + QRadioGroup.
+SUITES.push('timetable-ownership-ui', 'exam-series-ui');
+// The Access tab (safeguarding lead, acting head, access review) and the Houses tab (2026-09-24).
+SUITES.push('access-ui');
+// The rebrand to SACC Dashboard (2026-09-24): the name a person sees, on every surface (section 38 is the API half).
+SUITES.push('product-name');
 
 // Measurement, not assertion: density-check runs an A/B in one page load, furniture-check tallies
 // the space a page spends before any data. Neither has a pass state, so failing the run on one

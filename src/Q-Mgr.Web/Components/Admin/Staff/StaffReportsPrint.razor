@@ -277,7 +277,7 @@ else if (loadError != null)
 
     private string PeriodName => r?.Period.Name ?? PeriodQuery ?? StaffPeriods.CurrentKey();
     private string OrganizationName =>
-        !string.IsNullOrWhiteSpace(branding?.BrandName) ? branding!.BrandName!
+        !string.IsNullOrWhiteSpace(branding?.OrganizationName) ? branding!.OrganizationName!
         : !string.IsNullOrWhiteSpace(BranchState.CurrentBranchName) ? BranchState.CurrentBranchName!
         : "Staff Performance";
 
@@ -334,7 +334,7 @@ else if (loadError != null)
                 OrganizationId = organizationId,
                 FileName = $"staff-summary-{r.Period.Key}-{QDateFormat.Iso8601(DateOnly.FromDateTime(DateTime.UtcNow))}.pdf",
                 DocumentName = name,
-                Summary = $"Staff performance summary for {BranchState.CurrentBranchName}, {PeriodName}. Generated {stamp} by {generatedBy ?? "Q-Mgr"}.",
+                Summary = $"Staff performance summary for {BranchState.CurrentBranchName}, {PeriodName}. Generated {stamp} by {generatedBy ?? (branding?.ProductName ?? ProductBrand.Name)}.",
                 PublishedFrom = $"Staff reports — {BranchState.CurrentBranchName}, {PeriodName}{(r.ScopedToDepartments.Any() ? $" (scoped to {string.Join(", ", r.ScopedToDepartments)})" : "")}, generated {stamp}",
                 // The activity log carries the publish (plan §11). RecordExportAsync never throws: the document
                 // exists either way, and a missing log line is not a reason to tell the user it failed.

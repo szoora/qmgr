@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using System.Text.Json;
 
 namespace QMgr.API.Domain.Entities;
@@ -162,7 +163,7 @@ public class EmailSettings
     public int SmtpPort { get; set; } = 587;
     public bool UseSsl { get; set; } = true;
     public string SenderEmail { get; set; } = string.Empty;
-    public string SenderName { get; set; } = "Q-Mgr";
+    public string SenderName { get; set; } = ProductBrand.Name;
     public string? Username { get; set; }
     public string? Password { get; set; }
 }
@@ -185,7 +186,7 @@ public class BillingSettings
 /// </summary>
 public class GeneralSettings
 {
-    public string PlatformName { get; set; } = "Q-Mgr";
+    public string PlatformName { get; set; } = ProductBrand.Name;
     public string SupportEmail { get; set; } = "support@qmgr.com";
     public string TermsOfServiceUrl { get; set; } = string.Empty;
     public string PrivacyPolicyUrl { get; set; } = string.Empty;

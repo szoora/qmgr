@@ -1,0 +1,30 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+@*
+    THE APP'S NAME, SET IN TYPE (rebrand 2026-09-24, plan §5). One home for how the name looks, so the
+    sidebar, the sign-in pages and the loading screen cannot set it three ways.
+
+    Ours is a lockup: "SACC" heavy and "Dashboard" regular, in the display face — the logo draws no
+    letters, so the name is always live text and needs no artwork per tenant. A school's own name is
+    set as ONE run, exactly as typed: we never split it, re-case it or add a word to it.
+*@
+
+<span class="q-product-name @Class">
+    @if (IsOurs)
+    {
+        <span class="q-product-name__word">@ProductBrand.Company</span> <span class="q-product-name__desc">@ProductBrand.Descriptor</span>
+    }
+    else
+    {
+        <span class="q-product-name__word">@Name</span>
+    }
+</span>
+
+@code {
+    /// <summary>The name to show: <c>ProductBrand.Name</c>, or a school's own app name as resolved by the API.</summary>
+    [Parameter, EditorRequired] public string Name { get; set; } = ProductBrand.Name;
+
+    [Parameter] public string? Class { get; set; }
+
+    private bool IsOurs => string.IsNullOrWhiteSpace(Name) || Name == ProductBrand.Name;
+}

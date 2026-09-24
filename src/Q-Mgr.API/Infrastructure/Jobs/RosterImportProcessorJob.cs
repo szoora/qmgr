@@ -63,6 +63,7 @@ public class RosterImportProcessorJob
     private readonly IPlatformSettingsService _platformSettings;
     private readonly IDataProtectionProvider _dataProtection;
     private readonly INotificationService _notifications;
+    private readonly IStaffPerformancePolicyService _policy;
     private readonly QMgr.Application.Interfaces.Billing.IBillingService _billing;
 
     public RosterImportProcessorJob(
@@ -74,8 +75,10 @@ public class RosterImportProcessorJob
         INotificationService notifications,
         IActivityLogger activity,
         ILogger<RosterImportProcessorJob> logger,
-        QMgr.Application.Interfaces.Billing.IBillingService billing)
+        QMgr.Application.Interfaces.Billing.IBillingService billing,
+        IStaffPerformancePolicyService policy)
     {
+        _policy = policy;
         _billing = billing;
         _context = context;
         _broadcaster = broadcaster;
@@ -828,6 +831,8 @@ public class RosterImportProcessorJob
         // The user limit counts ACTIVE people and this job saves in chunks, so the room is read once and counted
         // down per account created (UserSeats). Rows past it fail by name; the ones before it are kept.
         (context.SeatsLeft, context.SeatMax) = await UserSeats.RoomAsync(_billing, job.OrganizationId);
+        // The school's own employment types (2026-09-23): what a cell resolves against, created or updated.
+        context.EmploymentTypes = (await _policy.GetAsync(job.OrganizationId)).ActiveEmploymentTypeNames();
         var created = new List<(Guid UserId, string? LineManagerEmail)>();
         var protector = _dataProtection.CreateProtector(TemporaryPasswords.ImportProtectorPurpose).ToTimeLimitedDataProtector();
 
@@ -915,6 +920,7 @@ public class RosterImportProcessorJob
         public string BaseUrl { get; set; } = "https://qmgr.app";
         public int SeatsLeft { get; set; } = int.MaxValue;
         public int SeatMax { get; set; }
+        public List<string> EmploymentTypes { get; set; } = new();
 
         public static async Task<StaffImportContext> LoadAsync(QMgrDbContext db, Guid organizationId, Guid branchId)
         {
@@ -936,7 +942,7 @@ public class RosterImportProcessorJob
                 ctx.DepartmentsByCode.TryAdd(d.Code.Trim(), d.Id);
 
             ctx.OrganizationName = await db.Organizations.IgnoreQueryFilters().AsNoTracking()
-                .Where(o => o.Id == organizationId).Select(o => o.BrandName ?? o.Name).FirstOrDefaultAsync() ?? ctx.OrganizationName;
+                .Where(o => o.Id == organizationId).Select(o => o.Name).FirstOrDefaultAsync() ?? ctx.OrganizationName;
             return ctx;
         }
     }
@@ -948,7 +954,7 @@ public class RosterImportProcessorJob
     /// branch, username, email and password are untouched by design.
     /// </summary>
     private async Task UpdateExistingStaffAsync(RosterImportJob job, StaffImportRow row, RosterImportJobEntry entry,
-        Guid userId, string firstName, string lastName)
+        Guid userId, string firstName, string lastName, IReadOnlyCollection<string> employmentTypes)
     {
         var user = await _context.Users.IgnoreQueryFilters().FirstOrDefaultAsync(u => u.Id == userId);
         if (user == null)
@@ -963,7 +969,7 @@ public class RosterImportProcessorJob
         // ONE list, computed by StaffImportChanges and applied here. The precheck reads the same
         // list to tell the reader what this file would change BEFORE it is sent, so the preview and
         // the import cannot disagree about a single field.
-        var pending = StaffImportChanges.Compute(row, firstName, lastName, user);
+        var pending = StaffImportChanges.Compute(row, firstName, lastName, user, employmentTypes);
         foreach (var change in pending) change.Apply(user);
         var changed = pending.Select(c => c.Label).ToList();
 
@@ -1072,7 +1078,7 @@ public class RosterImportProcessorJob
         {
             if (updateExisting && existing.OrganizationId == job.OrganizationId)
             {
-                await UpdateExistingStaffAsync(job, row, entry, existing.Id, firstName, lastName);
+                await UpdateExistingStaffAsync(job, row, entry, existing.Id, firstName, lastName, ctx.EmploymentTypes);
                 return;
             }
 
@@ -1132,7 +1138,7 @@ public class RosterImportProcessorJob
             // (StaffFieldParsing in Q-Mgr.Shared) so the two answers cannot disagree.
             EmploymentStartDate = StaffFieldParsing.Date(row.StartDate),
             EmploymentEndDate = StaffFieldParsing.Date(row.EndDate),
-            EmploymentType = StaffFieldParsing.EmploymentType(row.EmploymentType),
+            EmploymentType = StaffFieldParsing.EmploymentTypeName(row.EmploymentType, ctx.EmploymentTypes),
             Qualification = StaffFieldParsing.Text(row.Qualification, 120),
             TeachingRegistrationNumber = StaffFieldParsing.Text(row.TeachingRegistrationNumber, 60),
             DateOfBirth = StaffFieldParsing.Date(row.DateOfBirth),
@@ -1184,7 +1190,7 @@ public class RosterImportProcessorJob
                 if (ctx.BaseUrl == "https://qmgr.app")
                     ctx.BaseUrl = await _platformSettings.GetPublicWebBaseUrlAsync();
                 var sms = await _notifications.SendSmsAsync(job.OrganizationId, user.Phone,
-                    StaffOnboardingController.TemporaryPasswordSms(user.Username, temporaryPassword!, ctx.BaseUrl));
+                    StaffOnboardingController.TemporaryPasswordSms(user.Username, temporaryPassword!, ctx.BaseUrl, ctx.OrganizationName));
                 inviteNote = sms.IsSent ? " Temporary password sent by SMS." : $" The SMS was not sent ({sms.Reason ?? sms.Outcome.ToString()}) — print this person's slip.";
             }
         }

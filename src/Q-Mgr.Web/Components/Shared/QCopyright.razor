@@ -91,10 +91,13 @@
             // copyright notice, not a legal identification — Terms and Privacy name the company in
             // full, because there it is the contracting party. The mobile sign-in screen and the
             // email footer say the same, so the three cannot drift.
-            var who = "SACC";
+            // With attribution removed the line credits the ORGANISATION, never its app name: a
+            // copyright belongs to Maryhill High School, not to "MARYHILL Dashboard" (2026-09-24).
+            var who = ProductBrand.Company;
             if (removed)
             {
                 if (!string.IsNullOrWhiteSpace(Owner)) who = Owner!;
+                else if (!string.IsNullOrWhiteSpace(Host.OrganizationName)) who = Host.OrganizationName!;
                 else if (Host.IsTenantHost) who = Host.AppName;
             }
 

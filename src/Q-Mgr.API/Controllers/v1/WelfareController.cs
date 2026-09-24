@@ -1288,7 +1288,7 @@ public class WelfareController : ControllerBase
 
     /// <summary>The Welfare Dashboard's numbers — category mix and the per-staff category distribution the equity/consistency-audit case (welfare-plan §03) argues a school should be able to check on its own process. Same permission as SearchRecords, since it's the same audience and the same underlying data.</summary>
     [HttpGet("branches/{branchId:guid}/welfare/summary")]
-    [RequirePermissionAny(Permissions.WelfareReportsView, Permissions.WelfareReportsOwn)]
+    [RequirePermissionAny(Permissions.WelfareReportsView, Permissions.WelfareReportsOwn, Permissions.WelfareReportsAggregate)]
     [ProducesResponseType(typeof(WelfareSummaryDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetSummary(Guid branchId, [FromQuery] DateTime? dateFrom = null, [FromQuery] DateTime? dateTo = null)
     {
@@ -1302,7 +1302,19 @@ public class WelfareController : ControllerBase
         // school has and how they break down by category and by member of staff.
         query = await ApplyStudentScopeAsync(query, branchId);
 
-        var visibleLevels = await VisibleLevelsAsync();
+        var figuresOnly = !await HasPermissionAsync(Permissions.WelfareReportsView) && !await HasPermissionAsync(Permissions.WelfareReportsOwn);
+
+        // A GOVERNOR'S FIGURES COUNT CONFIDENTIAL RECORDS, NEVER RESTRICTED ONES (2026-09-24). A figures-only caller
+        // (welfare.reports.aggregate) holds no confidential-view permission, so the visibility rung alone counted
+        // Standard records only — and every Welfare-type record is FORCED to Confidential, so a board read zero welfare
+        // cases however many the school had. These are counts by category with no child and no member of staff named,
+        // which is what KCSIE expects a designated safeguarding lead to report to governors. RESTRICTED stays out: its
+        // very existence is need-to-know. Scope, dates and the Draft filter apply exactly as for everyone else.
+        // Deliberately NOT extended to the cohort breakdown below: house × sex × residency cuts small enough to point
+        // at a child.
+        var visibleLevels = figuresOnly
+            ? new List<WelfareVisibility> { WelfareVisibility.Standard, WelfareVisibility.Confidential }
+            : await VisibleLevelsAsync();
         query = query.Where(r => visibleLevels.Contains(r.Visibility));
         if (dateFrom.HasValue)
             query = query.Where(r => r.OccurredAt >= dateFrom.Value.ToUniversalTime());
@@ -1326,12 +1338,16 @@ public class WelfareController : ControllerBase
             .OrderByDescending(c => c.Count)
             .ToList();
 
+        // FIGURES ONLY (2026-09-24): a caller holding just welfare.reports.aggregate — a governor — reads the counts
+        // and never a named member of staff. Who logged how many records is about people, not about the school.
+        if (figuresOnly)
+            byStaff = new List<WelfareStaffCountDto>();
+
         // Told to the client so the reports page can say whose figures these are. A class teacher
         // reading their own class's total as the school's is a wrong conclusion from a correct
         // query, and nothing on the page said otherwise.
-        var scopedClasses = (await _scope.IsUnscopedAsync())
-            ? new List<string>()
-            : (await _scope.GetPastoralClassNamesAsync(branchId)).ToList(); // welfare reports stay pastoral (duty rota plan §5.3)
+        // Welfare reports stay pastoral (duty rota plan §5.3); a house or dormitory post is named too, since 2026-09-24.
+        var scopedClasses = (await _scope.GetPastoralScopeLabelsAsync(branchId)).ToList();
 
         return Ok(new WelfareSummaryDto
         {
@@ -1694,9 +1710,9 @@ public class WelfareController : ControllerBase
             WelfareCaseType.Behavior => "was involved in an incident regarding",
             _ => "has a welfare note regarding"
         };
-        var schoolName = record.Branch?.Name ?? "the school";
+        var schoolName = record.Branch?.Name ?? "School";
         var message = string.Create(CultureInfo.InvariantCulture,
-                          $"Q-Mgr: {record.Student!.FullName} {verb} \"{record.Category!.Name}\" on {record.OccurredAt:MMM d} at {schoolName}. ") +
+                          $"{schoolName}: {record.Student!.FullName} {verb} \"{record.Category!.Name}\" on {record.OccurredAt:dd MMM}. ") +
                       "Please contact the school office if you have any questions.";
 
         return Ok(new WelfareNotificationDraftDto
@@ -1976,7 +1992,7 @@ public class WelfareController : ControllerBase
     /// not substitute for the gate.
     /// </summary>
     [HttpGet("branches/{branchId:guid}/welfare/cohorts")]
-    [RequirePermissionAny(Permissions.WelfareReportsView, Permissions.WelfareReportsOwn)]
+    [RequirePermissionAny(Permissions.WelfareReportsView, Permissions.WelfareReportsOwn, Permissions.WelfareReportsAggregate)]
     [ProducesResponseType(typeof(WelfareCohortReportDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetCohortReport(Guid branchId, [FromQuery] int days = 90)
     {

@@ -281,7 +281,7 @@ else if (loadError != null)
     private string BandName(int? rating) => rating.HasValue ? Bands.FirstOrDefault(b => b.Rating == rating)?.Name ?? "—" : "—";
 
     private string OrganizationName =>
-        !string.IsNullOrWhiteSpace(branding?.BrandName) ? branding!.BrandName!
+        !string.IsNullOrWhiteSpace(branding?.OrganizationName) ? branding!.OrganizationName!
         : !string.IsNullOrWhiteSpace(BranchState.CurrentBranchName) ? BranchState.CurrentBranchName!
         : "Staff Performance";
 
@@ -345,7 +345,7 @@ else if (loadError != null)
                 OrganizationId = organizationId,
                 FileName = $"appraisal-{a.PeriodKey}-{QDateFormat.Iso8601(DateOnly.FromDateTime(DateTime.UtcNow))}.pdf",
                 DocumentName = name,
-                Summary = $"Staff appraisal for {a.SubjectName}, {a.PeriodKey} ({StaffDisplay.StageLabel(a.Stage)}). Generated {stamp} by {generatedBy ?? "Q-Mgr"}.",
+                Summary = $"Staff appraisal for {a.SubjectName}, {a.PeriodKey} ({StaffDisplay.StageLabel(a.Stage)}). Generated {stamp} by {generatedBy ?? (branding?.ProductName ?? ProductBrand.Name)}.",
                 PublishedFrom = $"Staff appraisal — {a.SubjectName}, {a.PeriodKey}, {StaffDisplay.StageLabel(a.Stage)}, generated {stamp}",
                 ExtraDetail = signed
                     ? "The signed appraisal is attached to the record."

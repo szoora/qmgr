@@ -154,7 +154,7 @@ if (!SA) {
   if (mine) {
     const signals = JSON.stringify(mine.signals ?? mine.Signals ?? []);
     ok("18.5c: …carrying the reason, in words a reviewer can act on",
-      /already uses Q-Mgr/i.test(signals), signals.slice(0, 220));
+      /already uses SACC Dashboard/i.test(signals), signals.slice(0, 220));
     ok("18.5d: …and a score above zero", (mine.riskScore ?? mine.RiskScore ?? 0) > 0, JSON.stringify(mine.riskScore));
   }
 }

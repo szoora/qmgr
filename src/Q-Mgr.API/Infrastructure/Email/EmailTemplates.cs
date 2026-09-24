@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using QMgr.Application.Branding;
 
 namespace QMgr.Infrastructure.Email;
 
@@ -12,7 +13,8 @@ namespace QMgr.Infrastructure.Email;
 /// </summary>
 public static class EmailTemplates
 {
-    public const string AppName = "Q-Mgr";
+    /// <summary>Our product's name, for the platform's own mail. From <see cref="ProductBrand"/>, never typed here.</summary>
+    public const string AppName = ProductBrand.Name;
 
     /// <summary>Brand accent — the same wine as the app's --qm-primary (light theme).</summary>
     private const string Accent = "#7a2847";
@@ -29,11 +31,19 @@ public static class EmailTemplates
     /// branded, the envelope is not, and anything else would be a promise the mail providers
     /// refuse to keep.
     /// </summary>
-    public sealed record EmailBrand(string Name, string Accent, string? LogoUrl, bool AttributionRemoved)
+    /// <param name="Name">The APP's name — the school's own, exactly as typed, or ours (<c>ProductBrand.NameFor</c>).
+    /// What a subject line says the email is about: "Reset your MARYHILL Dashboard password".</param>
+    /// <param name="OrganizationName">The organisation, or null for the platform's own mail. What the
+    /// signature and — once attribution is bought off — the copyright line name: a copyright belongs
+    /// to the school, not to what the school calls its app.</param>
+    public sealed record EmailBrand(string Name, string? OrganizationName, string Accent, string? LogoUrl, bool AttributionRemoved)
     {
-        /// <summary>Q-Mgr's own. The default for every caller that does not know an organization —
+        /// <summary>Ours. The default for every caller that does not know an organization —
         /// a sign-up confirmation for an organization that does not exist yet, a platform notice.</summary>
-        public static readonly EmailBrand Platform = new(AppName, EmailTemplates.Accent, null, false);
+        public static readonly EmailBrand Platform = new(AppName, null, EmailTemplates.Accent, null, false);
+
+        /// <summary>Who signs the email: the organisation when there is one, otherwise our product.</summary>
+        public string Signatory => string.IsNullOrWhiteSpace(OrganizationName) ? Name : OrganizationName!;
     }
     private const string Danger = "#b42318";
     private const string Text = "#1f1f1f";
@@ -102,8 +112,8 @@ public static class EmailTemplates
         // shell footer; all three move together on one flag, or a tenant pays to remove our name
         // and still reads it at the foot of their own password-reset mail.
         var attribution = who.AttributionRemoved
-            ? $"&copy; {DateTime.UtcNow.Year} {WebUtility.HtmlEncode(who.Name)}"
-            : $"&copy; {DateTime.UtcNow.Year} SACC";   // as QCopyright on the web and the app
+            ? $"&copy; {DateTime.UtcNow.Year} {WebUtility.HtmlEncode(who.Signatory)}"
+            : $"&copy; {DateTime.UtcNow.Year} {ProductBrand.Company}";   // as QCopyright on the web and the app
 
         return $@"<!DOCTYPE html>
 <html>
@@ -116,7 +126,7 @@ public static class EmailTemplates
         <div style='background: #ffffff; border: 1px solid {Rule}; border-top: 3px solid {accent}; border-radius: 4px; padding: 28px;'>
 {logo}        <h1 style='color: {headingColor}; font-size: 22px; margin: 0 0 18px 0;'>{WebUtility.HtmlEncode(title)}</h1>
 {greet}{body}
-{cta}        <p style='margin: 18px 0 0 0;'>Best regards,<br>The {WebUtility.HtmlEncode(who.Name)} Team</p>
+{cta}        <p style='margin: 18px 0 0 0;'>Best regards,<br>{WebUtility.HtmlEncode(who.Signatory)}</p>
         </div>
         <hr style='border: none; border-top: 1px solid {Rule}; margin: 24px 0 14px 0;'>
 {footer}        <p style='color: {Muted}; font-size: 12px; margin: 0;'>{attribution}</p>
@@ -151,7 +161,7 @@ public static class EmailTemplates
     public const string ReportDanger = "#a3302a";
 
     /// <summary>Report shell: heading, subtitle, body, small-print footer. <paramref name="footer"/> is plain text.</summary>
-    public static string ReportShell(string title, string subtitle, string body, string footer = "Sent by Q-Mgr. Times are shown in the branch's local timezone.") => $@"
+    public static string ReportShell(string title, string subtitle, string body, string footer = "Sent by " + ProductBrand.Name + ". Times are shown in the branch's local timezone.") => $@"
 <div style=""font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:{ReportInk};max-width:720px;margin:0 auto;padding:8px"">
   <h1 style=""font-size:20px;margin:0 0 4px;color:{ReportWine}"">{P(title)}</h1>
   <p style=""margin:0 0 18px;color:{ReportMuted};font-size:13px"">{P(subtitle)}</p>
@@ -187,7 +197,7 @@ public static class EmailTemplates
             $@"<th align=""left"" style=""padding:7px 10px;border-bottom:2px solid {ReportRule};font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:{ReportMuted}"">{P(h)}</th>"));
 
         var omitted = totalCount > shown
-            ? $@"<p style=""margin:6px 0 18px;color:{ReportMuted};font-size:12px"">Showing {shown} of {totalCount}. Open the report in Q-Mgr for the rest.</p>"
+            ? $@"<p style=""margin:6px 0 18px;color:{ReportMuted};font-size:12px"">Showing {shown} of {totalCount}. Open the report in the app for the rest.</p>"
             : @"<div style=""height:18px""></div>";
 
         return $@"<table cellspacing=""0"" cellpadding=""0"" style=""width:100%;border-collapse:collapse""><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>{omitted}";

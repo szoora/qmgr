@@ -1,0 +1,436 @@
+@* No @page: a SECTION of the Duties hub at /admin/staff/duties?tab=exams (2026-09-23). *@
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject NavigationManager Navigation
+@inherits BranchAwareComponentBase
+@inject IPermissionService PermissionService
+@inject IAuthService AuthService
+
+@*
+    EXAM SUPERVISION (plan TIMETABLE_OWNERSHIP §1, Phase 3). "Three timetables in a term" is one teaching timetable
+    plus exam supervision, and exam supervision is dated sittings with invigilators — Session duties — never a second
+    Timetable, which would archive the live one and stop every lesson. A series is those sittings under a NAME and an
+    OWNER: its managers add, change and cancel sittings and take their registers without holding staff.duties.manage,
+    and only a holder of that permission appoints them. Every sitting is an ordinary duty, so the register, reminders,
+    My School Day and the Exam Supervision parameter's scoring already work.
+*@
+
+<div class="admin-page exam-page">
+<QPageActions Embedded="@Embedded">
+    <Title>
+        <h1>Exam supervision</h1>
+        <p class="subtitle">Sittings, rooms and invigilators, grouped as a series with its own managers.</p>
+    </Title>
+    <Actions>
+        @if (selected != null)
+        {
+            <QButton Text="All series" Icon="arrow-left" Variant="ghost" OnClick="@CloseSeries" />
+            @if (selected.Series.CanWrite)
+            {
+                <QButton Text="Rename or appoint" Icon="person-gear" Variant="secondary" OnClick="@OpenEditSeries" />
+                <QButton Text="Add sitting" Icon="plus-lg" Variant="primary" OnClick="@(() => OpenSitting(null))" />
+            }
+        }
+        else if (canManage)
+        {
+            <QButton Text="New exam series" Icon="plus-lg" Variant="primary" OnClick="@OpenNewSeries" Disabled="@(branchId == Guid.Empty)" />
+        }
+    </Actions>
+</QPageActions>
+
+@if (warnings.Any())
+{
+    <div class="exam-warnings" role="note">
+        <QIcon Name="exclamation-triangle" />
+        <div>
+            <strong>Saved — but check @(warnings.Count == 1 ? "this" : "these"):</strong>
+            <ul>@foreach (var w in warnings) { <li>@w</li> }</ul>
+        </div>
+        <QButton Icon="x-lg" Variant="ghost" Size="sm" Title="Dismiss" OnClick="@(() => warnings.Clear())" />
+    </div>
+}
+
+@if (isLoading)
+{
+    <div class="loading-container"><QSpinner Size="lg" /><span>Loading exam supervision…</span></div>
+}
+else if (selected == null)
+{
+    @if (!series.Any())
+    {
+        <QEmptyState Icon="pencil-square" Title="No exam series"
+                     Text="@(canManage ? "Start one for the end-of-term exams: name it, appoint who runs it, add the sittings." : "When you run or invigilate an exam series, it appears here.")" />
+    }
+    else
+    {
+        <div class="table-wrap">
+            <table class="data-table q-stack exam-table">
+                <thead><tr><th>Series</th><th>Dates</th><th class="num">Sittings</th><th>Run by</th><th>Registers</th><th class="row-actions"></th></tr></thead>
+                <tbody>
+                    @foreach (var s in series)
+                    {
+                        <tr>
+                            <td>
+                                <strong>@s.Name</strong>
+                                @if (s.IAmManager) { <QChip Text="You run it" Size="sm" Variant="primary" /> }
+                                <span class="cell-sub">@s.ParameterName</span>
+                            </td>
+                            <td>@(s.FirstStartsAt is { } f ? QDateFormat.Range(DateOnly.FromDateTime(Local(f)), DateOnly.FromDateTime(Local(s.LastEndsAt ?? f))) : "—")</td>
+                            <td class="num">@s.SlotCount</td>
+                            <td>@(s.ManagerNames.Any() ? string.Join(", ", s.ManagerNames) : "Administrators")</td>
+                            <td>@(s.RegistersOutstanding == 0 ? "Up to date" : $"{s.RegistersOutstanding} to take")</td>
+                            <td class="row-actions"><QButton Text="Open" Icon="chevron-right" Variant="ghost" Size="sm" OnClick="@(() => OpenSeries(s.SeriesId))" /></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+else
+{
+    <div class="exam-head">
+        <h2>@selected.Series.Name</h2>
+        <QChip Text="@(selected.Series.ManagerNames.Any() ? $"Run by {string.Join(", ", selected.Series.ManagerNames)}" : "Run by administrators")"
+               Icon="person-check" Variant="@(selected.Series.IAmManager ? "primary" : "muted")" Size="sm" />
+        <span class="cell-sub">@selected.Series.SlotCount sitting@(selected.Series.SlotCount == 1 ? "" : "s") · scored on @selected.Series.ParameterName</span>
+    </div>
+    <div class="table-wrap">
+        <table class="data-table q-stack exam-table">
+            <thead><tr><th>When</th><th>Sitting</th><th>Room</th><th>Invigilators</th><th>Register</th><th class="row-actions"></th></tr></thead>
+            <tbody>
+                @foreach (var slot in selected.Slots)
+                {
+                    <tr>
+                        <td>@QDateFormat.DD(Local(slot.StartsAt)) <span class="cell-sub">@QDateFormat.T(Local(slot.StartsAt))–@QDateFormat.T(Local(slot.EndsAt))</span></td>
+                        <td>@slot.Title</td>
+                        <td>@(slot.Location ?? "—")</td>
+                        <td>@(slot.ExpectedNames.Any() ? string.Join(", ", slot.ExpectedNames) : "—")</td>
+                        <td>@(slot.RegisterClosedAt != null ? "Taken" : slot.EndsAt < DateTime.UtcNow ? "Not taken" : "—")</td>
+                        <td class="row-actions">
+                            @if (slot.CanIRecord)
+                            {
+                                <QButton Text="Register" Icon="clipboard-check" Variant="ghost" Size="sm"
+                                         OnClick="@(() => Navigation.NavigateTo($"/admin/staff/duties/{slot.Id}/register"))" />
+                            }
+                            @if (selected.Series.CanWrite && slot.RegisterClosedAt == null)
+                            {
+                                <QButton Icon="pencil" Variant="ghost" Size="sm" Title="Change this sitting" OnClick="@(() => OpenSitting(slot))" />
+                                <QButton Icon="x-circle" Variant="ghost" Size="sm" Title="Cancel this sitting" OnClick="@(() => cancelTarget = slot)" />
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+</div>
+
+@* ---- New series ------------------------------------------------------------------------------------- *@
+<QModal @bind-Visible="showNewSeries" Title="New exam series" Icon="pencil-square" Size="lg">
+    <ChildContent>
+        <div class="form-row">
+            <QInput TValue="string" @bind-Value="seriesName" Label="Name" Required="true" MaxLength="200" Placeholder="End of Term 3 exams 2026" />
+            <QMultiSelect TValue="Guid" TItem="PersonOption" SelectedValues="@seriesManagers" SelectedValuesChanged="@(v => seriesManagers = v.ToList())"
+                          Items="@people" ValueSelector="@(p => p.UserId)" TextSelector="@(p => p.Name)" Sorted="true" Label="Run by"
+                          Hint="They add, change and cancel sittings and take their registers without the duties permission — and nothing else. Only an administrator appoints them. Leave it empty and administrators run it." />
+        </div>
+        <h3 class="exam-sub">First sitting</h3>
+        @SittingFields
+        @if (problem is { Length: > 0 }) { <p class="form-error">@problem</p> }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showNewSeries = false)" />
+        <QButton Text="Create series" Icon="check2" Variant="primary" OnClick="@CreateSeriesAsync" Disabled="@busy" />
+    </FooterContent>
+</QModal>
+
+@* ---- A sitting ------------------------------------------------------------------------------------- *@
+<QModal @bind-Visible="showSitting" Title="@(editingSlot == null ? "Add a sitting" : "Change this sitting")" Icon="calendar-plus" Size="lg">
+    <ChildContent>
+        @SittingFields
+        @if (problem is { Length: > 0 }) { <p class="form-error">@problem</p> }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showSitting = false)" />
+        <QButton Text="Save sitting" Icon="check2" Variant="primary" OnClick="@SaveSittingAsync" Disabled="@busy" />
+    </FooterContent>
+</QModal>
+
+@* ---- Rename / appoint -------------------------------------------------------------------------------- *@
+<QModal @bind-Visible="showEditSeries" Title="Rename or appoint" Icon="person-gear" Size="md">
+    <ChildContent>
+        <QInput TValue="string" @bind-Value="seriesName" Label="Name" Required="true" MaxLength="200" />
+        @if (selected?.Series.CanAppoint == true)
+        {
+            <QMultiSelect TValue="Guid" TItem="PersonOption" SelectedValues="@seriesManagers" SelectedValuesChanged="@(v => seriesManagers = v.ToList())"
+                          Items="@people" ValueSelector="@(p => p.UserId)" TextSelector="@(p => p.Name)" Sorted="true" Label="Run by"
+                          Hint="A manager takes every sitting's register. Removing one takes that away from them on every sitting." />
+        }
+        else
+        {
+            <p class="cell-sub">Only an administrator appoints who runs a series.</p>
+        }
+        @if (problem is { Length: > 0 }) { <p class="form-error">@problem</p> }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showEditSeries = false)" />
+        <QButton Text="Save" Icon="check2" Variant="primary" OnClick="@SaveSeriesAsync" Disabled="@busy" />
+    </FooterContent>
+</QModal>
+
+@* ---- Cancel a sitting ---------------------------------------------------------------------------------- *@
+<QModal Visible="@(cancelTarget != null)" VisibleChanged="@(v => { if (!v) cancelTarget = null; })" Title="Cancel this sitting?" Icon="x-circle" Size="sm">
+    <ChildContent>
+        <p>@cancelTarget?.Title on @(cancelTarget == null ? "" : QDateFormat.DD(Local(cancelTarget.StartsAt))). Its invigilators stop being expected there.</p>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Keep it" Variant="ghost" OnClick="@(() => cancelTarget = null)" />
+        <QButton Text="Cancel sitting" Icon="x-circle" Variant="danger" OnClick="@CancelSittingAsync" Disabled="@busy" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .exam-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-bottom: var(--qm-block-gap); }
+    .exam-head h2 { margin: 0; }
+    .exam-sub { margin: var(--qm-field-gap) 0 6px; font-size: var(--qm-text-md); }
+    .exam-warnings { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; margin-bottom: var(--qm-block-gap);
+                     border: 1px solid var(--qm-warning); border-radius: var(--qm-radius-md); background: rgba(var(--qm-warning-rgb), 0.08); }
+    .exam-warnings > i, .exam-warnings > span:first-child { color: var(--qm-warning); flex: 0 0 auto; margin-top: 2px; }
+    .exam-warnings > div { flex: 1 1 auto; min-width: 0; }
+    .exam-warnings ul { margin: 4px 0 0; padding-left: 18px; }
+</style>
+
+@code {
+    [Parameter] public bool Embedded { get; set; }
+
+    private sealed record PersonOption(Guid UserId, string Name);
+
+    private bool isLoading = true, busy, canManage;
+    private Guid branchId;
+    private List<DutySeriesDto> series = new();
+    private DutySeriesDetailDto? selected;
+    private List<PersonOption> people = new();
+    private List<string> warnings = new();
+    private string? problem;
+
+    private bool showNewSeries, showSitting, showEditSeries;
+    private string seriesName = string.Empty;
+    private List<Guid> seriesManagers = new();
+    private StaffDutyDto? editingSlot;
+    private StaffDutyDto? cancelTarget;
+
+    // The sitting form, shared by "New series" (its first sitting) and "Add / change a sitting".
+    private string? sitTitle, sitRoom;
+    private DateTime? sitStarts, sitEnds;
+    private List<Guid> sitInvigilators = new();
+
+    private RenderFragment SittingFields => __builder =>
+    {
+        <div class="form-row">
+            <QInput TValue="string" @bind-Value="sitTitle" Label="Sitting" MaxLength="200" Placeholder="S.4 Mathematics Paper 1"
+                    Hint="Blank uses the series name." />
+            <QInput TValue="string" @bind-Value="sitRoom" Label="Room" MaxLength="200" Placeholder="Main Hall" />
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <div class="q-datetime-pair">
+                    <QDatePicker @bind-Value="@sitStarts" Label="Starts" Required="true" />
+                    <QDatePicker @bind-Value="@sitStarts" ShowTime="true" Label="Time" Required="true" />
+                </div>
+            </div>
+            <div class="form-group">
+                <div class="q-datetime-pair">
+                    <QDatePicker @bind-Value="@sitEnds" Label="Ends" Required="true" Min="@sitStarts" />
+                    <QDatePicker @bind-Value="@sitEnds" ShowTime="true" Label="Time" Required="true" />
+                </div>
+            </div>
+        </div>
+        <QMultiSelect TValue="Guid" TItem="PersonOption" SelectedValues="@sitInvigilators" SelectedValuesChanged="@(v => sitInvigilators = v.ToList())"
+                      Items="@people" ValueSelector="@(p => p.UserId)" TextSelector="@(p => p.Name)" Sorted="true" Label="Invigilators" Required="true"
+                      Hint="They are marked on this sitting's register and see it on My School Day. Somebody already elsewhere at that time is warned about, not refused." />
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        canManage = await PermissionService.HasPermissionAsync(Permissions.StaffDutiesManage);
+        branchId = BranchState.CurrentBranchId;
+        TrackBranch();
+        await LoadAsync();
+    }
+
+    protected override async Task OnBranchChangedAsync(Guid newBranchId)
+    {
+        branchId = newBranchId;
+        selected = null;
+        warnings.Clear();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        try
+        {
+            if (branchId == Guid.Empty) { series = new(); return; }
+            series = await StaffApi.GetDutySeriesAsync(branchId);
+            if (!people.Any()) await LoadPeopleAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Exam supervision", ex.Message);
+        }
+        finally { isLoading = false; }
+    }
+
+    /// <summary>Colleagues plus the caller: readable by anybody on the staff, so a teacher running a series can pick.</summary>
+    private async Task LoadPeopleAsync()
+    {
+        try
+        {
+            var list = (await StaffApi.GetColleaguesAsync()).Select(c => new PersonOption(c.UserId, c.FullName)).ToList();
+            if (await AuthService.GetCurrentUserAsync() is { } me && me.Id != Guid.Empty && list.All(p => p.UserId != me.Id))
+                list.Add(new PersonOption(me.Id, me.FullName ?? "Me"));
+            people = list;
+        }
+        catch { people = new(); }
+    }
+
+    private async Task OpenSeries(Guid id)
+    {
+        try { selected = await StaffApi.GetDutySeriesDetailAsync(branchId, id); warnings.Clear(); }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Exam series", ex.Message); }
+    }
+
+    private async Task CloseSeries() { selected = null; await LoadAsync(); }
+
+    private void ResetSitting(StaffDutyDto? slot)
+    {
+        problem = null;
+        editingSlot = slot;
+        sitTitle = slot?.Title;
+        sitRoom = slot?.Location;
+        sitStarts = slot == null ? null : Local(slot.StartsAt);
+        sitEnds = slot == null ? null : Local(slot.EndsAt);
+        sitInvigilators = slot?.ExpectedUserIds?.ToList() ?? new();
+    }
+
+    private void OpenNewSeries()
+    {
+        ResetSitting(null);
+        seriesName = string.Empty;
+        seriesManagers = new();
+        showNewSeries = true;
+    }
+
+    private void OpenSitting(StaffDutyDto? slot) { ResetSitting(slot); showSitting = true; }
+
+    private void OpenEditSeries()
+    {
+        if (selected == null) return;
+        problem = null;
+        seriesName = selected.Series.Name;
+        seriesManagers = selected.Series.ManagerUserIds.ToList();
+        showEditSeries = true;
+    }
+
+    /// <summary>The client refuses what the server refuses, first, in the same terms.</summary>
+    private DutySeriesSlotRequest? SittingRequest()
+    {
+        if (sitStarts == null || sitEnds == null) { problem = "Say when the sitting starts and ends."; return null; }
+        if (sitEnds <= sitStarts) { problem = "The sitting must end after it starts."; return null; }
+        if (!sitInvigilators.Any()) { problem = "Name at least one invigilator."; return null; }
+        return new DutySeriesSlotRequest
+        {
+            Title = string.IsNullOrWhiteSpace(sitTitle) ? null : sitTitle.Trim(),
+            Location = string.IsNullOrWhiteSpace(sitRoom) ? null : sitRoom.Trim(),
+            StartsAt = ToUtc(sitStarts.Value),
+            EndsAt = ToUtc(sitEnds.Value),
+            InvigilatorUserIds = sitInvigilators.ToList()
+        };
+    }
+
+    private async Task CreateSeriesAsync()
+    {
+        problem = null;
+        if (string.IsNullOrWhiteSpace(seriesName)) { problem = "Give the series a name."; return; }
+        if (SittingRequest() is not { } first) return;
+        busy = true;
+        try
+        {
+            var result = await StaffApi.CreateDutySeriesAsync(branchId, new CreateDutySeriesRequest
+            { Name = seriesName.Trim(), ManagerUserIds = seriesManagers.ToList(), Slots = new() { first } });
+            showNewSeries = false;
+            selected = result.Detail;
+            warnings = result.Warnings;
+            Toast.Notify(ToastSeverity.Success, "Exam series created", "Its invigilators have been told.");
+        }
+        catch (Exception ex) { problem = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task SaveSittingAsync()
+    {
+        problem = null;
+        if (selected == null || SittingRequest() is not { } sitting) return;
+        busy = true;
+        try
+        {
+            var result = editingSlot == null
+                ? await StaffApi.AddSeriesSlotsAsync(branchId, selected.Series.SeriesId, new() { sitting })
+                : await StaffApi.UpdateSeriesSlotAsync(branchId, selected.Series.SeriesId, editingSlot.Id, sitting);
+            showSitting = false;
+            selected = result.Detail;
+            warnings = result.Warnings;
+            Toast.Notify(ToastSeverity.Success, editingSlot == null ? "Sitting added" : "Sitting changed", "Anybody newly named has been told.");
+        }
+        catch (Exception ex) { problem = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task SaveSeriesAsync()
+    {
+        problem = null;
+        if (selected == null) return;
+        if (string.IsNullOrWhiteSpace(seriesName)) { problem = "Give the series a name."; return; }
+        busy = true;
+        try
+        {
+            selected = await StaffApi.UpdateDutySeriesAsync(branchId, selected.Series.SeriesId, new UpdateDutySeriesRequest
+            {
+                Name = seriesName.Trim(),
+                // Sent only by somebody who may appoint; the server refuses a change from anybody else anyway.
+                ManagerUserIds = selected.Series.CanAppoint ? seriesManagers.ToList() : null
+            });
+            showEditSeries = false;
+            Toast.Notify(ToastSeverity.Success, "Series saved", selected.Series.Name);
+        }
+        catch (Exception ex) { problem = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task CancelSittingAsync()
+    {
+        if (selected == null || cancelTarget == null) return;
+        busy = true;
+        try
+        {
+            await StaffApi.CancelSeriesSlotAsync(branchId, selected.Series.SeriesId, cancelTarget.Id);
+            cancelTarget = null;
+            var remaining = selected.Slots.Count - 1;
+            if (remaining <= 0) { await CloseSeries(); Toast.Notify(ToastSeverity.Success, "Sitting cancelled", "That was the last sitting, so the series is closed."); }
+            else { selected = await StaffApi.GetDutySeriesDetailAsync(branchId, selected.Series.SeriesId); Toast.Notify(ToastSeverity.Success, "Sitting cancelled"); }
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not cancel", ex.Message); }
+        finally { busy = false; }
+    }
+
+    private static DateTime Local(DateTime value) => value.Kind == DateTimeKind.Utc ? value.ToLocalTime() : value;
+    private static DateTime ToUtc(DateTime local) => DateTime.SpecifyKind(local, DateTimeKind.Local).ToUniversalTime();
+}

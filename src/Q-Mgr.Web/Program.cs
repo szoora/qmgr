@@ -125,6 +125,8 @@ builder.Services.AddScoped<IModuleApiService, ModuleApiService>();
 builder.Services.AddScoped<IMobileAppApiService, MobileAppApiService>();
 builder.Services.AddScoped<IPaymentApiService, PaymentApiService>();
 builder.Services.AddScoped<ISelfServiceApiService, SelfServiceApiService>();
+// Leadership posts and the access review (2026-09-24).
+builder.Services.AddScoped<ILeadershipApiService, LeadershipApiService>();
 // The school calendar, its settings, the personal feed and the national dates (TERM_PROGRAMME_CALENDAR_AND_GATES §9).
 builder.Services.AddScoped<ICalendarApiService, CalendarApiService>();
 builder.Services.AddScoped<IMarketingApiService, MarketingApiService>();
@@ -267,34 +269,74 @@ app.MapGet("/culture/set", (HttpContext http, string culture, string? redirectUr
     return Results.LocalRedirect(target);
 });
 
-// The PWA manifest for a tenant's OWN host (white-label plan, C3). An installed app on a member
-// of staff's phone carries their school's name, icon and colour rather than ours — an installed
-// icon reading "Q-Mgr" on a white-labelled deployment is the most visible place the white-labelling
-// could leak, and it is the one place a user keeps looking at when the browser is shut.
+// THE MARK, SERVED FROM ONE DRAWING (rebrand 2026-09-24). Every /brand/*.svg is generated from
+// ProductMark in Q-Mgr.Shared — the same geometry the API's product-logo endpoint emits for the mobile
+// app — so there is no SVG file on disk to fall out of step with another. The PNGs beside them
+// (favicon, touch and app icons) are rendered FROM these by scripts/brand/render-brand-assets.mjs and
+// are the only derived copies; that script is re-run whenever ProductMark changes.
+app.MapGet("/brand/{file}.svg", (string file, HttpContext http) =>
+{
+    var svg = file switch
+    {
+        "mark" => QMgr.Application.Branding.ProductMark.Tile512(QMgr.Application.Branding.ProductMark.WineDark),
+        "mark-light" => QMgr.Application.Branding.ProductMark.TileLight(),
+        "mark-mono" => QMgr.Application.Branding.ProductMark.Mono(),
+        "app-icon" => QMgr.Application.Branding.ProductMark.Tile512(),
+        "app-icon-maskable" => QMgr.Application.Branding.ProductMark.Maskable(),
+        "favicon" => QMgr.Application.Branding.ProductMark.Favicon(),
+        _ => null
+    };
+    if (svg == null) return Results.NotFound();
+    http.Response.Headers.CacheControl = "public, max-age=86400";
+    return Results.Text(svg, "image/svg+xml");
+});
+
+// THE PWA MANIFEST, FOR EVERY HOST (rebrand 2026-09-24). It was two things: this endpoint on a
+// tenant's own domain and a static wwwroot/manifest.json on the platform host — which carried the
+// product name typed in twice and a /dashboard shortcut to a route that has never existed. One
+// endpoint now answers both, and the name comes from ProductBrand or the tenant's resolved app name.
 //
-// App.razor only links this on a host that actually resolves to a tenant; on the platform host the
-// static wwwroot/manifest.json is linked instead. This endpoint re-checks anyway and falls back to
-// the platform manifest for an unknown host — a link is not a permission.
+// An installed app on a member of staff's phone carries their school's name, icon and colour on its
+// own domain rather than ours — the one place a user keeps looking at when the browser is shut.
 app.MapGet("/app-manifest.json", async (HttpContext http, QMgr.Web.Services.IOrganizationApiService organizations) =>
 {
     var branding = await organizations.GetBrandingForHostAsync(http.Request.Host.Host);
+    var tenant = branding.Resolved;
 
-    var name = branding.Resolved && !string.IsNullOrWhiteSpace(branding.BrandName) ? branding.BrandName! : "Q-Mgr";
-    var theme = branding.Resolved && !string.IsNullOrWhiteSpace(branding.PrimaryColor) ? branding.PrimaryColor! : "#8c2f52";
-    // A tenant's uploaded logo, else ours. Purpose "any" only: a maskable icon has to carry its own
-    // safe zone and we cannot know that an uploaded logo does — declaring it maskable would let
-    // Android crop the school's name off its own icon.
-    var icon = branding.Resolved && !string.IsNullOrWhiteSpace(branding.LogoUrl) ? branding.LogoUrl! : "/images/icon-512.svg";
-    var iconType = icon.EndsWith(".svg", StringComparison.OrdinalIgnoreCase) ? "image/svg+xml"
-        : icon.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ? "image/png"
-        : icon.EndsWith(".webp", StringComparison.OrdinalIgnoreCase) ? "image/webp"
-        : "image/jpeg";
+    var name = tenant && !string.IsNullOrWhiteSpace(branding.ProductName) ? branding.ProductName! : QMgr.Application.Branding.ProductBrand.Name;
+    var shortName = tenant && !string.IsNullOrWhiteSpace(branding.ProductShortName)
+        ? branding.ProductShortName!
+        : QMgr.Application.Branding.ProductBrand.ShortNameFor(name);
+    var theme = tenant && !string.IsNullOrWhiteSpace(branding.PrimaryColor) ? branding.PrimaryColor! : QMgr.Application.Branding.ProductMark.WineDark;
+
+    // A tenant's uploaded logo, else ours. A tenant's is purpose "any" only: a maskable icon has to
+    // carry its own safe zone and we cannot know that an uploaded logo does — declaring it maskable
+    // would let Android crop the school's name off its own icon. Ours is drawn with one.
+    object[] icons;
+    if (tenant && !string.IsNullOrWhiteSpace(branding.LogoUrl))
+    {
+        var logo = branding.LogoUrl!;
+        var logoType = logo.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ? "image/png"
+            : logo.EndsWith(".webp", StringComparison.OrdinalIgnoreCase) ? "image/webp"
+            : "image/jpeg";
+        icons = new object[] { new Dictionary<string, object?> { ["src"] = logo, ["sizes"] = "any", ["type"] = logoType, ["purpose"] = "any" } };
+    }
+    else
+    {
+        icons = new object[]
+        {
+            new Dictionary<string, object?> { ["src"] = QMgr.Application.Branding.ProductBrand.Assets.AppIcon, ["sizes"] = "any", ["type"] = "image/svg+xml", ["purpose"] = "any" },
+            new Dictionary<string, object?> { ["src"] = QMgr.Application.Branding.ProductBrand.Assets.AppIconMaskable, ["sizes"] = "any", ["type"] = "image/svg+xml", ["purpose"] = "maskable" },
+            new Dictionary<string, object?> { ["src"] = "/brand/icon-192.png", ["sizes"] = "192x192", ["type"] = "image/png", ["purpose"] = "any" },
+            new Dictionary<string, object?> { ["src"] = "/brand/icon-512.png", ["sizes"] = "512x512", ["type"] = "image/png", ["purpose"] = "any" },
+        };
+    }
 
     var manifest = new Dictionary<string, object?>
     {
         ["name"] = name,
-        ["short_name"] = name.Length > 12 ? name[..12].TrimEnd() : name,
-        ["description"] = $"{name} — front office: queues, visitors, signage, welfare and secure documents.",
+        ["short_name"] = shortName,
+        ["description"] = tenant ? $"{name} — {QMgr.Application.Branding.ProductBrand.Tagline}." : QMgr.Application.Branding.ProductBrand.Description,
         ["start_url"] = "/",
         ["display"] = "standalone",
         ["background_color"] = "#0d1117",
@@ -302,10 +344,8 @@ app.MapGet("/app-manifest.json", async (HttpContext http, QMgr.Web.Services.IOrg
         ["orientation"] = "any",
         ["scope"] = "/",
         ["lang"] = "en",
-        ["icons"] = new[]
-        {
-            new Dictionary<string, object?> { ["src"] = icon, ["sizes"] = "any", ["type"] = iconType, ["purpose"] = "any" }
-        }
+        ["categories"] = new[] { "business", "education", "productivity" },
+        ["icons"] = icons
     };
 
     // Never cached at the edge: the manifest depends on the Host header, and a shared cache that

@@ -72,7 +72,7 @@ public record TenantInfoResponse
     public string CompanyName { get; init; } = string.Empty;
 
     /// <summary>The product, displayed by the app. The app never guesses this.</summary>
-    public string Product { get; init; } = "Q-Mgr";
+    public string Product { get; init; } = ProductBrand.Name;
 
     /// <summary>A one-line descriptor under the product name.</summary>
     public string? Descriptor { get; init; }

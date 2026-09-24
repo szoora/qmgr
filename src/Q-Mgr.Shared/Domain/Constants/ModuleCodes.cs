@@ -40,9 +40,8 @@ public static class ModuleCodes
 
     /// <summary>
     /// "White-Label Plus" — an ADD-ON, not a functional module. It carries exactly one
-    /// entitlement, <c>FeatureCodes.RemoveAttribution</c>: "Powered by SACC Software" comes off the
-    /// tenant's sign-in pages, the Q-Mgr line comes out of the shell footer, and their outbound
-    /// email stops signing itself with our name.
+    /// entitlement, <c>FeatureCodes.RemoveAttribution</c>: the copyright line on the tenant's sign-in
+    /// pages, in the shell footer and in their outbound email names the TENANT instead of us.
     ///
     /// It is a catalogue row rather than a switch so that it is billed, purchased, renewed,
     /// grandfathered and shown on the Modules tab by machinery that already exists and is already

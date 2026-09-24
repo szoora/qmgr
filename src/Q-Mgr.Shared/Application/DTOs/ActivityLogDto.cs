@@ -57,12 +57,21 @@ public static class ActivityActions
     public const string TimelineViewed = "staff.timeline.viewed";
     public const string TimelineExported = "staff.timeline.exported";
     public const string RecognitionGiven = "staff.recognition.given";
+
+    // Access (2026-09-24): the leadership posts, the access review, and the leaver sweep.
+    public const string SafeguardingLeadsChanged = "access.safeguarding-leads-changed";
+    public const string ActingHeadChanged = "access.acting-head-changed";
+    public const string PastoralPostsChanged = "access.pastoral-posts-changed";
+    public const string AccessReviewed = "access.reviewed";
+    public const string LeaverDeactivated = "access.leaver-deactivated";
     /// <summary>One record logged for a group of staff (the Staff Directory's "Log a record", 2026-09-23) — ONE line for the batch, naming no individual; each record still writes its own RecordCreated.</summary>
     public const string RecordsBulkLogged = "staff.records.bulk-logged";
 
     public const string DutyCreated = "staff.duty.created";
     public const string DutyUpdated = "staff.duty.updated";
     public const string DutyCancelled = "staff.duty.cancelled";
+    /// <summary>An exam-supervision series was created, renamed, or given different managers (2026-09-23).</summary>
+    public const string DutySeriesSaved = "staff.duty-series.saved";
     public const string RegisterSubmitted = "staff.duty.register-submitted";
     public const string RegisterReopened = "staff.duty.register-reopened";
     public const string MinutesAttached = "staff.duty.minutes-attached";

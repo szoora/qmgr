@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using Microsoft.Extensions.Logging;
 using QMgr.Application.Interfaces;
 using QMgr.Domain.Entities.Notification;
@@ -64,7 +65,7 @@ public class SmtpProfileResolver : ISmtpProfileResolver
                 Username: tenantSettings.SmtpUsername,
                 Password: tenantSettings.SmtpPassword,
                 FromEmail: tenantSettings.EmailFromAddress!,
-                FromName: string.IsNullOrWhiteSpace(tenantSettings.EmailFromName) ? "Q-Mgr" : tenantSettings.EmailFromName!,
+                FromName: string.IsNullOrWhiteSpace(tenantSettings.EmailFromName) ? ProductBrand.Name : tenantSettings.EmailFromName!,
                 IsPlatformRelay: false);
         }
 
@@ -82,7 +83,7 @@ public class SmtpProfileResolver : ISmtpProfileResolver
         // message even though it is delivered by the platform account.
         var displayName = !string.IsNullOrWhiteSpace(tenantSettings?.EmailFromName)
             ? tenantSettings!.EmailFromName!
-            : (string.IsNullOrWhiteSpace(platform.FromName) ? "Q-Mgr" : platform.FromName);
+            : (string.IsNullOrWhiteSpace(platform.FromName) ? ProductBrand.Name : platform.FromName);
 
         return new SmtpProfile(
             Host: platform.SmtpHost,

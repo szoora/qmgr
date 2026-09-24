@@ -147,19 +147,7 @@
 <QModal @bind-Visible="showScheduleDialog" Title="@($"Configure Schedule - {selectedPlaylist?.Name}")" Size="md">
     <ChildContent>
         <div class="form-group">
-            <label class="form-label">Schedule Type</label>
-            <div class="form-check">
-                <input class="form-check-input" type="radio" name="scheduleType" id="schedule-always" value="always" checked="@(scheduleModel.ScheduleType == "always")" @onchange="@(() => scheduleModel.ScheduleType = "always")" />
-                <label class="form-check-label" for="schedule-always">Always (plays continuously)</label>
-            </div>
-            <div class="form-check">
-                <input class="form-check-input" type="radio" name="scheduleType" id="schedule-scheduled" value="scheduled" checked="@(scheduleModel.ScheduleType == "scheduled")" @onchange="@(() => scheduleModel.ScheduleType = "scheduled")" />
-                <label class="form-check-label" for="schedule-scheduled">Scheduled (time-based)</label>
-            </div>
-            <div class="form-check">
-                <input class="form-check-input" type="radio" name="scheduleType" id="schedule-conditional" value="conditional" checked="@(scheduleModel.ScheduleType == "conditional")" @onchange="@(() => scheduleModel.ScheduleType = "conditional")" />
-                <label class="form-check-label" for="schedule-conditional">Conditional (rule-based)</label>
-            </div>
+            <QRadioGroup TValue="string" Legend="Schedule type" @bind-Value="scheduleModel.ScheduleType" Options="@ScheduleTypeOptions" />
         </div>
 
         @if (scheduleModel.ScheduleType == "scheduled")
@@ -454,6 +442,13 @@
     }</style>
 
 @code {
+    private static readonly IReadOnlyList<QRadioOption<string>> ScheduleTypeOptions = new[]
+    {
+        new QRadioOption<string>("always", "Always", "plays continuously"),
+        new QRadioOption<string>("scheduled", "Scheduled", "time-based"),
+        new QRadioOption<string>("conditional", "Conditional", "rule-based"),
+    };
+
     /// <summary>True when the Signage hub is hosting this page inside its own tab strip: the host
     /// then owns the page title, the header band and the tabs. There is no route to reach this
     /// component any other way — see CLAUDE.md, "A hub owns the route; its sections own nothing".</summary>

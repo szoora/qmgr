@@ -35,10 +35,12 @@
     font-size: var(--qm-text-xl);
 }
 
+/* Our mark (ProductMark) since the rebrand: a wine tile of its own, so the ring only separates it
+   from the wine bar behind it. */
 .doc-brand-mark {
     width: 34px;
     height: 34px;
-    border-radius: 50%;
+    border-radius: var(--qm-radius-md);
     display: flex;
     align-items: center;
     justify-content: center;

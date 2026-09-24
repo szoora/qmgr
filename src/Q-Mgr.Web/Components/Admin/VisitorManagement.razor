@@ -146,7 +146,7 @@
         @RenderReturningVisitorSearch(checkInSelectedProfile, checkInSelectedRoster, p => ApplyProfileToCheckIn(p), r => ApplyRosterToCheckIn(r))
         <div class="form-grid">
             <label>Full Name *<input @bind="checkInModel.FullName" @bind:event="oninput" @bind:after="@(() => OnNameTyped(checkInModel.FullName, checkInModel.VisitorProfileId))" placeholder="Jane Doe" /></label>
-            <label>Company<input @bind="checkInModel.Company" placeholder="SACC Software Limited" /></label>
+            <label>Company<input @bind="checkInModel.Company" placeholder="e.g. Kampala Suppliers Ltd" /></label>
             <label>Phone<input @bind="checkInModel.Phone" placeholder="0753404044" /></label>
             <label>Email<input @bind="checkInModel.Email" placeholder="support@getsacc.com" /></label>
             <label>ID Number<input @bind="checkInModel.IdNumber" placeholder="Passport / National ID" /></label>
@@ -226,7 +226,7 @@
         @RenderReturningVisitorSearch(preRegisterSelectedProfile, preRegisterSelectedRoster, p => ApplyProfileToPreRegister(p), r => ApplyRosterToPreRegister(r))
         <div class="form-grid">
             <label>Full Name *<input @bind="preRegisterModel.FullName" @bind:event="oninput" @bind:after="@(() => OnNameTyped(preRegisterModel.FullName, preRegisterModel.VisitorProfileId))" placeholder="Jane Doe" /></label>
-            <label>Company<input @bind="preRegisterModel.Company" placeholder="SACC Software Limited" /></label>
+            <label>Company<input @bind="preRegisterModel.Company" placeholder="e.g. Kampala Suppliers Ltd" /></label>
             <label>Phone<input @bind="preRegisterModel.Phone" placeholder="0753404044" /></label>
             <label>Email<input @bind="preRegisterModel.Email" placeholder="support@getsacc.com" /></label>
             <label>Vehicle Plate<input @bind="preRegisterModel.VehiclePlate" placeholder="KDA 123B" /></label>

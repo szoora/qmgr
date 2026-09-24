@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
 using QMgr.Application.Interfaces;
@@ -273,8 +274,8 @@ public class RegistrationGuardService : IRegistrationGuardService
         {
             score += ScoreContinuedPastExistingOrganization;
             signals.Add(string.IsNullOrWhiteSpace(input.AcknowledgedOrganizationName)
-                ? "They were told an organization at their email domain already uses Q-Mgr, and registered a new one anyway."
-                : $"They were told \"{input.AcknowledgedOrganizationName}\" already uses Q-Mgr at their email domain, and registered a new one anyway.");
+                ? "They were told an organization at their email domain already uses " + ProductBrand.Name + ", and registered a new one anyway."
+                : $"They were told \"{input.AcknowledgedOrganizationName}\" already uses {ProductBrand.Name} at their email domain, and registered a new one anyway.");
         }
 
         var decision = score >= FlagThreshold ? RegistrationRiskDecision.Flag : RegistrationRiskDecision.Allow;

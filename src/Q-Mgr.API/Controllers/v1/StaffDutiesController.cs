@@ -38,7 +38,7 @@ namespace QMgr.API.Controllers.v1;
 [Produces("application/json")]
 [Authorize]
 [RequireModule(ModuleCodes.StudentWelfare)]
-public class StaffDutiesController : ControllerBase
+public partial class StaffDutiesController : ControllerBase
 {
     private readonly QMgrDbContext _context;
     private readonly ITenantContextAccessor _tenantAccessor;
@@ -817,7 +817,9 @@ public class StaffDutiesController : ControllerBase
                 .Concat(duties.Select(d => d.RegisterClosedByUserId))
                 .Concat(duties.SelectMany(d => d.SupervisorUserIds.Select(id => (Guid?)id)))
                 // Rota slots name their people; a Session duty's expected list can be the whole branch and is counted, not named.
-                .Concat(duties.Where(d => d.Kind == DutyKind.Rota).SelectMany(d => (d.ExpectedUserIds ?? Array.Empty<Guid>()).Select(id => (Guid?)id))), default);
+                // An exam sitting (a named series) names its few invigilators too — found by browser/exam-series-ui 1h,
+                // where the Invigilators column read "—" on every sitting.
+                .Concat(duties.Where(d => d.Kind == DutyKind.Rota || d.SeriesName != null).SelectMany(d => (d.ExpectedUserIds ?? Array.Empty<Guid>()).Select(id => (Guid?)id))), default);
 
         return duties.Select(d =>
         {

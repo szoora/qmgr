@@ -70,6 +70,12 @@ public interface IStudentScopeService
     /// </summary>
     Task<IReadOnlyList<string>> GetPastoralClassNamesAsync(Guid branchId);
 
+    /// <summary>
+    /// What a scoped caller's pastoral reach is, in words a page can print: their classes, then "House Nile",
+    /// "Dormitory Kagera" for any house or dormitory post (2026-09-24). Empty for an unscoped caller.
+    /// </summary>
+    Task<IReadOnlyList<string>> GetPastoralScopeLabelsAsync(Guid branchId);
+
     /// <summary>The caller's live SUBJECT-TEACHER class names in this branch. Same empty-list caveat.</summary>
     Task<IReadOnlyList<string>> GetTeachingClassNamesAsync(Guid branchId);
 
@@ -120,6 +126,8 @@ public class StudentScopeService : IStudentScopeService
     // Per-request memoisation: long enough that one action calling several guards does not pay for the
     // lookup repeatedly, short enough that an assignment ended a second ago is honoured next request.
     private bool? _isUnscoped;
+    /// <summary>The posts resolved alongside <see cref="_isUnscoped"/>; null for the platform administrator and API keys.</summary>
+    private PostGrants? _posts;
     private readonly Dictionary<Guid, IReadOnlyList<string>> _pastoralNamesByBranch = new();
     private readonly Dictionary<Guid, IReadOnlyList<string>> _teachingNamesByBranch = new();
     private readonly Dictionary<Guid, HashSet<Guid>> _pastoralIdsByBranch = new();
@@ -189,12 +197,23 @@ public class StudentScopeService : IStudentScopeService
         // arrived with the post, it runs at the post's reach — the classes held. A Tenant Admin or
         // Manager who also teaches a class keeps the school, because their role already granted it.
         var posts = await PostPermissionService.GrantsForAsync(_context, userId);
+        _posts = posts;
         _isUnscoped = PostPermissionService.IsUnscopedOnStudents(role.Scope.Value, role.Permissions, posts);
         return _isUnscoped.Value;
     }
 
     public Task<IReadOnlyList<string>> GetPastoralClassNamesAsync(Guid branchId)
         => ClassNamesAsync(branchId, pastoral: true);
+
+    public async Task<IReadOnlyList<string>> GetPastoralScopeLabelsAsync(Guid branchId)
+    {
+        if (await IsUnscopedAsync()) return Array.Empty<string>();
+        var (houses, dorms) = await PastoralUnitsAsync(branchId);
+        return (await GetPastoralClassNamesAsync(branchId))
+            .Concat(houses.Select(h => $"House {h}"))
+            .Concat(dorms.Select(d => $"Dormitory {d}"))
+            .ToList();
+    }
 
     public Task<IReadOnlyList<string>> GetTeachingClassNamesAsync(Guid branchId)
         => ClassNamesAsync(branchId, pastoral: false);
@@ -221,26 +240,47 @@ public class StudentScopeService : IStudentScopeService
         return cache[branchId] = names;
     }
 
-    private static IQueryable<Student> FilterByClasses(IQueryable<Student> query, IReadOnlyCollection<string> names)
+    private static IQueryable<Student> FilterByClasses(IQueryable<Student> query, IReadOnlyCollection<string> names,
+        IReadOnlyCollection<string>? houses = null, IReadOnlyCollection<string>? dormitories = null)
     {
+        houses ??= Array.Empty<string>();
+        dormitories ??= Array.Empty<string>();
         // FAIL CLOSED: an empty allow-list is an explicit empty result, never a no-op WHERE.
-        if (names.Count == 0) return query.Where(_ => false);
+        if (names.Count == 0 && houses.Count == 0 && dormitories.Count == 0) return query.Where(_ => false);
         var normalized = names.Select(n => n.Trim().ToLower()).Distinct().ToList();
-        // Trim().ToLower() on both sides: Student.ClassName is free text, the vocabulary is admin-typed.
-        return query.Where(s => s.ClassName != null && normalized.Contains(s.ClassName.Trim().ToLower()));
+        var h = houses.Select(n => n.Trim().ToLower()).Distinct().ToList();
+        var d = dormitories.Select(n => n.Trim().ToLower()).Distinct().ToList();
+        // Trim().ToLower() on both sides: Student.ClassName, House and DormitoryOrStream are free text.
+        return query.Where(s => (s.ClassName != null && normalized.Contains(s.ClassName.Trim().ToLower()))
+                             || (s.House != null && h.Contains(s.House.Trim().ToLower()))
+                             || (s.DormitoryOrStream != null && d.Contains(s.DormitoryOrStream.Trim().ToLower())));
+    }
+
+    /// <summary>
+    /// The houses and dormitories this caller holds a pastoral post for in <paramref name="branchId"/> (2026-09-24).
+    /// Read from the posts resolved by <see cref="IsUnscopedAsync"/>, so there is no second query.
+    /// </summary>
+    private async Task<(List<string> Houses, List<string> Dormitories)> PastoralUnitsAsync(Guid branchId)
+    {
+        await IsUnscopedAsync();
+        var units = (_posts?.PastoralUnits ?? Array.Empty<QMgr.Application.DTOs.PastoralUnitPostDto>()).Where(u => u.BranchId == branchId).ToList();
+        return (units.Where(u => u.Kind == QMgr.Application.DTOs.PastoralUnitKind.House).Select(u => u.Name).ToList(),
+                units.Where(u => u.Kind == QMgr.Application.DTOs.PastoralUnitKind.Dormitory).Select(u => u.Name).ToList());
     }
 
     public async Task<IQueryable<Student>> ApplyAsync(IQueryable<Student> query, Guid branchId)
     {
         if (await IsUnscopedAsync()) return query;
-        return FilterByClasses(query, await GetPastoralClassNamesAsync(branchId));
+        var (houses, dorms) = await PastoralUnitsAsync(branchId);
+        return FilterByClasses(query, await GetPastoralClassNamesAsync(branchId), houses, dorms);
     }
 
     public async Task<IQueryable<Student>> ApplyAnyTierAsync(IQueryable<Student> query, Guid branchId)
     {
         if (await IsUnscopedAsync()) return query;
         var names = (await GetPastoralClassNamesAsync(branchId)).Concat(await GetTeachingClassNamesAsync(branchId)).ToList();
-        return FilterByClasses(query, names);
+        var (houses, dorms) = await PastoralUnitsAsync(branchId);
+        return FilterByClasses(query, names, houses, dorms);
     }
 
     public async Task<HashSet<Guid>?> GetVisibleStudentIdsAsync(Guid branchId)
@@ -260,21 +300,30 @@ public class StudentScopeService : IStudentScopeService
 
         var pastoral = (await GetPastoralClassNamesAsync(branchId)).Select(n => n.Trim().ToLower()).ToHashSet();
         var teaching = (await GetTeachingClassNamesAsync(branchId)).Select(n => n.Trim().ToLower()).ToHashSet();
+        var (houseList, dormList) = await PastoralUnitsAsync(branchId);
+        var houses = houseList.Select(n => n.Trim().ToLower()).ToList();
+        var dorms = dormList.Select(n => n.Trim().ToLower()).ToList();
         var any = pastoral.Concat(teaching).ToList();
-        if (any.Count == 0) return _tiersByBranch[branchId] = new Dictionary<Guid, StudentAccessTier>();
+        if (any.Count == 0 && houses.Count == 0 && dorms.Count == 0) return _tiersByBranch[branchId] = new Dictionary<Guid, StudentAccessTier>();
 
         // INACTIVE STUDENTS INCLUDED on purpose: a child who has left still has a ledger.
         var students = await _context.Students
             .AsNoTracking()
-            .Where(s => s.BranchId == branchId && s.ClassName != null && any.Contains(s.ClassName.Trim().ToLower()))
-            .Select(s => new { s.Id, s.ClassName })
+            .Where(s => s.BranchId == branchId
+                && ((s.ClassName != null && any.Contains(s.ClassName.Trim().ToLower()))
+                    || (s.House != null && houses.Contains(s.House.Trim().ToLower()))
+                    || (s.DormitoryOrStream != null && dorms.Contains(s.DormitoryOrStream.Trim().ToLower()))))
+            .Select(s => new { s.Id, s.ClassName, s.House, s.DormitoryOrStream })
             .ToListAsync();
 
         // One user, both tiers: pastoral wins for the classes they are pastoral for (plan §5.3 — tiers are
-        // per assignment, never per role).
+        // per assignment, never per role). A house or dormitory post is always pastoral.
         var map = students.ToDictionary(
             s => s.Id,
-            s => pastoral.Contains(s.ClassName!.Trim().ToLower()) ? StudentAccessTier.Pastoral : StudentAccessTier.Teaching);
+            s => (s.ClassName != null && pastoral.Contains(s.ClassName.Trim().ToLower()))
+                 || (s.House != null && houses.Contains(s.House.Trim().ToLower()))
+                 || (s.DormitoryOrStream != null && dorms.Contains(s.DormitoryOrStream.Trim().ToLower()))
+                ? StudentAccessTier.Pastoral : StudentAccessTier.Teaching);
         return _tiersByBranch[branchId] = map;
     }
 

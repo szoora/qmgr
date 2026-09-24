@@ -38,12 +38,23 @@ public sealed record TenantHostContext(string Host, TenantHostBrandingDto Brandi
     /// </summary>
     public string? ApiOrigin => IsTenantHost && !string.IsNullOrWhiteSpace(Host) ? $"https://{Host}" : null;
 
-    /// <summary>What to call the product on this host.</summary>
-    public string AppName => IsTenantHost && !string.IsNullOrWhiteSpace(Branding.BrandName) ? Branding.BrandName! : "Q-Mgr";
+    /// <summary>
+    /// What to call the app on this host: the school's own name exactly as typed on a white-labelled
+    /// tenant domain, otherwise ours. Resolved by the API (<c>ProductBrand.NameFor</c>); this only reads it.
+    /// </summary>
+    public string AppName => IsTenantHost && !string.IsNullOrWhiteSpace(Branding.ProductName) ? Branding.ProductName! : ProductBrand.Name;
+
+    /// <summary>The same, short enough for a phone's home-screen label.</summary>
+    public string AppShortName => IsTenantHost && !string.IsNullOrWhiteSpace(Branding.ProductShortName)
+        ? Branding.ProductShortName!
+        : ProductBrand.ShortNameFor(ProductBrand.Name);
+
+    /// <summary>The organisation on this host, or null on the platform host.</summary>
+    public string? OrganizationName => IsTenantHost ? Branding.OrganizationName : null;
 
     /// <summary>
-    /// Whether "Powered by SACC Software" comes off. Resolved server-side — this only reports it.
-    /// The platform's own host always keeps it, whatever any tenant holds.
+    /// Whether the copyright line credits the school rather than us. Resolved server-side — this only
+    /// reports it. The platform's own host always credits us, whatever any tenant holds.
     /// </summary>
     public bool AttributionRemoved => IsTenantHost && Branding.AttributionRemoved;
 

@@ -55,6 +55,8 @@ public static class NotificationEventKeys
 
     /// <summary>I was put on a rota slot.</summary>
     public const string StaffRotaAssigned = "staff.rota-assigned";
+    /// <summary>I was put on (or taken off) exam invigilation in a named series. A wire format, persisted in preferences.</summary>
+    public const string StaffInvigilationAssigned = "staff.invigilation-assigned";
     /// <summary>A rota slot I am on is approaching (the escalating ladder).</summary>
     public const string StaffRotaReminder = "staff.rota-reminder";
     /// <summary>Someone I supervise on a rota slot has not acknowledged it (supervisors).</summary>
@@ -115,6 +117,14 @@ public static class NotificationEventKeys
     /// <summary>A module trial is ending soon, or has ended.</summary>
     public const string BillingTrial = "billing.trial";
 
+    // ---- Access (2026-09-24) ----
+
+    /// <summary>I was made, or stopped being, the safeguarding lead, a deputy lead, acting head, or a house or dormitory post holder.</summary>
+    public const string LeadershipPostChanged = "access.post-changed";
+
+    /// <summary>Accounts were switched off because their employment end date passed. Only for people who manage accounts.</summary>
+    public const string AccountsDeactivated = "access.leavers-deactivated";
+
     /// <summary>Everything else — system alerts, queue events, and anything sent without a key.</summary>
     public const string General = "general";
 
@@ -167,6 +177,9 @@ public static class NotificationEventKeys
             "Staff Performance", DefaultEmail: true, DefaultSms: false),
         new(StaffRotaAssigned, "I was put on the duty rota",
             "You were assigned to a rota slot, or a slot was swapped to you.",
+            "Duty Rota", DefaultEmail: true, DefaultSms: false),
+        new(StaffInvigilationAssigned, "I was given exam invigilation",
+            "You were put on one or more sittings of an exam series, or one you were on changed.",
             "Duty Rota", DefaultEmail: true, DefaultSms: false),
         new(StaffRotaReminder, "My duty is coming up",
             "Reminders before a rota slot you are on. They grow more urgent as it approaches and stop once you acknowledge.",
@@ -228,6 +241,12 @@ public static class NotificationEventKeys
         new(StaffMinuteAction, "An action minuted for me",
             "An action point the minutes gave you, as its date approaches and after it passes.",
             "Staff Performance", DefaultEmail: true, DefaultSms: false, DefaultPush: true),
+        new(LeadershipPostChanged, "I was given or lost a leadership post",
+            "Safeguarding lead, deputy lead, acting head, or a house or dormitory post.",
+            "Access", DefaultEmail: true, DefaultSms: false),
+        new(AccountsDeactivated, "Leavers' accounts were switched off",
+            "Accounts switched off because the person's employment end date passed. Only for people who manage accounts.",
+            "Access", DefaultEmail: true, DefaultSms: false, Permission: "users.edit"),
         new(BillingPayment, "A payment for this school",
             "A payment was received, is being checked, or did not go through. Only for people who can open Billing.",
             "Billing", DefaultEmail: false, DefaultSms: false, Permission: "billing.view"),

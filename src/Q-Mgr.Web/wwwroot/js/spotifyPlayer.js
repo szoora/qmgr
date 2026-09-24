@@ -28,7 +28,7 @@ window.spotifyPlayerInterop = {
         }
 
         this._player = new window.Spotify.Player({
-            name: 'Q-Mgr Signage',
+            name: 'Signage display',
             getOAuthToken: cb => cb(accessToken),
             volume: 0.4
         });

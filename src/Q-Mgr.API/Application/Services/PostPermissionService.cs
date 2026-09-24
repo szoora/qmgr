@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using QMgr.Application.DTOs;
 using QMgr.Domain.Constants;
 using QMgr.Domain.Enums;
 using QMgr.Infrastructure.Data;
@@ -31,6 +32,17 @@ public sealed record PostGrants
     /// caller themselves.
     /// </summary>
     public bool HasDepartmentPost { get; init; }
+
+    /// <summary>
+    /// The caller holds a post whose reach is the WHOLE SCHOOL on the student axis — safeguarding lead, a deputy
+    /// lead, or acting head while the period covers today (2026-09-24). Such a post makes the caller unscoped on
+    /// students whatever their role's own scope: reaching every child is what those posts are for.
+    /// </summary>
+    public bool HasOrganizationWidePost { get; init; }
+
+    /// <summary>House and dormitory posts the caller holds, in every branch. Each adds the students of that house or
+    /// dormitory to the caller's pastoral reach, exactly as a class does.</summary>
+    public IReadOnlyList<PastoralUnitPostDto> PastoralUnits { get; init; } = Array.Empty<PastoralUnitPostDto>();
 
     public bool Any => Permissions.Count > 0;
 }
@@ -199,17 +211,31 @@ public static class PostPermissionService
         var department = await db.Departments.IgnoreQueryFilters().AsNoTracking()
             .AnyAsync(d => d.IsActive && (d.HeadUserId == userId || d.DeputyHeadUserId == userId), ct);
 
-        if (!pastoral && !department) return PostGrants.None;
+        // THE LEADERSHIP POSTS (2026-09-24): safeguarding lead and deputies, acting head, house and dormitory.
+        // One read of the organization's settings; LeadershipPosts is the only parser of that key.
+        var organizationId = await db.Users.IgnoreQueryFilters().AsNoTracking()
+            .Where(u => u.Id == userId && u.IsActive).Select(u => (Guid?)u.OrganizationId).FirstOrDefaultAsync(ct);
+        var leadership = organizationId is { } org ? await LeadershipPosts.ReadAsync(db, org, ct) : new LeadershipPostsDto();
+
+        var safeguarding = leadership.SafeguardingLeadUserId == userId || leadership.DeputySafeguardingLeadUserIds.Contains(userId);
+        var actingHead = leadership.ActingHead is { } ah && ah.UserId == userId && ah.IsActiveOn(LeadershipPosts.Today());
+        var units = leadership.PastoralUnitPosts.Where(p => p.UserId == userId).ToList();
+
+        if (!pastoral && !department && !safeguarding && !actingHead && units.Count == 0) return PostGrants.None;
 
         var codes = new HashSet<string>(StringComparer.Ordinal);
-        if (pastoral) foreach (var c in PastoralClassPost) codes.Add(c);
+        if (pastoral || units.Count > 0) foreach (var c in PastoralClassPost) codes.Add(c);
         if (department) foreach (var c in DepartmentHeadPost) codes.Add(c);
+        if (safeguarding) foreach (var c in LeadershipPosts.SafeguardingLeadPost) codes.Add(c);
+        if (actingHead) foreach (var c in LeadershipPosts.ActingHeadPost()) codes.Add(c);
 
         return new PostGrants
         {
             Permissions = codes,
-            HasPastoralPost = pastoral,
-            HasDepartmentPost = department
+            HasPastoralPost = pastoral || units.Count > 0,
+            HasDepartmentPost = department,
+            HasOrganizationWidePost = safeguarding || actingHead,
+            PastoralUnits = units,
         };
     }
 
@@ -228,6 +254,8 @@ public static class PostPermissionService
     /// </summary>
     public static bool IsUnscopedOnStudents(RoleDataScope roleScope, IReadOnlyCollection<string> rolePermissions, PostGrants posts)
     {
+        // A whole-school post reaches every child, whatever the role's own scope — that is the post.
+        if (posts.HasOrganizationWidePost) return true;
         if (roleScope != RoleDataScope.Organization) return false;
         if (!posts.HasPastoralPost) return true;
         return rolePermissions.Any(p => RoleHeldStudentAccess.Contains(p, StringComparer.OrdinalIgnoreCase));

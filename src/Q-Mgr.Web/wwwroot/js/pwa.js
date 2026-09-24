@@ -54,7 +54,7 @@
         // Initialize PWA
         async init() {
             if (this.isNativeShell()) {
-                console.log('[PWA] Running inside the Q-Mgr app — the app owns updating; PWA disabled.');
+                console.log('[PWA] Running inside the mobile app — the app owns updating; PWA disabled.');
                 return;
             }
 
@@ -183,7 +183,7 @@
                     </div>
                     <div class="pwa-update-text">
                         <strong>Update Available</strong>
-                        <span>A new version of Q-Mgr is ready to install</span>
+                        <span>A new version of this app is ready to install</span>
                     </div>
                     <div class="pwa-update-actions">
                         <button class="pwa-btn-later" onclick="PWA.dismissUpdate()">Later</button>

@@ -78,6 +78,9 @@ public record ProvisionTenantRequest
     /// <summary>Organization name</summary>
     public string OrganizationName { get; init; } = string.Empty;
 
+    /// <summary>The app's own name, already validated; null means ours.</summary>
+    public string? BrandName { get; init; }
+
     /// <summary>Desired slug (optional, will be generated if not provided)</summary>
     public string? Slug { get; init; }
 

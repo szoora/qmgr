@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Caching.Distributed;
 using QMgr.Application.Interfaces;
@@ -72,7 +73,7 @@ public class PhoneVerificationService : IPhoneVerificationService
         // is the whole attack.
         var code = RandomNumberGenerator.GetInt32(100_000, 1_000_000).ToString();
 
-        var message = $"Your Q-Mgr verification code is {code}. It expires in {CodeLifetime.TotalMinutes:F0} minutes.";
+        var message = $"Your {ProductBrand.Name} verification code is {code}. It expires in {CodeLifetime.TotalMinutes:F0} minutes.";
 
         try
         {

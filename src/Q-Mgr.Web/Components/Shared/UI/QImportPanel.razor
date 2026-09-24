@@ -224,14 +224,7 @@
                     <p class="q-import__map-sub">@string.Join(" · ", existing.Sample)@(existing.Count > existing.Sample.Count ? " and others" : "")</p>
                 }
 
-                <label class="q-import__radio">
-                    <input type="radio" name="q-import-existing" checked="@updateExisting" @onchange="@(() => updateExisting = true)" />
-                    <span><strong>Update them</strong> with what is in this file. Their role, permissions and password are never changed by an import.</span>
-                </label>
-                <label class="q-import__radio">
-                    <input type="radio" name="q-import-existing" checked="@(!updateExisting)" @onchange="@(() => updateExisting = false)" />
-                    <span><strong>Leave them as they are</strong> — add only the @(Noun)s who are missing.</span>
-                </label>
+                <QRadioGroup TValue="bool" @bind-Value="updateExisting" Options="@ExistingOptions" />
             </div>
         }
 
@@ -487,7 +480,6 @@
     .qi-blocked { color: var(--qm-warning); }
     .q-import__problems { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px;
                           font-size: var(--qm-text-sm); }
-    .q-import__radio { display: flex; align-items: flex-start; gap: 8px; font-size: var(--qm-text-sm); }
 
     .q-import__tally { display: flex; flex-wrap: wrap; gap: var(--q-row-gap, 8px); }
     .q-import__tile { flex: 1 1 120px; display: flex; flex-direction: column; padding: 10px 12px;
@@ -526,6 +518,12 @@
 </style>
 
 @code {
+    private IReadOnlyList<QRadioOption<bool>> ExistingOptions => new[]
+    {
+        new QRadioOption<bool>(true, "Update them", "with what is in this file. Their role, permissions and password are never changed by an import."),
+        new QRadioOption<bool>(false, "Leave them as they are", $"add only the {Noun}s who are missing."),
+    };
+
     /// <summary>The branch whose SignalR group carries this job's progress.</summary>
     [Parameter, EditorRequired] public Guid BranchId { get; set; }
 

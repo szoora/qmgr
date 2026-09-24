@@ -148,12 +148,12 @@
                                 </table>
                                 @if (mine.Count > DutyRowCap)
                                 {
-                                    <p class="ttp-duties__none">and @(mine.Count - DutyRowCap) more — see Duties &amp; Registers in Q-Mgr.</p>
+                                    <p class="ttp-duties__none">and @(mine.Count - DutyRowCap) more — see Duties &amp; Registers in @(branding?.ProductName ?? ProductBrand.Name).</p>
                                 }
                             }
                         </section>
                     }
-                    <footer class="ttp-foot">Printed @QDateFormat.DT(DateTime.Now)@(string.IsNullOrWhiteSpace(generatedBy) ? "" : $" by {generatedBy}"). Timetables change: the one in Q-Mgr is the current version.</footer>
+                    <footer class="ttp-foot">Printed @QDateFormat.DT(DateTime.Now)@(string.IsNullOrWhiteSpace(generatedBy) ? "" : $" by {generatedBy}"). Timetables change: the one in @(branding?.ProductName ?? ProductBrand.Name) is the current version.</footer>
                 </section>
             }
         }
@@ -286,7 +286,7 @@ else if (loadError != null)
             return slug.Length == 0 ? by : $"{by}-{slug}";
         }
     }
-    private string OrganizationName => !string.IsNullOrWhiteSpace(branding?.BrandName) ? branding!.BrandName! : BranchState.CurrentBranchName ?? "Timetable";
+    private string OrganizationName => !string.IsNullOrWhiteSpace(branding?.OrganizationName) ? branding!.OrganizationName! : BranchState.CurrentBranchName ?? "Timetable";
 
     protected override async Task OnInitializedAsync()
     {
@@ -473,7 +473,7 @@ else if (loadError != null)
                 OrganizationId = organizationId,
                 FileName = $"timetable-{FileSlug}-{detail.Timetable.EffectiveFrom:yyyy-MM-dd}.pdf",
                 DocumentName = name,
-                Summary = $"{detail.Timetable.Name}, {QDateFormat.Range(detail.Timetable.EffectiveFrom, detail.Timetable.EffectiveTo)}, {SelectionSummary}. Generated {QDateFormat.D(DateTime.UtcNow)} by {generatedBy ?? "Q-Mgr"}.",
+                Summary = $"{detail.Timetable.Name}, {QDateFormat.Range(detail.Timetable.EffectiveFrom, detail.Timetable.EffectiveTo)}, {SelectionSummary}. Generated {QDateFormat.D(DateTime.UtcNow)} by {generatedBy ?? (branding?.ProductName ?? ProductBrand.Name)}.",
                 PublishedFrom = $"Timetable — {BranchState.CurrentBranchName}",
                 SubjectNoun = "timetable",
                 Audit = doc => StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest { Kind = StaffExportKinds.Timetable, Published = true, MediaContentId = doc.Id, DocumentName = name, Format = "PDF" })

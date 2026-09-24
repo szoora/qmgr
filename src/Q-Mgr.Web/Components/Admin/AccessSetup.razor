@@ -1,0 +1,349 @@
+@* No @page: the Access tab of the Users & Roles hub, /admin/users?tab=access (2026-09-24). *@
+@using QMgr.Application.DTOs
+@using QMgr.Web.Services
+@inject ILeadershipApiService LeadershipApi
+@inject IToastService Toast
+
+@*
+    THE LEADERSHIP POSTS AND THE ACCESS REVIEW (the RBAC review's R2, R5 and R6). Three cards, one subject: who can
+    reach the most sensitive things in the school, and whether anybody has looked lately.
+
+    - Safeguarding lead and deputies: a POST, not a role. It grants the restricted rung of welfare records while it is
+      held, and only the Administrator or the Head Teacher may appoint (you delegate only what your role holds).
+    - Acting head: the Head's set for a fixed period that ENDS ON ITS OWN. Nobody has to remember to take it back.
+    - The access review: who holds what, read once a term and recorded with a note (NIST SP 800-53 AC-2).
+*@
+
+<QPageActions Embedded="@Embedded">
+    <Title><h1>Access</h1></Title>
+    <Actions>
+        @if (review?.CanConfirm == true)
+        {
+            <QButton Text="Record this review" Icon="clipboard-check" Variant="primary" OnClick="@(() => { reviewNote = string.Empty; showConfirm = true; })" />
+        }
+    </Actions>
+</QPageActions>
+
+@if (isLoading)
+{
+    <QEmptyState Icon="hourglass-split" Title="Loading" />
+}
+else
+{
+    <div class="access-grid">
+        <QCard Title="Safeguarding lead" Icon="shield-lock" Hint="The designated safeguarding lead and up to three deputies read every child's welfare file, including restricted records, for as long as they hold the post. They must be on the senior leadership team.">
+            <HeaderActions>
+                @if (view?.CanAppointSafeguarding == true)
+                {
+                    <QButton Text="Change" Icon="pencil" Variant="ghost" Size="sm" OnClick="@OpenSafeguarding" />
+                }
+            </HeaderActions>
+            <ChildContent>
+                <dl class="access-facts" id="safeguarding-facts">
+                    <dt>Lead</dt>
+                    <dd>@(view?.SafeguardingLead is { } l ? $"{l.FullName} · {l.RoleName}" : "Not named")</dd>
+                    <dt>Deputies</dt>
+                    <dd>@(view?.DeputySafeguardingLeads.Count > 0 ? string.Join(", ", view!.DeputySafeguardingLeads.Select(d => d.FullName)) : "None")</dd>
+                </dl>
+                @if (view?.SafeguardingLead == null)
+                {
+                    <p class="form-error">Nobody is named. Every member of staff needs to know who to take a concern to.</p>
+                }
+            </ChildContent>
+        </QCard>
+
+        <QCard Title="Acting head" Icon="person-up" Hint="While the head is away, a Deputy Head Teacher or the Director of Studies can hold everything the Head Teacher holds, for up to 120 days. It ends on its own after the last day.">
+            <HeaderActions>
+                @if (view?.CanAppointActingHead == true)
+                {
+                    <QButton Text="@(view.ActingHead == null ? "Appoint" : "Change")" Icon="pencil" Variant="ghost" Size="sm" OnClick="@OpenActing" />
+                }
+            </HeaderActions>
+            <ChildContent>
+                @if (view?.ActingHead is { } a)
+                {
+                    <dl class="access-facts" id="acting-facts">
+                        <dt>Acting head</dt>
+                        <dd>@a.FullName · @a.RoleName <QChip Text="@(view.ActingHeadActive ? "In post" : "Starts later")" Variant="@(view.ActingHeadActive ? "success" : "muted")" Size="sm" /></dd>
+                        <dt>Period</dt>
+                        <dd>@QDateFormat.D(view.ActingHeadStartsOn) to @QDateFormat.D(view.ActingHeadEndsOn)</dd>
+                        @if (!string.IsNullOrWhiteSpace(view.ActingHeadReason))
+                        {
+                            <dt>Why</dt><dd>@view.ActingHeadReason</dd>
+                        }
+                    </dl>
+                }
+                else
+                {
+                    <p class="access-muted">Nobody is acting as head.</p>
+                }
+            </ChildContent>
+        </QCard>
+    </div>
+
+    <QCard Title="Access review" Icon="list-check" Class="access-review"
+           Hint="Who can read restricted and confidential records, manage accounts, design roles and pay — with the posts each person holds. Read it once a term, change what is wrong, then record the review.">
+        <ChildContent>
+            @if (review == null)
+            {
+                <QEmptyState Icon="lock" Title="Not available" Text="The access review is for people who manage accounts and can read roles." />
+            }
+            else
+            {
+                <p class="access-muted" id="last-review">
+                    @if (review.LastReviewedAt is { } at)
+                    {
+                        <span>Last recorded @QDateFormat.D(at.ToLocalTime())@(review.LastReviewedBy is { } by ? $" by {by}" : "")@(review.LastReviewNote is { } n ? $": {n}" : "").</span>
+                    }
+                    else
+                    {
+                        <span>No review has been recorded yet.</span>
+                    }
+                </p>
+
+                <QBulkBar Filters="@chips" ActiveFilter="@activeChip" ActiveFilterChanged="@OnChip" ShowSelection="false"
+                          SearchPlaceholder="Search people" Search="@search" SearchChanged="@OnSearch" VisibleCount="@Visible.Count" />
+
+                <div class="table-wrap">
+                    <table class="data-table q-stack" id="access-table">
+                        <thead>
+                            <tr>
+                                <th>Person</th>
+                                <th>Role</th>
+                                <th>Posts</th>
+                                <th>Restricted welfare</th>
+                                <th>Confidential welfare</th>
+                                <th>Restricted staff</th>
+                                <th>Accounts</th>
+                                <th>Roles</th>
+                                <th>Billing</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var r in paging.Apply(Visible))
+                            {
+                                <tr>
+                                    <td>@r.FullName</td>
+                                    <td>@r.RoleName</td>
+                                    <td>@if (r.Posts.Count > 0) { <span class="cell-tags">@foreach (var p in r.Posts) { <QChip Text="@p" Size="sm" Variant="muted" /> }</span> }</td>
+                                    <td>@Mark(r.RestrictedWelfare)</td>
+                                    <td>@Mark(r.ConfidentialWelfare)</td>
+                                    <td>@Mark(r.RestrictedStaff)</td>
+                                    <td>@Mark(r.ManagesAccounts)</td>
+                                    <td>@Mark(r.DesignsRoles)</td>
+                                    <td>@Mark(r.ManagesBilling)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <QPager Count="@Visible.Count" PageSize="@paging.PageSize" PageIndex="@paging.PageIndex"
+                        PageIndexChanged="@(p => paging.PageIndex = p)" PageSizeOptions="@QPagerDefaults.Sizes"
+                        PageSizeChanged="@(s => paging.SetSize(s))" StorageKey="access-review" ItemLabel="people" />
+            }
+        </ChildContent>
+    </QCard>
+}
+
+<QModal @bind-Visible="showSafeguarding" Title="Safeguarding lead" Icon="shield-lock" Size="lg">
+    <ChildContent>
+        <div class="form-row">
+            <QSelect TValue="Guid?" TItem="LeadershipPersonDto" Value="@leadId" ValueChanged="@(v => leadId = v)"
+                     Items="@(view?.SafeguardingCandidates ?? new())" ValueSelector="@(p => (Guid?)p.UserId)" TextSelector="@(p => $"{p.FullName} · {p.RoleName}")"
+                     Label="Lead" AllowClear="true" Sorted="true" Placeholder="Nobody"
+                     Hint="Only the Administrator, the Head Teacher, a Deputy Head Teacher or the Director of Studies can hold it." />
+            <QMultiSelect TValue="Guid" TItem="LeadershipPersonDto" SelectedValues="@deputyIds" SelectedValuesChanged="@(v => deputyIds = v.ToList())"
+                          Items="@(view?.SafeguardingCandidates ?? new())" ValueSelector="@(p => p.UserId)" TextSelector="@(p => $"{p.FullName} · {p.RoleName}")"
+                          Label="Deputies (up to 3)" Sorted="true" />
+        </div>
+        @if (problem is { Length: > 0 }) { <p class="form-error">@problem</p> }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showSafeguarding = false)" />
+        <QButton Text="Save" Icon="check2" Variant="primary" OnClick="@SaveSafeguardingAsync" Disabled="@busy" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showActing" Title="Acting head" Icon="person-up" Size="lg">
+    <ChildContent>
+        <div class="form-row">
+            <QSelect TValue="Guid?" TItem="LeadershipPersonDto" Value="@actingId" ValueChanged="@(v => actingId = v)"
+                     Items="@(view?.ActingHeadCandidates ?? new())" ValueSelector="@(p => (Guid?)p.UserId)" TextSelector="@(p => $"{p.FullName} · {p.RoleName}")"
+                     Label="Acting head" AllowClear="true" Sorted="true" Placeholder="Nobody"
+                     Hint="A Deputy Head Teacher or the Director of Studies. Clear it to end the arrangement now." />
+            <QDatePicker Value="@actingStarts" ValueChanged="@(v => actingStarts = v)" Label="From" Required="true" Min="@DateTime.Today" />
+            <QDatePicker Value="@actingEnds" ValueChanged="@(v => actingEnds = v)" Label="To" Required="true" Min="@DateTime.Today" Max="@DateTime.Today.AddDays(120)" />
+        </div>
+        <QInput TValue="string" @bind-Value="actingReason" Label="Why" Required="@(actingId != null)" MaxLength="300" Placeholder="Head on study leave" />
+        @if (problem is { Length: > 0 }) { <p class="form-error">@problem</p> }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showActing = false)" />
+        <QButton Text="Save" Icon="check2" Variant="primary" OnClick="@SaveActingAsync" Disabled="@busy" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showConfirm" Title="Record this review" Icon="clipboard-check">
+    <ChildContent>
+        <p>Say what you checked or changed. The note is kept with the date and your name.</p>
+        <QInput TValue="string" @bind-Value="reviewNote" Type="textarea" Rows="3" Label="Note" Required="true" MaxLength="1000"
+                Placeholder="Checked every restricted reader; removed a deputy who left in August." />
+        @if (problem is { Length: > 0 }) { <p class="form-error">@problem</p> }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showConfirm = false)" />
+        <QButton Text="Record" Icon="check2" Variant="primary" OnClick="@ConfirmAsync" Disabled="@busy" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .access-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--qm-block-gap); margin-bottom: var(--qm-block-gap); }
+    .access-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+    .access-facts dt { color: var(--qm-text-muted); }
+    .access-facts dd { margin: 0; }
+    .access-muted { color: var(--qm-text-muted); margin: 0 0 var(--qm-field-gap); }
+    .access-yes { color: var(--qm-danger); font-weight: 600; }
+</style>
+
+@code {
+    [Parameter] public bool Embedded { get; set; }
+
+    private LeadershipViewDto? view;
+    private AccessReviewDto? review;
+    private bool isLoading = true, busy;
+    private string? problem;
+
+    private bool showSafeguarding, showActing, showConfirm;
+    private Guid? leadId, actingId;
+    private List<Guid> deputyIds = new();
+    private DateTime? actingStarts, actingEnds;
+    private string actingReason = string.Empty;
+    private string reviewNote = string.Empty;
+
+    private string activeChip = "all";
+    private string search = string.Empty;
+    private readonly QPaging paging = new();
+
+    private List<QBulkBar.Filter> chips => new()
+    {
+        new("all", "Everyone", review?.Rows.Count ?? 0),
+        new("restricted", "Restricted readers", review?.Rows.Count(r => r.RestrictedWelfare || r.RestrictedStaff) ?? 0),
+        new("accounts", "Manage accounts", review?.Rows.Count(r => r.ManagesAccounts || r.DesignsRoles) ?? 0),
+        new("posts", "Hold a post", review?.Rows.Count(r => r.Posts.Count > 0) ?? 0),
+    };
+
+    private List<AccessReviewRowDto> Visible => (review?.Rows ?? new())
+        .Where(r => activeChip switch
+        {
+            "restricted" => r.RestrictedWelfare || r.RestrictedStaff,
+            "accounts" => r.ManagesAccounts || r.DesignsRoles,
+            "posts" => r.Posts.Count > 0,
+            _ => true
+        })
+        .Where(r => string.IsNullOrWhiteSpace(search)
+                    || r.FullName.Contains(search, StringComparison.OrdinalIgnoreCase)
+                    || (r.RoleName ?? "").Contains(search, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    private static MarkupString Mark(bool yes) => yes ? new MarkupString("<span class=\"access-yes\">Yes</span>") : new MarkupString("<span class=\"access-muted\">—</span>");
+
+    private static DateTime? ToDate(DateOnly? d) => d?.ToDateTime(TimeOnly.MinValue);
+
+    private void OnChip(string key) { activeChip = key; paging.Reset(); }
+    private void OnSearch(string text) { search = text; paging.Reset(); }
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        try
+        {
+            view = await LeadershipApi.GetAsync();
+            try { review = await LeadershipApi.GetAccessReviewAsync(); }
+            catch { review = null; } // not everybody on this tab may read the review; the cards still show
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Access", ex.Message);
+        }
+        finally { isLoading = false; }
+    }
+
+    private void OpenSafeguarding()
+    {
+        problem = null;
+        leadId = view?.SafeguardingLead?.UserId;
+        deputyIds = view?.DeputySafeguardingLeads.Select(d => d.UserId).ToList() ?? new();
+        showSafeguarding = true;
+    }
+
+    private void OpenActing()
+    {
+        problem = null;
+        actingId = view?.ActingHead?.UserId;
+        actingStarts = ToDate(view?.ActingHeadStartsOn) ?? DateTime.Today;
+        actingEnds = ToDate(view?.ActingHeadEndsOn) ?? DateTime.Today.AddDays(14);
+        actingReason = view?.ActingHeadReason ?? string.Empty;
+        showActing = true;
+    }
+
+    private async Task SaveSafeguardingAsync()
+    {
+        problem = null;
+        if (deputyIds.Count > 3) { problem = "Name at most three deputies."; return; }
+        if (leadId == null && deputyIds.Count > 0) { problem = "Name the lead before naming deputies."; return; }
+        busy = true;
+        try
+        {
+            view = await LeadershipApi.UpdateSafeguardingAsync(new UpdateSafeguardingLeadsRequest { LeadUserId = leadId, DeputyUserIds = deputyIds });
+            showSafeguarding = false;
+            Toast.Notify(ToastSeverity.Success, "Safeguarding lead saved", "Anybody newly named has been told.");
+            try { review = await LeadershipApi.GetAccessReviewAsync(); } catch { }
+        }
+        catch (Exception ex) { problem = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task SaveActingAsync()
+    {
+        problem = null;
+        if (actingId != null)
+        {
+            if (actingStarts == null || actingEnds == null) { problem = "Choose both dates."; return; }
+            if (actingEnds < actingStarts) { problem = "The end date is before the start date."; return; }
+            if ((actingReason ?? "").Trim().Length < 10) { problem = "Say why, in ten characters or more."; return; }
+        }
+        busy = true;
+        try
+        {
+            view = await LeadershipApi.UpdateActingHeadAsync(new UpdateActingHeadRequest
+            {
+                UserId = actingId,
+                StartsOn = actingStarts is { } s ? DateOnly.FromDateTime(s) : null,
+                EndsOn = actingEnds is { } e ? DateOnly.FromDateTime(e) : null,
+                Reason = actingReason
+            });
+            showActing = false;
+            Toast.Notify(ToastSeverity.Success, actingId == null ? "Acting head ended" : "Acting head saved");
+            try { review = await LeadershipApi.GetAccessReviewAsync(); } catch { }
+        }
+        catch (Exception ex) { problem = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task ConfirmAsync()
+    {
+        problem = null;
+        if ((reviewNote ?? "").Trim().Length < 10) { problem = "Say what was checked or changed, in ten characters or more."; return; }
+        busy = true;
+        try
+        {
+            review = await LeadershipApi.ConfirmAccessReviewAsync(reviewNote!);
+            showConfirm = false;
+            Toast.Notify(ToastSeverity.Success, "Review recorded");
+        }
+        catch (Exception ex) { problem = ex.Message; }
+        finally { busy = false; }
+    }
+}

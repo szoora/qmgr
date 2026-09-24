@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using System.Globalization;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
@@ -258,7 +259,7 @@ public class StaffPerformanceJobs
                             var prefs = await _preferences.GetAsync(user.Id);
                             if (prefs.LastStaffDigestSentAt.HasValue && prefs.LastStaffDigestSentAt.Value > now.AddDays(-6)) continue;
 
-                            var html = await BuildWeeklyDigestAsync(org.Id, branch.Id, branch.Name, org.BrandName ?? org.Name, user.Id, user.FirstName, period, policy, zone);
+                            var html = await BuildWeeklyDigestAsync(org.Id, branch.Id, branch.Name, org.Name, user.Id, user.FirstName, period, policy, zone);
                             var score = html.Score;
 
                             await _notifications.CreateInAppNotificationAsync(new CreateNotificationRequest
@@ -402,7 +403,7 @@ public class StaffPerformanceJobs
             $"Your weekly digest — {branchName}",
             string.Create(CultureInfo.InvariantCulture, $"{orgName} · {period.Name} · {(string.IsNullOrWhiteSpace(firstName) ? "" : $"for {firstName} · ")}sent {TimeZoneInfo.ConvertTimeFromUtc(now, zone):dd MMM yyyy}"),
             body.ToString(),
-            "Sent by Q-Mgr Staff Performance. Turn this digest off under Notification preferences. Times are shown in the branch's local timezone.");
+            "Sent by " + ProductBrand.Name + " Staff Performance. Turn this digest off under Notification preferences. Times are shown in the branch's local timezone.");
 
         return new DigestBuild(html, score, upcoming.Count, openCount, lastWeek != null ? score.Points - lastWeek.Points : score.Points);
     }
@@ -466,12 +467,12 @@ public class StaffPerformanceJobs
                     body.Append(RenderBranchSummary(branch.Name, report));
                 }
 
-                var subject = string.Create(CultureInfo.InvariantCulture, $"Staff performance — {org.BrandName ?? org.Name} — {lastMonth:MMMM yyyy}");
+                var subject = string.Create(CultureInfo.InvariantCulture, $"Staff performance — {org.Name} — {lastMonth:MMMM yyyy}");
                 var html = EmailTemplates.ReportShell(
                     string.Create(CultureInfo.InvariantCulture, $"Staff performance summary — {lastMonth:MMMM yyyy}"),
-                    $"{org.BrandName ?? org.Name} · {period.Name} to date · {branches.Count} branch(es)",
+                    $"{org.Name} · {period.Name} to date · {branches.Count} branch(es)",
                     body.ToString(),
-                    "Sent by Q-Mgr Staff Performance to holders of staff.reports.view on the first business day of each month.");
+                    "Sent by " + ProductBrand.Name + " Staff Performance to holders of staff.reports.view on the first business day of each month.");
 
                 var delivered = 0;
                 foreach (var userId in recipients)
@@ -610,7 +611,7 @@ public class StaffPerformanceJobs
 
                     var range = string.Create(CultureInfo.InvariantCulture, $"{lastWeek.Start:dd MMM} – {lastWeek.End:dd MMM yyyy}");
                     var html = EmailTemplates.ReportShell($"Weekly lesson analysis — {range}", $"{branch.Name}", body.ToString(),
-                        "Sent on Mondays by Q-Mgr to lesson supervisors and staff report readers, for the staff each one oversees.");
+                        "Sent on Mondays by " + ProductBrand.Name + " to lesson supervisors and staff report readers, for the staff each one oversees.");
                     try
                     {
                         await _notifications.CreateInAppNotificationAsync(new CreateNotificationRequest

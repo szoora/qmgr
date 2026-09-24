@@ -107,7 +107,7 @@ try {
   ok('1g: --qm-text-on-primary follows the brand lightness', !!tokens?.onPrimary, tokens?.onPrimary);
   ok('1h: --qm-secondary-dark is derived too', !!tokens?.secondaryDark && tokens.secondaryDark.toLowerCase() !== '#2e242a', tokens?.secondaryDark);
 
-  ok('1i: the brand NAME replaced Q-Mgr in the shell',
+  ok('1i: the brand name replaced ours in the shell, exactly as typed',
     (await t.eval(`document.querySelector('.brand-text')?.textContent?.trim() ?? ''`)) === 'Maryhill Academy',
     await t.eval(`document.querySelector('.brand-text')?.textContent`));
 
@@ -153,7 +153,7 @@ try {
   })()`;
 
   const pages = [
-    ['Dashboard', '/'],
+    ['Home', '/'],
     ['Billing', '/billing'],
     ['Users & Roles', '/admin/users'],
     ['Appearance', '/admin/appearance'],
@@ -185,8 +185,8 @@ try {
 
   const offStyle = await t.eval(`document.querySelector('.qm-app')?.getAttribute('style') ?? ''`);
   ok('4a: the wrapper carries no branding once the switch is off', !offStyle.includes('--qm-primary'), offStyle.slice(0, 120));
-  ok('4b: the brand name is Q-Mgr again',
-    (await t.eval(`document.querySelector('.brand-text')?.textContent?.trim() ?? ''`)) === 'Q-Mgr',
+  ok('4b: the app is called SACC Dashboard again',
+    (await t.eval(`document.querySelector('.brand-text')?.textContent?.trim() ?? ''`)) === 'SACC Dashboard',
     await t.eval(`document.querySelector('.brand-text')?.textContent`));
 
   const errs = t.consoleErrors.filter(e => !/favicon|manifest/i.test(e ?? ''));

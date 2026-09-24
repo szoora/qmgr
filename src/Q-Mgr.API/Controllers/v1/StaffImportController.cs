@@ -50,6 +50,7 @@ public class StaffImportController : ControllerBase
     private readonly IPasswordValidationService _passwords;
     private readonly IDataProtectionProvider _dataProtection;
     private readonly ILogger<StaffImportController> _logger;
+    private readonly IStaffPerformancePolicyService _policy;
 
     private const int MaxRows = 2000;
 
@@ -60,8 +61,10 @@ public class StaffImportController : ControllerBase
         IActivityLogger activity,
         IPasswordValidationService passwords,
         IDataProtectionProvider dataProtection,
-        ILogger<StaffImportController> logger)
+        ILogger<StaffImportController> logger,
+        IStaffPerformancePolicyService policy)
     {
+        _policy = policy;
         _context = context;
         _tenantAccessor = tenantAccessor;
         _scope = scope;
@@ -189,6 +192,7 @@ public class StaffImportController : ControllerBase
         var byNumber = matched.Where(u => !string.IsNullOrWhiteSpace(u.EmployeeNumber))
             .GroupBy(u => u.EmployeeNumber!).ToDictionary(g => g.Key, g => g.First());
 
+        var employmentTypes = (await _policy.GetAsync(organizationId)).ActiveEmploymentTypeNames();
         var changesFor = new Dictionary<Guid, List<string>>();
         var matchedIds = new HashSet<Guid>();
         foreach (var row in rows)
@@ -203,7 +207,7 @@ public class StaffImportController : ControllerBase
 
             matchedIds.Add(person.Id);
             var (first, last) = StaffImportChanges.NamesOf(row, request.NameOrder);
-            var labels = StaffImportChanges.Compute(row, first, last, person).Select(c => c.Label).ToList();
+            var labels = StaffImportChanges.Compute(row, first, last, person, employmentTypes).Select(c => c.Label).ToList();
 
             // A person named on two rows: everything either row would change is a change.
             if (changesFor.TryGetValue(person.Id, out var already))

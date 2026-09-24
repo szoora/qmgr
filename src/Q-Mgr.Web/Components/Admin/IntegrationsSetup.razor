@@ -18,7 +18,7 @@
 <div class="page-header">
             <div class="header-content">
                 <h1>Integrations</h1>
-                <p class="subtitle">Connect Q-Mgr with external systems and services</p>
+                <p class="subtitle">Connect this app with external systems and services</p>
             </div>
         </div>
     }
@@ -285,7 +285,7 @@
         {
             new() { Name = "SMS Gateway", Description = "Send SMS notifications to customers when their token is called", Icon = "chat-dots", Color = "#10b981", IsConnected = smsEnabled, IsBuilt = true, ConfigureUrl = "/admin/settings?tab=notifications", Features = new() { "Token Notifications", "Appointment Reminders", "Custom Templates" } },
             new() { Name = "Email Service", Description = "Send email notifications and reports to customers and staff", Icon = "envelope", Color = "#8c2f52", IsConnected = emailEnabled, IsBuilt = true, ConfigureUrl = "/admin/settings?tab=notifications", Features = new() { "Token Updates", "Daily Reports", "Custom Branding" } },
-            new() { Name = "Display Signage", Description = "Q-Mgr's built-in digital signage module for queue displays", Icon = "tv", Color = "#f59e0b", IsConnected = true, IsBuilt = true, ConfigureUrl = "/content/signage?tab=playlists", Features = new() { "Real-time Updates", "Multi-screen Support", "Custom Layouts" } },
+            new() { Name = "Display Signage", Description = "The built-in digital signage module for queue displays", Icon = "tv", Color = "#f59e0b", IsConnected = true, IsBuilt = true, ConfigureUrl = "/content/signage?tab=playlists", Features = new() { "Real-time Updates", "Multi-screen Support", "Custom Layouts" } },
             new() { Name = "Telegram Bot", Description = "Send Telegram messages via a bot you create — contacts must message the bot first", Icon = "telegram", Color = "#26A5E4", IsConnected = telegramEnabled, IsBuilt = true, ConfigureUrl = "/admin/settings?tab=notifications", Features = new() { "Broadcast Campaigns", "Token Notifications", "Free to Use" } },
             new() { Name = "WhatsApp Business", Description = "Send WhatsApp messages via the real WhatsApp Cloud API (Meta for Developers)", Icon = "whatsapp", Color = "#25D366", IsConnected = whatsAppEnabled, IsBuilt = true, ConfigureUrl = "/admin/settings?tab=notifications", Features = new() { "Broadcast Campaigns", "Token Notifications", "Rich Text Messages" } },
             new() { Name = "Hospital Information System", Description = "Integrate with HIS for patient queue management", Icon = "hospital", Color = "#ef4444", IsConnected = false, IsBuilt = false, Features = new() { "Patient Lookup", "Appointment Sync", "Department Routing" } },

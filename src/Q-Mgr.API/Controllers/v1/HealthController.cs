@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using Hangfire;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -394,7 +395,7 @@ public class HealthController : ControllerBase
                             {
                                 Timestamp = ts.UtcDateTime,
                                 Level = level == "FTL" ? "Fatal" : "Error",
-                                Service = "Q-Mgr API",
+                                Service = ProductBrand.Name + " API",
                                 Message = match.Groups["message"].Value
                             };
                         }

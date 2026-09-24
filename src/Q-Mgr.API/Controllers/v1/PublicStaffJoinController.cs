@@ -323,7 +323,7 @@ public class PublicStaffJoinController : ControllerBase
         => BadRequest(new ProblemDetails { Title = title, Detail = detail, Status = StatusCodes.Status400BadRequest });
 
     private async Task<string> OrganizationNameAsync(Guid orgId)
-        => await _db.Organizations.IgnoreQueryFilters().Where(o => o.Id == orgId).Select(o => o.BrandName ?? o.Name).FirstOrDefaultAsync() ?? "the school";
+        => await _db.Organizations.IgnoreQueryFilters().Where(o => o.Id == orgId).Select(o => o.Name).FirstOrDefaultAsync() ?? "the school";
 
     private async Task TellExistingOwnerAsync(string email, string orgName)
     {

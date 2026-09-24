@@ -44,7 +44,7 @@
             }
             else
             {
-                <img src="/images/icon-512.svg" alt="@(TenantHost?.AppName ?? "Q-Mgr")" class="loading-logo" />
+                <img src="@(currentTheme == "light" ? ProductBrand.Assets.MarkLight : ProductBrand.Assets.Mark)" alt="@(TenantHost?.AppName ?? ProductBrand.Name)" class="loading-logo" />
             }
             <QSpinner Class="loading-spinner mt-3" />
             <p class="loading-text mt-2">Initializing...</p>
@@ -100,10 +100,10 @@ else
                     }
                     else
                     {
-                        <img src="/images/icon-512@(currentTheme == "light" ? "-light" : "").svg" alt="@ShellAppName" />
+                        <img src="@(currentTheme == "light" ? ProductBrand.Assets.MarkLight : ProductBrand.Assets.Mark)" alt="@ShellAppName" />
                     }
                 </span>
-                <span class="brand-text">@ShellAppName</span>
+                <span class="brand-text"><QProductMark Name="@ShellAppName" /></span>
             </a>
         </div>
 
@@ -167,8 +167,8 @@ else
                 {
                     <li class="nav-item">
                         <a href="/" @onclick="CollapseSidebarOnMobile" class="nav-link @(IsActive("/") ? "active" : "")">
-                            <i class="bi bi-speedometer2"></i>
-                            <span>Dashboard</span>
+                            <i class="bi bi-house"></i>
+                            <span>Home</span>
                         </a>
                     </li>
                 }
@@ -508,15 +508,18 @@ else
                legal pages had a literal with the YEAR TYPED IN, and email had a ninth.
 
                The attribution has to move with the sign-in page's: a tenant who paid to take our
-               name off there and still reads "Q-Mgr" at the foot of every screen afterwards has not
+               name off there and still reads ours at the foot of every screen afterwards has not
                got what they bought. Same flag, same server-side resolution.
 
                The source HERE is the ORGANISATION rather than the host, and that is the difference
                from the public pages: most tenants sign in on the platform address, and should not
                need a domain of their own to get what they paid for. Out there nobody is signed in,
                so the host is all there is to go on. *@
-            <QCopyright Owner="@ShellAppName" Attributed="@shellBranding.AttributionRemoved"
-                        Suffix="@(shellBranding.AttributionRemoved ? null : "Q-Mgr Front Office")" />
+            @* No suffix: "Front Office" was retired as a descriptor with the rebrand (B10), and the line
+               is a copyright notice — "© 2026 SACC", or the organisation's own name once it has
+               bought the attribution off. The ORGANISATION, never the app name: a copyright belongs
+               to the school, not to what the school calls its app. *@
+            <QCopyright Owner="@(shellBranding.Resolved ? shellBranding.OrganizationName : null)" Attributed="@shellBranding.AttributionRemoved" />
             <div class="footer-links">
                 @if (isSuperAdmin)
                 {
@@ -703,9 +706,13 @@ else
     /// </summary>
     private TenantHostBrandingDto shellBranding = new() { Resolved = false };
 
-    private string ShellAppName => shellBranding.Resolved && !string.IsNullOrWhiteSpace(shellBranding.BrandName)
-        ? shellBranding.BrandName!
-        : "Q-Mgr";
+    /// <summary>
+    /// The app's name in the shell: the school's own, exactly as typed, once white-labelling is on
+    /// (resolved by the API, <c>ProductBrand.NameFor</c>), otherwise ours.
+    /// </summary>
+    private string ShellAppName => shellBranding.Resolved && !string.IsNullOrWhiteSpace(shellBranding.ProductName)
+        ? shellBranding.ProductName!
+        : ProductBrand.Name;
 
     private string ShellBrandingStyle => shellBranding.Resolved
         ? BrandPalette.StyleFor(shellBranding.PrimaryColor, shellBranding.SecondaryColor, shellBranding.AccentColor)

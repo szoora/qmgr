@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using System.Net;
 using System.Net.Http.Json;
 using System.Net.Mail;
@@ -95,7 +96,7 @@ public class NotificationService : INotificationService
             {
                 Message = message,
                 Recipient = NormalizePhoneNumber(phoneNumber),
-                Sender = settings.SmsSenderId ?? "Q-Mgr"
+                Sender = settings.SmsSenderId ?? ProductBrand.Company
             };
 
             var customerId = settings.SmsCustomerId ?? "default";

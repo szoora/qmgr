@@ -376,7 +376,7 @@ else if (loadError != null)
     private string SubjectName => context?.FullName ?? "Student";
 
     private string OrganizationName =>
-        !string.IsNullOrWhiteSpace(branding?.BrandName) ? branding!.BrandName!
+        !string.IsNullOrWhiteSpace(branding?.OrganizationName) ? branding!.OrganizationName!
         : !string.IsNullOrWhiteSpace(BranchState.CurrentBranchName) ? BranchState.CurrentBranchName!
         : "Welfare";
 
@@ -508,7 +508,7 @@ else if (loadError != null)
                 OrganizationId = organizationId,
                 FileName = $"welfare-report-{QDateFormat.Iso8601(DateOnly.FromDateTime(DateTime.UtcNow))}.pdf",
                 DocumentName = documentName,
-                Summary = $"Student welfare report for {SubjectName}, {PeriodCaption}. Generated {stamp} by {generatedBy ?? "Q-Mgr"}.",
+                Summary = $"Student welfare report for {SubjectName}, {PeriodCaption}. Generated {stamp} by {generatedBy ?? (branding?.ProductName ?? ProductBrand.Name)}.",
                 PublishedFrom = $"Welfare timeline — {SubjectName} ({context?.StudentCode ?? "no code"}), {PeriodCaption}, generated {stamp}"
             }, JS, DocShareApi, Toast, Navigation);
 

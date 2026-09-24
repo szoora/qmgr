@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -263,8 +264,8 @@ public sealed class PaymentLedger : IPaymentLedger
             : null;
 
         return await SendAsync(payment, new GatewayCollectRequest(
-            payment.Id, amount, $"Q-Mgr {module.Name} module ({cycle})", method, phone, email, name, returnUrl,
-            invoice.InvoiceNumber, $"Q-Mgr: {module.Name}"), cancellationToken);
+            payment.Id, amount, $"{ProductBrand.Name} {module.Name} module ({cycle})", method, phone, email, name, returnUrl,
+            invoice.InvoiceNumber, $"{ProductBrand.MessagePrefix}{module.Name}"), cancellationToken);
     }
 
     // ================================================================== start: pay an invoice
@@ -306,8 +307,8 @@ public sealed class PaymentLedger : IPaymentLedger
         await _db.SaveChangesAsync(cancellationToken);
 
         return await SendAsync(payment, new GatewayCollectRequest(
-            payment.Id, due, $"Q-Mgr invoice {invoice.InvoiceNumber}", PaymentMethodCodes.MobileMoney, phone,
-            null, null, null, invoice.InvoiceNumber, $"Q-Mgr invoice {invoice.InvoiceNumber}"), cancellationToken);
+            payment.Id, due, $"{ProductBrand.Name} invoice {invoice.InvoiceNumber}", PaymentMethodCodes.MobileMoney, phone,
+            null, null, null, invoice.InvoiceNumber, $"{ProductBrand.Name} invoice {invoice.InvoiceNumber}"), cancellationToken);
     }
 
     private static Payment NewPayment(Guid organizationId, Guid? subscriptionId, Guid invoiceId, decimal amount,

@@ -20,7 +20,7 @@
     sessionStorage so a reload resumes without a second passcode, and dies with the tab.
 *@
 
-<PageTitle>@(gate?.DocumentName ?? "Shared document") - @(gate?.OrganizationName ?? "Q-Mgr")</PageTitle>
+<PageTitle>@(gate?.DocumentName ?? "Shared document") - @(gate?.OrganizationName ?? ProductBrand.Name)</PageTitle>
 
 @*
     The address of this page IS the capability: /s/{slug} is the whole credential, which is what the
@@ -55,7 +55,7 @@
                 }
                 <span>@(gate?.AttributionRemoved == true && !string.IsNullOrWhiteSpace(gate.OrganizationName)
                     ? $"Shared securely by {gate.OrganizationName}"
-                    : "Shared securely with Q-Mgr")</span>
+                    : $"Shared securely with {gate?.AppName ?? ProductBrand.Name}")</span>
             </div>
 
             @if (isLoading)

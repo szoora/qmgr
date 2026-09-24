@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using QMgr.Application.Interfaces.Billing;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -106,7 +107,9 @@ public class PublicDocumentSharesController : ControllerBase
         // wins where one is set, because that is what the school calls itself.
         var whiteLabel = org is { WhitelabelEnabled: true }
             && await _featureFlags.IsFeatureEnabledAsync(doc.OrganizationId, FeatureCodes.WhiteLabel);
-        var orgName = whiteLabel && !string.IsNullOrWhiteSpace(org!.BrandName) ? org.BrandName : org?.Name;
+        // The ORGANISATION: a parent reading a shared document needs the school's name, not what the
+        // school calls its app. BrandName stopped meaning both on 2026-09-24.
+        var orgName = org?.Name;
         var attributionRemoved = whiteLabel
             && await _featureFlags.IsFeatureEnabledAsync(doc.OrganizationId, FeatureCodes.RemoveAttribution);
 
@@ -118,6 +121,7 @@ public class PublicDocumentSharesController : ControllerBase
             Summary = open ? doc.Summary : null,
             OrganizationName = orgName,
             OrganizationLogoUrl = whiteLabel ? org!.LogoUrl : null,
+            AppName = ProductBrand.NameFor(org?.BrandName, whiteLabel),
             AttributionRemoved = attributionRemoved,
             PublishedFrom = open ? doc.PublishedFrom : null,
             PublishedAt = open ? doc.PublishedAt : null,

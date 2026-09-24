@@ -7,6 +7,36 @@ Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/
 ---
 ## ▶▶ HANDOVER — read this first (newest first; rewritten 2026-09-21 15:20, prepended 2026-09-22 evening)
 
+### 2026-09-24 — THE REBRAND: Q-Mgr → SACC Dashboard (uncommitted, on top of the 09-23/09-24 batch)
+
+**Nothing is committed and nothing is deployed.** Plan `docs/plans/SACC_DASHBOARD_REBRAND.md` (artifact
+https://claude.ai/artifact/F21ZYLMNNsGtTRt1KxViqN); all ten decisions B1–B10 taken as recommended. CLAUDE.md carries
+"The product's name has ONE home". **One more migration, `20260924090000_RebrandToSaccDashboard`** (data only —
+clears the two seeded brand names, repoints the platform mailbox's "Q-Mgr" display name, clears tenant email From
+names left at the shipped default; SMS sender IDs deliberately untouched) — **applied to the dev DB**.
+
+- [x] **`ProductBrand` + `ProductMark`** (Q-Mgr.Shared/Application/Branding) — the name and the mark, one home each.
+      **`brand-literal-check`** in `guards.sh`: 152 hits on the previous commit, 0 now. 18/18 guards pass.
+- [x] **Every literal swept** (~170 in ~70 files): pages, legal pages (LegalEntity), emails (`EmailBrand` gained
+      `OrganizationName`), SMS (headed by the organisation), billing, gateway, health, iCal PRODID, Hangfire title.
+- [x] **`BrandName` = a school's whole app name, as typed** — validated on save, at registration (optional, with a
+      suggestion) and on Platform → Tenants (new `PUT admin/tenants/{id}/brand-name`); 21 readers of the
+      organisation's name moved from `BrandName ?? Name` to `Name`.
+- [x] **The mark**: tile S; `/brand/*.svg` served from ProductMark; PNGs by `scripts/brand/render-brand-assets.mjs`;
+      `/app-manifest.json` for every host; old `images/*`, `favicon.svg`, static `manifest.json` deleted.
+- [x] **Home** replaces "Dashboard" as the home page's label. `QProductMark` sets the lockup.
+- [x] **Mobile app** (`D:\QMGR\Mobile\QMgr`, local-only repo, ALSO UNCOMMITTED there): `brands/qmgr.json` title
+      "SACC Dashboard" → `Brand.g.cs`/`qmgr.props` regenerated; `artwork/build-brand-assets.py` redraws the tile S
+      (flat, no gradient); sign-in lockup reads `Brand.Title`; unlock prompt and web bridge too. `ug.qmgr` unchanged.
+      Android and Windows targets build; `verify-brand-assets.py` 14/14.
+- [x] Fixed on the way: `NameFor` 500ed on an empty name (found by section 38); the service worker had not installed
+      since 09-19 (precache named deleted files); its update banner sat under the phone bar.
+- **Verified:** section 38 (`product-brand-e2e.mjs`) 35/0, wired into `class-teacher-e2e.sh`; browser
+  `product-name.mjs` 31/0 (headless and in a visible Chrome), wired into `all.mjs`; mobile-shell 31/0,
+  registration-doors 25/0 + 18/0, white-label API 46/0, getapp-page 28/0.
+- **Not done here, the user's to do:** URSB search/filing for "SACC"; the Play listing text and icon
+  (`artwork/out/store-icon-512.png`, `feature-graphic-1024x500.png`); confirm "SACC" is a registered SMS sender.
+
 ### 2026-09-23 evening — CALENDAR + DOCUMENT IMPORT + GATES, THE LIST STANDARD, BULK LOGGING (uncommitted; ~325 paths)
 
 **Nothing is committed and nothing is deployed.** The tree is the morning's (notification routing, above) plus

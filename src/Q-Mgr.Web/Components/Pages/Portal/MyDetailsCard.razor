@@ -88,7 +88,7 @@
                 <div><dt>Department</dt><dd>@(profile.DepartmentNames.Count == 0 ? "—" : string.Join(", ", profile.DepartmentNames))</dd></div>
                 <div><dt>Line manager</dt><dd>@Show(profile.LineManagerName)</dd></div>
                 <div><dt>Employee number</dt><dd>@Show(profile.EmployeeNumber)</dd></div>
-                <div><dt>Terms</dt><dd>@(profile.EmploymentType?.ToString() ?? "—")</dd></div>
+                <div><dt>Terms</dt><dd>@(profile.EmploymentType ?? "—")</dd></div>
                 <div><dt>Appointed</dt><dd>@(profile.EmploymentStartDate.HasValue ? QDateFormat.D(profile.EmploymentStartDate.Value) : "—")</dd></div>
                 @if (profile.EmploymentEndDate.HasValue)
                 {

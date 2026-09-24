@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using Mediator;
 using Microsoft.Extensions.Logging;
 using QMgr.Application.Interfaces;
@@ -58,6 +59,7 @@ public class RegisterOrganizationCommandHandler : IRequestHandler<RegisterOrgani
             var provisionResult = await _provisioningService.ProvisionTenantAsync(new ProvisionTenantRequest
             {
                 OrganizationName = request.OrganizationName,
+                BrandName = string.IsNullOrWhiteSpace(request.BrandName) ? null : request.BrandName.Trim(),
                 Slug = request.Slug,
                 AdminEmail = request.Email,
                 AdminPassword = request.Password,
@@ -148,6 +150,12 @@ public class RegisterOrganizationCommandHandler : IRequestHandler<RegisterOrgani
         if (request.OrganizationName.Length < 2 || request.OrganizationName.Length > 100)
         {
             return RegisterOrganizationResult.Failed("INVALID_ORG_NAME", "Organization name must be between 2 and 100 characters.");
+        }
+
+        // The one rule for an app name, the same sentence the form showed (ProductBrand.ValidateBrandName).
+        if (ProductBrand.ValidateBrandName(request.BrandName) is { } brandNameProblem)
+        {
+            return RegisterOrganizationResult.Failed("INVALID_BRAND_NAME", brandNameProblem);
         }
 
         if (string.IsNullOrWhiteSpace(request.Email))
@@ -257,7 +265,7 @@ public class RegisterOrganizationCommandHandler : IRequestHandler<RegisterOrgani
             var baseUrl = await _platformSettingsService.GetPublicWebBaseUrlAsync();
             var verificationUrl = $"{baseUrl}/verify?org={organizationId}&token={verificationToken}";
 
-            var subject = "Verify your Q-Mgr account";
+            var subject = $"Verify your {ProductBrand.Name} account";
             var htmlBody = EmailTemplates.Layout(
                 $"Welcome to {EmailTemplates.AppName}!",
                 firstName,

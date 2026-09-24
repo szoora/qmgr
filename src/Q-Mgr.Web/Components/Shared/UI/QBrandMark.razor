@@ -18,20 +18,29 @@
 *@
 
 <div class="q-brand-mark @Class">
-    <div class="q-brand-mark__tile @(Round ? "q-brand-mark__tile--round" : "")">
-        @if (HasLogo)
-        {
-            <img src="@Host!.Branding.LogoUrl" alt="@Host.AppName" class="q-brand-mark__img" />
-        }
-        else
-        {
-            <QIcon Name="@FallbackIcon" Size="30" />
-        }
-    </div>
+    @if (IsOurs)
+    {
+        @* The platform host is OURS, so it wears our mark (ProductMark) rather than a generic icon.
+           The mark is its own rounded wine tile, so it replaces the tile instead of sitting in one. *@
+        <img src="@ProductBrand.Assets.AppIcon" alt="" class="q-brand-mark__ours" width="80" height="80" />
+    }
+    else
+    {
+        <div class="q-brand-mark__tile @(Round ? "q-brand-mark__tile--round" : "")">
+            @if (HasLogo)
+            {
+                <img src="@Host!.Branding.LogoUrl" alt="@Host.AppName" class="q-brand-mark__img" />
+            }
+            else
+            {
+                <QIcon Name="@FallbackIcon" Size="30" />
+            }
+        </div>
+    }
 
     @if (ShowName)
     {
-        <h1 class="q-brand-mark__name">@Name</h1>
+        <h1 class="q-brand-mark__name">@if (Heading != null) { @Heading } else { <QProductMark Name="@Name" /> }</h1>
     }
     @if (!string.IsNullOrWhiteSpace(Tagline))
     {
@@ -59,6 +68,9 @@
         box-shadow: 0 6px 18px rgba(0, 0, 0, .10);
     }
     .q-brand-mark__tile--round { border-radius: 50%; }
+
+    /* Our mark (rebrand 2026-09-24): already a rounded tile, so it stands on its own. */
+    .q-brand-mark__ours { display: block; width: 80px; height: 80px; margin: 0 auto; border-radius: var(--qm-radius-lg); box-shadow: 0 6px 18px rgba(0, 0, 0, .10); }
 
     .q-brand-mark__tile:has(.q-brand-mark__img) {
         background: var(--qm-bg-card);
@@ -103,5 +115,8 @@
 
     private bool HasLogo => Host?.IsTenantHost == true && !string.IsNullOrWhiteSpace(Host.Branding.LogoUrl);
 
-    private string Name => Heading ?? (Host?.IsTenantHost == true ? Host.AppName : "Q-Mgr");
+    /// <summary>Not a school's own domain: the page is ours and carries our mark.</summary>
+    private bool IsOurs => Host?.IsTenantHost != true;
+
+    private string Name => Heading ?? (Host?.IsTenantHost == true ? Host.AppName : ProductBrand.Name);
 }

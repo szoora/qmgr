@@ -1,0 +1,47 @@
+@using QMgr.Application.DTOs
+@inject IStaffPerformanceApiService StaffApi
+@inject NavigationManager Navigation
+
+@* The series a person RUNS, on My Workspace (2026-09-23). A teacher appointed to run the end-of-term exams usually
+   holds no duty permission, so the Duties entry is not in their sidebar; without this they would have been given a
+   job with no door to it. Invigilating needs nothing here — the sittings are on My School Day and the register
+   to-do already. Hidden when they run none. *@
+@if (mine.Any())
+{
+    <QCard Title="Exam series you run" Icon="pencil-square" Class="@Class">
+        <ul class="esc-list">
+            @foreach (var s in mine)
+            {
+                <li>
+                    <div>
+                        <strong>@s.Name</strong>
+                        <span class="cell-sub">@s.SlotCount sitting@(s.SlotCount == 1 ? "" : "s")@(s.RegistersOutstanding > 0 ? $" · {s.RegistersOutstanding} register{(s.RegistersOutstanding == 1 ? "" : "s")} to take" : "")</span>
+                    </div>
+                    <QButton Text="Open" Icon="chevron-right" Variant="ghost" Size="sm" OnClick="@(() => Navigation.NavigateTo("/admin/staff/duties?tab=exams"))" />
+                </li>
+            }
+        </ul>
+    </QCard>
+}
+
+<style>
+    .esc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+    .esc-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .esc-list li > div { display: flex; flex-direction: column; min-width: 0; }
+</style>
+
+@code {
+    [Parameter] public Guid BranchId { get; set; }
+    [Parameter] public string? Class { get; set; }
+
+    private List<DutySeriesDto> mine = new();
+    private Guid loadedFor;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (BranchId == Guid.Empty || loadedFor == BranchId) return;
+        loadedFor = BranchId;
+        try { mine = (await StaffApi.GetDutySeriesAsync(BranchId)).Where(s => s.IAmManager).ToList(); }
+        catch { mine = new(); }
+    }
+}

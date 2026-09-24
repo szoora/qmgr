@@ -106,6 +106,13 @@ public static class Permissions
     public const string WelfareReportsOwn = "welfare.reports.own";
 
     /// <summary>
+    /// The welfare FIGURES and nothing else (2026-09-24): the summary and the cohort breakdown, with the per-staff
+    /// counts blanked. Every other welfare report code also opens the record search, which names children, so a
+    /// governor could not be given welfare figures without it. Held by the Board Member role.
+    /// </summary>
+    public const string WelfareReportsAggregate = "welfare.reports.aggregate";
+
+    /// <summary>
     /// The rung above Confidential: administrator-only welfare records, student flags, and the
     /// student-level restricted note. Seeded to Tenant Admin and SuperAdmin ONLY — a tenant must
     /// consciously grant it to a custom role (a DSL, a counsellor). Grants both reading restricted
@@ -281,6 +288,7 @@ public static class Permissions
         new("welfare.categories.manage", "Manage Welfare Categories", "Define the achievement/behavior/welfare categories staff can log against", "Student Welfare", 7),
         new("welfare.reports.view", "View Welfare Reports", "View trend and process-consistency reports across welfare records", "Student Welfare", 8),
         new("welfare.reports.own", "View Own Class Reports", "The same welfare reports, narrowed to the classes this user holds — revoke it to withhold the page from class teachers", "Student Welfare", 9),
+        new("welfare.reports.aggregate", "View Welfare Figures", "Welfare counts by category and cohort, with no child and no member of staff named — for governors", "Student Welfare", 10),
 
         // Staff Performance Monitor
         new("staff.records.view", "View Staff Records", "Read performance records about other staff, within the role's staff scope", "Staff Performance", 1),
@@ -346,6 +354,52 @@ public static class Permissions
     /// <summary>
     /// Default role definitions with their permissions
     /// </summary>
+    /// <summary>
+    /// What the Head Teacher does NOT hold, taken off the Administrator's set (2026-09-24): money, the system's own
+    /// settings and keys, and the power to change what a role GRANTS. A head runs the school; the owner / IT keeps the
+    /// levers that could hand the whole organisation to somebody. Deriving the head from "Administrator minus this"
+    /// means a new school permission reaches the head without anybody remembering to add it.
+    /// </summary>
+    public static readonly string[] HeadTeacherWithheld =
+    {
+        BillingManage,
+        ApiClientsView, ApiClientsCreate, ApiClientsEdit, ApiClientsDelete,
+        SettingsEdit, NotificationsManage,
+        RolesCreate, RolesEdit, RolesDelete,
+        BranchesCreate, BranchesDelete,
+    };
+
+    /// <summary>The Head Teacher's set: every visible tenant permission except the customer-portal ones and
+    /// <see cref="HeadTeacherWithheld"/>. One definition, read by RbacSeeder and DbSeeder alike — both ADD role
+    /// permissions, so two lists that disagreed would hand the role their union.</summary>
+    public static string[] HeadTeacherPermissions(IEnumerable<(string Code, bool IsVisible)> catalogue) => catalogue
+        .Where(p => p.IsVisible)
+        .Select(p => p.Code)
+        .Where(c => !c.StartsWith("tenants.") && !c.StartsWith("system.") && !c.StartsWith("platform.") && !c.StartsWith("customer."))
+        .Except(HeadTeacherWithheld)
+        .ToArray();
+
+    /// <summary>The Deputy Head Teacher's set (2026-09-24): the Director of Studies' plus welfare to the CONFIDENTIAL
+    /// rung (never restricted — that stays with the head and the Administrator), the roll, class teachers, visitors,
+    /// and admitting and onboarding staff.</summary>
+    public static readonly string[] DeputyHeadTeacherPermissions =
+    {
+        DashboardView, NotificationsView, ReportsView, ReportsExport,
+        UsersView, UsersCreate, UsersEdit, UsersApprove, RolesView,
+        StudentsView, StudentsManage, ClassTeachersManage,
+        WelfareView, WelfareCreate, WelfareEdit, WelfareNotify, WelfareConfidentialView, WelfareReportsView, WelfareReportsAggregate, WelfareCategoriesManage,
+        VisitorsView, VisitorsCheckIn, VisitorsCheckOut, VisitorsManage,
+        StaffRecordsView, StaffRecordsCreate, StaffRecordsEdit, StaffConfidentialView,
+        StaffDutiesManage, StaffParametersManage,
+        StaffAppraisalsConduct, StaffAppraisalsApprove,
+        StaffReportsView, StaffNoticesManage, StaffStructureManage, StaffRecognitionGive,
+        StaffDutyReportsView, StaffDutyReportsReview, TimetableManage, TimetableLessonsFlag,
+        CalendarManage, LibraryPublish, DocumentsShareCreate,
+    };
+
+    /// <summary>What the Board Member role holds: the dashboard and the welfare figures. Read by both seeders.</summary>
+    public static readonly string[] BoardMemberPermissions = { DashboardView, NotificationsView, WelfareReportsAggregate };
+
     public static readonly Dictionary<string, RoleDefinition> DefaultRoles = new()
     {
         [RoleCodes.SuperAdmin] = new RoleDefinition(
@@ -359,9 +413,9 @@ public static class Permissions
         ),
 
         [RoleCodes.Admin] = new RoleDefinition(
-            "Admin",
+            "Administrator",
             RoleCodes.Admin,
-            "Full access within organization",
+            "Everything in the organisation, including billing, settings and what each role may do. For the owner or IT administrator; a school's head holds the Head Teacher role.",
             "#9C27B0",
             "account-cog",
             1,
@@ -370,9 +424,9 @@ public static class Permissions
         ),
 
         [RoleCodes.Manager] = new RoleDefinition(
-            "Manager",
+            "Front Office Manager",
             RoleCodes.Manager,
-            "Manage branches, counters, and staff",
+            "Runs the front office: visitors, the queue and counters, signage and broadcasts, feedback, and the student roll. Outside a school's teaching hierarchy — it reads no staff records and appraises nobody.",
             "#2196F3",
             "account-supervisor",
             2,
@@ -403,9 +457,9 @@ public static class Permissions
         ),
 
         [RoleCodes.Staff] = new RoleDefinition(
-            "Staff",
+            "Front Desk Staff",
             RoleCodes.Staff,
-            "Counter operations and queue management",
+            "Front-desk work: the queue, tickets and visitors, and logging a welfare concern. Not teaching staff — a teacher holds the Teacher role.",
             "#4CAF50",
             "account",
             3,
@@ -424,6 +478,31 @@ public static class Permissions
         ),
 
         // ---- Staff Performance Monitor hierarchy (2026-09-16). See RoleCodes for the rank decision. ----
+
+        // ---- The school chain (2026-09-24): Head Teacher, then Deputy, then Director of Studies. ----
+        [RoleCodes.HeadTeacher] = new RoleDefinition(
+            "Head Teacher",
+            RoleCodes.HeadTeacher,
+            "The school's accountable head. Everything the school runs, including restricted welfare and staff records; payments, system settings, API keys and what a role grants stay with the Administrator.",
+            "#5B1E36",
+            "award",
+            2,
+            HeadTeacherPermissions(All.Select(p => (p.Code, p.IsVisible))),
+            RoleDataScope.Organization,
+            StaffDataScope.Organization
+        ),
+
+        [RoleCodes.DeputyHeadTeacher] = new RoleDefinition(
+            "Deputy Head Teacher",
+            RoleCodes.DeputyHeadTeacher,
+            "Runs the school day. Everything the Director of Studies holds, plus student welfare to the confidential tier, the roll, class teachers, visitors and staff onboarding.",
+            "#6C2A45",
+            "person-up",
+            3,
+            DeputyHeadTeacherPermissions,
+            RoleDataScope.Organization,
+            StaffDataScope.Organization
+        ),
 
         [RoleCodes.DirectorOfStudies] = new RoleDefinition(
             "Director of Studies",
@@ -499,6 +578,18 @@ public static class Permissions
                 DashboardView, NotificationsView,
                 StaffRecognitionGive,
             },
+            RoleDataScope.Organization,
+            StaffDataScope.SelfOnly
+        ),
+
+        [RoleCodes.BoardMember] = new RoleDefinition(
+            "Board Member",
+            RoleCodes.BoardMember,
+            "A governor or proprietor's representative: the dashboard and the school's welfare figures, with no child and no member of staff named.",
+            "#475569",
+            "bank",
+            4,
+            BoardMemberPermissions,
             RoleDataScope.Organization,
             StaffDataScope.SelfOnly
         ),

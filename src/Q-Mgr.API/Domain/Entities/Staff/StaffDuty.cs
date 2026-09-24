@@ -126,6 +126,22 @@ public class StaffDuty : BaseAuditableEntity
     public Guid? SeriesId { get; set; }
 
     /// <summary>
+    /// A NAMED series (2026-09-23): "End of Term 3 exams". Set on every Session slot of an exam-supervision series,
+    /// null on a rota series and on everything else. A series is the rows sharing <see cref="SeriesId"/>; the name and
+    /// the managers are carried on each row rather than in a table of their own (the enhance-before-add rule), and
+    /// every write to them updates the whole series in one statement. See <c>DutySeriesAccess</c>.
+    /// </summary>
+    [System.ComponentModel.DataAnnotations.MaxLength(200)]
+    public string? SeriesName { get; set; }
+
+    /// <summary>
+    /// Who runs this series: they may add, change and cancel its slots and take their registers WITHOUT holding
+    /// staff.duties.manage — delegation is not scope, the rule <see cref="RecorderUserIds"/> and a timetable master
+    /// already follow. Appointing them is the permission holder's act alone. Empty = the permission alone opens it.
+    /// </summary>
+    public Guid[] SeriesManagerUserIds { get; set; } = Array.Empty<Guid>();
+
+    /// <summary>
     /// The programme import that created this duty (plan TERM_PROGRAMME_CALENDAR_AND_GATES §8): a meeting read from the
     /// schedule of meetings, or a rota slot read from a duty rota. It is the undo handle — "Undo this import" removes
     /// every duty carrying it EXCEPT one whose register has been taken, which is never deleted.

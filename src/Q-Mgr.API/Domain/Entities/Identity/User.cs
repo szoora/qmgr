@@ -101,8 +101,11 @@ public class User : BaseAuditableEntity
     /// </summary>
     public DateOnly? EmploymentEndDate { get; set; }
 
-    /// <summary>Permanent, Contract, Probation, PartTime, Volunteer, Seconded — see the enum.</summary>
-    public StaffEmploymentType? EmploymentType { get; set; }
+    /// <summary>How they are engaged, by NAME from the school's own list (<c>StaffPerformancePolicyDto.EmploymentTypes</c>,
+    /// read through <c>EmploymentTypes.Resolve</c>). An enum until 2026-09-23; the migration wrote each stored value
+    /// as its old name.</summary>
+    [System.ComponentModel.DataAnnotations.MaxLength(60)]
+    public string? EmploymentType { get; set; }
 
     /// <summary>Highest qualification as the school records it, e.g. "Dip.Ed", "BSc Ed", "MEd".</summary>
     [MaxLength(120)]

@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -180,8 +181,8 @@ public partial class PlatformPaymentsController : ControllerBase
         var phone = UgandaPhone.Normalize(request!.PhoneNumber);
         var referenceId = Guid.NewGuid();
         var result = await _gateway.CollectAsync(new GatewayCollectRequest(
-            referenceId, SaccTestPrompts.Amount, "Q-Mgr gateway test", PaymentMethodCodes.MobileMoney, phone,
-            null, null, null, $"TEST-{referenceId.ToString("N")[..8].ToUpperInvariant()}", "Q-Mgr test"), cancellationToken);
+            referenceId, SaccTestPrompts.Amount, ProductBrand.Name + " gateway test", PaymentMethodCodes.MobileMoney, phone,
+            null, null, null, $"TEST-{referenceId.ToString("N")[..8].ToUpperInvariant()}", ProductBrand.Name + " test"), cancellationToken);
 
         var message = result.Accepted
             ? $"Prompt sent to {UgandaPhone.Display(phone)}. Approve it on the phone to finish the test."

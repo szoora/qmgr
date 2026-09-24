@@ -1915,8 +1915,9 @@ namespace QMgr.Infrastructure.Migrations
                     b.Property<DateOnly?>("EmploymentStartDate")
                         .HasColumnType("date");
 
-                    b.Property<int?>("EmploymentType")
-                        .HasColumnType("integer");
+                    b.Property<string>("EmploymentType")
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
 
                     b.Property<int>("FailedLoginAttempts")
                         .HasColumnType("integer");
@@ -4741,6 +4742,14 @@ namespace QMgr.Infrastructure.Migrations
 
                     b.Property<Guid?>("SeriesId")
                         .HasColumnType("uuid");
+
+                    b.PrimitiveCollection<Guid[]>("SeriesManagerUserIds")
+                        .IsRequired()
+                        .HasColumnType("uuid[]");
+
+                    b.Property<string>("SeriesName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
 
                     b.Property<DateTime>("StartsAt")
                         .HasColumnType("timestamp with time zone");

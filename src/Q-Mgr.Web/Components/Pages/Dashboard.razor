@@ -2,6 +2,7 @@
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
 @inject IQueueApiService QueueApi
+@inject IBrandContext Brand
 @inject ISignalRService SignalR
 @inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
@@ -12,12 +13,12 @@
 @inject System.Text.Json.JsonSerializerOptions JsonOptions
 @inject IJSRuntime JS
 
-<QPageTitle Text="Dashboard" />
+<QPageTitle Text="Home" />
 
 <!-- Page Header -->
 <div class="page-header">
     <div class="header-content">
-        <h1>Dashboard<QInfo Label="Dashboard" Text="Figures marked with a period cover the range you choose. Now Serving, counters and visitors on site are LIVE and always show this moment — a date range cannot apply to who is in the building." /></h1>
+        <h1>Home<QInfo Label="Home" Text="Figures marked with a period cover the range you choose. Now Serving, counters and visitors on site are LIVE and always show this moment — a date range cannot apply to who is in the building." /></h1>
         <span class="subtitle">@dashboardSubtitle</span>
     </div>
     <div class="header-actions">
@@ -62,9 +63,9 @@ else if (!BranchState.HasBranches)
             <div class="welcome-icon">
                 <QIcon Name="rocket-takeoff-fill" />
             </div>
-            <h2>Welcome to Q-Mgr!</h2>
+            <h2>Welcome to @Brand.AppName</h2>
             <p class="welcome-message">
-                Your front-office platform is ready. To get started, you'll need to set up your first branch location.
+                Everything is ready. To get started, you'll need to set up your first branch location.
             </p>
             <div class="welcome-steps">
                 <div class="step-item">
@@ -292,8 +293,12 @@ else if (hasCoreQueue && queueStatus != null)
     <div class="module-section">
         <div class="module-section-head">
             <h2><QIcon Name="mortarboard-fill" /> Student Welfare <span class="module-section-period">@PeriodNote</span></h2>
-            <QButton Text="Open ledger" Icon="arrow-right" Variant="ghost" Size="sm"
-                     OnClick="@(() => Navigation.NavigateTo("/admin/welfare-my-actions"))" />
+            @* A governor (welfare.reports.aggregate alone) reads the figures and has no ledger to open. *@
+            @if (canOpenLedger)
+            {
+                <QButton Text="Open ledger" Icon="arrow-right" Variant="ghost" Size="sm"
+                         OnClick="@(() => Navigation.NavigateTo("/admin/welfare-my-actions"))" />
+            }
         </div>
 
         @if (welfareSummary == null)
@@ -1142,6 +1147,7 @@ else if (hasCoreQueue && queueStatus != null)
         canViewStudents = await PermissionService.HasPermissionAsync(Permissions.StudentsView);
         canViewWelfareReports = await PermissionService.HasPermissionAsync(Permissions.WelfareReportsView)
             || await PermissionService.HasPermissionAsync(Permissions.WelfareReportsOwn);
+        canOpenLedger = await PermissionService.HasPermissionAsync(Permissions.WelfareView);
         canViewVisitors = await PermissionService.HasPermissionAsync(Permissions.VisitorsView);
         canViewFeedback = await PermissionService.HasPermissionAsync(Permissions.FeedbackView);
         canRespondFeedback = await PermissionService.HasPermissionAsync(Permissions.FeedbackRespond);
@@ -1173,7 +1179,7 @@ else if (hasCoreQueue && queueStatus != null)
     //   * a card the caller cannot open is not a link. StatHref returns null and the card renders
     //     as the plain tile it always was, rather than a link that bounces off /unauthorized.
 
-    private bool canViewReports, canViewQueue, canViewStudents, canViewWelfareReports;
+    private bool canViewReports, canViewQueue, canViewStudents, canViewWelfareReports, canOpenLedger;
     private bool canViewVisitors, canViewFeedback, canRespondFeedback, canViewContent;
 
     // Queue: the live board shows what is waiting and being served right now; the wait and
@@ -1184,9 +1190,9 @@ else if (hasCoreQueue && queueStatus != null)
     // Welfare: the ledger, filtered to the tile's own definition. `view=open` is "not resolved"
     // and `view=overdue` adds "past its due date" — the same two predicates GetSummary counts.
     private string? WelfareOpenHref =>
-        canViewWelfareReports ? "/admin/welfare-reports?tab=search&view=open" : "/admin/welfare-my-actions";
+        canViewWelfareReports ? "/admin/welfare-reports?tab=search&view=open" : canOpenLedger ? "/admin/welfare-my-actions" : null;
     private string? WelfareOverdueHref =>
-        canViewWelfareReports ? "/admin/welfare-reports?tab=search&view=overdue" : "/admin/welfare-my-actions";
+        canViewWelfareReports ? "/admin/welfare-reports?tab=search&view=overdue" : canOpenLedger ? "/admin/welfare-my-actions" : null;
     private string? WelfareRecordsHref => canViewWelfareReports ? "/admin/welfare-reports" : null;
     private string? RosterHref => canViewStudents ? "/admin/students/roster" : null;
 

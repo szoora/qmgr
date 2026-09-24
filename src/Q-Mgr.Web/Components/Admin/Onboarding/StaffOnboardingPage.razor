@@ -257,7 +257,7 @@
                    up in its own staffroom carrying OUR name, on the one printed surface a
                    white-labelling tenant is most likely to put on a wall. The other eight sheets
                    already fetched branding; this one had none at all. *@
-                <h1>Join @organizationName@(brandingRemovesAttribution ? "" : " on Q-Mgr")</h1>
+                <h1>Join @organizationName@(PosterAppName is null ? "" : $" on {PosterAppName}")</h1>
                 <p>Staff: scan the code or type the address to ask for your account. An administrator will approve you.</p>
                 <div id="ob-board-qr" class="ob-board-qr"></div>
                 <p class="ob-board-url">@JoinUrl</p>
@@ -327,6 +327,13 @@
     /// fetch leaves our name on rather than silently taking it off.
     /// </summary>
     private bool brandingRemovesAttribution;
+    private string appName = ProductBrand.Name;
+
+    /// <summary>
+    /// What the poster says staff are joining ON: the school's app when it has named one, ours otherwise —
+    /// except that a school which bought our name off never prints ours on its own wall.
+    /// </summary>
+    private string? PosterAppName => appName != ProductBrand.Name ? appName : (brandingRemovesAttribution ? null : ProductBrand.Name);
     private OnboardingStatusDto? status;
     private StaffOnboardingSettingsDto? settings;
     private SaveStaffOnboardingSettingsRequest form = new();
@@ -362,7 +369,10 @@
         organizationName = (await AuthService.GetCurrentUserAsync())?.OrganizationName ?? string.Empty;
 
         var branding = await OrganizationApi.GetMyBrandingAsync();
-        if (branding.Resolved && !string.IsNullOrWhiteSpace(branding.BrandName)) organizationName = branding.BrandName!;
+        // The ORGANISATION heads the poster; the app is what staff are joining it on. Before the
+        // rebrand this put the brand name where the organisation belongs (2026-09-24).
+        if (branding.Resolved && !string.IsNullOrWhiteSpace(branding.OrganizationName)) organizationName = branding.OrganizationName!;
+        appName = branding.Resolved && !string.IsNullOrWhiteSpace(branding.ProductName) ? branding.ProductName! : ProductBrand.Name;
         brandingRemovesAttribution = branding.AttributionRemoved;
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;

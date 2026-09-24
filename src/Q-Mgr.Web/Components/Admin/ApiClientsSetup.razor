@@ -168,7 +168,7 @@
         </div>
         <div class="form-group">
             <QInput TValue="string" @bind-Value="@formData.WebhookUrl" Label="Webhook URL (outbound)" Placeholder="https://your-system.example.com/qmgr/webhook" />
-            <span class="field-hint">Q-Mgr POSTs the selected events here, signed with <code>X-QMgr-Signature</code>. Must be https (http only for localhost). Leave blank for no outbound webhook.</span>
+            <span class="field-hint">The selected events are POSTed here, signed with <code>X-QMgr-Signature</code>. Must be https (http only for localhost). Leave blank for no outbound webhook.</span>
         </div>
         <div class="form-group">
             <label>Webhook events</label>
@@ -221,7 +221,7 @@
                     <code>@revealedWebhookSecret</code>
                     <QButton Icon="clipboard-fill" Variant="ghost" Size="sm" OnClick="@(() => CopyToClipboard(revealedWebhookSecret))" />
                 </div>
-                <span class="field-hint">HMAC-SHA256 key. Verify Q-Mgr's <code>X-QMgr-Signature</code> header with it, and sign calls to the inbound endpoint with it.</span>
+                <span class="field-hint">HMAC-SHA256 key. Verify the <code>X-QMgr-Signature</code> header with it, and sign calls to the inbound endpoint with it.</span>
             </div>
         }
     </ChildContent>

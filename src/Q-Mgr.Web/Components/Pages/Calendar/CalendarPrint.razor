@@ -75,7 +75,7 @@
                     }
                 </table>
             }
-            <footer class="calp-foot">Printed @QDateFormat.DT(DateTime.Now)@(string.IsNullOrWhiteSpace(generatedBy) ? "" : $" by {generatedBy}"). Programmes change: the calendar in Q-Mgr is the current version.</footer>
+            <footer class="calp-foot">Printed @QDateFormat.DT(DateTime.Now)@(string.IsNullOrWhiteSpace(generatedBy) ? "" : $" by {generatedBy}"). Programmes change: the calendar in @(branding?.ProductName ?? ProductBrand.Name) is the current version.</footer>
         }
     </ChildContent>
 </QPrintSheet>
@@ -141,7 +141,7 @@ else if (loadError != null)
         ? $"{Term.Name} programme{(string.IsNullOrWhiteSpace(Term.Theme) ? "" : $" — {Term.Theme}")}"
         : $"Programme {QDateFormat.Range(from, to)}";
 
-    private string OrganizationName => !string.IsNullOrWhiteSpace(branding?.BrandName) ? branding!.BrandName! : BranchState.CurrentBranchName ?? "Programme";
+    private string OrganizationName => !string.IsNullOrWhiteSpace(branding?.OrganizationName) ? branding!.OrganizationName! : BranchState.CurrentBranchName ?? "Programme";
 
     private string WeekHeading(DateOnly monday)
     {
@@ -207,7 +207,7 @@ else if (loadError != null)
                 OrganizationId = organizationId,
                 FileName = $"term-programme-{CalendarDisplay.Iso(from)}.pdf",
                 DocumentName = $"{DocTitle} — {BranchState.CurrentBranchName}",
-                Summary = $"{QDateFormat.Range(from, to)}, {Events.Count} event(s). Generated {QDateFormat.D(DateTime.UtcNow)} by {generatedBy ?? "Q-Mgr"}.",
+                Summary = $"{QDateFormat.Range(from, to)}, {Events.Count} event(s). Generated {QDateFormat.D(DateTime.UtcNow)} by {generatedBy ?? (branding?.ProductName ?? ProductBrand.Name)}.",
                 PublishedFrom = $"Calendar — {BranchState.CurrentBranchName}",
                 SubjectNoun = "programme",
             }, JS, DocShareApi, Toast, Navigation);

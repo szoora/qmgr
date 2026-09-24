@@ -167,9 +167,36 @@
                             <label for="orgName"><QIcon Name="building" Size="16" /><span>Organization Name *</span></label>
                             <div class="input-wrapper">
                                 <input type="text" id="orgName" @bind="formData.OrganizationName"
-                                       placeholder="e.g., SACC Software Limited" class="form-control" />
+                                       placeholder="e.g. Maryhill High School" class="form-control" />
                             </div>
                             <ValidationMessage For="@(() => formData.OrganizationName)" class="validation-message" />
+                        </div>
+
+                        @* OPTIONAL: what the school calls its app (rebrand 2026-09-24, decision B4). We SUGGEST a
+                           name from the organisation's; the school may take it, change it or leave it empty.
+                           It shows once white-labelling is on — until then the app is ours — and the hint says so,
+                           rather than letting somebody type a name and wonder where it went. *@
+                        <div class="form-group">
+                            <label for="brandName"><QIcon Name="app-indicator" Size="16" /><span>Your app's name</span></label>
+                            <div class="input-wrapper">
+                                <input type="text" id="brandName" @bind="formData.BrandName" @bind:event="oninput"
+                                       maxlength="@ProductBrand.MaxBrandNameLength"
+                                       placeholder="@(string.IsNullOrWhiteSpace(BrandSuggestion) ? "Optional" : BrandSuggestion)" class="form-control" />
+                            </div>
+                            @if (BrandNameProblem is { } brandProblem)
+                            {
+                                <div class="validation-message">@brandProblem</div>
+                            }
+                            else
+                            {
+                                <small class="form-hint">
+                                    Optional. Shown to your staff once white-labelling is on; until then they see @ProductBrand.Name.
+                                    @if (!string.IsNullOrWhiteSpace(BrandSuggestion) && formData.BrandName?.Trim() != BrandSuggestion)
+                                    {
+                                        <button type="button" class="link-button" id="use-brand-suggestion" @onclick="() => formData.BrandName = BrandSuggestion">Use @BrandSuggestion</button>
+                                    }
+                                </small>
+                            }
                         </div>
 
                         <div class="form-row">
@@ -208,7 +235,7 @@
                             <div class="auth-alert auth-alert-warning auth-animate-in" role="status">
                                 <div class="auth-alert-icon"><QIcon Name="info-circle-fill" /></div>
                                 <div class="auth-alert-content">
-                                    <p><strong>@h.OrganizationName</strong> already uses Q-Mgr, and invites people at <strong>@h.MatchedDomain</strong> to join.</p>
+                                    <p><strong>@h.OrganizationName</strong> already uses @ProductBrand.Name, and invites people at <strong>@h.MatchedDomain</strong> to join.</p>
                                     <p class="auth-alert-sub">If that is your organisation, join it instead of setting up a second one &mdash; your colleagues, students and records are already there. Ask an administrator for the join link.</p>
                                     <div class="auth-alert-actions">
                                         <a href="/join" class="btn-login btn-login--sm"><QIcon Name="link-45deg" Size="16" /><span>I have a join link</span></a>
@@ -927,9 +954,16 @@
     /// own with two optional fields for company; with those removed a single-field step was padding
     /// rather than simplicity, so it moved here and sign-up went from four steps to three.
     /// </summary>
+    /// <summary>The suggested app name, from the organisation name as typed ("MARYHILL Dashboard").</summary>
+    private string BrandSuggestion => ProductBrand.SuggestFor(formData.OrganizationName);
+
+    /// <summary>The one rule for an app name — the API runs the same and says the same sentence.</summary>
+    private string? BrandNameProblem => ProductBrand.ValidateBrandName(formData.BrandName);
+
     private bool CanProceedAccountStep()
     {
         return !string.IsNullOrWhiteSpace(formData.OrganizationName) &&
+               BrandNameProblem == null &&
                !string.IsNullOrWhiteSpace(formData.FirstName) &&
                !string.IsNullOrWhiteSpace(formData.LastName) &&
                !string.IsNullOrWhiteSpace(formData.Email) &&
@@ -970,6 +1004,7 @@
             var request = new
             {
                 organizationName = formData.OrganizationName,
+                brandName = string.IsNullOrWhiteSpace(formData.BrandName) ? null : formData.BrandName.Trim(),
                 // No user-facing subdomain picker - Slug is omitted so the API auto-generates a
                 // guaranteed-unique one from organizationName (RegisterOrganizationCommandHandler
                 // already supported this; the picker just never used that path).
@@ -1134,6 +1169,10 @@
     private class RegisterFormData
     {
         public string OrganizationName { get; set; } = "";
+
+        /// <summary>Optional: the app's own name, exactly as typed.</summary>
+        public string? BrandName { get; set; }
+
         public string Email { get; set; } = "";
         public string Password { get; set; } = "";
         public string ConfirmPassword { get; set; } = "";

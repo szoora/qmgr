@@ -56,7 +56,8 @@ public record StaffProfileDto
 
     public DateOnly? EmploymentStartDate { get; init; }
     public DateOnly? EmploymentEndDate { get; init; }
-    public StaffEmploymentType? EmploymentType { get; init; }
+    /// <summary>The school's name for how they are engaged (see <c>EmploymentTypes</c>).</summary>
+    public string? EmploymentType { get; init; }
     public string? Qualification { get; init; }
     public string? TeachingRegistrationNumber { get; init; }
     public DateOnly? DateOfBirth { get; init; }
@@ -91,7 +92,8 @@ public record UpdateStaffProfileRequest
     public string? EmployeeNumber { get; set; }
     public DateOnly? EmploymentStartDate { get; set; }
     public DateOnly? EmploymentEndDate { get; set; }
-    public StaffEmploymentType? EmploymentType { get; set; }
+    /// <summary>A name from the school's active employment types, or null. Checked by <c>EmploymentTypes.Resolve</c>.</summary>
+    public string? EmploymentType { get; set; }
     public string? Qualification { get; set; }
     public string? TeachingRegistrationNumber { get; set; }
     public DateOnly? DateOfBirth { get; set; }

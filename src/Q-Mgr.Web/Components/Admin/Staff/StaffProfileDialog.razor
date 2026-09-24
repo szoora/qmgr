@@ -77,10 +77,11 @@
                             HasError="@(numberProblem != null)" ErrorMessage="@numberProblem" />
                 </div>
                 <div class="form-group">
-                    <QSelect TValue="StaffEmploymentType?" TItem="EnumOption<StaffEmploymentType>" Label="Terms"
-                             @bind-Value="form.EmploymentType" Items="@EmploymentTypes"
-                             TextSelector="@(o => o.Label)" ValueSelector="@(o => (StaffEmploymentType?)o.Value)"
-                             Placeholder="Not recorded" AllowClear="true" Disabled="@(!CanEdit)" />
+                    <QSelect TValue="string" TItem="string" Label="Terms"
+                             @bind-Value="form.EmploymentType" Items="@EmploymentTypeOptions"
+                             TextSelector="@(o => o)" ValueSelector="@(o => o)"
+                             Placeholder="Not recorded" AllowClear="true" Disabled="@(!CanEdit)"
+                             Hint="The school's own list, kept under Staff Performance setup — add Government-paid or PTA-paid there if your MoES return separates them." />
                 </div>
                 <div class="form-group">
                     <QDatePicker Label="Appointed" Value="@ToDateTime(form.EmploymentStartDate)"
@@ -183,15 +184,13 @@
 
     private record EnumOption<T>(T Value, string Label);
 
-    private static readonly IReadOnlyList<EnumOption<StaffEmploymentType>> EmploymentTypes = new[]
-    {
-        new EnumOption<StaffEmploymentType>(StaffEmploymentType.Permanent, "Permanent"),
-        new EnumOption<StaffEmploymentType>(StaffEmploymentType.Contract, "Contract"),
-        new EnumOption<StaffEmploymentType>(StaffEmploymentType.Probation, "Probation"),
-        new EnumOption<StaffEmploymentType>(StaffEmploymentType.PartTime, "Part time"),
-        new EnumOption<StaffEmploymentType>(StaffEmploymentType.Volunteer, "Volunteer"),
-        new EnumOption<StaffEmploymentType>(StaffEmploymentType.Seconded, "Seconded")
-    };
+    // The school's ACTIVE employment types, plus whatever this person already holds if the school has since retired
+    // it — so opening the dialog never blanks a stored value the list no longer offers (the server keeps it too).
+    private List<string> activeEmploymentTypes = new();
+    private IReadOnlyList<string> EmploymentTypeOptions =>
+        profile?.EmploymentType is { Length: > 0 } held && !activeEmploymentTypes.Any(t => QMgr.Domain.Enums.EmploymentTypes.Key(t) == QMgr.Domain.Enums.EmploymentTypes.Key(held))
+            ? activeEmploymentTypes.Append(held).ToList()
+            : activeEmploymentTypes;
 
     private static readonly IReadOnlyList<EnumOption<PersonSex>> Sexes = new[]
     {
@@ -215,6 +214,8 @@
         try
         {
             profile = await StaffApi.GetStaffProfileAsync(BranchId, UserId!.Value);
+            try { activeEmploymentTypes = (await StaffApi.GetPolicyAsync()).ActiveEmploymentTypeNames(); }
+            catch { activeEmploymentTypes = QMgr.Domain.Enums.EmploymentTypes.Defaults.ToList(); }
             form = new UpdateStaffProfileRequest
             {
                 Phone = profile.Phone,

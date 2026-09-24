@@ -102,7 +102,19 @@ public record TenantHostBrandingDto
     /// </summary>
     public bool Resolved { get; init; }
 
-    public string? BrandName { get; init; }
+    /// <summary>
+    /// The app's name on this host, resolved server-side (<c>ProductBrand.NameFor</c>): the school's
+    /// Brand Name exactly as typed, or "SACC Dashboard" when it has none. Replaced <c>BrandName</c> on
+    /// 2026-09-24, which held "brand name, else organisation name" and so meant two things at once.
+    /// </summary>
+    public string? ProductName { get; init; }
+
+    /// <summary>The same, short enough for a home-screen label.</summary>
+    public string? ProductShortName { get; init; }
+
+    /// <summary>The organisation itself. What the copyright line credits when attribution is removed.</summary>
+    public string? OrganizationName { get; init; }
+
     public string? LogoUrl { get; init; }
     public string? FaviconUrl { get; init; }
     public string? PrimaryColor { get; init; }

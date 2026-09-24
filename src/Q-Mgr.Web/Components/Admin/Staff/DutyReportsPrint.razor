@@ -163,7 +163,7 @@ else if (loadError != null)
     private DateOnly from, to;
 
     private string RangeText => QDateFormat.Range(from, to);
-    private string OrganizationName => !string.IsNullOrWhiteSpace(branding?.BrandName) ? branding!.BrandName! : BranchState.CurrentBranchName ?? "Duty reports";
+    private string OrganizationName => !string.IsNullOrWhiteSpace(branding?.OrganizationName) ? branding!.OrganizationName! : BranchState.CurrentBranchName ?? "Duty reports";
 
     protected override async Task OnInitializedAsync()
     {
@@ -218,7 +218,7 @@ else if (loadError != null)
                 OrganizationId = organizationId,
                 FileName = $"duty-reports-{from:yyyy-MM-dd}-{to:yyyy-MM-dd}.pdf",
                 DocumentName = name,
-                Summary = $"Duty report pack for {BranchState.CurrentBranchName}, due {RangeText}. Generated {QDateFormat.D(DateTime.UtcNow)} by {generatedBy ?? "Q-Mgr"}.",
+                Summary = $"Duty report pack for {BranchState.CurrentBranchName}, due {RangeText}. Generated {QDateFormat.D(DateTime.UtcNow)} by {generatedBy ?? (branding?.ProductName ?? ProductBrand.Name)}.",
                 PublishedFrom = $"Duty reports — {BranchState.CurrentBranchName}, {RangeText}{(queue?.ScopedToDepartments.Any() == true ? $" (scoped to {string.Join(", ", queue.ScopedToDepartments)})" : "")}",
                 SubjectNoun = "pack",
                 Audit = doc => StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest { Kind = StaffExportKinds.DutyReports, Published = true, MediaContentId = doc.Id, DocumentName = name, Format = "PDF" })

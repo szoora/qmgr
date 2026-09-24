@@ -70,6 +70,30 @@ public class StaffPolicyController : StaffPerformanceControllerBase
         var error = Validate(request);
         if (error != null) return error;
 
+        // The two taxonomy lists (staff groups, employment types): trimmed, blanks dropped, one name per KEY. The
+        // editor refused duplicates on the page only; the server refuses them too, in the same words.
+        request.StaffGroups = Tidy(request.StaffGroups);
+        request.EmploymentTypes = Tidy(request.EmploymentTypes);
+        if (request.StaffGroups.Count == 0) return BadRequestProblem("Keep at least one staff group.");
+        if (request.StaffGroups.Select(g => StaffGroups.Key(g.Name)).Distinct().Count() != request.StaffGroups.Count)
+            return BadRequestProblem("Two groups have the same name.");
+        if (request.EmploymentTypes.Count == 0) return BadRequestProblem("Keep at least one employment type.");
+        if (request.EmploymentTypes.Select(t => EmploymentTypes.Key(t.Name)).Distinct().Count() != request.EmploymentTypes.Count)
+            return BadRequestProblem("Two employment types have the same name.");
+        if (request.EmploymentTypes.Any(t => t.Name.Length > 60))
+            return BadRequestProblem("An employment type is too long", "60 characters at most.");
+
+        // A type somebody HOLDS is retired, never removed: a stored name the list no longer carries reads as nothing,
+        // and a rename is a removal plus an addition. Retiring keeps it on the people who have it and off new choices.
+        var kept = request.EmploymentTypes.Select(t => EmploymentTypes.Key(t.Name)).ToHashSet();
+        var held = await Db.Users.IgnoreQueryFilters().AsNoTracking()
+            .Where(u => u.OrganizationId == organizationId.Value && u.EmploymentType != null)
+            .Select(u => u.EmploymentType!).Distinct().ToListAsync();
+        var dropped = held.Where(h => !kept.Contains(EmploymentTypes.Key(h))).OrderBy(h => h).ToList();
+        if (dropped.Count > 0)
+            return BadRequestProblem($"{string.Join(", ", dropped)} {(dropped.Count == 1 ? "is" : "are")} still held by somebody",
+                "Retire an employment type somebody holds instead of removing it — untick Active. To rename one, add the new name, move the people, then retire the old.");
+
         var current = await _policy.GetAsync(organizationId.Value);
 
         // Job bookkeeping is the job's to write, not the editor's; keep whatever the sweep last set.
@@ -281,6 +305,11 @@ public class StaffPolicyController : StaffPerformanceControllerBase
         p.SummaryHour,
         HasDpoContact = !string.IsNullOrWhiteSpace(p.DataProtectionOfficerContact)
     };
+
+    /// <summary>Names trimmed, blanks dropped, SortOrder renumbered in the order given.</summary>
+    private static List<VocabularyItemDto> Tidy(List<VocabularyItemDto>? items)
+        => (items ?? new()).Where(i => !string.IsNullOrWhiteSpace(i.Name))
+            .Select((i, idx) => i with { Name = i.Name.Trim(), SortOrder = idx }).ToList();
 
     private IActionResult? Validate(StaffPerformancePolicyDto p)
     {

@@ -71,7 +71,7 @@
                     <QSwitch @bind-Value="settings.WhitelabelEnabled" Disabled="@(!settings.WhiteLabelEntitled)" aria-label="White-labeling" />
                     <div class="toggle-info">
                         <span class="toggle-label">White-labeling @(settings.WhitelabelEnabled ? "on" : "off")</span>
-                        <small>When off, every screen uses the standard Q-Mgr look whatever is set below.</small>
+                        <small>When off, every screen uses the standard @ProductBrand.Name look whatever is set below.</small>
                     </div>
                 </div>
 
@@ -93,10 +93,25 @@
 
             <QCard Icon="image-fill" Title="Logo &amp; Favicon" Subtitle="Shown wherever your organisation is named — the app, your kiosk and display screens, and the emails you send">
                 <div class="form-grid">
+                    @* THE APP'S NAME, written by the school in full (rebrand 2026-09-24). Nothing is added to it —
+                       not "Dashboard", not ours. We SUGGEST a name built from the organisation's; the school
+                       may take it, change it or clear it. The rule is ProductBrand.ValidateBrandName, which
+                       the API runs too, so the sentence here is the sentence a refused save would give. *@
                     <div class="form-group">
-                        <label>Brand Name</label>
-                        <QInput @bind-Value="@settings.BrandName" Placeholder="Your Company Name" Disabled="@(!settings.WhiteLabelEntitled)" />
-                        <small>Overrides "Q-Mgr" wherever the product names itself</small>
+                        <QInput id="brand-name" Label="Brand Name" @bind-Value="@settings.BrandName"
+                                Placeholder="@(string.IsNullOrWhiteSpace(Suggestion) ? ProductBrand.Name : Suggestion)"
+                                MaxLength="@ProductBrand.MaxBrandNameLength"
+                                Disabled="@(!settings.WhiteLabelEntitled)"
+                                HasError="@(BrandNameProblem != null)" ErrorMessage="@BrandNameProblem"
+                                Hint="@($"Your app's name, exactly as you write it: on the sign-in page, in the browser tab, on staff phones and in your emails. It shows while white-labelling is on. Leave it empty to use {ProductBrand.Name}.")" />
+                        <div class="brand-name-preview" id="brand-name-preview">
+                            <span class="brand-name-preview__label">Staff will see</span>
+                            <strong>@PreviewName</strong>
+                            @if (!string.IsNullOrWhiteSpace(Suggestion) && settings.BrandName?.Trim() != Suggestion && settings.WhiteLabelEntitled)
+                            {
+                                <QButton Text="@($"Use {Suggestion}")" Variant="ghost" Size="sm" OnClick="@(() => settings.BrandName = Suggestion)" />
+                            }
+                        </div>
                     </div>
                 </div>
 
@@ -275,18 +290,10 @@
 
                 <div class="form-grid" style="margin-top:20px;">
                     <div class="form-group">
-                        <label>Position</label>
-                        <div class="banner-radio-row">
-                            <label class="banner-radio"><input type="radio" name="banner-position" checked="@(banner.Position == DisplayBannerPosition.Bottom)" @onchange="@(() => banner.Position = DisplayBannerPosition.Bottom)" /> Bottom</label>
-                            <label class="banner-radio"><input type="radio" name="banner-position" checked="@(banner.Position == DisplayBannerPosition.Top)" @onchange="@(() => banner.Position = DisplayBannerPosition.Top)" /> Top</label>
-                        </div>
+                        <QRadioGroup TValue="DisplayBannerPosition" Legend="Position" Inline="true" @bind-Value="banner.Position" Options="@BannerPositionOptions" />
                     </div>
                     <div class="form-group">
-                        <label>Scroll Direction</label>
-                        <div class="banner-radio-row">
-                            <label class="banner-radio"><input type="radio" name="banner-direction" checked="@(banner.Direction == DisplayBannerDirection.RightToLeft)" @onchange="@(() => banner.Direction = DisplayBannerDirection.RightToLeft)" /> Right to left</label>
-                            <label class="banner-radio"><input type="radio" name="banner-direction" checked="@(banner.Direction == DisplayBannerDirection.LeftToRight)" @onchange="@(() => banner.Direction = DisplayBannerDirection.LeftToRight)" /> Left to right</label>
-                        </div>
+                        <QRadioGroup TValue="DisplayBannerDirection" Legend="Scroll direction" Inline="true" @bind-Value="banner.Direction" Options="@BannerDirectionOptions" />
                         <small>Use left-to-right for RTL-language message content</small>
                     </div>
                 </div>
@@ -358,7 +365,11 @@
     }
 </div>
 
-<style>.header-content h1 {
+<style>
+    /* What the app will be called, read back under the field (rebrand 2026-09-24). */
+    .brand-name-preview { display: flex; align-items: center; flex-wrap: wrap; gap: var(--q-row-gap); margin-top: 6px; font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
+    .brand-name-preview strong { color: var(--qm-text-primary); font-family: var(--qm-font-display); }
+.header-content h1 {
         margin: 0 0 8px;
         color: var(--qm-text-primary);
     }
@@ -535,20 +546,6 @@
         text-align: center;
     }
 
-    .banner-radio-row {
-        display: flex;
-        gap: 20px;
-    }
-
-    .banner-radio {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: var(--qm-text-base);
-        color: var(--qm-text-primary);
-        cursor: pointer;
-    }
-
     .banner-message-row {
         display: flex;
         align-items: center;
@@ -689,6 +686,11 @@
 </style>
 
 @code {
+    private static readonly IReadOnlyList<QRadioOption<DisplayBannerPosition>> BannerPositionOptions = new[]
+        { new QRadioOption<DisplayBannerPosition>(DisplayBannerPosition.Bottom, "Bottom"), new QRadioOption<DisplayBannerPosition>(DisplayBannerPosition.Top, "Top") };
+    private static readonly IReadOnlyList<QRadioOption<DisplayBannerDirection>> BannerDirectionOptions = new[]
+        { new QRadioOption<DisplayBannerDirection>(DisplayBannerDirection.RightToLeft, "Right to left"), new QRadioOption<DisplayBannerDirection>(DisplayBannerDirection.LeftToRight, "Left to right") };
+
     /// <summary>True when the Appearance hub is hosting this page inside its own tab strip: the host
     /// then owns the page title and the tab strip. There is no route to this component any other
     /// way — see CLAUDE.md, "A hub owns the route; its sections own nothing".</summary>
@@ -722,7 +724,7 @@
 
     private static readonly List<ColorPalette> Palettes = new()
     {
-        new("Signature Wine", "Q-Mgr default", "#8c2f52", "#47393f", "#0d9488"),
+        new("Signature Wine", $"{ProductBrand.Name} default", "#8c2f52", "#47393f", "#0d9488"),
         new("Corporate Navy", "Banking & finance", "#1d3557", "#2b2d3a", "#3fa9f5"),
         new("Healthcare Teal", "Clinics & hospitals", "#0f766e", "#1e3a3a", "#38bdf8"),
         new("Government Slate", "Public sector offices", "#475569", "#1e293b", "#0ea5e9"),
@@ -872,8 +874,23 @@
         }
     }
 
+    /// <summary>The organisation's name, for the suggestion. From the loaded branding (Settings → General).</summary>
+    private string? Suggestion => ProductBrand.SuggestFor(settings.OrganizationName);
+
+    private string? BrandNameProblem => ProductBrand.ValidateBrandName(settings.BrandName);
+
+    /// <summary>What the app will be called once this is saved — the same rule the API applies.</summary>
+    private string PreviewName => ProductBrand.NameFor(settings.BrandName, settings.WhitelabelEnabled && settings.WhiteLabelEntitled);
+
     private async Task SaveSettings()
     {
+        // Refused here in the API's own words, before a round trip that would only say the same.
+        if (BrandNameProblem is { } problem)
+        {
+            validationError = problem;
+            return;
+        }
+
         isSaving = true;
         validationError = null;
         try

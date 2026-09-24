@@ -15,7 +15,26 @@ namespace QMgr.Application.DTOs;
 public record OrganizationBrandingDto
 {
     public bool WhitelabelEnabled { get; set; }
+
+    /// <summary>
+    /// The school's own name for its APP, exactly as typed — the raw value, for the editor. Not the
+    /// organisation's name (that is <see cref="OrganizationName"/>) and not necessarily what is shown
+    /// (that is <see cref="ProductName"/>, which falls back to ours unless white-labelling is on).
+    /// </summary>
     public string? BrandName { get; set; }
+
+    /// <summary>The organisation itself — Settings → General. What a printed header names.</summary>
+    public string? OrganizationName { get; set; }
+
+    /// <summary>
+    /// The app's name as it is SHOWN, resolved server-side by <c>ProductBrand.NameFor</c>: the school's
+    /// Brand Name while white-labelling is entitled and on, otherwise "SACC Dashboard".
+    /// </summary>
+    public string? ProductName { get; set; }
+
+    /// <summary>The same, short enough for a home-screen label (<c>ProductBrand.ShortNameFor</c>).</summary>
+    public string? ProductShortName { get; set; }
+
     public string? LogoUrl { get; set; }
     public string? FaviconUrl { get; set; }
     public string? PrimaryColor { get; set; }
@@ -38,8 +57,8 @@ public record OrganizationBrandingDto
     public bool WhiteLabelEntitled { get; set; } = true;
 
     /// <summary>
-    /// Whether "Powered by SACC Software" and the Q-Mgr footer line come off this tenant's
-    /// screens. Resolved SERVER-side from <c>FeatureCodes.RemoveAttribution</c> — an add-on, or a
+    /// Whether this tenant's copyright lines (<c>QCopyright</c>) credit the TENANT rather than us on
+    /// its screens. Resolved SERVER-side from <c>FeatureCodes.RemoveAttribution</c> — an add-on, or a
     /// platform override on the organization — and never inferred by the client.
     ///
     /// DEFAULTS TO FALSE, unlike <see cref="WhiteLabelEntitled"/> beside it, and that asymmetry is

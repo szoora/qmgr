@@ -1268,5 +1268,66 @@ else
   printf '  \033[33mSKIP\033[0m  node is not installed; section 34 did not run\n'
 fi
 
+hdr "35. Exam-supervision series and the school's own employment types"
+# A named series of Session duties with managers who run it without the duties permission and cannot appoint; an
+# outsider gets 404; a manager change moves the registers; an invigilator double-booked is warned, never refused.
+# Employment types: the enum became the school's list — a name it does not carry is refused, a held type cannot be
+# removed, only retired. Uses section 14's staff; creates no users; cancels and restores what it writes.
+if command -v node > /dev/null 2>&1; then
+  ES_OUT=$(API="$API" BRANCH="$BRANCH" node "$(dirname "$0")/exam-series-e2e.mjs" 2>&1)
+  echo "$ES_OUT" | sed 's/^/  /'
+  ES_PASS=$(echo "$ES_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  ES_FAIL=$(echo "$ES_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$ES_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 35 did not report a summary\n'
+  else PASS=$((PASS+ES_PASS)); FAIL=$((FAIL+ES_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 35 did not run\n'
+fi
+
+hdr "36. The school chain: Head Teacher, Deputy, Director of Studies"
+# The two seeded roles, their sets and labels; the ORDER as RoleAssignmentGuard applies it; and the person-side gate:
+# nobody changes, switches off, re-addresses or removes an account whose role they could not have given - one at a
+# time or in bulk. Borrows section 14's e2e.sp.dos / e2e.sp.aa and puts both roles back.
+if command -v node > /dev/null 2>&1; then
+  SR_OUT=$(API="$API" BRANCH="$BRANCH" node "$(dirname "$0")/school-roles-e2e.mjs" 2>&1)
+  echo "$SR_OUT" | sed 's/^/  /'
+  SR_PASS=$(echo "$SR_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  SR_FAIL=$(echo "$SR_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$SR_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 36 did not report a summary\n'
+  else PASS=$((PASS+SR_PASS)); FAIL=$((FAIL+SR_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 36 did not run\n'
+fi
+
+hdr "37. The RBAC review, built: posts, the access review, leavers, governors"
+# R1-R8 of the RBAC review (2026-09-24): the school chain above the front office, the safeguarding lead and acting
+# head as posts that grant and expire, house posts that reach a house, the access review, the Board Member reading
+# figures only, and the overnight leaver sweep. Borrows section 14 accounts and puts every role and post back.
+if command -v node > /dev/null 2>&1; then
+  LD_OUT=$(API="$API" BRANCH="$BRANCH" node "$(dirname "$0")/leadership-e2e.mjs" 2>&1)
+  echo "$LD_OUT" | sed 's/^/  /'
+  LD_PASS=$(echo "$LD_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  LD_FAIL=$(echo "$LD_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$LD_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 37 did not report a summary\n'
+  else PASS=$((PASS+LD_PASS)); FAIL=$((FAIL+LD_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 37 did not run\n'
+fi
+
+hdr "38. SACC Dashboard: the product's name and a school's own"
+# The rebrand (2026-09-24, docs/plans/SACC_DASHBOARD_REBRAND.md): the app-name rule on save, how the shown name
+# resolves (a school's own only while white-labelling is entitled and on), the short form, the platform setter,
+# registration refusing a bad name, the mobile tenant/info, and the mark. Puts the tenant's branding back.
+if command -v node > /dev/null 2>&1; then
+  PB_OUT=$(API="$API" node "$(dirname "$0")/product-brand-e2e.mjs" 2>&1)
+  echo "$PB_OUT" | sed 's/^/  /'
+  PB_PASS=$(echo "$PB_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  PB_FAIL=$(echo "$PB_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$PB_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 38 did not report a summary\n'
+  else PASS=$((PASS+PB_PASS)); FAIL=$((FAIL+PB_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 38 did not run\n'
+fi
+
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 exit "$FAIL"

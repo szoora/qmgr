@@ -69,6 +69,20 @@ public static class RoleCodes
     // existing Tenant Admin. The staff-axis narrowing lives on Role.StaffScope, enforced by
     // StaffScopeService — never by comparing against these codes.
 
+    /// <summary>
+    /// Head Teacher — the school's accountable head (2026-09-24). Everything the school runs, including the restricted
+    /// rung of welfare and staff records; NOT payments, system settings, API keys or what a role grants, which stay
+    /// with the Administrator (the owner / IT). Ranks directly above <see cref="DeputyHeadTeacher"/>.
+    /// </summary>
+    public const string HeadTeacher = "head-teacher";
+
+    /// <summary>
+    /// Deputy Head Teacher — runs the day (2026-09-24). The Director of Studies' set plus student welfare to the
+    /// confidential rung, rolls, class-teacher assignments, visitors and staff onboarding. Ranks directly above the
+    /// Director of Studies: "next to DOS is Deputy, then head" (user, 2026-09-24).
+    /// </summary>
+    public const string DeputyHeadTeacher = "deputy-head-teacher";
+
     /// <summary>Director of Studies — academic head. Staff scope Organization; conducts and approves appraisals.</summary>
     public const string DirectorOfStudies = "director-of-studies";
 
@@ -81,6 +95,14 @@ public static class RoleCodes
     /// permissions and the staff scope together. The role granted the scope and no permission.
     /// </summary>
     public const string RetiredHeadOfDepartment = "head-of-department";
+
+    /// <summary>
+    /// Board Member — a governor or proprietor's representative (2026-09-24). The dashboard and the school's
+    /// welfare FIGURES only (<c>welfare.reports.aggregate</c>): counts by category and cohort, never a named child
+    /// and never a named member of staff. The Board oversees the school under the Education Act 2008 (Schedule 3);
+    /// it does not read case files.
+    /// </summary>
+    public const string BoardMember = "board-member";
 
     /// <summary>Teacher — the portal and recognition; records only through named-recorder delegation on a duty.</summary>
     public const string Teacher = "teacher";
@@ -106,10 +128,32 @@ public static class RoleCodes
     /// </summary>
     public static readonly string[] All =
     {
-        SuperAdmin, Admin, Manager,
+        SuperAdmin, Admin,
+        // THE SCHOOL CHAIN SITS ABOVE THE FRONT OFFICE (R1 of the RBAC review, 2026-09-24). Head, then Deputy, then
+        // Front Office Manager, then Director of Studies. A head is the school's accountable officer: they may assign
+        // the front-office role, change a Front Office Manager's account, and take the visiting-day override that
+        // "manager or above" carries. Moving them was checked, not assumed: every role that was below Manager is
+        // still below it, and Manager moved down only past the two roles seeded the same day, so no pre-existing
+        // pair of roles changed order. RoleAssignmentGuard's permission-subset check still stops a head handing out
+        // anything their own role does not hold.
+        HeadTeacher, DeputyHeadTeacher,
+        Manager,
         DirectorOfStudies, AcademicAssistant,
-        Staff, Teacher, SupportStaff, Viewer
+        Staff, Teacher, SupportStaff, BoardMember, Viewer
     };
+
+    /// <summary>
+    /// The senior leadership team, for the designated safeguarding lead post (2026-09-24). Keeping Children Safe in
+    /// Education requires the lead to be a member of the SLT, with the status and authority to direct other staff.
+    /// Deliberately an explicit list rather than "rank at or above X": the front office ranks among these and is not
+    /// the SLT.
+    /// </summary>
+    public static readonly string[] SeniorLeadership = { Admin, HeadTeacher, DeputyHeadTeacher, DirectorOfStudies };
+
+    /// <summary>Who may act as head for a period: a deputy or the Director of Studies.</summary>
+    public static readonly string[] ActingHeadEligible = { DeputyHeadTeacher, DirectorOfStudies };
+
+    public static bool IsIn(string[] set, string? roleCode) => set.Contains(roleCode, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The roles whose holders are support (non-teaching) staff, for PerformanceParameter.AppliesTo.</summary>
     public static bool IsSupportStaff(string? roleCode)
@@ -208,10 +252,14 @@ public static class RoleCodes
     /// (user decision 2026-09-17), not a module of its own. A custom role's code is arbitrary and
     /// returns null here, so a tenant's own roles are never hidden by this.
     /// </summary>
-    public static string? ModuleFor(string? roleCode) => roleCode?.Trim().ToLowerInvariant() switch
+    public static string[] ModulesFor(string? roleCode) => roleCode?.Trim().ToLowerInvariant() switch
     {
-        DirectorOfStudies or AcademicAssistant or Teacher or SupportStaff => ModuleCodes.StudentWelfare,
-        _ => null,
+        HeadTeacher or DeputyHeadTeacher or DirectorOfStudies or AcademicAssistant or Teacher or SupportStaff or BoardMember
+            => new[] { ModuleCodes.StudentWelfare },
+        // THE FRONT OFFICE (R8, 2026-09-24): "a school may not use manager". Offered to a tenant that runs a front
+        // office — a queue or a visitor desk — and to nobody else. Visibility only: anybody already holding one keeps it.
+        Manager or Staff => new[] { ModuleCodes.CoreQueue, ModuleCodes.VisitorManagement },
+        _ => Array.Empty<string>(),
     };
 
     /// <summary>
@@ -227,10 +275,10 @@ public static class RoleCodes
     {
         if (IsPlatformOnly(roleCode)) return false;
 
-        var module = ModuleFor(roleCode);
-        if (module is null) return true;
+        var modules = ModulesFor(roleCode);
+        if (modules.Length == 0) return true;
 
         return activeModuleCodes is not null
-            && activeModuleCodes.Contains(module, StringComparer.OrdinalIgnoreCase);
+            && modules.Any(m => activeModuleCodes.Contains(m, StringComparer.OrdinalIgnoreCase));
     }
 }

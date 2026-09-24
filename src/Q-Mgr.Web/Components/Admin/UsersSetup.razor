@@ -1424,7 +1424,9 @@
         formData = new UserFormData
         {
             IsActive = true,
-            RoleId = roleOptions.FirstOrDefault(r => r.Name == "Staff")?.Id ?? roleOptions.FirstOrDefault()?.Id ?? Guid.Empty
+            // By CODE, never by display name: the labels are repaired from the seeder on every start and "Staff" became
+            // "Front Desk Staff" on 2026-09-24, which would have silently defaulted every new user to the first role.
+            RoleId = roleOptions.FirstOrDefault(r => r.Code == "staff")?.Id ?? roleOptions.FirstOrDefault()?.Id ?? Guid.Empty
         };
         if (isSuperAdmin)
         {

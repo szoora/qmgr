@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using QMgr.Application.Interfaces;
@@ -300,7 +301,7 @@ public class PlatformSettingsService : IPlatformSettingsService
                         SmtpUsername = "",
                         SmtpPassword = "",
                         FromEmail = "",
-                        FromName = "Q-Mgr",
+                        FromName = ProductBrand.Name,
                         UseSsl = true
                     }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true })
             }

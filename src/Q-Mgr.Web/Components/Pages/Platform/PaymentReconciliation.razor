@@ -130,7 +130,7 @@ else if (data != null)
                             <tr>
                                 <td><strong>@payment.OrganizationName</strong></td>
                                 <td>@payment.Description<span class="cell-sub">@payment.ReferenceId.ToString("N")[..8]</span></td>
-                                <td>@payment.Method@if (!string.IsNullOrEmpty(payment.Phone)) { <span class="cell-sub">@payment.Phone</span> }</td>
+                                <td>@payment.Method @if (!string.IsNullOrEmpty(payment.Phone)) { <span class="cell-sub">@payment.Phone</span> }</td>
                                 <td class="num">@payment.Currency @payment.Amount.ToString("N0")</td>
                                 <td>
                                     <QChip Text="@StateLabel(payment.State)" Variant="@StateVariant(payment.State)" Size="sm" />

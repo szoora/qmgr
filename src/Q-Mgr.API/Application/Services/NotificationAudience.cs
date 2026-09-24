@@ -65,6 +65,23 @@ public static class NotificationAudience
                 .ToListAsync(ct));
         }
 
+        // The leadership posts (2026-09-24): safeguarding lead and deputies, an acting head in period, house and
+        // dormitory posts. Filtered through the same people query, so an inactive or departed holder hears nothing.
+        var leadership = await LeadershipPosts.ReadAsync(db, organizationId, ct);
+        var candidates = new List<Guid>();
+        if (LeadershipPosts.SafeguardingLeadPost.Contains(permissionCode, StringComparer.OrdinalIgnoreCase))
+        {
+            if (leadership.SafeguardingLeadUserId is { } lead) candidates.Add(lead);
+            candidates.AddRange(leadership.DeputySafeguardingLeadUserIds);
+        }
+        if (leadership.ActingHead is { } acting && acting.IsActiveOn(LeadershipPosts.Today())
+            && LeadershipPosts.ActingHeadPost().Contains(permissionCode, StringComparer.OrdinalIgnoreCase))
+            candidates.Add(acting.UserId);
+        if (PostPermissionService.PastoralClassPost.Contains(permissionCode, StringComparer.OrdinalIgnoreCase))
+            candidates.AddRange(leadership.PastoralUnitPosts.Where(p => branchId == null || p.BranchId == branchId).Select(p => p.UserId));
+        if (candidates.Count > 0)
+            ids.AddRange(await people.Where(u => candidates.Contains(u.Id)).Select(u => u.Id).ToListAsync(ct));
+
         return ids.Distinct().ToList();
     }
 }

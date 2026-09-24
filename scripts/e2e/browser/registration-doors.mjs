@@ -149,7 +149,7 @@ try {
   })()`);
   const w = JSON.parse(warn);
   check('3d: the published domain names the school', w.shown === true, warn);
-  check('3e: …says it already uses Q-Mgr', /already uses Q-Mgr/i.test(w.text), w.text);
+  check('3e: …says it already uses SACC Dashboard', /already uses SACC Dashboard/i.test(w.text), w.text);
   check('3f: …offers the join link', w.hasJoinLink === true, warn);
   check('3g: …and a way to continue anyway — it WARNS, never blocks', w.hasContinue === true, warn);
   check('3h: …with the form still usable', w.inputsStillEnabled === true, warn);

@@ -113,6 +113,7 @@ public static class DependencyInjection
         // The staff sweeps. Hangfire resolves these through the same container, and the
         // Development-only "run the weekly lesson analysis now" trigger injects the first one.
         services.AddScoped<QMgr.Infrastructure.Jobs.StaffPerformanceJobs>();
+        services.AddScoped<QMgr.Infrastructure.Jobs.AccountLifecycleJobs>();
         // Tells a class teacher when one of their students has a (non-confidential) case logged.
         services.AddScoped<IWelfareAlertService, WelfareAlertService>();
         // Queue-side customer messaging: ticket issued, nearly your turn, called to counter.

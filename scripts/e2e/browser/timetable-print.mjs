@@ -11,6 +11,7 @@
 // Run: node scripts/e2e/browser/timetable-print.mjs   (headless Chrome on 9333; see CLAUDE.md)
 import { openTab } from './cdp.mjs';
 import { login } from './login.mjs';
+import { seedLiveTimetable } from './seed-timetable.mjs';
 
 const BASE = 'http://127.0.0.1:5003';
 const API = process.env.API ?? 'http://127.0.0.1:5001';
@@ -61,91 +62,17 @@ const teacherToken = await fetch(`${API}/api/v1/auth/login`, {
 const claims = (jwt) => JSON.parse(Buffer.from(jwt.split('.')[1], 'base64').toString());
 const teacherId = claims(teacherToken).sub;
 const ORG = claims(token).org_id;
-const versions = await fetch(`${API}/api/v1/branches/${BRANCH}/timetable/timetables`, { headers: auth }).then(r => r.json());
 
-const TT = `${API}/api/v1/branches/${BRANCH}/timetable`;
-const detail = (id) => fetch(`${TT}/timetables/${id}`, { headers: auth }).then(r => r.json());
-const hasTwoIncludingTeacher = (d) => {
-  const ts = new Set((d?.lessons ?? []).map(l => l.teacherUserId));
-  return ts.size > 1 && ts.has(teacherId);
-};
-
-// The version under test must be PUBLISHED, IN FORCE TODAY and include the teacher section 9 signs in as:
-// the portal card reads .../timetable/current and hides itself on 204, so any other version leaves section 9
-// failing on the dev branch's state rather than on the product (it did, 2026-09-23 — every suite archives
-// what it publishes). Use the live one when it qualifies; otherwise copy the newest version that has this
-// teacher and a colleague into a one-week draft starting today, publish it, and ARCHIVE it at the end.
-let target = null, lessons = [], seededId = null, seededPublished = false;
-const seededAssignments = [];
-const current = await fetch(`${TT}/current`, { headers: { Authorization: `Bearer ${teacherToken}` } });
-if (current.status === 200) {
-  const c = await current.json();
-  const d = await detail(c.timetable?.id ?? c.id);
-  if (hasTwoIncludingTeacher(d)) { target = { id: d.timetable.id, name: d.timetable.name }; lessons = d.lessons; }
-}
-if (!target) {
-  let source = null;
-  for (const v of versions.filter(v => (v.lessonCount ?? 0) > 1)
-                          .sort((a, b) => String(b.createdAt ?? b.effectiveFrom).localeCompare(String(a.createdAt ?? a.effectiveFrom)))) {
-    const d = await detail(v.id);
-    if (hasTwoIncludingTeacher(d)) { source = { id: v.id, name: v.name }; break; }
-  }
-  if (source) {
-    const today = new Date(); const iso = (d) => d.toISOString().slice(0, 10);
-    const until = new Date(today); until.setDate(until.getDate() + 6);
-    const created = await fetch(`${TT}/timetables`, {
-      method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: `E2E print ${Date.now().toString(36)}`, copyFromTimetableId: source.id, effectiveFrom: iso(today), effectiveTo: iso(until) }),
-    });
-    const createdText = await created.text();
-    const draft = created.ok ? JSON.parse(createdText) : null;
-    const draftId = draft?.timetable?.id;
-    if (draftId) {
-      seededId = draftId;
-      // A copied lesson needs its teacher ASSIGNED that class and subject, or TimetableChecker raises
-      // TeacherNotAssigned (hard) and publishing refuses — the same fixture lesson section 26 learned.
-      // Those assignments GRANT Teaching-tier access to a class of children, so every one is removed after.
-      const issues = draft?.diagnosis?.issues ?? [];
-      const byLesson = new Map((draft?.lessons ?? []).map(l => [l.id, l]));
-      const wanted = new Map();
-      for (const i of issues.filter(i => i.kind === 'TeacherNotAssigned'))
-        for (const lid of i.lessonIds ?? []) {
-          const l = byLesson.get(lid);
-          if (l) wanted.set(`${l.teacherUserId}|${l.className}|${l.subjectId}`, l);
-        }
-      for (const l of wanted.values()) {
-        const r = await fetch(`${API}/api/v1/branches/${BRANCH}/class-teachers/subject-teachers`, {
-          method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ className: l.className, userId: l.teacherUserId, subjectId: l.subjectId, periodsPerWeek: 4 }),
-        });
-        const j = await r.json().catch(() => null);
-        if (j?.id) seededAssignments.push(j.id);
-      }
-      const pub = await fetch(`${TT}/timetables/${draftId}/publish`, {
-        method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ acknowledgeSoftClashes: true, note: 'e2e timetable-print' }),
-      });
-      if (pub.ok) { seededPublished = true; const d = await detail(draftId); target = { id: d.timetable.id, name: d.timetable.name }; lessons = d.lessons; }
-      else console.error(`could not publish the seeded copy of "${source.name}": ${pub.status} ${(await pub.text()).slice(0, 300)}`);
-    } else console.error(`could not copy "${source.name}": ${created.status} ${createdText.slice(0, 300)}`);
-  }
-}
-const archiveSeeded = async () => {
-  if (seededId) {
-    // A published version is archived (never deleted, by design); a draft that never published is deleted.
-    const r = seededPublished
-      ? await fetch(`${TT}/timetables/${seededId}/archive`, { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: '{}' })
-      : await fetch(`${TT}/timetables/${seededId}`, { method: 'DELETE', headers: auth });
-    console.log(`    cleanup: ${seededPublished ? 'archived' : 'deleted'} the seeded timetable (${r.status})`);
-  }
-  for (const id of seededAssignments) await fetch(`${API}/api/v1/branches/${BRANCH}/class-teachers/${id}`, { method: 'DELETE', headers: auth });
-  if (seededAssignments.length) console.log(`    cleanup: removed ${seededAssignments.length} seeded subject-teacher assignment(s)`);
-};
-if (!target) {
+// The version under test must be PUBLISHED, IN FORCE TODAY and include the teacher section 9 signs in as — the
+// portal card reads .../timetable/current and hides itself on 204. seed-timetable.mjs is the one home for that.
+const tt = await seedLiveTimetable({ API, BRANCH, token, teacherId, label: 'print' });
+const archiveSeeded = tt.cleanup;
+if (!tt.target) {
   await archiveSeeded();
-  console.error('SKIP: no published timetable in force today includes this teacher, and none could be seeded from a version that does. Place lessons for them and a colleague first.');
+  console.error(`SKIP: no published timetable in force today includes this teacher (${tt.reason}).`);
   process.exit(2);
 }
+const target = tt.target, lessons = tt.lessons;
 
 const byTeacher = new Map();
 for (const l of lessons) byTeacher.set(l.teacherUserId, l.teacherName);

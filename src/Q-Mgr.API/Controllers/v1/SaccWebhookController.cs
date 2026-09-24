@@ -72,7 +72,7 @@ public class SaccWebhookController : ControllerBase
             var data = root.TryGetProperty("data", out var d) ? d : root;
             if (!Guid.TryParse(Text(data, "reference_id") ?? Text(data, "referenceId"), out referenceId))
             {
-                _logger.LogInformation("Gateway webhook {Event} carried no Q-Mgr reference; ignored", eventName);
+                _logger.LogInformation("Gateway webhook {Event} carried no reference of ours; ignored", eventName);
                 return Ok(new { received = true });
             }
         }

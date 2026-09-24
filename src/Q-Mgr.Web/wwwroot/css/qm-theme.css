@@ -567,7 +567,10 @@ a {
     transition: var(--qm-transition);
 }
 
-a:hover {
+/* Not on an anchor dressed as a button: `a:hover` (0,1,1) out-ranks `.q-btn--primary` (0,1,0), so
+   the button's text took the brand SECONDARY on hover — dark on a dark fill, unreadable. On a phone
+   a tap leaves :hover stuck, so the Get-app page's download button went blank after one press. */
+a:not(.q-btn):hover {
     color: var(--qm-secondary);
 }
 

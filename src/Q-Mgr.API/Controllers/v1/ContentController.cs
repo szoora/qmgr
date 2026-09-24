@@ -301,7 +301,7 @@ public class ContentController : ControllerBase
         // into our own upload store would be a second row for a file some other record owns —
         // and the security review showed that was a way to take a gated file public. Refused.
         if (QMgr.Infrastructure.Services.Storage.UploadAccessService.FileNameOf(request.FileUrl) != null)
-            return BadRequest(new { message = "Files in Q-Mgr's own upload store cannot be added by URL. Upload the file instead." });
+            return BadRequest(new { message = "Files in this app's own upload store cannot be added by URL. Upload the file instead." });
 
         var media = new MediaContent
         {

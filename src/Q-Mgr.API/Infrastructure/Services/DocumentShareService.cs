@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -439,7 +440,7 @@ public class DocumentShareService : IDocumentShareService
                 ActionUrl = $"/content/library?tab=documents&document={doc.Id}",
                 Channels = NotificationChannel.InApp | NotificationChannel.Email,
                 Email = creator?.Email,
-                EmailSubject = $"Q-Mgr: \"{doc.Name}\" was opened"
+                EmailSubject = $"{ProductBrand.MessagePrefix}\"{doc.Name}\" was opened"
             }, ct);
         }
         catch (Exception ex)

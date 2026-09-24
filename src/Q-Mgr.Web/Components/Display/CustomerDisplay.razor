@@ -51,7 +51,7 @@ else
         <div class="header-left">
             <div class="logo">
                 <QIcon Name="collection-fill" />
-                <span>@(string.IsNullOrWhiteSpace(branchInfo?.OrganizationName) ? "Q-Mgr" : branchInfo!.OrganizationName)</span>
+                <span>@(string.IsNullOrWhiteSpace(branchInfo?.OrganizationName) ? ProductBrand.Name : branchInfo!.OrganizationName)</span>
             </div>
             @if (!string.IsNullOrWhiteSpace(branchInfo?.Name))
             {

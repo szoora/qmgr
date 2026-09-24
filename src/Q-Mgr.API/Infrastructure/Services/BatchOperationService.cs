@@ -30,7 +30,9 @@ namespace QMgr.Infrastructure.Services;
 /// </remarks>
 public interface IBatchOperationService
 {
-    Task<BatchPreviewDto> ResolveAsync(Guid branchId, BatchRequest request, CancellationToken ct = default);
+    /// <param name="actorUserId">Who asked. The two account operations are bounded by the asker's rank, so they
+    /// refuse without one; the job passes the batch's <c>CreatedByUserId</c>, since it has no HTTP context.</param>
+    Task<BatchPreviewDto> ResolveAsync(Guid branchId, BatchRequest request, Guid? actorUserId, CancellationToken ct = default);
 }
 
 public class BatchOperationService : IBatchOperationService
@@ -47,7 +49,7 @@ public class BatchOperationService : IBatchOperationService
         _billing = billing;
     }
 
-    public async Task<BatchPreviewDto> ResolveAsync(Guid branchId, BatchRequest request, CancellationToken ct = default)
+    public async Task<BatchPreviewDto> ResolveAsync(Guid branchId, BatchRequest request, Guid? actorUserId, CancellationToken ct = default)
     {
         if (request.Ids.Count == 0)
             return Blocked(request, "Nothing is selected.");
@@ -70,8 +72,8 @@ public class BatchOperationService : IBatchOperationService
             BatchOperation.CancelTokens => await ResolveCancelTokensAsync(branchId, request, ct),
             BatchOperation.CancelAppointments => await ResolveCancelAppointmentsAsync(branchId, request, ct),
 
-            BatchOperation.SetUserActive => await ResolveUserActiveAsync(branchId, request, ct),
-            BatchOperation.SetUserRole => await ResolveUserRoleAsync(branchId, request, ct),
+            BatchOperation.SetUserActive => await ResolveUserActiveAsync(branchId, request, actorUserId, ct),
+            BatchOperation.SetUserRole => await ResolveUserRoleAsync(branchId, request, actorUserId, ct),
 
             _ => Blocked(request, "That operation isn't supported.")
         };
@@ -427,15 +429,36 @@ public class BatchOperationService : IBatchOperationService
         return Build(request, rows, $"Cancel {changing:N0} booking{(changing == 1 ? "" : "s")}");
     }
 
-    private async Task<BatchPreviewDto> ResolveUserActiveAsync(Guid branchId, BatchRequest request, CancellationToken ct)
+    /// <summary>
+    /// A person's account may be changed only by somebody who could have given them the role they hold now — the rule
+    /// UsersController applies to one account (2026-09-24). Null when the change may go ahead; otherwise the reason,
+    /// which becomes that row's Failed message so the rest of the batch still runs and the refusal is named.
+    /// One's own account is always one's own. Memoised per role, since a batch is mostly one or two roles.
+    /// </summary>
+    private async Task<string?> SubjectRefusalAsync(Guid actorUserId, Guid subjectId, Guid subjectRoleId,
+        Dictionary<Guid, string?> memo, CancellationToken ct)
     {
+        if (subjectId == actorUserId) return null;
+        if (memo.TryGetValue(subjectRoleId, out var known)) return known;
+        var role = await _context.Roles.IgnoreQueryFilters().AsNoTracking().FirstOrDefaultAsync(r => r.Id == subjectRoleId, ct);
+        var refusal = role == null ? null
+            : await QMgr.API.Application.Services.RoleAssignmentGuard.RefusalAsync(_context, actorUserId, role, ct) is { } why
+                ? $"{role.Name} is above what you may change. {why}" : null;
+        memo[subjectRoleId] = refusal;
+        return refusal;
+    }
+
+    private async Task<BatchPreviewDto> ResolveUserActiveAsync(Guid branchId, BatchRequest request, Guid? actorUserId, CancellationToken ct)
+    {
+        if (actorUserId is null) return Blocked(request, "Who is making this change could not be determined.");
+        var memo = new Dictionary<Guid, string?>();
         var activating = string.Equals(request.Value, "true", StringComparison.OrdinalIgnoreCase);
         var orgId = await _context.Branches.AsNoTracking().Where(b => b.Id == branchId)
             .Select(b => b.OrganizationId).FirstOrDefaultAsync(ct);
 
         var users = await _context.Users.AsNoTracking()
             .Where(u => u.OrganizationId == orgId && request.Ids.Contains(u.Id))
-            .Select(u => new { u.Id, u.Email, Name = PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName), u.IsActive })
+            .Select(u => new { u.Id, u.Email, Name = PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName), u.IsActive, u.RoleId })
             .ToListAsync(ct);
 
         var rows = new List<BatchRowPreviewDto>(users.Count);
@@ -445,6 +468,13 @@ public class BatchOperationService : IBatchOperationService
             {
                 rows.Add(Row(u.Id, string.IsNullOrWhiteSpace(u.Name) ? (u.Email ?? "Unknown") : u.Name, u.Email,
                     RosterImportRowOutcome.Skipped, u.IsActive ? "Active" : "Inactive", null, "No change needed."));
+                continue;
+            }
+
+            if (await SubjectRefusalAsync(actorUserId.Value, u.Id, u.RoleId, memo, ct) is { } refused)
+            {
+                rows.Add(Row(u.Id, string.IsNullOrWhiteSpace(u.Name) ? (u.Email ?? "Unknown") : u.Name, u.Email,
+                    RosterImportRowOutcome.Failed, u.IsActive ? "Active" : "Inactive", null, refused));
                 continue;
             }
 
@@ -466,9 +496,11 @@ public class BatchOperationService : IBatchOperationService
             activating ? $"Enable {changing:N0} account{(changing == 1 ? "" : "s")}" : $"Disable {changing:N0} account{(changing == 1 ? "" : "s")}");
     }
 
-    private async Task<BatchPreviewDto> ResolveUserRoleAsync(Guid branchId, BatchRequest request, CancellationToken ct)
+    private async Task<BatchPreviewDto> ResolveUserRoleAsync(Guid branchId, BatchRequest request, Guid? actorUserId, CancellationToken ct)
     {
         if (request.TargetUserId is null) return Blocked(request, "Choose the role to move these accounts onto.");
+        if (actorUserId is null) return Blocked(request, "Who is making this change could not be determined.");
+        var memo = new Dictionary<Guid, string?>();
 
         var orgId = await _context.Branches.AsNoTracking().Where(b => b.Id == branchId)
             .Select(b => b.OrganizationId).FirstOrDefaultAsync(ct);
@@ -484,6 +516,13 @@ public class BatchOperationService : IBatchOperationService
         if (RoleCodes.IsSuperAdmin(role.Code))
             return Blocked(request, "The platform administrator role cannot be assigned in bulk.");
 
+        // THE ROLE BEING GIVEN is bounded exactly as it is for one person (UsersController.UpdateUser). Until
+        // 2026-09-24 this path checked only the platform role, so anybody who could reach a bulk role change could
+        // hand out Administrator — the 2026-09-18 escalation through the door beside it.
+        var targetRole = await _context.Roles.IgnoreQueryFilters().AsNoTracking().FirstAsync(r => r.Id == role.Id, ct);
+        if (await QMgr.API.Application.Services.RoleAssignmentGuard.RefusalAsync(_context, actorUserId.Value, targetRole, ct) is { } roleRefusal)
+            return Blocked(request, roleRefusal);
+
         var users = await _context.Users.AsNoTracking()
             .Where(u => u.OrganizationId == orgId && request.Ids.Contains(u.Id))
             .Select(u => new { u.Id, u.Email, Name = PersonNames.Display(u.OrganizationId, u.FirstName, u.LastName), u.RoleId, RoleName = u.Role!.Name })
@@ -496,6 +535,13 @@ public class BatchOperationService : IBatchOperationService
             {
                 rows.Add(Row(u.Id, string.IsNullOrWhiteSpace(u.Name) ? (u.Email ?? "Unknown") : u.Name, u.Email,
                     RosterImportRowOutcome.Skipped, u.RoleName, role.Name, "Already on that role."));
+                continue;
+            }
+
+            if (await SubjectRefusalAsync(actorUserId.Value, u.Id, u.RoleId, memo, ct) is { } refused)
+            {
+                rows.Add(Row(u.Id, string.IsNullOrWhiteSpace(u.Name) ? (u.Email ?? "Unknown") : u.Name, u.Email,
+                    RosterImportRowOutcome.Failed, u.RoleName, role.Name, refused));
                 continue;
             }
 

@@ -195,7 +195,7 @@ public class StudentsController : ControllerBase
 
         return Ok(new PrintLetterheadDto
         {
-            OrganizationName = string.IsNullOrWhiteSpace(branch.Organization.BrandName) ? branch.Organization.Name : branch.Organization.BrandName,
+            OrganizationName = branch.Organization.Name,
             Address = string.IsNullOrWhiteSpace(branch.Address) ? branch.Organization.Address : branch.Address,
             ContactPhone = branch.Organization.ContactPhone,
             ContactEmail = branch.Organization.ContactEmail,

@@ -560,6 +560,20 @@ public class StaffStructureController : StaffPerformanceControllerBase
             return BadRequestProblem("That staff number is already in use",
                 "Two members of staff cannot share a staff number — it is how the school's own file identifies them.");
 
+        // The school's own list decides what an employment type is. Somebody already holding a type the school has
+        // since RETIRED keeps it on an unrelated save; choosing a retired or unknown one is refused, in words.
+        string? employmentType = null;
+        if (!string.IsNullOrWhiteSpace(request.EmploymentType))
+        {
+            var types = (await _policy.GetAsync(organizationId)).EmploymentTypes;
+            employmentType = EmploymentTypes.Resolve(request.EmploymentType, types.Where(t => t.IsActive).Select(t => t.Name));
+            if (employmentType == null && EmploymentTypes.Key(request.EmploymentType) == EmploymentTypes.Key(user.EmploymentType))
+                employmentType = user.EmploymentType;
+            if (employmentType == null)
+                return BadRequestProblem($"\"{request.EmploymentType.Trim()}\" is not one of this school's employment types",
+                    "Choose one from the list, or add it under Staff Performance setup first.");
+        }
+
         var before = Snapshot(user);
 
         user.Phone = Trim(request.Phone, 40);
@@ -572,7 +586,7 @@ public class StaffStructureController : StaffPerformanceControllerBase
         user.EmployeeNumber = employeeNumber;
         user.EmploymentStartDate = request.EmploymentStartDate;
         user.EmploymentEndDate = request.EmploymentEndDate;
-        user.EmploymentType = request.EmploymentType;
+        user.EmploymentType = employmentType;
         user.Qualification = Trim(request.Qualification, 120);
         user.TeachingRegistrationNumber = Trim(request.TeachingRegistrationNumber, 60);
         user.DateOfBirth = request.DateOfBirth;
@@ -670,7 +684,7 @@ public class StaffStructureController : StaffPerformanceControllerBase
         ["employee number"] = u.EmployeeNumber,
         ["start date"] = u.EmploymentStartDate?.ToString("O"),
         ["leaving date"] = u.EmploymentEndDate?.ToString("O"),
-        ["employment type"] = u.EmploymentType?.ToString(),
+        ["employment type"] = u.EmploymentType,
         ["qualification"] = u.Qualification,
         ["registration number"] = u.TeachingRegistrationNumber,
         ["date of birth"] = u.DateOfBirth?.ToString("O"),

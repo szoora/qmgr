@@ -10,6 +10,9 @@ public record RegisterOrganizationCommand : IRequest<RegisterOrganizationResult>
     /// <summary>Organization/Company name</summary>
     public string OrganizationName { get; init; } = string.Empty;
 
+    /// <summary>Optional: the app's own name, exactly as the school writes it (ProductBrand.ValidateBrandName).</summary>
+    public string? BrandName { get; init; }
+
     /// <summary>Desired URL slug (optional, auto-generated if not provided)</summary>
     public string? Slug { get; init; }
 

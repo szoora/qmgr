@@ -129,7 +129,7 @@ param(
     [bool]$SmtpUseSsl        = $true,
     [string]$SmtpUsername    = 'info@sacc.ug',
     [string]$SmtpFromEmail   = 'info@sacc.ug',
-    [string]$SmtpFromName    = 'Q-Mgr',
+    [string]$SmtpFromName    = 'SACC Dashboard',
     [string]$SmtpPassword    = '',
 
     [switch]$SkipClean,

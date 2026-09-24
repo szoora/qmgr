@@ -292,6 +292,29 @@ public class SuperAdminController : ControllerBase
     }
 
     /// <summary>
+    /// Sets a school's app name for them — for a school that asks support rather than using its own
+    /// Appearance page (rebrand 2026-09-24, decision B5). The same rule the Appearance page and the
+    /// registration form run (ProductBrand.ValidateBrandName); empty clears it back to ours.
+    /// </summary>
+    [HttpPut("tenants/{id:guid}/brand-name")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> SetBrandName(Guid id, [FromBody] SetBrandNameRequest request, CancellationToken ct)
+    {
+        if (QMgr.Application.Branding.ProductBrand.ValidateBrandName(request?.BrandName) is { } problem)
+            return BadRequest(new { error = "INVALID_BRAND_NAME", message = problem });
+
+        var org = await _dbContext.Organizations.IgnoreQueryFilters().FirstOrDefaultAsync(o => o.Id == id, ct);
+        if (org == null) return NotFound(new { error = "TENANT_NOT_FOUND", message = "Tenant not found" });
+
+        org.BrandName = string.IsNullOrWhiteSpace(request?.BrandName) ? null : request.BrandName.Trim();
+        await _dbContext.SaveChangesAsync(ct);
+
+        _logger.LogInformation("Super admin set the app name of tenant {TenantId} to {BrandName}", id, org.BrandName ?? "(ours)");
+        return Ok(new { brandName = org.BrandName });
+    }
+
+    /// <summary>
     /// The features a platform administrator may hand out by hand. Deliberately a short list, not
     /// every constant on <c>FeatureCodes</c>: an override is for a negotiated deal, and anything
     /// that is simply part of a module should be sold as that module.
@@ -831,6 +854,9 @@ public record TenantSummary
     public DateTime? TrialEndsAt { get; init; }
     public bool OnboardingCompleted { get; init; }
 }
+
+/// <summary>Body of <c>PUT tenants/{id}/brand-name</c>. Null or empty clears the name back to ours.</summary>
+public record SetBrandNameRequest(string? BrandName);
 
 public record TenantDetails : TenantSummary
 {

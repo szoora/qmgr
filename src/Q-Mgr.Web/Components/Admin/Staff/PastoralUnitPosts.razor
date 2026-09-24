@@ -1,0 +1,163 @@
+@* No @page: the Houses tab of the Staff Directory hub, /admin/staff?tab=houses (2026-09-24). *@
+@using QMgr.Application.DTOs
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared
+@inherits BranchAwareComponentBase
+@inject ILeadershipApiService LeadershipApi
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject IAuthService AuthService
+
+@*
+    HOUSE AND DORMITORY POSTS (the RBAC review's R4). In a boarding school the housemaster, housemistress or matron is
+    the first responder for a child, and a class is the wrong unit for them. A post here grants the class teacher's
+    pastoral permissions over the students of that house or dormitory — matched on Student.House and
+    Student.DormitoryOrStream — and nothing wider. Same gate as naming a class teacher, because it grants the same.
+*@
+
+<QPageActions Embedded="@Embedded">
+    <Title><h1>Houses</h1></Title>
+    <Actions>
+        @if (data != null && (data.Houses.Count > 0 || data.Dormitories.Count > 0))
+        {
+            <QButton Text="Add a post" Icon="plus-lg" Variant="primary" OnClick="@OpenAdd" />
+        }
+    </Actions>
+</QPageActions>
+
+@if (isLoading)
+{
+    <QEmptyState Icon="hourglass-split" Title="Loading" />
+}
+else if (data == null)
+{
+    <QEmptyState Icon="exclamation-circle" Title="Posts not available" />
+}
+else if (data.Houses.Count == 0 && data.Dormitories.Count == 0)
+{
+    <QEmptyState Icon="house" Title="No houses or dormitories"
+                 Text="Add them under Students → Vocabularies first; a post names one of them." />
+}
+else if (data.Posts.Count == 0)
+{
+    <QEmptyState Icon="house-heart" Title="No house posts yet"
+                 Text="Name who looks after each house or dormitory. They can then read and log welfare records for its students." />
+}
+else
+{
+    <div class="table-wrap">
+        <table class="data-table q-stack" id="pastoral-posts">
+            <thead><tr><th>House or dormitory</th><th>Looked after by</th><th class="row-actions"></th></tr></thead>
+            <tbody>
+                @foreach (var p in data.Posts)
+                {
+                    <tr>
+                        <td>@(p.Kind == PastoralUnitKind.House ? "House" : "Dormitory") @p.Name</td>
+                        <td>@p.FullName</td>
+                        <td class="row-actions">
+                            <QButton Icon="x-circle" Variant="ghost" Size="sm" Title="End this post" OnClick="@(() => RemoveAsync(p))" Disabled="@busy" />
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+<QModal @bind-Visible="showAdd" Title="Add a house or dormitory post" Icon="house-heart">
+    <ChildContent>
+        <div class="form-row">
+            <QSelect TValue="string" TItem="string" Value="@unit" ValueChanged="@(v => unit = v)" Items="@UnitOptions"
+                     ValueSelector="@(s => s)" TextSelector="@(s => s)" Label="House or dormitory" Required="true" />
+            <QSelect TValue="Guid?" TItem="PersonOption" Value="@holder" ValueChanged="@(v => holder = v)" Items="@people"
+                     ValueSelector="@(p => (Guid?)p.UserId)" TextSelector="@(p => p.Name)" Sorted="true" Label="Looked after by" Required="true" />
+        </div>
+        @if (problem is { Length: > 0 }) { <p class="form-error">@problem</p> }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showAdd = false)" />
+        <QButton Text="Add" Icon="check2" Variant="primary" OnClick="@AddAsync" Disabled="@busy" />
+    </FooterContent>
+</QModal>
+
+@code {
+    [Parameter] public bool Embedded { get; set; }
+
+    private sealed record PersonOption(Guid UserId, string Name);
+
+    private Guid branchId;
+    private PastoralUnitPostsViewDto? data;
+    private List<PersonOption> people = new();
+    private bool isLoading = true, busy, showAdd;
+    private string? unit, problem;
+    private Guid? holder;
+
+    private List<string> UnitOptions => (data?.Houses.Select(h => $"House {h}") ?? Enumerable.Empty<string>())
+        .Concat(data?.Dormitories.Select(d => $"Dormitory {d}") ?? Enumerable.Empty<string>()).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        branchId = BranchState.CurrentBranchId;
+        TrackBranch();
+        await LoadAsync();
+    }
+
+    protected override async Task OnBranchChangedAsync(Guid newBranchId)
+    {
+        branchId = newBranchId;
+        data = null;
+        people.Clear();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        try
+        {
+            if (branchId == Guid.Empty) { data = null; return; }
+            data = await LeadershipApi.GetPastoralPostsAsync(branchId);
+            if (people.Count == 0)
+            {
+                // The same picker source as the exam series: colleagues, plus the caller, who may be the housemaster.
+                var list = (await StaffApi.GetColleaguesAsync()).Select(c => new PersonOption(c.UserId, c.FullName)).ToList();
+                if (await AuthService.GetCurrentUserAsync() is { } me && me.Id != Guid.Empty && list.All(p => p.UserId != me.Id))
+                    list.Add(new PersonOption(me.Id, me.FullName ?? "Me"));
+                people = list;
+            }
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "House posts", ex.Message); }
+        finally { isLoading = false; }
+    }
+
+    private void OpenAdd() { problem = null; unit = null; holder = null; showAdd = true; }
+
+    private IEnumerable<PastoralUnitPostInput> Current => data?.Posts.Select(p => new PastoralUnitPostInput(p.Kind, p.Name, p.UserId))
+                                                          ?? Enumerable.Empty<PastoralUnitPostInput>();
+
+    private async Task AddAsync()
+    {
+        problem = null;
+        if (string.IsNullOrEmpty(unit) || holder == null) { problem = "Choose the house or dormitory and the person."; return; }
+        var isHouse = unit.StartsWith("House ", StringComparison.Ordinal);
+        var input = new PastoralUnitPostInput(isHouse ? PastoralUnitKind.House : PastoralUnitKind.Dormitory,
+            unit[(isHouse ? "House ".Length : "Dormitory ".Length)..], holder.Value);
+        await SaveAsync(Current.Append(input).ToList(), "Post added", "They have been told.");
+        if (problem == null) showAdd = false;
+    }
+
+    private async Task RemoveAsync(PastoralUnitPostViewDto post)
+        => await SaveAsync(Current.Where(p => !(p.Kind == post.Kind && p.Name == post.Name && p.UserId == post.UserId)).ToList(), "Post ended", null);
+
+    private async Task SaveAsync(List<PastoralUnitPostInput> posts, string done, string? detail)
+    {
+        busy = true;
+        try
+        {
+            data = await LeadershipApi.UpdatePastoralPostsAsync(branchId, new UpdatePastoralUnitPostsRequest { Posts = posts });
+            Toast.Notify(ToastSeverity.Success, done, detail);
+        }
+        catch (Exception ex) { problem = ex.Message; Toast.Notify(ToastSeverity.Error, "House posts", ex.Message); }
+        finally { busy = false; }
+    }
+}

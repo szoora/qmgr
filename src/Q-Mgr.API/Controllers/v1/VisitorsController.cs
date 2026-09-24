@@ -566,7 +566,10 @@ public class VisitorsController : ControllerBase
 
         try
         {
-            var message = $"Q-Mgr: {profile.FullName}, your card was just used to check in to see {visitor.StudentName}. " +
+            // Headed by the school's own name: a guardian knows the school, not its software.
+            var schoolName = await _context.Organizations.IgnoreQueryFilters().Where(o => o.Id == organizationId)
+                .Select(o => o.Name).FirstOrDefaultAsync() ?? "School";
+            var message = $"{schoolName}: {profile.FullName}, your card was just used to check in to see {visitor.StudentName}. " +
                           "If this wasn't you, please contact the front desk immediately.";
             await _notificationService.SendSmsAsync(organizationId, profile.Phone, message);
         }

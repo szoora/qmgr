@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using QMgr.Domain.Entities.Platform;
@@ -64,7 +65,7 @@ public class PlatformEmailDefaults
             SmtpUsername = section["SmtpUsername"] ?? string.Empty,
             SmtpPassword = section["SmtpPassword"] ?? string.Empty,
             FromEmail = section["FromEmail"] ?? section["SmtpUsername"] ?? string.Empty,
-            FromName = string.IsNullOrWhiteSpace(section["FromName"]) ? "Q-Mgr" : section["FromName"]!,
+            FromName = string.IsNullOrWhiteSpace(section["FromName"]) ? ProductBrand.Name : section["FromName"]!,
             UseSsl = !bool.TryParse(section["UseSsl"], out var ssl) || ssl
         };
     }

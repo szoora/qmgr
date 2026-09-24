@@ -1,0 +1,64 @@
+@namespace QMgr.Web.Components.Shared.UI
+@typeparam TValue
+
+@* One choice out of a few, all visible at once (2026-09-23). Every radio button in the app is this;
+   there were five hand-made styles on five pages, three of them Bootstrap's form-check.
+
+   Native <input type="radio"> underneath, sharing one name, so the arrow keys move between options
+   and a screen reader announces "1 of 3" — the reason a radio group is not a row of buttons. The
+   input is visually hidden and the dot is drawn beside it, the same shape as QCheckbox, so the two
+   read as one family. A group of more than about five options, or one whose options come from data,
+   is a QSelect instead. *@
+<fieldset class="q-radio-group @(Inline ? "q-radio-group--inline" : "") @Class" disabled="@Disabled" @attributes="AdditionalAttributes">
+    @if (!string.IsNullOrWhiteSpace(Legend))
+    {
+        <legend class="q-radio-group__legend">@Legend</legend>
+    }
+    @foreach (var option in Options)
+    {
+        var selected = EqualityComparer<TValue>.Default.Equals(Value, option.Value);
+        <label class="q-radio @(selected ? "q-radio--checked" : "") @(option.Disabled || Disabled ? "q-radio--disabled" : "") @(option.Description != null ? "q-radio--described" : "")">
+            <input type="radio" class="q-radio__input" name="@name" checked="@selected"
+                   disabled="@(option.Disabled || Disabled)" @onchange="@(() => SelectAsync(option.Value))" />
+            <span class="q-radio__dot" aria-hidden="true"></span>
+            <span class="q-radio__label">
+                @if (option.Description == null)
+                {
+                    @option.Label
+                }
+                else
+                {
+                    <strong>@option.Label</strong><span class="q-radio__desc"> — @option.Description</span>
+                }
+            </span>
+        </label>
+    }
+</fieldset>
+
+@code {
+    /// <summary>The chosen option's value.</summary>
+    [Parameter] public TValue? Value { get; set; }
+    [Parameter] public EventCallback<TValue> ValueChanged { get; set; }
+
+    /// <summary>The options, in the order they read. A description renders after the label as a sentence.</summary>
+    [Parameter, EditorRequired] public IReadOnlyList<QRadioOption<TValue>> Options { get; set; } = Array.Empty<QRadioOption<TValue>>();
+
+    /// <summary>The question the options answer. Omit it when a form label above already asks it.</summary>
+    [Parameter] public string? Legend { get; set; }
+
+    /// <summary>Side by side instead of stacked — for two or three one-word options.</summary>
+    [Parameter] public bool Inline { get; set; }
+
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public string? Class { get; set; }
+    [Parameter(CaptureUnmatchedValues = true)] public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    // Unique per instance: two groups on one page sharing a name would be one group to the browser.
+    private readonly string name = "q-radio-" + Guid.NewGuid().ToString("N")[..10];
+
+    private async Task SelectAsync(TValue value)
+    {
+        Value = value;
+        await ValueChanged.InvokeAsync(value);
+    }
+}

@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QMgr.API.Authorization;
+using QMgr.Application.Branding;
 using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
 using QMgr.Application.Interfaces.Billing;
@@ -63,6 +64,11 @@ public class OrganizationsController : ControllerBase
         {
             WhitelabelEnabled = org.WhitelabelEnabled,
             BrandName = org.BrandName,
+            OrganizationName = org.Name,
+            // The shown name, decided once here (ProductBrand.NameFor). A public caller that never asked
+            // about entitlement is treated as entitled, the same default WhiteLabelEntitled has always had.
+            ProductName = ProductBrand.NameFor(org.BrandName, org.WhitelabelEnabled && (whiteLabelEntitled ?? true)),
+            ProductShortName = ProductBrand.ShortNameFor(ProductBrand.NameFor(org.BrandName, org.WhitelabelEnabled && (whiteLabelEntitled ?? true))),
             LogoUrl = org.LogoUrl,
             FaviconUrl = org.FaviconUrl,
             PrimaryColor = org.PrimaryColor,
@@ -129,14 +135,14 @@ public class OrganizationsController : ControllerBase
 
         if (org == null)
         {
-            return Ok(new OrganizationBrandingDto { WhitelabelEnabled = false, DisplayTheme = "dark" });
+            return Ok(new OrganizationBrandingDto { WhitelabelEnabled = false, DisplayTheme = "dark", ProductName = ProductBrand.Name, ProductShortName = ProductBrand.ShortNameFor(ProductBrand.Name) });
         }
 
         if (!org.WhitelabelEnabled)
         {
             // DisplayTheme still applies even when whitelabel (colors/logo) isn't enabled —
             // it's a basic display preference, not a paid customization.
-            return Ok(new OrganizationBrandingDto { WhitelabelEnabled = false, DisplayTheme = org.DisplayTheme });
+            return Ok(new OrganizationBrandingDto { WhitelabelEnabled = false, DisplayTheme = org.DisplayTheme, OrganizationName = org.Name, ProductName = ProductBrand.Name, ProductShortName = ProductBrand.ShortNameFor(ProductBrand.Name) });
         }
 
         return Ok(ToDto(org));
@@ -229,8 +235,14 @@ public class OrganizationsController : ControllerBase
                 return BadRequest(new { message = $"'{color}' is not a valid hex color." });
         }
 
+        // The app name has ONE rule, and the registration form and the Appearance page run the same
+        // one, so a person reads the same sentence wherever they typed it (ProductBrand.ValidateBrandName).
+        var brandNameProblem = ProductBrand.ValidateBrandName(request.BrandName);
+        if (brandNameProblem != null)
+            return BadRequest(new { message = brandNameProblem, errors = new Dictionary<string, string[]> { ["BrandName"] = new[] { brandNameProblem } } });
+
         org.WhitelabelEnabled = request.WhitelabelEnabled;
-        org.BrandName = request.BrandName;
+        org.BrandName = string.IsNullOrWhiteSpace(request.BrandName) ? null : request.BrandName.Trim();
         org.LogoUrl = request.LogoUrl;
         org.FaviconUrl = request.FaviconUrl;
         org.PrimaryColor = request.PrimaryColor;
@@ -571,14 +583,18 @@ public class OrganizationsController : ControllerBase
         return new TenantHostBrandingDto
         {
             Resolved = true,
-            BrandName = string.IsNullOrWhiteSpace(org.BrandName) ? org.Name : org.BrandName,
+            // Exactly as the school typed it, or ours. Never the organisation name any more: that made
+            // one field mean two things, and put an app name at the top of printed timetables.
+            ProductName = ProductBrand.NameFor(org.BrandName, whiteLabelActive: true),
+            ProductShortName = ProductBrand.ShortNameFor(ProductBrand.NameFor(org.BrandName, whiteLabelActive: true)),
+            OrganizationName = org.Name,
             LogoUrl = org.LogoUrl,
             FaviconUrl = org.FaviconUrl,
             PrimaryColor = Safe(org.PrimaryColor),
             SecondaryColor = Safe(org.SecondaryColor),
             AccentColor = Safe(org.AccentColor),
             // Attribution removal sits ON TOP of white-labelling, never beside it: taking
-            // "Powered by SACC Software" off a page that still says Q-Mgr everywhere is a gap,
+            // our name off the copyright line of a page that still carries our name everywhere is a gap,
             // not a product. Both gates above have already passed by the time this is read.
             AttributionRemoved = features.RemoveAttribution
         };

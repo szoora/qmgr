@@ -17,7 +17,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Staff@if (TabHelp != null) { <QInfo Text="@TabHelp" Label="@TabHelpLabel" /> }</h1>
+            <h1>Staff @if (TabHelp != null) { <QInfo Text="@TabHelp" Label="@TabHelpLabel" /> }</h1>
             <p class="subtitle">Everyone on this branch's staff, with their department, line manager and this period's band.</p>
         </div>
         <div class="header-actions">
@@ -65,6 +65,10 @@
     @if (hubTab is "class-teachers" or "subject-teachers")
     {
         <ClassTeachers Embedded="true" EmbeddedTab="@hubTab" />
+    }
+    else if (hubTab == "houses")
+    {
+        <PastoralUnitPosts Embedded="true" />
     }
     else if (hubTab != "people")
     {
@@ -433,6 +437,9 @@
         // tabs, and a classes.teachers.manage holder without staff.records.view must still reach them.
         new(new QTab("class-teachers", "Class teachers", "person-video3"), Permissions.ClassTeachersManage),
         new(new QTab("subject-teachers", "Subject teachers", "book"), Permissions.ClassTeachersManage),
+        // House and dormitory posts (2026-09-24): the class teacher's pastoral grant over a house or dormitory
+        // instead of a class. The same gate as naming a class teacher, because it grants the same.
+        new(new QTab("houses", "Houses", "house-heart"), Permissions.ClassTeachersManage),
         new(new QTab("departments", "Departments", "diagram-3"), Permissions.StaffStructureManage),
         new(new QTab("coverage", "Coverage", "shield-check"), Permissions.StaffRecordsView, Permissions.StaffStructureManage),
         new(new QTab("import", "Import", "upload"), Permissions.StaffStructureManage),

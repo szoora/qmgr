@@ -130,7 +130,7 @@ else if (loadError != null)
     private OrganizationBrandingDto? branding;
 
     private string DocTitle => report == null ? "Lessons report" : $"Lessons taught — {report.Period.Name}";
-    private string OrganizationName => !string.IsNullOrWhiteSpace(branding?.BrandName) ? branding!.BrandName! : BranchState.CurrentBranchName ?? "Lessons";
+    private string OrganizationName => !string.IsNullOrWhiteSpace(branding?.OrganizationName) ? branding!.OrganizationName! : BranchState.CurrentBranchName ?? "Lessons";
 
     protected override async Task OnInitializedAsync()
     {

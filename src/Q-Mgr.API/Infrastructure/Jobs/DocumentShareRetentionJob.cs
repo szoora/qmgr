@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using QMgr.Application.DTOs;
@@ -131,7 +132,7 @@ public class DocumentShareRetentionJob
                     ActionUrl = $"/content/library?tab=documents&document={doc.Id}",
                     Channels = NotificationChannel.InApp | NotificationChannel.Email,
                     Email = creator?.Email,
-                    EmailSubject = $"Q-Mgr: the link to \"{doc.Name}\" expires on {when}"
+                    EmailSubject = $"{ProductBrand.MessagePrefix}the link to \"{doc.Name}\" expires on {when}"
                 });
 
                 // Claimed after the send, not before: a link nobody was told about is better warned

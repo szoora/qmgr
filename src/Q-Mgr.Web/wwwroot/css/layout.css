@@ -2218,4 +2218,7 @@
 @media (max-width: 768px) {
     .q-datepicker__popover { bottom: calc(12px + var(--qm-mobilenav-total)) !important; }
     .bottom-sheet { padding-bottom: var(--qm-mobilenav-total); }
+    /* The PWA "new version" banner (pwa.js) is fixed to the bottom too, and sat on the bar — found
+       by mobile-nav.mjs once the service worker could install again (2026-09-24). Only where the bar is. */
+    body:has(.qm-mobilenav) #pwa-update-banner { bottom: calc(10px + var(--qm-mobilenav-total)) !important; }
 }

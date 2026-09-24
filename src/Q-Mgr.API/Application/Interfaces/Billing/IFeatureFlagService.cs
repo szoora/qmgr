@@ -51,8 +51,8 @@ public static class FeatureCodes
     public const string ExportReports = "export_reports";
 
     /// <summary>
-    /// Takes "Powered by SACC Software" off a tenant's sign-in pages and the Q-Mgr line out of the
-    /// shell footer and every outbound email.
+    /// Puts the TENANT's name on the copyright line (<c>QCopyright</c>) of its sign-in pages, the shell
+    /// footer and every outbound email, in place of ours. The line itself is never hidden.
     ///
     /// A CODE OF ITS OWN, and that is the whole point. The obvious move was to hang this off
     /// <see cref="WhiteLabel"/> — but <c>engagement-communications</c> already grants WhiteLabel,

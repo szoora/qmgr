@@ -18,7 +18,7 @@ let cleared = 0;
 const PAGE = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Q-Mgr e2e</title>
+<title>SACC Dashboard e2e</title>
 <style>
   :root {
     --bg: #14100f; --card: #1d1817; --line: #2e2725; --text: #f3efee; --muted: #a79f9c;
@@ -73,7 +73,7 @@ const PAGE = `<!doctype html>
 <body>
 <header>
   <span class="dot idle" id="dot"></span>
-  <h1>Q-Mgr e2e</h1>
+  <h1>SACC Dashboard e2e</h1>
   <button id="follow" class="on">Follow</button>
   <button id="only">Failures only</button>
   <div class="counts">
@@ -122,7 +122,7 @@ const PAGE = `<!doctype html>
       document.getElementById('cAll').textContent = d.total + ' lines';
       const live = d.lastAt && Date.now() - d.lastAt < 6000;
       document.getElementById('dot').className = 'dot' + (live ? '' : ' idle');
-      document.title = (d.fail ? '✗ ' + d.fail + ' — ' : '') + 'Q-Mgr e2e';
+      document.title = (d.fail ? '✗ ' + d.fail + ' — ' : '') + 'SACC Dashboard e2e';
     } catch {}
     setTimeout(poll, 500);
   }

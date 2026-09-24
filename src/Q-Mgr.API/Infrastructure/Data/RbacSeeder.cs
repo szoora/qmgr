@@ -177,6 +177,7 @@ public class RbacSeeder
         new("welfare.categories.manage", "Manage Welfare Categories", "Define the achievement/behavior/welfare categories staff can log against", "Student Welfare", 7, true),
         new("welfare.reports.view", "View Welfare Reports", "View trend and process-consistency reports across welfare records", "Student Welfare", 8, true),
         new("welfare.reports.own", "View Own Class Reports", "The same welfare reports, narrowed to the classes this user holds — revoke it to withhold the page from class teachers", "Student Welfare", 9, true),
+        new("welfare.reports.aggregate", "View Welfare Figures", "Welfare counts by category and cohort, with no child and no member of staff named — for governors", "Student Welfare", 10, true),
 
         // ============================================
         // STAFF PERFORMANCE MONITOR (2026-09-16) — mirrored in Permissions.All and the Web copy
@@ -259,7 +260,7 @@ public class RbacSeeder
         [RoleCodes.SuperAdmin] = new RoleDefinition(
             Name: "Platform Admin",
             Code: RoleCodes.SuperAdmin,
-            Description: "Full platform administration access across all organizations. For Q-Mgr platform operators.",
+            Description: "Full platform administration access across all organizations. For the platform's own operators.",
             Color: "#FF0000",
             Icon: "shield-check",
             SortOrder: 0,
@@ -274,7 +275,7 @@ public class RbacSeeder
         [RoleCodes.Admin] = new RoleDefinition(
             Name: "Administrator",
             Code: RoleCodes.Admin,
-            Description: "Full administrative access within the organization. For business owners and IT administrators.",
+            Description: "Everything in the organisation, including billing, settings and what each role may do. For the owner or IT administrator; a school's head holds the Head Teacher role.",
             Color: "#9C27B0",
             Icon: "person-gear",
             SortOrder: 1,
@@ -291,9 +292,11 @@ public class RbacSeeder
         // For branch managers and supervisors
         // ============================================
         [RoleCodes.Manager] = new RoleDefinition(
-            Name: "Manager",
+            // Display name and description changed 2026-09-24: "Manager" read as a school's management, and a school
+            // may not use this role at all — it is the front office. The CODE is a wire format and does not move.
+            Name: "Front Office Manager",
             Code: RoleCodes.Manager,
-            Description: "Branch management and staff supervision. Can manage counters, service types, and view reports.",
+            Description: "Runs the front office: visitors, the queue and counters, signage and broadcasts, feedback, and the student roll. Outside a school's teaching hierarchy — it reads no staff records and appraises nobody.",
             Color: "#2196F3",
             Icon: "person-badge",
             SortOrder: 2,
@@ -350,9 +353,10 @@ public class RbacSeeder
         // For counter operators and service agents
         // ============================================
         [RoleCodes.Staff] = new RoleDefinition(
-            Name: "Staff",
+            // "Staff" beside Teacher and Support Staff in a school's role list read as "the staff". It is the front desk.
+            Name: "Front Desk Staff",
             Code: RoleCodes.Staff,
-            Description: "Counter operations and queue management. Can call tokens and serve customers.",
+            Description: "Front-desk work: the queue, tickets and visitors, and logging a welfare concern. Not teaching staff — a teacher holds the Teacher role.",
             Color: "#4CAF50",
             Icon: "person",
             SortOrder: 3,
@@ -387,6 +391,36 @@ public class RbacSeeder
         // department is not the permission set but StaffScope.AssignedDepartments: a head with no
         // department sees nobody, as a class teacher with no class sees no students.
         // ============================================
+        // ============================================
+        // THE SCHOOL CHAIN (2026-09-24): Head Teacher, then Deputy, then Director of Studies.
+        // Their permission sets live in Permissions.cs, ONE definition read by both seeders.
+        // ============================================
+        [RoleCodes.HeadTeacher] = new RoleDefinition(
+            Name: "Head Teacher",
+            Code: RoleCodes.HeadTeacher,
+            Description: "The school's accountable head. Everything the school runs, including restricted welfare and staff records; payments, system settings, API keys and what a role grants stay with the Administrator.",
+            Color: "#5B1E36",
+            Icon: "award",
+            SortOrder: 2,
+            IsSystemRole: true,
+            Permissions: QMgr.Domain.Constants.Permissions.HeadTeacherPermissions(AllPermissions.Select(p => (p.Code, p.IsVisible))),
+            DataScope: RoleDataScope.Organization,
+            StaffScope: StaffDataScope.Organization
+        ),
+
+        [RoleCodes.DeputyHeadTeacher] = new RoleDefinition(
+            Name: "Deputy Head Teacher",
+            Code: RoleCodes.DeputyHeadTeacher,
+            Description: "Runs the school day. Everything the Director of Studies holds, plus student welfare to the confidential tier, the roll, class teachers, visitors and staff onboarding.",
+            Color: "#6C2A45",
+            Icon: "person-up",
+            SortOrder: 3,
+            IsSystemRole: true,
+            Permissions: QMgr.Domain.Constants.Permissions.DeputyHeadTeacherPermissions,
+            DataScope: RoleDataScope.Organization,
+            StaffScope: StaffDataScope.Organization
+        ),
+
         [RoleCodes.DirectorOfStudies] = new RoleDefinition(
             Name: "Director of Studies",
             Code: RoleCodes.DirectorOfStudies,
@@ -481,6 +515,20 @@ public class RbacSeeder
         // For read-only access and customer self-service
         // Note: Customer role is merged with Viewer as per requirements
         // ============================================
+        // Board Member (2026-09-24): the welfare FIGURES, never a named child. Set in Permissions.cs, read here.
+        [RoleCodes.BoardMember] = new RoleDefinition(
+            Name: "Board Member",
+            Code: RoleCodes.BoardMember,
+            Description: "A governor or proprietor's representative: the dashboard and the school's welfare figures, with no child and no member of staff named.",
+            Color: "#475569",
+            Icon: "bank",
+            SortOrder: 4,
+            IsSystemRole: true,
+            Permissions: QMgr.Domain.Constants.Permissions.BoardMemberPermissions,
+            DataScope: RoleDataScope.Organization,
+            StaffScope: StaffDataScope.SelfOnly
+        ),
+
         [RoleCodes.Viewer] = new RoleDefinition(
             Name: "Viewer",
             Code: RoleCodes.Viewer,
@@ -781,7 +829,7 @@ public class RbacSeeder
             {
                 Id = platformOrgId,
                 Name = "Platform Administration",
-                BrandName = "Q-Mgr Platform",
+                BrandName = null,
                 ContactEmail = "admin@qmgr.platform",
                 Slug = "platform",
                 Status = TenantStatus.Active,

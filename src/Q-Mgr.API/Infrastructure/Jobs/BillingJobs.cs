@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using QMgr.Domain.Constants;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
@@ -93,7 +94,7 @@ public class BillingJobs
                 await _notificationService.SendEmailAsync(
                     org.Id,
                     org.EffectiveBillingEmail,
-                    $"Your Q-Mgr trial expires in {daysLeft} days",
+                    $"Your {ProductBrand.Name} trial expires in {daysLeft} days",
                     GetTrialExpiringEmailBody(org.Name, daysLeft, baseUrl),
                     true);
 
@@ -134,7 +135,7 @@ public class BillingJobs
                     await _notificationService.SendEmailAsync(
                         org.Id,
                         org.EffectiveBillingEmail,
-                        "Your Q-Mgr trial has ended",
+                        $"Your {ProductBrand.Name} trial has ended",
                         GetTrialExpiredEmailBody(org.Name, baseUrl),
                         true);
                 }
@@ -481,7 +482,7 @@ public class BillingJobs
                             await _notificationService.SendEmailAsync(
                                 invoice.Subscription.Organization.Id,
                                 invoice.Subscription.Organization.EffectiveBillingEmail,
-                                "Payment failed for your Q-Mgr subscription",
+                                $"Payment failed for your {ProductBrand.Name} subscription",
                                 GetPaymentFailedEmailBody(
                                     invoice.Subscription.Organization.Name,
                                     invoice.Total, baseUrl),
@@ -536,7 +537,7 @@ public class BillingJobs
                     await _notificationService.SendEmailAsync(
                         subscription.Organization.Id,
                         subscription.Organization.EffectiveBillingEmail,
-                        "Your Q-Mgr account has been suspended",
+                        $"Your {ProductBrand.Name} account has been suspended",
                         GetAccountSuspendedEmailBody(
                             subscription.Organization.Name, baseUrl),
                         true);

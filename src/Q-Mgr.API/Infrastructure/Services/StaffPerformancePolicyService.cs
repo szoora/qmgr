@@ -95,7 +95,7 @@ public class StaffPerformancePolicyService : IStaffPerformancePolicyService
 
     public StaffPerformancePolicyDto ReadPolicy(string? organizationSettingsJson)
     {
-        if (string.IsNullOrWhiteSpace(organizationSettingsJson)) return new StaffPerformancePolicyDto { StaffGroups = DefaultStaffGroups() };
+        if (string.IsNullOrWhiteSpace(organizationSettingsJson)) return new StaffPerformancePolicyDto { StaffGroups = DefaultStaffGroups(), EmploymentTypes = DefaultEmploymentTypes() };
         try
         {
             var root = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(organizationSettingsJson);
@@ -119,6 +119,10 @@ public class StaffPerformancePolicyService : IStaffPerformancePolicyService
                 // role resolving to nothing.
                 if (policy.StaffGroups == null || policy.StaffGroups.Count == 0)
                     policy.StaffGroups = DefaultStaffGroups();
+                // Employment types (2026-09-23), seeded the same way: a blob written before then carries none, and the
+                // six names are exactly what the migration wrote onto people, so nothing stored reads differently.
+                if (policy.EmploymentTypes == null || policy.EmploymentTypes.Count == 0)
+                    policy.EmploymentTypes = DefaultEmploymentTypes();
                 // The three scoring dials are clamped here as well as validated in the editor, so a
                 // blob written before they existed — or edited by hand — can never produce nonsense.
                 policy.LateCreditFraction = Math.Clamp(policy.LateCreditFraction, 0m, 1m);
@@ -128,7 +132,7 @@ public class StaffPerformancePolicyService : IStaffPerformancePolicyService
             }
         }
         catch (JsonException) { /* malformed settings blob — fall back to defaults */ }
-        return new StaffPerformancePolicyDto { StaffGroups = DefaultStaffGroups() };
+        return new StaffPerformancePolicyDto { StaffGroups = DefaultStaffGroups(), EmploymentTypes = DefaultEmploymentTypes() };
     }
 
     public string WritePolicy(string? organizationSettingsJson, StaffPerformancePolicyDto policy)
@@ -254,6 +258,10 @@ public class StaffPerformancePolicyService : IStaffPerformancePolicyService
     /// <c>StaffParameterDefaults</c> seeds parameters. They are exactly what the old enum resolved
     /// to, so seeding them moves no score.
     /// </summary>
+    /// <summary>The six names <c>StaffEmploymentType</c> had, in its order (see <c>EmploymentTypes</c>).</summary>
+    public static List<VocabularyItemDto> DefaultEmploymentTypes()
+        => QMgr.Domain.Enums.EmploymentTypes.Defaults.Select((name, i) => new VocabularyItemDto { Name = name, IsActive = true, SortOrder = i }).ToList();
+
     public static List<VocabularyItemDto> DefaultStaffGroups() => new()
     {
         new VocabularyItemDto { Name = StaffGroups.Teaching, IsActive = true, SortOrder = 0 },

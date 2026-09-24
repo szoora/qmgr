@@ -1432,7 +1432,11 @@ public class TimetableController : StaffPerformanceControllerBase
             Settings = settings,
             Lessons = await MapLessonsAsync(timetable.OrganizationId, lessons),
             Diagnosis = canManage && timetable.Status != TimetableStatus.Archived ? await DiagnoseAsync(timetable, lessons) : null,
-            CanManage = canManage && await StaffScope.IsUnscopedAsync(),
+            // The SAME exemption the write path makes (TimetableAccess.NeedsUnscopedStaffView): an appointed master is
+            // usually a teacher, whose role is StaffScope.SelfOnly, and the appointment IS the unscoping. Until 2026-09-23
+            // this asked IsUnscopedAsync alone, so the API let a master publish while the editor hid Publish, Import and
+            // Discard from them — the feature invisible to the one person it exists for (timetable-ownership-ui 4a).
+            CanManage = canManage && (!TimetableAccess.NeedsUnscopedStaffView(timetable, me) || await StaffScope.IsUnscopedAsync()),
             // Cover and cancellations from today on. Only a published version can have any, and everyone who may
             // read the version may read them: who is teaching a class on Thursday is operational information, the
             // same argument that makes a published timetable readable by the whole branch.

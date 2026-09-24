@@ -287,6 +287,9 @@ public record SharedDocumentGateDto
     /// </summary>
     public string? OrganizationLogoUrl { get; init; }
 
+    /// <summary>The app the document was shared from: the school's own name while white-labelled, else ours.</summary>
+    public string? AppName { get; init; }
+
     /// <summary>
     /// Whether this page drops "Shared securely with Q-Mgr" for the organization's own name.
     /// Resolved server-side from the sharing organization's entitlement, never from the host: the

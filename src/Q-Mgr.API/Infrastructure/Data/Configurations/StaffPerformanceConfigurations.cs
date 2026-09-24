@@ -67,6 +67,7 @@ public class StaffDutyConfiguration : IEntityTypeConfiguration<StaffDuty>
         b.HasIndex(d => new { d.Kind, d.StartsAt }).HasDatabaseName("idx_staff_duties_kind_start");
         // Duty rota (plan §3.2). Supervisors are an id list like the recorders; acknowledgements a jsonb map like a notice's.
         b.PrimitiveCollection(d => d.SupervisorUserIds).HasColumnType("uuid[]");
+        b.PrimitiveCollection(d => d.SeriesManagerUserIds).HasColumnType("uuid[]");
         b.Property(d => d.Acknowledgements).HasColumnType("jsonb").HasDefaultValueSql("'{}'::jsonb").IsRequired();
         b.HasIndex(d => d.SeriesId).HasFilter("\"SeriesId\" IS NOT NULL").HasDatabaseName("idx_staff_duties_series");
         // Programme import (2026-09-23): the undo finds a batch's duties by this.

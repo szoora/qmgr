@@ -928,7 +928,7 @@ else if (settings != null && settings.Any())
             </div>
             <div class="settings-form-group">
                 <label>From Name</label>
-                <QInput TValue="string" @bind-Value="editEmail!.FromName" Placeholder="Q-Mgr" />
+                <QInput TValue="string" @bind-Value="editEmail!.FromName" Placeholder="@ProductBrand.Name" />
             </div>
         </div>
         <div class="settings-toggle-group">
@@ -1071,7 +1071,7 @@ else if (settings != null && settings.Any())
         public string SmtpUsername { get; set; } = string.Empty;
         public string SmtpPassword { get; set; } = string.Empty;
         public string FromEmail { get; set; } = string.Empty;
-        public string FromName { get; set; } = "Q-Mgr";
+        public string FromName { get; set; } = ProductBrand.Name;
         public bool UseSsl { get; set; } = true;
     }
 

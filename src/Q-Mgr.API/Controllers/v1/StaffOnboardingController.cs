@@ -185,7 +185,7 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
         var orgId = CurrentOrganizationId();
         if (orgId == null) return TenantNotResolved();
 
-        var orgName = await Db.Organizations.IgnoreQueryFilters().Where(o => o.Id == orgId).Select(o => o.BrandName ?? o.Name).FirstOrDefaultAsync() ?? "the school";
+        var orgName = await Db.Organizations.IgnoreQueryFilters().Where(o => o.Id == orgId).Select(o => o.Name).FirstOrDefaultAsync() ?? "the school";
         var notice = new StaffNotice
         {
             OrganizationId = orgId.Value,
@@ -694,7 +694,7 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
                     if (string.IsNullOrWhiteSpace(user.Phone)) messages.Add($"{user.FullName}: no phone number, so no SMS — print their slip instead.");
                     else
                     {
-                        var sms = await _notifications.SendSmsAsync(orgId.Value, user.Phone, TemporaryPasswordSms(user.Username, temporary, baseUrl));
+                        var sms = await _notifications.SendSmsAsync(orgId.Value, user.Phone, TemporaryPasswordSms(user.Username, temporary, baseUrl, await OrganizationDisplayNameAsync(orgId.Value)));
                         if (sms.Outcome != ChannelSendOutcome.Sent) messages.Add($"{user.FullName}: the SMS was not sent ({sms.Reason ?? sms.Outcome.ToString()}) — print their slip instead.");
                     }
                 }
@@ -726,11 +726,13 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
     }
 
     /// <summary>The text of a temporary password by SMS (plan §12.2): username, password, where, and when it expires — no school or student data.</summary>
-    internal static string TemporaryPasswordSms(string username, string temporaryPassword, string baseUrl)
-        => $"Q-Mgr sign-in: username {username}, temporary password {temporaryPassword}. Sign in at {baseUrl}/login within 72 hours and choose your own password.";
+    /// <remarks>Headed by the ORGANISATION's name: the person receiving it knows their school, not what the
+    /// school's app is called, and an SMS from an unknown number has to say who it is from.</remarks>
+    internal static string TemporaryPasswordSms(string username, string temporaryPassword, string baseUrl, string organizationName)
+        => $"{organizationName} sign-in: username {username}, temporary password {temporaryPassword}. Sign in at {baseUrl}/login within 72 hours and choose your own password.";
 
     private async Task<string> OrganizationDisplayNameAsync(Guid orgId)
-        => await Db.Organizations.IgnoreQueryFilters().Where(o => o.Id == orgId).Select(o => o.BrandName ?? o.Name).FirstOrDefaultAsync() ?? "your organization";
+        => await Db.Organizations.IgnoreQueryFilters().Where(o => o.Id == orgId).Select(o => o.Name).FirstOrDefaultAsync() ?? "your organization";
 
     private Task<string> BaseUrlAsync() => _platformSettings.GetPublicWebBaseUrlAsync();
 }

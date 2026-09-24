@@ -59,7 +59,7 @@ public static class MobileNav
     private static readonly Slot Duties = new("duties", "Duties", "calendar-check", "/admin/staff/duties", Permissions.StaffDutiesManage, ModuleCodes.StudentWelfare);
     private static readonly Slot Timetable = new("timetable", "Timetable", "grid-3x3-gap", "/admin/timetable", Permissions.TimetableManage, ModuleCodes.StudentWelfare);
     private static readonly Slot Staff = new("staff", "Staff", "person-lines-fill", "/admin/staff", Permissions.StaffRecordsView, ModuleCodes.StudentWelfare);
-    private static readonly Slot Dashboard = new("dashboard", "Dashboard", "speedometer2", "/", Permissions.DashboardView);
+    private static readonly Slot Dashboard = new("dashboard", "Home", "house", "/", Permissions.DashboardView);
     /// <summary>The school calendar: base product, open to everybody signed in (TERM_PROGRAMME_CALENDAR_AND_GATES D8). In More, not a candidate, so no role's bar changed.</summary>
     private static readonly Slot Calendar = new("calendar", "Calendar", "calendar3", "/calendar");
 

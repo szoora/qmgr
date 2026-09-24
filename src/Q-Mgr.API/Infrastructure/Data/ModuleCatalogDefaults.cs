@@ -42,6 +42,15 @@ public class ModuleCatalogDefaults
         "Student roster and guardians, visiting-day passes, and the welfare ledger; plus staff performance: duties and registers, recognition, scoring, termly appraisals, staff notices, the activity log and every staff member's own portal.";
 
     /// <summary>The catalog as shipped. One entry per <see cref="ModuleCodes.All"/> code.</summary>
+    /// <summary>White-Label Plus, as a person reads it. Shared with the migration that corrects existing rows, which
+    /// rewrites a row only while it still holds <see cref="WhiteLabelPlusDescriptionShipped"/>.</summary>
+    public const string WhiteLabelPlusDescription =
+        "Puts your organisation's name on the copyright line of your sign-in pages, the app footer and the emails your organisation sends, in place of ours. Requires white-label branding to be switched on.";
+
+    /// <summary>What it shipped with on 2026-09-20. Those pages stopped carrying that line on 2026-09-22.</summary>
+    public const string WhiteLabelPlusDescriptionShipped =
+        "Removes \"Powered by SACC Software\" from your sign-in pages, the Q-Mgr line from the app footer, and our name from the emails your organization sends. Requires white-label branding to be switched on.";
+
     public static readonly IReadOnlyList<ModuleDefaults> Definitions = new[]
     {
         new ModuleDefaults(
@@ -102,7 +111,7 @@ public class ModuleCatalogDefaults
             MaxBranches: 0, MaxDisplays: 0, MaxUsersPerBranch: 0, MaxCountersPerBranch: 0,
             MaxTokensPerMonth: 0, MaxApiCallsPerMonth: 0, MaxStorageMb: 0,
             MonthlyPriceUsd: 12m, AnnualPriceUsd: 120m, MonthlyPriceUgx: 50_000m, AnnualPriceUgx: 500_000m,
-            Description: "Removes \"Powered by SACC Software\" from your sign-in pages, the Q-Mgr line from the app footer, and our name from the emails your organization sends. Requires white-label branding to be switched on.",
+            Description: WhiteLabelPlusDescription,
             Badge: "Add-on", SortOrder: 5),
     };
 

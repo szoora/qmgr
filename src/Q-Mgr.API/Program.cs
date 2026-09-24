@@ -436,7 +436,7 @@ QMgr.API.Application.Services.PersonNames.Use(app.Services.GetRequiredService<QM
 app.MapHangfireDashboard("/hangfire", new DashboardOptions
 {
     Authorization = new[] { new HangfireAuthorizationFilter(app.Environment.IsDevelopment()) },
-    DashboardTitle = "Q-Mgr Background Jobs"
+    DashboardTitle = QMgr.Application.Branding.ProductBrand.Name + " Background Jobs"
 });
 
 // Register recurring billing jobs (AFTER database is initialized)
@@ -452,6 +452,7 @@ DocumentShareJobsRegistration.RegisterRecurringJobs();
 CustomDomainJobsRegistration.RegisterRecurringJobs();
 TenantLifecycleJobsRegistration.RegisterRecurringJobs();
 StaffPerformanceJobsRegistration.RegisterRecurringJobs();
+QMgr.Infrastructure.Jobs.AccountLifecycleJobsRegistration.RegisterRecurringJobs();
 ReminderLadderJobRegistration.RegisterRecurringJobs();
 TimetableIntegrityJobRegistration.RegisterRecurringJobs();
 LessonGenerationJobRegistration.RegisterRecurringJobs();

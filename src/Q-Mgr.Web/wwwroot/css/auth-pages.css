@@ -616,3 +616,17 @@
         margin-left: auto;
     }
 }
+
+/* A suggestion offered inline in a hint — the app name on sign-up (rebrand 2026-09-24). A button,
+   because it changes the field; drawn as a link, because it is a suggestion rather than an action. */
+.form-hint .link-button {
+    background: none;
+    border: none;
+    padding: 0;
+    margin-left: 4px;
+    color: var(--qm-primary);
+    font: inherit;
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
+}

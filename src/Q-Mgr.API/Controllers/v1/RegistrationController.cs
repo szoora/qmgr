@@ -198,6 +198,7 @@ public class RegistrationController : ControllerBase
         {
             PhoneVerifiedAt = phoneVerified ? DateTime.UtcNow : null,
             OrganizationName = request.OrganizationName,
+            BrandName = request.BrandName,
             Slug = request.Slug,
             Email = request.Email,
             Password = request.Password,
@@ -430,6 +431,12 @@ public record RegisterRequest
     /// <summary>Organization/Company name</summary>
     public string OrganizationName { get; init; } = string.Empty;
 
+    /// <summary>
+    /// Optional: what the school calls its app ("MARYHILL Dashboard", "Dashboard", anything). Shown once
+    /// white-labelling is on; until then the app is ours. Validated by ProductBrand.ValidateBrandName.
+    /// </summary>
+    public string? BrandName { get; init; }
+
     /// <summary>Desired URL slug (optional)</summary>
     public string? Slug { get; init; }
 
@@ -528,6 +535,12 @@ public record SlugAvailabilityResponse
 public record SlugSuggestionResponse
 {
     public string OrganizationName { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Optional: what the school calls its app ("MARYHILL Dashboard", "Dashboard", anything). Shown once
+    /// white-labelling is on; until then the app is ours. Validated by ProductBrand.ValidateBrandName.
+    /// </summary>
+    public string? BrandName { get; init; }
     public string SuggestedSlug { get; init; } = string.Empty;
 }
 

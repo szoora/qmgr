@@ -58,7 +58,10 @@
     white-space: nowrap;
 }
 
-.q-btn:focus {
+/* :focus-visible, not :focus — a tap on a phone focuses the button and the ring then stayed on it
+   as if it were still pressed. The keyboard still gets the ring. */
+.q-btn:focus { outline: none; }
+.q-btn:focus-visible {
     outline: none;
     box-shadow: 0 0 0 3px rgba(var(--qm-primary-rgb), 0.25);
 }
@@ -1091,6 +1094,74 @@
     outline: 2px solid var(--qm-primary);
     outline-offset: 2px;
 }
+
+/* ==========================================================================
+   QRadioGroup Component (2026-09-23) — one choice out of a few, all visible
+   ========================================================================== */
+.q-radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+}
+.q-radio-group--inline { flex-direction: row; flex-wrap: wrap; gap: 6px 18px; }
+.q-radio-group__legend {
+    padding: 0;
+    margin-bottom: 4px;
+    font-size: var(--qm-text-sm);
+    font-weight: 600;
+    color: var(--qm-text-secondary);
+}
+/* Doubled class for the reason given at .q-checkbox: generic `.form-group label` rules would make each
+   option a bold uppercase block. */
+.q-radio.q-radio {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    user-select: none;
+    margin-bottom: 0;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    color: var(--qm-text-primary);
+    min-height: 1.5rem;          /* WCAG 2.2 SC 2.5.8, as QCheckbox */
+}
+/* An option that carries a sentence: the dot sits by the FIRST line, not the middle of three. */
+.q-radio--described.q-radio--described { align-items: flex-start; }
+.q-radio--described .q-radio__dot { margin-top: 0.15rem; }
+.q-radio--disabled { cursor: not-allowed; opacity: 0.6; }
+.q-radio__input { position: absolute; opacity: 0; width: 0; height: 0; }
+.q-radio__dot {
+    flex: 0 0 auto;
+    width: 1.1rem;
+    height: 1.1rem;
+    border-radius: 50%;
+    border: 2px solid var(--qm-border);
+    background: var(--qm-bg-card);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.q-radio:hover:not(.q-radio--disabled) .q-radio__dot { border-color: var(--qm-primary); }
+.q-radio--checked .q-radio__dot {
+    border-color: var(--qm-primary);
+    box-shadow: inset 0 0 0 3px var(--qm-bg-card);
+    background: var(--qm-primary);
+}
+.q-radio__input:focus-visible + .q-radio__dot { outline: 2px solid var(--qm-primary); outline-offset: 2px; }
+.q-radio__label.q-radio__label {
+    font-size: var(--qm-text-base);
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    color: var(--qm-text-primary);
+    line-height: 1.4;
+    margin-bottom: 0;
+}
+.q-radio__label strong { font-weight: 600; }
+.q-radio__desc { color: var(--qm-text-secondary); }
 
 /* ==========================================================================
    QSwitch Component (2026-09-23) — the on/off control for a setting
@@ -3199,3 +3270,10 @@ textarea.q-input { font-size: var(--q-control-font); padding: 8px var(--q-contro
     font-size: var(--qm-text-md);
     line-height: 1.3;
 }
+
+/* ==========================================================================
+   QProductMark — the app's name set in type (rebrand 2026-09-24)
+   ========================================================================== */
+.q-product-name { font-family: var(--qm-font-display); white-space: nowrap; }
+.q-product-name__word { font-weight: 800; }
+.q-product-name__desc { font-weight: 500; opacity: .78; }

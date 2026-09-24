@@ -1,3 +1,4 @@
+using QMgr.Application.Branding;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -139,6 +140,7 @@ public class TenantProvisioningService : ITenantProvisioningService
                 organization = new Organization
                 {
                     Name = request.OrganizationName,
+                    BrandName = request.BrandName,
                     Slug = slug,
                     // Canonical forms for duplicate detection, computed once at creation so the
                     // sign-up path can narrow candidates with an indexed lookup instead of scanning.
@@ -397,7 +399,7 @@ public class TenantProvisioningService : ITenantProvisioningService
         var baseUrl = await _platformSettingsService.GetPublicWebBaseUrlAsync();
         var verificationUrl = $"{baseUrl}/verify?org={organization.Id}&token={token}";
 
-        var subject = "Verify your Q-Mgr account";
+        var subject = $"Verify your {ProductBrand.Name} account";
         var htmlBody = EmailTemplates.Layout(
             "Verify your email",
             user.FirstName,

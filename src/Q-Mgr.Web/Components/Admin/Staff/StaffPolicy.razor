@@ -113,6 +113,30 @@
                 @if (groupError != null) { <p class="pol-error">@groupError</p> }
             </QCard>
 
+            @* Employment types (2026-09-23). A six-value enum until then that nothing branched on; the MoES return
+               separates government-paid from PTA-paid teachers and both squashed into "Contract". *@
+            <QCard Title="Employment types" Icon="briefcase" Class="pol-card"
+                   Hint="How your staff are engaged, as your returns count them — add Government-paid and PTA-paid if the MoES return separates them. The six seeded are what the fixed list used to be. A type somebody holds is retired rather than removed; to rename one, add the new name, move the people, then retire the old.">
+                <div class="table-wrap">
+                    <table class="data-table q-stack pol-table">
+                        <thead><tr><th>Name</th><th>In use</th><th></th></tr></thead>
+                        <tbody>
+                            @for (var i = 0; i < typeDrafts.Count; i++)
+                            {
+                                var idx = i;
+                                <tr class="@(typeDrafts[idx].IsActive ? "" : "row-muted")">
+                                    <td><QInput TValue="string" @bind-Value="@typeDrafts[idx].Name" MaxLength="60" Placeholder="e.g. PTA-paid" /></td>
+                                    <td><QCheckbox @bind-Value="@typeDrafts[idx].IsActive" Label="@(typeDrafts[idx].IsActive ? "Active" : "Retired")" /></td>
+                                    <td><QButton Icon="trash" Variant="ghost" Size="sm" OnClick="@(() => typeDrafts.RemoveAt(idx))" Title="Remove — refused while anybody holds it; retire it instead" /></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <QButton Text="Add type" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@(() => typeDrafts.Add(new VocabularyItemDto { Name = "", IsActive = true, SortOrder = typeDrafts.Count }))" Class="pol-add" />
+                @if (typeError != null) { <p class="pol-error">@typeError</p> }
+            </QCard>
+
             <QCard Title="Weights and points" Icon="sliders" Class="pol-card">
                 <QInput TValue="int" @bind-Value="@policy.MaxParameterWeightPercent" Type="number" Min="10" Max="50" Label="Weight cap (%)"
                         Hint="No single parameter may carry more than this share of the composite. Between 10 and 50: the MET study found composites where no measure exceeds about half the weight were the most stable, so 50 is a ceiling you may tighten but not lift."
@@ -278,6 +302,9 @@
     /// <summary>The staff-group rows being edited. Bound directly; committed to the policy on Save.</summary>
     private List<VocabularyItemDto> groupDrafts = new();
     private string? groupError;
+    /// <summary>The employment-type rows being edited; committed on Save, where the server also refuses removing a held one.</summary>
+    private List<VocabularyItemDto> typeDrafts = new();
+    private string? typeError;
     private StaffReminderLadders? ladderEditor;
 
     protected override async Task OnInitializedAsync()
@@ -303,6 +330,7 @@
             bandDrafts = bands.OrderByDescending(b => b.Rating).Select(b => new BandDraft { Rating = b.Rating, Name = b.Name, MinScore = b.MinScore }).ToList();
             // Copied rather than bound in place, so Cancel-by-navigation leaves the stored list alone.
             groupDrafts = policy.StaffGroups.Select(g => new VocabularyItemDto { Name = g.Name, IsActive = g.IsActive, SortOrder = g.SortOrder }).ToList();
+            typeDrafts = policy.EmploymentTypes.Select(g => new VocabularyItemDto { Name = g.Name, IsActive = g.IsActive, SortOrder = g.SortOrder }).ToList();
         }
         catch (Exception ex)
         {
@@ -371,6 +399,15 @@
             groupError = "Two groups have the same name.";
         if (groupError != null) return;
 
+        // Employment types: the same rules as groups, which the server applies again in the same words.
+        typeError = null;
+        var types = typeDrafts.Where(g => !string.IsNullOrWhiteSpace(g.Name)).ToList();
+        for (var i = 0; i < types.Count; i++) { types[i].Name = types[i].Name.Trim(); types[i].SortOrder = i; }
+        if (types.Count == 0) typeError = "Keep at least one employment type.";
+        else if (types.Select(g => QMgr.Domain.Enums.EmploymentTypes.Key(g.Name)).Distinct().Count() != types.Count)
+            typeError = "Two employment types have the same name.";
+        if (typeError != null) return;
+
         bandError = null;
         var ordered = bandDrafts.OrderBy(b => b.Rating).ToList();
         ordered[0].MinScore = 0;
@@ -417,6 +454,7 @@
         policy.Periods = periods;
         policy.Bands = ordered.Select(b => new ScoreBandDto { Rating = b.Rating, Name = b.Name.Trim(), MinScore = b.MinScore }).ToList();
         policy.StaffGroups = groups;
+        policy.EmploymentTypes = types;
 
         isSaving = true;
         try
