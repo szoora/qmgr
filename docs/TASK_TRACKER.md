@@ -31,8 +31,13 @@ remote, so it still exists on this disk alone until one is added.
       "Yours, not code"). **Two remain genuinely open:** a security review against the real production
       configuration, and whether the `AdvancedAnalytics` / `WebhookIntegration` feature flags should gate anything.
 - [x] **School Day ordering — BUILT the same afternoon** (the diagnosis above was wrong: the server always sorted; the page did not follow, and a save never re-timed generated lessons). Section 39 8/0, browser school-day-order 5/0.
-- **Waiting on the user:** Firebase — a service-account key for the server, and a `google-services.json` that lists
-  `ug.qmgr` (the one in the app lists only com.sacc.erp, com.sacc.ezycom and ug.cashbook, so push cannot register).
+- [x] **Firebase — supplied and wired the same evening.** The key is at `D:QMGRsecrets` (outside the repo),
+      named by `FirebaseServiceAccountPath` in the untracked `secrets.local.json`; `build-linux.ps1` now writes
+      `Push__*` into the API unit (the key as one quoted line). Dev: `Push` in `appsettings.Development.json`, and
+      the API logged "Platform push settings created … sacc-47bf4"; the key reads back masked. Google issued an
+      access token and FCM answered a validate-only send (INVALID_ARGUMENT for a made-up token = auth and project
+      permission fine). The app's `google-services.json` now lists `ug.qmgr` (mobile commit `7d7600c`) and the
+      Release APK carries its app id. **Still unexercised: a real notification reaching a real phone.**
 
 ### 2026-09-24 — THE REBRAND: Q-Mgr → SACC Dashboard (uncommitted, on top of the 09-23/09-24 batch)
 

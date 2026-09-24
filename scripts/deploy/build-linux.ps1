@@ -257,6 +257,37 @@ if (-not $resolvedSmtpPassword) {
     Write-Warn "No SMTP password (-SmtpPassword or scripts/deploy/secrets.local.json). The package ships with platform email UNCONFIGURED: tenants that have not set their own SMTP will have mail skipped, not failed."
 }
 
+# Firebase push: the service-account JSON Google issues, named by FirebaseServiceAccountPath in the
+# untracked secrets.local.json. The file itself lives OUTSIDE the repository — it holds an RSA key
+# that can send a notification to every handset. Three Push__* lines reach the API unit, for the
+# same reason Email__* does (see PlatformPushDefaults). None -> push ships unconfigured: a handset
+# notification is SKIPPED with a reason, never failed. The build warns.
+$pushServiceAccount = $null
+$secretsFileForPush = Join-Path $PSScriptRoot 'secrets.local.json'
+if (Test-Path $secretsFileForPush) {
+    try {
+        $saPath = (Get-Content $secretsFileForPush -Raw | ConvertFrom-Json).FirebaseServiceAccountPath
+        if ($saPath) {
+            if (Test-Path $saPath) {
+                $sa = Get-Content $saPath -Raw | ConvertFrom-Json
+                if ($sa.project_id -and $sa.client_email -and $sa.private_key) {
+                    $pushServiceAccount = $sa
+                    Write-Info "Firebase service account read for project $($sa.project_id)"
+                } else {
+                    Write-Warn "$saPath is not a complete Firebase service-account key (project_id, client_email, private_key)."
+                }
+            } else {
+                Write-Warn "FirebaseServiceAccountPath points at $saPath, which does not exist."
+            }
+        }
+    } catch {
+        Write-Warn "The Firebase service account could not be read ($($_.Exception.Message)) — continuing without push."
+    }
+}
+if (-not $pushServiceAccount) {
+    Write-Warn "No Firebase service account (FirebaseServiceAccountPath in scripts/deploy/secrets.local.json). The package ships with push UNCONFIGURED: handset notifications will be skipped, not failed."
+}
+
 $apiAppSettingsProd = [ordered]@{
     ConnectionStrings = [ordered]@{
         DefaultConnection = $dbConnString
@@ -936,6 +967,15 @@ $emailEnvLines = @(
 )
 if ($resolvedSmtpPassword) {
     $emailEnvLines += "Environment=Email__SmtpPassword=$resolvedSmtpPassword"
+}
+if ($pushServiceAccount) {
+    # A unit line cannot hold a newline, so the PEM travels with literal \n and the WHOLE assignment is
+    # quoted (the key's BEGIN/END lines contain spaces). PushSender turns \n back into newlines either
+    # way, so it does not matter whether systemd unescapes them first.
+    $pemOneLine = ([string]$pushServiceAccount.private_key).Replace("`r", '').TrimEnd("`n").Replace("`n", '\n')
+    $emailEnvLines += "Environment=Push__FirebaseProjectId=$($pushServiceAccount.project_id)"
+    $emailEnvLines += "Environment=Push__FirebaseClientEmail=$($pushServiceAccount.client_email)"
+    $emailEnvLines += "Environment=`"Push__FirebasePrivateKey=$pemOneLine`""
 }
 $emailUnitEnvironment = ($emailEnvLines -join "`n")
 
