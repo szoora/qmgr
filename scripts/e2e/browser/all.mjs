@@ -56,6 +56,8 @@ SUITES.push('access-ui');
 SUITES.push('product-name');
 // The School Day's rows follow their start times (2026-09-24); section 39 is the API half.
 SUITES.push('school-day-order');
+// The rota comes before the per-person load card, which says "Duty load" (2026-09-24).
+SUITES.push('rota-layout');
 
 // Measurement, not assertion: density-check runs an A/B in one page load, furniture-check tallies
 // the space a page spends before any data. Neither has a pass state, so failing the run on one

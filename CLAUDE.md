@@ -2781,6 +2781,13 @@ The plan is `docs/plans/DUTY_ROTA_AND_TIMETABLE.md`; progress and the resume poi
 - **A rota slot is a `StaffDuty` of kind Rota; `StaffRota` is the one home for its rules** (default cadence, warnings,
   the seeded "Teacher on Duty" parameter, the assignment notice). Warnings never refuse. A duty's kind never changes, a
   Lesson is never created by hand, and the Duties & Registers page lists Session duties only — the rota has its own page.
+- **CANCELLING A ROTA ENDS A SLOT UNDER WAY NOW (2026-09-24).** It used to cancel only slots not yet started, so a
+  weekly rota cancelled mid-week changed nothing visible, a second press reported 0, and the running slot went on
+  asking for daily reports to its end. Now the running slot's `EndsAt` becomes now — its days so far, acknowledgements
+  and reports stay, and its close-out is still taken — because reports, reminders and the register chase all read
+  `EndsAt`. The answer is `RotaCancelResult(Cancelled, Ended, Kept)` and the toast says which happened. The per-person
+  count below the rota is **"Duty load"**, not "Fairness", and sits UNDER the rota: the duties are what the page is for.
+  Section 15 and `browser/rota-layout.mjs`.
 - **The rota is readable by every member of the branch (a displayed MoES record); who has ACKNOWLEDGED is not** — only
   duty managers and the slot's supervisors get the map. Acknowledgement is the atomic jsonb `||` pattern, and a
   reschedule clears it. A supervisor is told a COUNT by the ladder; names appear only on their portal to-do.

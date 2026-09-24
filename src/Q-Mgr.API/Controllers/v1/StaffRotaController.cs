@@ -183,8 +183,11 @@ public class StaffRotaController : StaffPerformanceControllerBase
     // ---- Cancel a series ------------------------------------------------------------------------------
 
     /// <summary>
-    /// Cancels the slots of a series that have not started and whose register is not taken. A slot already under way
-    /// or done stays: it is history (plan §4.1 "open slots only"). Returns how many were cancelled and how many kept.
+    /// Stops a series. Slots that have not started are cancelled. A slot UNDER WAY whose register is not closed is
+    /// ENDED NOW rather than kept (2026-09-24): it used to be left running to its end, so cancelling a weekly rota on a
+    /// Thursday changed nothing anybody could see, pressing again reported 0, and the slot went on asking for daily
+    /// reports to Saturday. Its days so far stay as history — acknowledgements, reports filed, the close-out still to
+    /// take — because reports, reminders and the register chase all read EndsAt. A closed-out or finished slot is kept.
     /// </summary>
     [HttpDelete("series/{seriesId:guid}")]
     [RequirePermission(Permissions.StaffDutiesManage)]
@@ -203,18 +206,26 @@ public class StaffRotaController : StaffPerformanceControllerBase
             return NotFoundProblem("Rota not found");
 
         var open = series.Where(d => d.StartsAt > now && d.RegisterClosedAt == null).ToList();
+        var running = series.Where(d => d.StartsAt <= now && d.EndsAt > now && d.RegisterClosedAt == null).ToList();
         foreach (var d in open)
         {
             d.IsActive = false;
             d.UpdatedAt = now;
             d.UpdatedBy = CurrentUserId();
         }
+        foreach (var d in running)
+        {
+            d.EndsAt = now;
+            d.UpdatedAt = now;
+            d.UpdatedBy = CurrentUserId();
+        }
         await Db.SaveChangesAsync();
 
+        var kept = series.Count - open.Count - running.Count;
         await Activity.RecordAsync(ActivityActions.RotaSeriesCancelled, nameof(StaffDuty), seriesId, null,
-            $"Rota \"{series[0].Title}\": {open.Count} upcoming slot(s) cancelled, {series.Count - open.Count} kept",
-            new { Cancelled = open.Count, Kept = series.Count - open.Count }, branchId, organizationId);
-        return Ok(new { cancelled = open.Count, kept = series.Count - open.Count });
+            $"Rota \"{series[0].Title}\": {open.Count} upcoming slot(s) cancelled, {running.Count} ended now, {kept} kept",
+            new { Cancelled = open.Count, Ended = running.Count, Kept = kept }, branchId, organizationId);
+        return Ok(new { cancelled = open.Count, ended = running.Count, kept });
     }
 
     // ---- Swap -----------------------------------------------------------------------------------------

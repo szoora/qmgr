@@ -86,7 +86,7 @@ public interface IStaffPerformanceApiService
     Task<Guid> GetRotaParameterIdAsync(Guid branchId);
     Task<RotaGenerateResultDto> GenerateRotaAsync(Guid branchId, GenerateRotaRequest request);
     Task<RotaGenerateResultDto> ExtendRotaAsync(Guid branchId, Guid seriesId, ExtendRotaRequest request);
-    Task<int> CancelRotaSeriesAsync(Guid branchId, Guid seriesId);
+    Task<RotaCancelResult> CancelRotaSeriesAsync(Guid branchId, Guid seriesId);
     Task SwapRotaAsync(Guid branchId, SwapRotaRequest request);
     Task<List<RotaWarningDto>> CheckRotaSlotAsync(Guid branchId, CheckRotaSlotRequest request);
     Task<RotaFairnessDto> GetRotaFairnessAsync(Guid branchId, string? period = null);
@@ -457,7 +457,7 @@ public class StaffPerformanceApiService : IStaffPerformanceApiService
     public async Task<Guid> GetRotaParameterIdAsync(Guid branchId) => (await GetAsync<RotaDefaultsResponse>($"{B(branchId)}/rota/defaults")).ParameterId;
     public Task<RotaGenerateResultDto> GenerateRotaAsync(Guid branchId, GenerateRotaRequest request) => SendAsync<RotaGenerateResultDto>(HttpMethod.Post, $"{B(branchId)}/rota/generate", request);
     public Task<RotaGenerateResultDto> ExtendRotaAsync(Guid branchId, Guid seriesId, ExtendRotaRequest request) => SendAsync<RotaGenerateResultDto>(HttpMethod.Post, $"{B(branchId)}/rota/series/{seriesId}/extend", request);
-    public async Task<int> CancelRotaSeriesAsync(Guid branchId, Guid seriesId) => (await SendAsync<CancelSeriesResponse>(HttpMethod.Delete, $"{B(branchId)}/rota/series/{seriesId}")).Cancelled;
+    public Task<RotaCancelResult> CancelRotaSeriesAsync(Guid branchId, Guid seriesId) => SendAsync<RotaCancelResult>(HttpMethod.Delete, $"{B(branchId)}/rota/series/{seriesId}");
     public Task SwapRotaAsync(Guid branchId, SwapRotaRequest request) => SendAsync(HttpMethod.Post, $"{B(branchId)}/rota/swap", request);
     public Task<List<RotaWarningDto>> CheckRotaSlotAsync(Guid branchId, CheckRotaSlotRequest request) => SendAsync<List<RotaWarningDto>>(HttpMethod.Post, $"{B(branchId)}/rota/check", request);
     public Task<RotaFairnessDto> GetRotaFairnessAsync(Guid branchId, string? period = null) => GetAsync<RotaFairnessDto>($"{B(branchId)}/rota/fairness{Q(("period", period))}");
@@ -473,7 +473,6 @@ public class StaffPerformanceApiService : IStaffPerformanceApiService
     public Task MarkNoDutyAsync(Guid branchId, Guid id, string reason) => SendAsync(HttpMethod.Post, $"{B(branchId)}/duty-reports/{id}/no-duty", new DutyReportNoteRequest { Body = reason });
     public Task<List<DutyReportLinkedRecordDto>> GetLinkableWelfareRecordsAsync(Guid branchId) => GetAsync<List<DutyReportLinkedRecordDto>>($"{B(branchId)}/duty-reports/linkable-welfare-records");
     private sealed record RotaDefaultsResponse(Guid ParameterId);
-    private sealed record CancelSeriesResponse(int Cancelled, int Kept);
     public Task<StaffDutyDto> CreateDutyAsync(Guid branchId, SaveStaffDutyRequest request) => SendAsync<StaffDutyDto>(HttpMethod.Post, $"{B(branchId)}/duties", request);
     public Task<StaffDutyDto> UpdateDutyAsync(Guid branchId, Guid id, SaveStaffDutyRequest request) => SendAsync<StaffDutyDto>(HttpMethod.Put, $"{B(branchId)}/duties/{id}", request);
     public Task CancelDutyAsync(Guid branchId, Guid id) => SendAsync(HttpMethod.Delete, $"{B(branchId)}/duties/{id}");

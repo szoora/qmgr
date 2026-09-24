@@ -150,6 +150,21 @@ const fairness = await get(AD, `${B}/staff/rota/fairness?period=${encodeURICompo
 eq("FAIRNESS: answers 200 for a duties manager", fairness.status, 200);
 eq("FAIRNESS: a teacher without the permissions is refused (403)", (await get(U.math1.token, `${B}/staff/rota/fairness`)).status, 403);
 
+// CANCEL A ROTA WHOSE SLOT IS UNDER WAY (2026-09-24, reported from production as "cancel rota not working").
+// The running slot used to be kept to its end, so a weekly rota cancelled mid-week changed nothing visible and a
+// second press reported 0. It now ends NOW: the future slot goes, the running one stops, and nothing is left to cancel.
+{
+  const mon = new Date(); mon.setUTCDate(mon.getUTCDate() - ((mon.getUTCDay() + 6) % 7));
+  const live = await post(AD, `${B}/staff/rota/generate`, genBody({ title: `E2E ${RUN} cancel under way`, startDate: mon.toISOString().slice(0, 10), slots: 2, dayStartLocalTime: "00:01", dayEndLocalTime: "23:59", staffUserIds: [U.support.id], supervisorUserIds: [], supervisorsPerSlot: 0, preview: false }));
+  const liveId = live.json?.seriesId;   // not in cleanupSeries: this block cancels it, and what is left is a finished slot
+  const cancelled = await del(AD, `${B}/staff/rota/series/${liveId}`);
+  truthy("CANCEL SERIES UNDER WAY: the future slot is cancelled and the running one ended now", cancelled.json?.cancelled === 1 && cancelled.json?.ended === 1, `${cancelled.status} ${cancelled.text}`);
+  const running = (await rotaIn(AD, -24 * 8, 24 * 1)).find((d) => d.seriesId === liveId);
+  truthy("…the running slot stays as history, ending within the last minute", !!running && Math.abs(new Date(running.endsAt) - Date.now()) < 120_000, JSON.stringify(running && { s: running.startsAt, e: running.endsAt }));
+  const again = await del(AD, `${B}/staff/rota/series/${liveId}`);
+  truthy("…and a second press has nothing left to cancel or end", again.json?.cancelled === 0 && again.json?.ended === 0, again.text);
+}
+
 // ---------------------------------------------------------------------------------------------------
 hdr("15.2 ROTA — visibility, acknowledgement, reschedule, swap, cancel");
 const slot1 = afterExt[0];

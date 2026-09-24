@@ -52,13 +52,6 @@
         <QCheckbox @bind-Value="@onlyMine" Label="Only slots I am on or supervise" />
     </QFilterBar>
 
-    @if (fairness != null && fairness.Rows.Any())
-    {
-        <QCard Title="@($"Fairness — {fairness.PeriodName}")" Subtitle="@(fairness.Limit > 0 ? $"Rota slots on duty per person; the policy warns above {fairness.Limit} a term" : "Rota slots on duty per person")" Icon="bar-chart" Class="rota-fair">
-            <QBarList Items="@FairnessBars" Max="@((decimal)Math.Max(fairness.Limit, fairness.Rows.Max(r => r.OnDutySlots)))" Stacked="true" />
-        </QCard>
-    }
-
     @if (isLoading)
     {
         <div class="loading-container"><QSpinner Size="lg" /><span>Loading the rota...</span></div>
@@ -125,6 +118,15 @@
                 </button>
             </ItemTemplate>
         </QMonthList>
+    }
+
+    @* Below the rota, not above it (2026-09-24): the duties are what a reader came for, and this list names
+       every member of staff. "Duty load" says what it measures; "Fairness" was a judgement, not a label. *@
+    @if (!isLoading && fairness != null && fairness.Rows.Any())
+    {
+        <QCard Title="@($"Duty load — {fairness.PeriodName}")" Subtitle="@(fairness.Limit > 0 ? $"Rota slots each person is on this term; the rota warns above {fairness.Limit}" : "Rota slots each person is on this term")" Icon="bar-chart" Class="rota-fair">
+            <QBarList Items="@FairnessBars" Max="@((decimal)Math.Max(fairness.Limit, fairness.Rows.Max(r => r.OnDutySlots)))" Stacked="true" />
+        </QCard>
     }
 </div>
 
@@ -405,8 +407,8 @@
 </QModal>
 
 <ConfirmDialog @bind-IsVisible="showCancelSeries" Title="Cancel this rota?"
-               Message="@($"Every upcoming slot of \"{cancelSeriesTarget?.Title}\" is cancelled and its reminders stop. Slots already under way or closed out are kept.")"
-               ConfirmText="Cancel upcoming slots" ConfirmButtonClass="btn-danger" OnClose="@CancelSeriesAsync" />
+               Message="@($"Every upcoming slot of \"{cancelSeriesTarget?.Title}\" is cancelled, and a slot under way ends now. Its days so far, acknowledgements and reports are kept, and its close-out is still taken. Closed-out slots are not touched.")"
+               ConfirmText="Cancel the rota" ConfirmButtonClass="btn-danger" OnClose="@CancelSeriesAsync" />
 
 <style>
     .rota-nav { display: flex; align-items: center; gap: var(--q-row-gap, 8px); flex-wrap: wrap; }
@@ -740,8 +742,12 @@
         if (!confirmed || cancelSeriesTarget?.SeriesId is not { } seriesId) return;
         try
         {
-            var n = await StaffApi.CancelRotaSeriesAsync(branchId, seriesId);
-            Toast.Notify(ToastSeverity.Success, "Rota cancelled", $"{n} upcoming slot(s) cancelled.");
+            var r = await StaffApi.CancelRotaSeriesAsync(branchId, seriesId);
+            // Say what actually happened: "0 cancelled" on a rota whose only slot was under way read as a broken button.
+            var parts = new List<string>();
+            if (r.Cancelled > 0) parts.Add($"{r.Cancelled} upcoming slot{(r.Cancelled == 1 ? "" : "s")} cancelled");
+            if (r.Ended > 0) parts.Add($"{r.Ended} slot{(r.Ended == 1 ? "" : "s")} under way ended now");
+            Toast.Notify(ToastSeverity.Success, "Rota cancelled", parts.Count > 0 ? string.Join(", ", parts) + "." : "Nothing was left to cancel: every slot has finished or been closed out.");
             showSlot = false;
             await LoadAsync();
         }

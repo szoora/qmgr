@@ -386,6 +386,9 @@ public record CheckRotaSlotRequest
 }
 
 /// <summary>The fairness strip (plan §4.1): rota slots per person this term, against the policy's limit.</summary>
+/// <summary>What cancelling a rota did: upcoming slots cancelled, slots under way ended now, finished ones kept.</summary>
+public record RotaCancelResult(int Cancelled, int Ended, int Kept);
+
 public record RotaFairnessDto
 {
     public string PeriodKey { get; init; } = string.Empty;
