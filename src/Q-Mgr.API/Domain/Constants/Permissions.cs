@@ -150,6 +150,12 @@ public static class Permissions
     public const string TimetableManage = "timetable.manage";               // the timetable master: build, check, publish
     public const string TimetableLessonsFlag = "timetable.lessons.flag";    // confirm or override lesson flags within the staff scope
 
+    // Lesson plans and schemes of work (2026-09-26). In all THREE catalogues. Writing one's own plan needs no code — it
+    // needs a live teaching assignment. Review is granted by the head-of-department POST, never seeded on a role.
+    public const string TeachingPlansReview = "teaching.plans.review";      // stage 1: forward or return plans of the department
+    public const string TeachingPlansApprove = "teaching.plans.approve";    // stage 2: approve or return forwarded plans
+    public const string TeachingPlansView = "teaching.plans.view";          // read approved plans school-wide; the reports
+
     // School calendar (2026-09-23, plan TERM_PROGRAMME_CALENDAR_AND_GATES). In all THREE catalogues. Reading the
     // calendar needs no code: every signed-in member of the organization reads the events whose audience includes them.
     public const string CalendarManage = "calendar.manage";                 // create, edit and import school events and the term programme
@@ -308,6 +314,9 @@ public static class Permissions
         new("staff.dutyreports.review", "Review Duty Reports", "Comment on duty reports, return them for changes and mark them reviewed", "Staff Performance", 15),
         new("timetable.manage", "Manage the Timetable", "Build, check and publish the timetable, bell schedule and rooms — the timetable master", "Staff Performance", 16),
         new("timetable.lessons.flag", "Flag Lessons", "Confirm or override lessons taught, missed and recovered for the staff in scope", "Staff Performance", 17),
+        new("teaching.plans.review", "Review Lesson Plans", "Forward or return the lesson plans and schemes of work of a department (the head of department's post grants it)", "Staff Performance", 18),
+        new("teaching.plans.approve", "Approve Lesson Plans", "Approve or return lesson plans and schemes of work forwarded by heads of department", "Staff Performance", 19),
+        new("teaching.plans.view", "View Lesson Plans", "Read approved lesson plans and schemes of work across the school, and the planning reports", "Staff Performance", 20),
         new("calendar.manage", "Manage the School Calendar", "Create and edit school events and import the term programme, meetings and duty rotas", "Calendar", 1),
 
         // Marketing
@@ -320,7 +329,7 @@ public static class Permissions
         new("settings.edit", "Edit Settings", "Modify organization settings", "Settings", 2),
 
         // Notifications
-        new("notifications.view", "View Notifications", "View notification settings", "Notifications", 1),
+        new("notifications.view", "View Notifications", "View notification history", "Notifications", 1),
         new("notifications.manage", "Manage Notifications", "Configure notification settings", "Notifications", 2),
 
         // API Clients
@@ -394,6 +403,7 @@ public static class Permissions
         StaffAppraisalsConduct, StaffAppraisalsApprove,
         StaffReportsView, StaffNoticesManage, StaffStructureManage, StaffRecognitionGive,
         StaffDutyReportsView, StaffDutyReportsReview, TimetableManage, TimetableLessonsFlag,
+        TeachingPlansApprove, TeachingPlansView,
         CalendarManage, LibraryPublish, DocumentsShareCreate,
     };
 
@@ -521,6 +531,7 @@ public static class Permissions
                 StaffAppraisalsConduct, StaffAppraisalsApprove,
                 StaffReportsView, StaffNoticesManage, StaffStructureManage, StaffRecognitionGive,
                 StaffDutyReportsView, StaffDutyReportsReview, TimetableManage, TimetableLessonsFlag,
+                TeachingPlansApprove, TeachingPlansView,
                 CalendarManage,
             },
             RoleDataScope.Organization,
@@ -542,6 +553,7 @@ public static class Permissions
                 StaffDutiesManage,
                 StaffReportsView, StaffNoticesManage, StaffRecognitionGive,
                 StaffDutyReportsView, TimetableManage, TimetableLessonsFlag,
+                TeachingPlansApprove, TeachingPlansView,
                 CalendarManage,
             },
             RoleDataScope.Organization,

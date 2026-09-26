@@ -1,8 +1,11 @@
+// The Web address follows WEB like every suite does; it was typed in here, so a run on other ports signed in nowhere.
+const BASE = process.env.WEB ?? 'http://127.0.0.1:5003';
+
 export async function login(t, id, pw) {
-  await t.goto('http://127.0.0.1:5003/login');
+  await t.goto(`${BASE}/login`);
   await t.sleep(500);
   await t.eval('localStorage.clear(); sessionStorage.clear(); true');
-  await t.goto('http://127.0.0.1:5003/login');
+  await t.goto(`${BASE}/login`);
   await t.waitFor(`!!document.querySelector('input[type=text]')`); await t.sleep(1000);
   await t.setValue('input[type=text]', id);
   await t.clickText('Continue');

@@ -1,7 +1,7 @@
 # Mobile app integration — rebranding the MAUI shell for Q-Mgr
 
-**Status:** plan only. No code written. Written 2026-09-22, revised the same day with the
-user's seven decisions (§11) and the checks those decisions prompted.
+**Status:** BUILT 2026-09-22 (`66a03db`, mobile repo `1d238a1`/`7d7600c`) — every stage but iOS submission, which needs a Mac and an
+Apple account. Push configured 2026-09-24. Written 2026-09-22 with the user's seven decisions (§11). (Header corrected 2026-09-25.)
 **Mobile repo:** `D:\QMGR\Mobile\CashBook` (a working copy of `github.com/szoora/CashBookPro.git`)
 **Reference server implementation:** `E:\ERP` (`sacc/Api/V1/*`, `sacc/Controllers/GetAppController.cs`)
 **Contract:** `D:\QMGR\Mobile\CashBook\docs\product-onboarding.md` + `docs/onboarding-kit/`

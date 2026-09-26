@@ -831,6 +831,10 @@ public record StaffPerformancePolicyDto
     /// quietly running it.
     /// </summary>
     public SelfServicePolicyDto SelfService { get; set; } = new();
+
+    /// <summary>Lesson plans and schemes of work (2026-09-26): templates, stages, deadline, file limits. Read through
+    /// <c>IStaffPerformancePolicyService.PlanSettings</c>, which clamps it.</summary>
+    public TeachingPlanSettingsDto TeachingPlans { get; set; } = new();
 }
 
 public record ClosedPeriodDto

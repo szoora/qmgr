@@ -284,6 +284,46 @@ try {
     const reimport = await post(AD, IMPORT, body());
     eq("after the undo a re-import would create the events again", reimport.json?.eventsCreated, 2);
   } else skipped("undo", "the commit did not report its job or meeting");
+
+  // ---------------------------------------------------------------------------------------------------
+  hdr("31.5b Undo puts back the rows an import UPDATED — unless somebody changed them since (2026-09-25)");
+  {
+    const u = body("u", { preview: false, rotaSlots: [] });
+    const firstU = await post(AD, IMPORT, u);
+    eq("a first import creates the events and the meeting → 201", firstU.status, 201);
+    if (firstU.json?.jobId) cleanupJobs.push(firstU.json.jobId);
+    const upd = body("u", { preview: false, rotaSlots: [] });
+    upd.events[0].title = `E2E ${run}u Sports day (moved)`;
+    upd.events[1].location = "Main hall";
+    upd.meetings[0].location = "Library";
+    const second = await post(AD, IMPORT, upd);
+    eq("a second import of changed rows → 201", second.status, 201);
+    truthy("…updates two events and the meeting", (second.json?.eventsUpdated ?? 0) === 2 && (second.json?.meetingsUpdated ?? 0) === 1,
+      JSON.stringify({ e: second.json?.eventsUpdated, m: second.json?.meetingsUpdated }));
+    const secondJob = second.json?.jobId;
+
+    // Somebody edits the Carols event by hand after the import.
+    const mid = await ours("u");
+    const carols = mid.events.find((e) => e.title.includes("Carols"));
+    const edited = await call(AD, "PUT", `${B}/calendar/events/${carols?.id}`, {
+      title: carols?.title, startsOn: carols?.startsOn, endsOn: carols?.endsOn, audience: "Staff",
+      location: "Chapel (changed by hand)", classNames: [], responsibleUserIds: [], responsibleDepartmentIds: [],
+    });
+    eq("the Carols event is edited by hand after the import → 200", edited.status, 200);
+
+    const undoU = await post(AD, `${IMPORT}/jobs/${secondJob}/undo`);
+    eq("undoing the UPDATE import → 200", undoU.status, 200);
+    eq("…removes nothing it did not create", (undoU.json?.eventsRemoved ?? 0) + (undoU.json?.dutiesRemoved ?? 0), 0);
+    eq("…puts back the two rows nobody touched", undoU.json?.updatesRestored, 2);
+    truthy("…and names the one edited since, leaving it", (undoU.json?.updatesLeft ?? []).some((x) => /Carols/.test(x) && /changed since/.test(x)),
+      JSON.stringify(undoU.json?.updatesLeft));
+    const after = await ours("u");
+    truthy("the Sports day title is back as the first import wrote it",
+      after.events.some((e) => e.title === `E2E ${run}u Sports day`), JSON.stringify(after.events.map((e) => e.title)));
+    truthy("…and the hand edit on Carols survived", after.events.find((e) => e.title.includes("Carols"))?.location === "Chapel (changed by hand)",
+      after.events.find((e) => e.title.includes("Carols"))?.location);
+    truthy("…and the meeting's venue is back to what it was", (after.duties[0]?.location ?? null) !== "Library", after.duties[0]?.location);
+  }
 } catch (e) {
   bad("the suite ran to the end", "no exception", e?.stack ?? e);
 } finally {

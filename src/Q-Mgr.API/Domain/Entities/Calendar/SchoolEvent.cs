@@ -77,6 +77,85 @@ public class SchoolEvent : BaseAuditableEntity
     [MaxLength(200)]
     public string? SourceKey { get; set; }
 
+    // ---- The staff audience (plan CALENDAR_AUDIENCES_AND_IMPORT_ROUTING §5.1, 2026-09-26) ----------------------
+    // Who the event is FOR among staff, and therefore who is told about it and whose "My events" it is. Read through
+    // StaffAudienceRule (Shared) and StaffAudience (API) only — a second copy of "is this person in this audience" is
+    // how a notice and the calendar came to disagree about who a staff group contains. Columns on this row rather than
+    // a table: the lists are small, never queried across events by member, and belong to exactly one event.
+
+    /// <summary>
+    /// Every member of staff. Only meaningful while <see cref="Audience"/> includes Staff. The migration set it true on
+    /// every existing staff event, which is exactly what the Staff box meant before audiences could be narrowed.
+    /// </summary>
+    public bool AllStaff { get; set; } = true;
+
+    /// <summary>Staff group NAMES from the school's own list (matched with <c>StaffGroups.Key</c>). Ignored when <see cref="AllStaff"/>.</summary>
+    public string[] AudienceStaffGroups { get; set; } = Array.Empty<string>();
+
+    /// <summary>Role codes ("admin", "head-teacher"). How "only the administrators" is said.</summary>
+    public string[] AudienceRoleCodes { get; set; } = Array.Empty<string>();
+
+    public Guid[] AudienceDepartmentIds { get; set; } = Array.Empty<Guid>();
+
+    public Guid[] AudienceUserIds { get; set; } = Array.Empty<Guid>();
+
+    /// <summary>
+    /// "Only its audience can see it" — a disciplinary panel, an interview. Off, the event is on the whole-school
+    /// calendar for any member of staff who chooses to look; on, only its audience, the people responsible and the
+    /// calendar's keepers see it at all.
+    /// </summary>
+    public bool AudienceOnly { get; set; }
+
+    /// <summary>Attendance is required of the audience (Arbor's "Required"); shown on My School Day. Not a register.</summary>
+    public bool AttendanceRequired { get; set; }
+
+    // ---- Lifecycle, notices and reminders ------------------------------------------------------------------------
+
+    /// <summary>Cancelled events stay on the calendar struck through, so "was it cancelled or did I miss it" has an answer.</summary>
+    public SchoolEventStatus Status { get; set; } = SchoolEventStatus.Scheduled;
+
+    [MaxLength(300)]
+    public string? CancelReason { get; set; }
+    public DateTime? CancelledAt { get; set; }
+    public Guid? CancelledByUserId { get; set; }
+
+    /// <summary>
+    /// Bumped on a MATERIAL change — dates, times, venue, audience, status. A typo in the title is not one. It is the
+    /// iCalendar SEQUENCE (RFC 5546) and the notice claim: a notice goes out when <see cref="NotifiedVersion"/> is
+    /// below it, claimed by one conditional UPDATE so a retried or doubled save never tells anybody twice.
+    /// </summary>
+    public int Version { get; set; } = 1;
+
+    public int NotifiedVersion { get; set; }
+
+    /// <summary>The highest reminder stage sent, claimed with a conditional UPDATE (the duty ladder's rule). Reset when the event moves.</summary>
+    public int ReminderStage { get; set; }
+
+    /// <summary>The school's default ladder reminds; an event may switch it off.</summary>
+    public bool RemindersOn { get; set; } = true;
+
+    /// <summary>
+    /// Set when somebody edits an IMPORTED event by hand. A re-import of the document then leaves the fields alone and
+    /// says so, instead of silently putting back what the document said.
+    /// </summary>
+    public DateTime? EditedByHandAt { get; set; }
+
+    /// <summary>How a series repeats, in words ("Weekly on Tuesday, term time, until 5 Dec 2026"). Rows share <see cref="SeriesId"/>.</summary>
+    [MaxLength(160)]
+    public string? Recurrence { get; set; }
+
+    /// <summary>A Library document attached to the event (an agenda, a letter). Its own sharing rules decide who opens it.</summary>
+    public Guid? LibraryDocumentId { get; set; }
+
+    /// <summary>The dialog's idempotency key: a double press of "Add event" makes one event, not two.</summary>
+    public Guid? ClientRequestId { get; set; }
+
+    /// <summary>
+    /// PostgreSQL's xmin, mapped as the row version (Npgsql; no column is added). Two people editing one event: the
+    /// second save is refused with the first person's version rather than silently overwriting it.
+    /// </summary>
+    public uint RowVersion { get; set; }
+
     public virtual Organization.Organization? Organization { get; set; }
     public virtual Organization.Branch? Branch { get; set; }
 }

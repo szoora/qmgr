@@ -35,10 +35,15 @@ public enum ProgrammeRowKind
     Rota = 2
 }
 
-/// <summary>Who a meeting expects, as the reader chose it. A meeting with nobody named stays an event.</summary>
+/// <summary>
+/// Who a meeting expects, as the reader chose it. Until 2026-09-26 a meeting whose attendance its TITLE did not give
+/// defaulted to <see cref="EventOnly"/> with nothing asked — which is how a school's meetings silently failed to reach
+/// the registers. It now defaults to <see cref="Undecided"/>, which is a question on the row: read from the document's
+/// own words where they can be, asked where they cannot, never decided by the page alone.
+/// </summary>
 public enum MeetingAttendance
 {
-    /// <summary>Not a duty: imported as a calendar event only (the default for a meeting whose attendance cannot be read).</summary>
+    /// <summary>Not a duty: imported as a calendar event only — because the READER said so, never by default.</summary>
     EventOnly = 0,
     /// <summary>Every active member of staff ("Staff Meeting").</summary>
     Everyone = 1,
@@ -46,8 +51,10 @@ public enum MeetingAttendance
     DepartmentHeads = 2,
     /// <summary>The people a rota in the same import names with this role ("Prep Supervisor").</summary>
     RoleHolders = 3,
-    /// <summary>People the reader picked.</summary>
-    Chosen = 4
+    /// <summary>People and groups the reader picked, or the document's words read into an audience (<see cref="ProgrammeCandidate.StaffAudience"/>).</summary>
+    Chosen = 4,
+    /// <summary>Nobody has said yet: a must-decide question on the row.</summary>
+    Undecided = 5
 }
 
 /// <summary>One table, as the classifier read it.</summary>
@@ -123,6 +130,14 @@ public sealed class ProgrammeCandidate
     public List<Guid> ExpectedUserIds { get; set; } = new();
     public List<Guid> RecorderUserIds { get; set; } = new();
 
+    /// <summary>For <see cref="MeetingAttendance.Chosen"/>: who, as groups, roles, departments and people (2026-09-26).</summary>
+    public QMgr.Application.DTOs.StaffAudienceDto? StaffAudience { get; set; }
+    /// <summary>What the document's attendance words were read as, and what they could not be.</summary>
+    public List<string> AudienceReadings { get; set; } = new();
+    public List<string> AudienceUnresolved { get; set; } = new();
+    /// <summary>The reader said who takes the register (possibly "duty managers only"), so it is not asked again.</summary>
+    public bool RecordersDecided { get; set; }
+
     public bool IsDated => StartsOn.HasValue;
 }
 
@@ -195,7 +210,11 @@ public enum ProgrammeIssueKind
     TitleYear = 9,
     NoTime = 10,
     NameQuestion = 11,
-    NotOnRota = 12
+    NotOnRota = 12,
+    /// <summary>A meeting whose attendance is not known yet (2026-09-26).</summary>
+    AttendanceUnclear = 13,
+    /// <summary>A meeting with a register and nobody named to take it.</summary>
+    NoRecorder = 14
 }
 
 /// <summary>Something the reader should see, and — for MustDecide — answer, before anything is sent.</summary>

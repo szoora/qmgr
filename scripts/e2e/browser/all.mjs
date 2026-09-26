@@ -56,8 +56,14 @@ SUITES.push('access-ui');
 SUITES.push('product-name');
 // The School Day's rows follow their start times (2026-09-24); section 39 is the API half.
 SUITES.push('school-day-order');
+// 2026-09-25: every seeded role opens every link it is shown; the account page and My file (the RBAC close-out).
+SUITES.push('rbac-links', 'account-and-file');
 // The rota comes before the per-person load card, which says "Duty load" (2026-09-24).
 SUITES.push('rota-layout');
+// Past events, the two scopes and the audience picker; the chime; the Import inbox (CALENDAR_AUDIENCES_AND_IMPORT_ROUTING, 2026-09-26).
+SUITES.push('calendar-scope', 'notification-sound', 'import-inbox');
+// Lesson plans (LESSON_PLANS_AND_SCHEMES_OF_WORK, 2026-09-26): the form and the chain, the PDF shrunk in the browser, the Word template read back.
+SUITES.push('lesson-plan-ui', 'plan-pdf', 'plan-templates');
 
 // Measurement, not assertion: density-check runs an A/B in one page load, furniture-check tallies
 // the space a page spends before any data. Neither has a pass state, so failing the run on one

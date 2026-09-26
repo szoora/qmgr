@@ -78,7 +78,8 @@ try {
   // ---- 1. The hub and its tabs, by deep link -------------------------------------------------------------------
   await login(t, ADMIN, admin.password);
   branch = await branchOf();
-  const cameCal = await open('/calendar', `!!document.querySelector('#cal-month, .cal-page .q-empty, #cal-agenda')`);
+  // Term is the opening view since 2026-09-26 (remembered per person); the grid checks below ask for the month.
+  const cameCal = await open('/calendar?view=month', `!!document.querySelector('#cal-month, .cal-page .q-empty, #cal-agenda')`);
   ok(cameCal, 'the calendar opens for a tenant administrator', await t.eval('location.pathname'));
   ok(await noError(), 'no error bar on /calendar');
   const ids = await tabIds();

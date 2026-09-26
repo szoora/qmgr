@@ -83,6 +83,7 @@ public class QMgrDbContext : DbContext
     public DbSet<QMgr.Domain.Entities.Staff.PerformanceParameter> PerformanceParameters => Set<QMgr.Domain.Entities.Staff.PerformanceParameter>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffDuty> StaffDuties => Set<QMgr.Domain.Entities.Staff.StaffDuty>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffDutyReport> StaffDutyReports => Set<QMgr.Domain.Entities.Staff.StaffDutyReport>();
+    public DbSet<QMgr.Domain.Entities.Staff.TeachingPlan> TeachingPlans => Set<QMgr.Domain.Entities.Staff.TeachingPlan>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffDutyReportNote> StaffDutyReportNotes => Set<QMgr.Domain.Entities.Staff.StaffDutyReportNote>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffDutyReportAttachment> StaffDutyReportAttachments => Set<QMgr.Domain.Entities.Staff.StaffDutyReportAttachment>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffMinuteAction> StaffMinuteActions => Set<QMgr.Domain.Entities.Staff.StaffMinuteAction>();
@@ -582,7 +583,22 @@ public class QMgrDbContext : DbContext
             user.NormalizedEmail = string.IsNullOrWhiteSpace(user.Email)
                 ? null
                 : RegistrationIdentity.NormalizeEmail(user.Email) ?? user.Email.Trim().ToLowerInvariant();
-            user.NormalizedPhone = RegistrationIdentity.NormalizePhone(user.Phone);
+            var newPhone = RegistrationIdentity.NormalizePhone(user.Phone);
+
+            // A confirmation belongs to a NUMBER, not to a person: a changed number is unconfirmed
+            // again, whoever changed it. This was one writer's rule (ProfileController) until
+            // 2026-09-25 — the portal's contact form, an administrator's edit, the class-teacher
+            // card and a re-import all kept the old confirmation on a new number, so SMS password
+            // resets went to a number nobody had confirmed. Here it cannot be forgotten. A save that
+            // sets the confirmation itself (the verify-code endpoint) is left alone.
+            if (entry.State == EntityState.Modified
+                && !entry.Property(nameof(Domain.Entities.Identity.User.PhoneVerifiedAt)).IsModified
+                && entry.Property(nameof(Domain.Entities.Identity.User.Phone)).IsModified
+                && !string.Equals(RegistrationIdentity.NormalizePhone(entry.Property(nameof(Domain.Entities.Identity.User.Phone)).OriginalValue as string),
+                                  newPhone, StringComparison.Ordinal))
+                user.PhoneVerifiedAt = null;
+
+            user.NormalizedPhone = newPhone;
         }
 
         foreach (var entry in ChangeTracker.Entries<Domain.Entities.Organization.Organization>())

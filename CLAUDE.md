@@ -179,33 +179,6 @@ that remains in `CustomerDisplay`, `FeedbackEntry`, `KioskMode` and `PlaylistPla
 each sits on a fixed dark ground (a media letterbox, a solid green success circle, an industry
 accent) rather than a themed surface. Elsewhere it was replaced with `var(--qm-text-on-primary)`.
 
-### The original wording, for history (user-reported, not yet fixed as of 2026-08-17)
-
-1. **Largely addressed 2026-08-19** (see Phase 41 in `docs/TASK_TRACKER.md`) — the generic
-   AI-dashboard patterns this item originally referred to (diagonal gradients, neon glow shadows,
-   hardcoded blue bypassing the token system, and — the single biggest offender, found via live
-   e2e — 198 raw Bootstrap `btn-primary`/`text-primary`/etc. usages across 42 files rendering stock
-   Bootstrap blue regardless of any `--qm-*` token work) were swept app-wide and fixed. Not
-   exhaustively re-verified page-by-page beyond the pages spot-checked live during that session, so
-   treat as "should be close to fully fixed" rather than "guaranteed zero remaining instances."
-2. ~~**Dark/light mode has too much overlap and inconsistent coverage** — some features have no
-   light-mode styling at all. `qm-theme.css` uses `[data-theme="light"]` overrides on top of a
-   dark-first `:root` (see lines ~89+); this pattern needs a systematic audit against every page,
-   not just the ones already covered.~~ **CLOSED 2026-09-06.** The systematic audit ran; the token
-   layer and the stylesheets were already complete. Real fixes: `AdBanner` had no light counterpart
-   at all (white text on a black scrim, unreadable on the light display), plus the tint and glow
-   work described above. See Phase 68.
-3. ~~**Public display pages (`CustomerDisplay.razor`) are hardcoded dark-only** — no admin control
-   over the public-facing display's theme at all. Needs a real admin-configurable
-   light/dark choice for these screens (scope — per-organization vs. per-display — still needs to
-   be settled with the user).~~ **CLOSED — and it was already built well before 2026-09-06; this
-   note was stale for weeks.** `Organization.DisplayTheme` has a column, a validated
-   `PUT /organizations/{id}/display-theme`, a Dark/Light picker in `BrandingSettings.razor`, and
-   both `DisplayLayout` and `KioskLayout` stamp it onto their wrapper as `data-theme`.
-   `CustomerDisplay` and `KioskMode` each carry a full light block. The only genuinely open part
-   was the scope question, now answered per-organization (above). Verified live end to end
-   2026-09-06: flipping the org to light flipped `data-theme` on both the kiosk and the display.
-
 ## RBAC has TWO axes now: permissions gate actions, `Role.DataScope` gates rows (2026-09-09)
 
 The permission table answers "may this user read welfare records". It cannot answer "…for *these*
@@ -391,10 +364,9 @@ PostgreSQL storage and therefore survives a restart. No broker, no new server de
   are persisted in `Users.NotificationPreferences` — treat them as a wire format, not labels.
 - Digests and quiet hours are deliberately absent; the requirement was instant.
 
-- **There is no push sender and no SSO (user decisions, 2026-09-17).** The push stub and
-  `CreateNotificationRequest.DeviceToken` were removed — no app exists and no device token was ever
-  stored; `NotificationChannel.Push` and the Firebase/PushSent columns stay in the schema for the day
-  one does. `IdentifyResponse.SsoEnabled` was removed for the same reason. Either would be its own plan.
+- **There is no SSO (user decision, 2026-09-17)**; `IdentifyResponse.SsoEnabled` was removed and SSO would be its
+  own plan. **Push is real since 2026-09-22/24** (the mobile shell's per-device sessions and Firebase, configured
+  through the platform `Push` settings) — the 2026-09-17 note that there was no push sender is history.
 
 ## SSoT: DTO duplication pattern to watch for
 
@@ -945,33 +917,14 @@ the newly connected `deviceId` with `select_browser`. A tab Chrome reports as `v
 hidden` screenshots as solid black; read state with `javascript_tool` instead (URL, `innerText`,
 localStorage), which works normally there.
 
-### The old notes, kept because the constraints behind them still hold
+### Three local-run constraints that still bite
 
-Start the two apps separately; `dotnet run` serves a **snapshot compiled at startup**, so a `.razor`
-edit needs the process restarted (or use `dotnet watch run`). Static files under `wwwroot/` are
-re-read per request and do not.
-
-    dotnet run --project src/Q-Mgr.API/Q-Mgr.API.csproj --urls "https://localhost:5001"
-    dotnet run --project src/Q-Mgr.Web/Q-Mgr.Web.csproj --urls "http://127.0.0.1:5003"
-
-`curl -k` against either works immediately. **Note these two commands use HTTPS on 5001 and NO
-`ApiBaseUrl` override — that combination works for `curl` but is not the one to use when driving
-the browser.** See the section above for the recipe that does.
-
-The environmental notes below remain true and are still worth avoiding:
-
-- Chrome rejects the ASP.NET dev HTTPS certificate, and the automation tooling **cannot screenshot
-  or read an error page**, so the interstitial cannot be clicked through from here. Trusting the
-  cert (`dotnet dev-certs https --trust`) modifies the machine's root store — a system security
-  setting, so ask before doing it rather than doing it silently.
-- Visiting `https://localhost:...` once pins **HSTS on the whole `localhost` host, every port**, so
-  a later plain-HTTP run on `localhost` gets force-upgraded and fails. Bind to `127.0.0.1`, which
-  carries no HSTS entry.
-- Binding both an HTTP and an HTTPS URL re-enables `UseHttpsRedirection` (it learns the HTTPS port
-  and 307s). **HTTP-only is what skips the redirect.**
-- A `chrome-error://chromewebdata` landing while curl gets a clean 200 is the signature of driving
-  the wrong browser, not of a server problem. Check `list_connected_browsers` before assuming
-  anything else.
+- **`dotnet run` serves a snapshot compiled at startup** — a `.razor` edit needs a restart (or `dotnet watch`).
+- **Bind to `127.0.0.1`, HTTP only.** Visiting `https://localhost:…` once pins HSTS on every `localhost` port, and
+  binding both HTTP and HTTPS re-enables `UseHttpsRedirection`. Trusting the dev certificate changes the machine's
+  root store — ask first.
+- **Ports are not fixed.** On the 2026-09-25 machine 5001 is the CRM API; run on other ports and pass
+  `WEB=`/`API=` to the suites (every suite and `browser/login.mjs` read them).
 
 ## Every bulk import is `QImportPanel`, and the browser only turns a sheet into CSV (finished 2026-09-19)
 
@@ -1787,14 +1740,6 @@ normal engineering history in `docs/TASK_TRACKER.md` (Phase 84); the untracked
 The general rule, extending the notification-hub one above: **`ApiBaseUrl` is for Web's own
 server-side calls only. Anything a browser will fetch or post to (a saved link, an upload target,
 a docs link) must use a public origin, never the request host of a Web-to-API call.**
-
-### CORRECTION (2026-09-09): Chrome CAN drive the local app — the earlier note was wrong
-
-An earlier version of this file said Chrome could not load `http://127.0.0.1:5003` and that
-served-HTML assertions were the only fallback. **That was a misdiagnosis.** The full correction —
-both causes, the working recipe, and the two tooling limits that genuinely remain — now lives in
-one place: **"Running it locally — and the browser DOES work"** above. This heading is kept only so
-anyone who remembers the old wording lands somewhere that says it was wrong.
 
 ## Dates have one home, and it is not the browser (decided 2026-09-09)
 
@@ -4387,6 +4332,170 @@ took all eight. Verified by **section 37 (`leadership-e2e.mjs`, 60 checks)** and
   **The cohort breakdown stays at Standard**: house × sex × residency cuts small enough to point at a child. A Board Member account is a user, so it appears in staff lists.
 - **Front Office Manager and Front Desk Staff are offered only to a tenant holding Core Queue or Visitor
   Management** (`RoleCodes.ModulesFor`, which replaced `ModuleFor`). Visibility only; holders keep the role.
+
+## A link is shown exactly when its page would open — one rule per destination (2026-09-25)
+
+Reported with a screenshot: a teacher at Maryhill opened Administration → Settings and read the school's SMS gateway
+configuration. Three places drew that link and gave three answers — the sidebar gated it on
+`settings.view || notifications.view` (nine seeded roles hold the second), the phone sheet on `settings.view`, and
+the user menu and the account page on nothing at all. The plan is `docs/plans/CLOSE_OUT_RBAC_AND_ACCOUNT.md`.
+
+- **`Components/Shared/NavGates.cs` is the one home** for a destination more than one place links to: the Settings
+  hub (whose sections live there and the hub renders), Billing, Kiosk, Counter Terminal, Appointments, Customer
+  Display, Reports. Each rule takes the two synchronous predicates `MainLayout` builds once from the whole permission
+  set (`HasCode`, `HasModule`); `MobileNav.Slot` carries a `Gate` for a rule that is not one permission, and Home's
+  quick actions read the same rules. `HubTabs.AnyVisible` is the link-side twin of `HubTabs.VisibleAsync`.
+- **Settings is for people who can CHANGE something there** (decision D1): `settings.edit` or `notifications.manage`,
+  the Administrator by default. A read-only view of the school's messaging and integrations is nobody else's.
+- **`nav-gate-check.mjs`** (guards) fails an admin/billing/platform link drawn with no condition;
+  **`browser/rbac-links.mjs`** signs in as every seeded role, opens every link it is shown, and asserts the
+  administrator-only destinations are absent for the rest.
+
+### A view permission never gates a write, and a secret never leaves the API
+
+- **`GET notifications/settings` returned the school's SMS key and password, SMTP password, Telegram and WhatsApp
+  tokens in clear to every `notifications.view` holder.** It needs `notifications.manage` now, and
+  **`Application/Services/SecretMask.cs` is the one home** for how a secret leaves and comes back: the eight-dot mask
+  means "set", empty means "not set", and a save carrying the mask keeps the stored value. The platform settings
+  controller uses the same constant. **A new secret property goes through it or it leaks.** The Integrations tab
+  reads `settings/{org}/channels` (four flags) instead of the whole payload.
+- **`view-on-write-check.mjs`** (guards) fails a POST/PUT/PATCH/DELETE whose only gate is a `*.view` code. It found
+  ticket printing (`tokens.view`, and the request's printer address made the server open a TCP connection anywhere —
+  it prints only to the stored branch printer now), feedback links and visitor badges. The one allowed exception is
+  named in the guard with its reason (the restricted rung's single code).
+- **A field a reader does not need is blanked by the server**: a colleague's national ID, date of birth and next of
+  kin unless `staff.structure.manage` or `staff.confidential.view`; other people's phones on the account list unless
+  `users.edit`; module prices, cycle and trial dates on `modules/mine` unless `billing.view`; customer names on the
+  anonymous queue hub, always. Verified role by role by **section 40** (`rbac-settings-e2e.mjs`).
+
+### My account is how you get in; My file is how the school knows you (2026-09-25)
+
+- **`/profile` is "My account"**: photo, username, email (the one identity field a person maintains), password, the
+  devices holding a session with "sign out everywhere", notification preferences, the calendar feed. Built from
+  shared components; no page-owned header, no tiles. `IAccountApiService` is its one client.
+- **A person's name is the school's** (D3): `PUT profile` ignores names; the staff directory changes them.
+- **Contact detail has ONE writer, `PUT api/v1/profile/contact`, with no module requirement** — the portal route was
+  deleted, because a tenant without Welfare & Performance has no My Workspace. **`MyDetailsCard` is the one
+  component**: on My file with the employment half, and on the account page (contact half only) for a tenant without
+  the module. **`PhoneConfirm` is the one confirm-by-code control** (the onboarding strip uses it too).
+- **A confirmation belongs to a NUMBER** — `QMgrDbContext.ApplyIdentityNormalization` clears `PhoneVerifiedAt` when
+  `Phone` changes to a different number, whoever writes it (self, an administrator, an import). It was one writer's
+  rule, so a number changed anywhere else kept the old confirmation and SMS resets went to it.
+- **The email check is on the canonical form** (`RegistrationIdentity.NormalizeEmail` against `NormalizedEmail`), so
+  a variant of a colleague's address is refused in words instead of failing the unique index as a 500.
+
+## Calendar audiences, notices, sound and the Import inbox (built 2026-09-26)
+
+Reported from Maryhill: every past event on the Term view, a "Staff" box that meant everybody, nobody told of a new
+event, no sound, and *"several uploads of the school programmes and duty, some meetings, are not appearing in the
+registers"*. The plan is `docs/plans/CALENDAR_AUDIENCES_AND_IMPORT_ROUTING.md` (artifact
+https://claude.ai/artifact/5Q4EZtkKWUKGCSEdGtARLT); E1–E12 were taken as recommended, and §6a lists the departures.
+
+- **"Is this person in this audience" has ONE test: `StaffAudienceRule` (Shared), fed by `StaffAudience` (API).** An
+  event carries `AllStaff` or groups / roles / departments / people. The group comes through `GroupFor` with its
+  fallback, and leavers and the platform account are excluded. The calendar, the feed, event notices and Staff Notices
+  all ask it. **`audience-home-check.mjs`** fails a hand-written staff-group comparison anywhere else.
+- **Mine vs Whole school is a VIEW choice, not a permission.** `SchoolEventVisibility.CanSee` still decides what
+  exists for a person. `AudienceOnly` events are hidden from everybody outside the audience, and a students-only
+  event is openable but on nobody's Mine. Past events are hidden by default, with a switch. Every choice is
+  remembered in `User.UiPreferences`, read and written only through `IUserPreferencesService`.
+- **An event notice is exactly-once per VERSION.** A material change bumps `Version`, and `SchoolEventNotifier`
+  claims `NotifiedVersion` with a conditional UPDATE before anything is sent. A typo fix is not material, so it tells
+  nobody; a cancellation is. Edits race on the `xmin` row version (409, never a silent overwrite).
+  `ReminderSubject.SchoolEventStart` rides the reminder ladder.
+- **Sound is synthesised** (`wwwroot/js/notificationSound.js`, Web Audio, no file), throttled in the script, off in
+  quiet hours, muted per device (`qmgr-sound-muted`). It always comes with a toast, because sound is never the only cue
+  (WCAG 1.3.3).
+- **B4: a preference save must COPY the record with `with`.** `NotificationPreferenceResolver.SaveAsync` hand-listed
+  properties and dropped `PushEnabled`, so every save switched push back on. **`preferences-roundtrip-check.mjs`**
+  guards both preference stores.
+- **Why imported meetings made no registers:** a meeting defaulted to "event only" unless its title looked like a
+  staff meeting, and the attendance words were never read. A meeting is now **Undecided** until somebody answers,
+  and `AudienceTextResolver` reads the words, learning offices as aliases once approved. A **Registers panel** asks
+  who takes each register. **Import health** on a past job lists every meeting without a register and why, with
+  "Give it a register" (`POST …/calendar/events/{id}/register`), which links the event to its meeting so the two move
+  together.
+- **Undo keeps what a LATER import relies on (B13)**, but only when that import created or updated something of its
+  own. A duplicate re-submission is the same import. Undo takes each register's lock before cancelling its duty.
+- **`SchoolEvents.SourceKey` is unique per (organization, branch, key)** through a raw-SQL expression index on
+  `COALESCE(BranchId, empty guid)`, so two whole-school events collide too. EF cannot model it; do not "tidy" it into
+  a `HasIndex`.
+- **The Import inbox (`/imports`) — nothing is written before approval.** A routed document is split into parts
+  (events, meetings, rota, staff list, student roll, timetable). **Each part is approved by whoever may import that
+  kind of record, through that kind's own importer**, so every rule still holds. The school may require a second
+  approver (NIST AC-5). The approval is claimed under `import-inbox:{job}`, so two approvers cannot both commit.
+  Student and staff parts open their own wizard pre-filled (`InboxHandoff`); a timetable part is download, then
+  "Mark imported".
+- **A page that reads `?x=` must BIND it with `[SupplyParameterFromQuery]`.** The inbox read its query in
+  `OnInitializedAsync`. "Review and approve" is a same-route navigation, which never re-runs that, and Blazor gives
+  new parameters only to a page with something bound to the query. Moving the read to `OnParametersSetAsync` alone
+  did NOT fix it. Found by `browser/import-inbox.mjs`: opening the address directly worked, and only a real press
+  on the button showed the fault.
+- Verified: API sections **41** (`calendar-audiences-e2e.mjs`, 65), **42** (`import-routing-e2e.mjs`, 40), **43**
+  (`import-inbox-e2e.mjs`, 30), with 30 and 31 still green. Browser: `calendar-scope` (21), `notification-sound` (12),
+  `import-inbox` (14).
+
+## Segregation of duties has ONE home: `DutySeparation` (2026-09-26)
+
+An audit for the lesson-plan work found "the author cannot decide" written by hand in seven places and **missing in
+seven more (G1–G7)**. The worst was in a live feature: an appraisal could be reviewed, moderated and signed by one
+person, its own subject included. `Application/Services/DutySeparation.cs` is the rule now: **nobody decides on their
+own work or about themselves, and nobody takes two stages of one item** (NIST SP 800-53 AC-5). `Refusal(...)` returns
+the sentence a person reads; `Allows(...)` feeds the DTO's `CanI…` flag, so a button the server would refuse is never
+drawn. A stage with nobody else to take it is SKIPPED and recorded, never handed to the author.
+
+- **G1, appraisals:** the subject never reviews, moderates or signs; whoever wrote the review never moderates or signs.
+  `StaffAppraisal.ReviewedByUserId` records who actually wrote the review, which may be an approver standing in.
+- **G2–G3:** no performance record of any kind about oneself, and nobody annuls, re-scores or re-rungs one about
+  themselves. The right of reply (`/respond`) stays open.
+- **G4:** whoever last wrote the minutes does not adopt them. Section 17 now writes as the administrator and adopts as
+  the Director of Studies.
+- **G5:** a report's author never excuses it ("no duty") nor returns or reviews it.
+- **G6:** the colleague in a swap or cover agrees; somebody else decides.
+- **G7:** nobody appoints themselves head or deputy of a department. The post GRANTS permissions and reach, so
+  appointing oneself is choosing one's own privilege.
+- **`scripts/e2e/separation-check.mjs` (guards) fails a decision endpoint that does not call it.** Any action on those
+  controllers whose route ends in approve/forward/return/moderate/sign/decide is checked, whether or not it is listed.
+  It found the duty report's Return on its first run.
+- Left to the school, and SAID on Users & Roles → Access: the Import inbox's second approver is a setting, and the access
+  review is recorded by one person.
+
+## Lesson plans and schemes of work (built 2026-09-26)
+
+Plan `docs/plans/LESSON_PLANS_AND_SCHEMES_OF_WORK.md` (artifact https://claude.ai/artifact/GrjY8qNAeEjuY3jsp2ntUu).
+L1–L12 were taken as recommended, **the form is the main route**, and §11 lists the departures.
+
+- **`TeachingPlans` is the one new table**, and §5.1 says why nothing existing could carry it. The trail, the file and
+  the content are columns and JSON on the row; templates are in the staff policy blob; the curriculum list is in
+  `Organization.Settings["Curriculum"]` (`CurriculumStore`, through the organisation lock); records of work are derived.
+- **The chain.** The teacher submits. The head (or deputy) of the SUBJECT's department takes stage 1. A holder of
+  `teaching.plans.approve` with the author in scope takes stage 2. A scheme always takes both stages; a lesson plan
+  takes the school's setting (default: the head of department alone, with the DoS told in the Monday digest).
+  **`TeachingPlans.AccessForAsync` is the one read-and-act rule**, used by the controller, the upload authorizer and the
+  reports. 404, never 403. `teaching.plans.review` comes from the head-of-department POST, never a role.
+- **A submitted plan is frozen; an approved one is never edited** — a change is a new version that becomes current only
+  when approved. **Retire the old version FIRST, in its own statement, inside the approval's transaction**: in one save
+  the database may apply the two updates in either order and the one-current-plan index refuses the pair. That bug
+  shipped for a day and was found by running section 45 twice.
+- **Every transition saves through the row's xmin**: five approvers pressing at once, one lands.
+- **Nobody plans for a class they do not teach** (live subject-teacher assignment; a lesson's own teacher for a cover).
+- **The PDF is the fallback, shrunk IN THE BROWSER** (`wwwroot/js/planPdf.js`: pdf.js + pdf-lib from jsDelivr, loaded
+  on demand). Text is rebuilt in Standard-14 fonts; a scan becomes a 1-bit image; the teacher sees before and after.
+  **`PdfGate` checks every file again on the server** with the base library alone: it inflates every stream, decodes
+  `#xx` in names, refuses script, automatic actions, embedded files and forms, counts pages, and caps inflation. Limits
+  come from `TeachingPlanLimits` / the school's settings (50/64 KB and 4 pages for a lesson plan, 150/200 KB and 30 pages
+  for a scheme), clamped on read.
+- **Word templates are written with `ZipArchive` and read back into the FORM — never stored**
+  (`TeachingPlanTemplates`). `.docx` stays off the stored-upload allow-list.
+- **Storage now counts every kind of upload** (`StorageUsage`), not the Library alone.
+- **Printed plans are headed by the school** through `PlanSheetHead`, which reads the BRANCH's public branding (the settings
+  endpoint needs `settings.view`, which a teacher lacks). **A printed sheet pins its colours to black**: under the dark theme a
+  heading inherits a light colour and prints white on white. That was found only by looking at a screenshot, and it is
+  asserted now. A blank sheet in the school's format is `/plans/blank/print?kind=lesson|scheme`.
+- **The report names every teacher's scheme by state** (not started to approved, and late), and the Monday email lists the
+  teachers whose schemes are not yet approved.
+- Verified by **sections 44 (25 checks) and 45 (99 checks)** and the browser suites `lesson-plan-ui`, `plan-pdf` and
+  `plan-templates`, all 0 failed.
 
 ## Process note for future sessions
 

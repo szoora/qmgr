@@ -271,7 +271,7 @@
     protected override async Task OnInitializedAsync()
     {
         // Check permission
-        if (!await PermissionService.HasPermissionAsync(Permissions.SettingsView))
+        if (!await PermissionService.HasPermissionAsync(Permissions.SettingsEdit))
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
             return;
@@ -356,7 +356,7 @@
                 return (false, false, false, false);
             }
 
-            var response = await Http.GetAsync($"api/v1/notifications/settings/{organizationId}");
+            var response = await Http.GetAsync($"api/v1/notifications/settings/{organizationId}/channels");
             if (!response.IsSuccessStatusCode) return (false, false, false, false);
 
             var settings = await response.Content.ReadFromJsonAsync<NotificationChannelState>(JsonOptions);

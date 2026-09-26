@@ -363,6 +363,9 @@ public class StaffRecordsController : StaffPerformanceControllerBase
     {
         var me = CurrentUserId();
         if (parameter.Kind == ParameterKind.Recognition && subject.Id == me) return (BadRequestProblem("You cannot recognise yourself"), null);
+        // G2 (2026-09-26): no record of any kind about oneself — a head of department could award themselves the
+        // "Records & Schemes of Work" points. A self-report the SYSTEM makes (a lesson flag) never comes through here.
+        if (DutySeparation.Refusal(me, subject.Id, "log a record about yourself") is { } self) return (DutySeparation.Problem(self), null);
 
         var group = subject.Role?.StaffGroup;
         if (!StaffGroups.Applies(parameter.AppliesToGroup, group))
@@ -665,6 +668,8 @@ public class StaffRecordsController : StaffPerformanceControllerBase
 
         var record = await LoadAsync(id, branchId);
         if (record == null || !await CanActOnRecordAsync(record, branchId)) return RecordNotFound();
+        // G3 (2026-09-26): nobody annuls, re-scores or re-rungs a record about themselves; they reply with a note.
+        if (DutySeparation.Refusal(CurrentUserId(), record.SubjectUserId, "change a record about yourself") is { } aboutMe) return DutySeparation.Problem(aboutMe);
         if (record.Status == StaffRecordStatus.Annulled) return BadRequestProblem("This record is already annulled");
         if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Trim().Length < 5) return BadRequestProblem("Say why the record is being annulled");
         if (record.Status == StaffRecordStatus.Final)
@@ -707,6 +712,8 @@ public class StaffRecordsController : StaffPerformanceControllerBase
 
         var record = await LoadAsync(id, branchId);
         if (record == null || !await CanActOnRecordAsync(record, branchId)) return RecordNotFound();
+        // G3 (2026-09-26): nobody annuls, re-scores or re-rungs a record about themselves; they reply with a note.
+        if (DutySeparation.Refusal(CurrentUserId(), record.SubjectUserId, "change a record about yourself") is { } aboutMe) return DutySeparation.Problem(aboutMe);
 
         if (!Enum.IsDefined(request.Visibility)) return BadRequestProblem("Unrecognised visibility");
         var from = record.Visibility;
@@ -754,6 +761,8 @@ public class StaffRecordsController : StaffPerformanceControllerBase
 
         var record = await LoadAsync(id, branchId);
         if (record == null || !await CanActOnRecordAsync(record, branchId)) return RecordNotFound();
+        // G3 (2026-09-26): nobody annuls, re-scores or re-rungs a record about themselves; they reply with a note.
+        if (DutySeparation.Refusal(CurrentUserId(), record.SubjectUserId, "change a record about yourself") is { } aboutMe) return DutySeparation.Problem(aboutMe);
         if (record.Status == StaffRecordStatus.Annulled) return BadRequestProblem("An annulled record cannot be corrected");
         if (record.Parameter == null) return BadRequestProblem("The record's parameter no longer exists");
         if (request.Points == null && request.Rating == null) return BadRequestProblem("Nothing to correct", "Give new points, a new rating, or both.");

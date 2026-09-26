@@ -156,6 +156,17 @@ public static class ActivityActions
     public const string RotaSeriesCancelled = "staff.rota.series-cancelled";
     public const string RotaSwapped = "staff.rota.swapped";
     public const string DutyAcknowledged = "staff.duty.acknowledged";
+    public const string TeachingPlanCreated = "staff.plan.created";
+    public const string TeachingPlanSubmitted = "staff.plan.submitted";
+    public const string TeachingPlanForwarded = "staff.plan.forwarded";
+    public const string TeachingPlanApproved = "staff.plan.approved";
+    public const string TeachingPlanReturned = "staff.plan.returned";
+    public const string TeachingPlanWithdrawn = "staff.plan.withdrawn";
+    public const string TeachingPlanStageSkipped = "staff.plan.stage-skipped";
+    public const string TeachingPlanRevised = "staff.plan.revised";
+    public const string TeachingPlanFileAdded = "staff.plan.file-added";
+    public const string TeachingPlanSettingsChanged = "staff.plan.settings-changed";
+    public const string CurriculumChanged = "staff.curriculum.changed";
     public const string DutyReportSubmitted = "staff.duty-report.submitted";
     public const string DutyReportViewed = "staff.duty-report.viewed";
     public const string DutyReportCommented = "staff.duty-report.commented";
@@ -192,6 +203,20 @@ public static class ActivityActions
     public const string LessonFlagOverridden = "staff.lesson.flag-overridden";
     public const string LessonCancelled = "staff.lesson.cancelled";
     public const string RecoveryScheduled = "staff.lesson.recovery-scheduled";
+
+    // ---- The school calendar (calendar-audiences plan, B22, 2026-09-26). Event CRUD wrote no log line at all. ----
+    public const string CalendarEventCreated = "calendar.event-created";
+    public const string CalendarEventUpdated = "calendar.event-updated";
+    public const string CalendarEventCancelled = "calendar.event-cancelled";
+    public const string CalendarEventReinstated = "calendar.event-reinstated";
+    public const string CalendarEventDeleted = "calendar.event-deleted";
+    /// <summary>An event was turned into a meeting with a register ("Give this a register", E10).</summary>
+    public const string CalendarEventRegisterGiven = "calendar.event-register-given";
+
+    // ---- The Import inbox (E11) ----
+    public const string ImportSubmitted = "imports.submitted";
+    public const string ImportSectionApproved = "imports.section-approved";
+    public const string ImportSectionRejected = "imports.section-rejected";
 }
 
 /// <summary>The things a page can report it exported or published (POST …/staff/activity/exports). Wire format.</summary>

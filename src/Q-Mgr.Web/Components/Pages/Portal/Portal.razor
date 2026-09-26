@@ -279,6 +279,7 @@
         <div class="portal-grid">
             @* ---- Reminders & to-do ---------------------------------------------------------- *@
             <QCard Title="Reminders & to-do" Subtitle="What you still owe, soonest first" Icon="list-check" Class="portal-card">
+                <QMgr.Web.Components.Admin.Staff.Plans.MyPlansCard BranchId="@portal.BranchId" Compact="true" />
                 @if (!portal.OpenItems.Any())
                 {
                     <QEmptyState Icon="check2-circle" Title="Nothing open" Text="Anything waiting on you — a register, a response, a notice to acknowledge — will appear here." />
@@ -385,6 +386,7 @@
         @* ---- My teaching (duty rota plan §10): hidden for somebody who teaches nothing ------------- *@
         <TeachingSummaryCard BranchId="@portal.BranchId" HideWhenEmpty="true" Class="portal-card" />
         <MyTimetableCard BranchId="@portal.BranchId" UserId="@portal.Me.UserId" Class="portal-card" />
+        <QMgr.Web.Components.Admin.Staff.Plans.MyPlansCard BranchId="@portal.BranchId" Class="portal-card" />
         <ExamSeriesCard BranchId="@portal.BranchId" Class="portal-card" />
 
             <SelfServiceSection BranchId="@portal.BranchId" />

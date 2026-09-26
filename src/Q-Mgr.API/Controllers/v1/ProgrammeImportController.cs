@@ -54,7 +54,6 @@ namespace QMgr.API.Controllers.v1;
 public class ProgrammeImportController : StaffPerformanceControllerBase
 {
     private const string AliasesKey = "ImportAliases";
-    private const string MeetingParameterName = "Meeting Attendance";
     private const string ActionCommitted = "calendar.import.committed";
     private const string ActionUndone = "calendar.import.undone";
     private const int MaxEvents = 1000;
@@ -66,6 +65,7 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
     private readonly IStaffPerformancePolicyService _policy;
     private readonly INotificationService _notifications;
     private readonly IModuleAccessService _modules;
+    private readonly IImportInbox _inbox;
     private readonly IWebHostEnvironment _environment;
     private readonly ILogger<ProgrammeImportController> _logger;
 
@@ -79,10 +79,12 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
         IStaffPerformancePolicyService policy,
         INotificationService notifications,
         IModuleAccessService modules,
+        IImportInbox inbox,
         IWebHostEnvironment environment,
         ILogger<ProgrammeImportController> logger)
         : base(db, tenantAccessor, staffScope, activity)
     {
+        _inbox = inbox;
         _policy = policy;
         _notifications = notifications;
         _modules = modules;
@@ -138,7 +140,8 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
             National = await NationalCalendarStore.GetAsync(Db),
             Terms = policy.Periods?.OrderBy(p => p.Start).ToList() ?? new List<PerformancePeriodDto>(),
             CanImportDuties = dutiesRefusal == null,
-            DutiesRefusal = dutiesRefusal
+            DutiesRefusal = dutiesRefusal,
+            Audience = await CalendarController.AudienceOptionsAsync(Db, _policy, organizationId, branchId)
         });
     }
 
@@ -154,8 +157,13 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
 
     // ---- Preview and commit -----------------------------------------------------------------------------
 
+    /// <summary>
+    /// Preview or commit. Gated in code rather than by attribute (2026-09-26): an import made directly needs
+    /// calendar.manage as it always did; one that commits a section of a document waiting in the Import inbox needs the
+    /// permission that OWNS that section — a holder of staff.duties.manage approving the meetings of a programme need not
+    /// also keep the calendar. The inbox checks that, under its own lock, inside this commit's transaction.
+    /// </summary>
     [HttpPost("branches/{branchId:guid}/calendar/import")]
-    [RequirePermission(Permissions.CalendarManage)]
     [ProducesResponseType(typeof(ProgrammeImportResultDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProgrammeImportResultDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -170,6 +178,19 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
         request.Meetings ??= new();
         request.RotaSlots ??= new();
         request.SourceFiles ??= new();
+
+        if (request.InboxJobId is { } inboxJob)
+        {
+            if (await _inbox.StagedAsync(organizationId, branchId, inboxJob, request.InboxSection ?? string.Empty, HasPermissionAsync) == null)
+                return NotFoundProblem("That part of the document is not waiting for you.");
+        }
+        else if (!await HasPermissionAsync(Permissions.CalendarManage))
+            return StatusCode(StatusCodes.Status403Forbidden, new ProblemDetails
+            {
+                Title = "You cannot import the term programme",
+                Detail = "Importing needs permission to manage the calendar. Send the document for approval from the Import inbox instead.",
+                Status = StatusCodes.Status403Forbidden
+            });
         if (request.Events.Count + request.Meetings.Count + request.RotaSlots.Count == 0 && request.Term == null)
             return BadRequestProblem("Nothing to import", "The documents gave no events, meetings or rota slots.");
         if (request.Events.Count > MaxEvents || request.Meetings.Count > MaxMeetings || request.RotaSlots.Count > MaxRotaSlots)
@@ -212,6 +233,7 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
         var createdDuties = new List<StaffDuty>();
         var createdEvents = new List<SchoolEvent>();
         var termUpdated = false;
+        string? inboxRefusal = null;
 
         var strategy = Db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
@@ -227,10 +249,22 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
             var lockKey = $"staff-rota:{branchId}";
             await Db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtext({lockKey})::bigint)");
 
+            // An inbox section is CLAIMED before anything is written, in this transaction: two approvers pressing at once
+            // cannot both commit it, and a refusal (already decided, the uploader under four eyes) writes nothing at all.
+            var jobId = Guid.NewGuid();
+            inboxRefusal = null;
+            if (request.InboxJobId is { } inbox)
+            {
+                inboxRefusal = await _inbox.DecideInTransactionAsync(organizationId, branchId, inbox, request.InboxSection ?? string.Empty, me,
+                    ImportSectionStates.Approved, null, jobId, HasPermissionAsync);
+                if (inboxRefusal != null) return;
+            }
+
             // Re-read under the lock: a commit that ran a moment ago has made these rows Unchanged.
             plan = await EvaluateAsync(branchId, organizationId, request, meetingParameterId);
             job = new RosterImportJob
             {
+                Id = jobId,
                 OrganizationId = organizationId,
                 BranchId = branchId,
                 CreatedByUserId = me == Guid.Empty ? null : me,
@@ -258,7 +292,15 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
                 EventsUpdated = plan.EventsUpdated,
                 MeetingsCreated = plan.MeetingsCreated,
                 MeetingsUpdated = plan.MeetingsUpdated,
-                RotaSlotsCreated = plan.RotaCreated
+                RotaSlotsCreated = plan.RotaCreated,
+                // Import health (E10) and undo (B13) read these back.
+                RefusedRecorded = true,
+                Refused = RefusedRows(request, plan),
+                Matched = plan.Events.Where(x => x.ExistingId.HasValue).Select(x => x.ExistingId!.Value)
+                    .Concat(plan.Meetings.Where(x => x.ExistingId.HasValue).Select(x => x.ExistingId!.Value))
+                    .Concat(plan.Rota.Where(x => x.ExistingId.HasValue).Select(x => x.ExistingId!.Value)).Distinct().ToList(),
+                NoRegisterReasons = request.Events.Where(e => !string.IsNullOrWhiteSpace(e.NoRegisterReason) && !string.IsNullOrWhiteSpace(e.SourceKey))
+                    .GroupBy(e => e.SourceKey.Trim()).ToDictionary(g => g.Key, g => Truncate(g.First().NoRegisterReason!.Trim(), 300))
             });
 
             // Term dates and learned aliases: the one writer of Organization.Settings, inside this transaction.
@@ -266,9 +308,21 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
                 termUpdated = await WriteSettingsAsync(organizationId, request, plan);
 
             await Db.SaveChangesAsync();
+
+            // The snapshots of UPDATED rows, stamped with the UpdatedAt this save gave them: undo
+            // restores a row only while it still carries that stamp, i.e. nobody has edited it since.
+            if (plan.MeetingsBefore.Count > 0 || plan.EventsBefore.Count > 0)
+            {
+                var summary = ReadSummary(job.RowsJson);
+                summary.MeetingsBefore = plan.MeetingsBefore.Select(x => x.Before with { AppliedUpdatedAt = x.Entity.UpdatedAt }).ToList();
+                summary.EventsBefore = plan.EventsBefore.Select(x => x.Before with { AppliedUpdatedAt = x.Entity.UpdatedAt }).ToList();
+                job.RowsJson = JsonSerializer.Serialize(summary);
+                await Db.SaveChangesAsync();
+            }
             await tx.CommitAsync();
         });
 
+        if (inboxRefusal != null) return ConflictProblem(inboxRefusal);
         if (plan == null || job == null) return StatusCode(StatusCodes.Status500InternalServerError);
 
         await Activity.RecordAsync(ActionCommitted, nameof(RosterImportJob), job.Id, null,
@@ -276,7 +330,7 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
                 $"Programme imported from {request.SourceFiles.Count} file(s): {plan.EventsCreated} event(s), {plan.MeetingsCreated} meeting(s), {plan.RotaCreated} rota slot(s) created; {plan.Unchanged} unchanged."),
             new { job.Id, plan.EventsCreated, plan.EventsUpdated, plan.MeetingsCreated, plan.RotaCreated, plan.Unchanged, plan.Refused }, branchId, organizationId);
 
-        var notified = request.NotifyPeople ? await NotifyPeopleAsync(branchId, organizationId, createdDuties) : 0;
+        var notified = request.NotifyPeople ? await NotifyPeopleAsync(branchId, organizationId, createdDuties, createdEvents) : 0;
         var result = plan.ToResult(preview: false, jobId: job.Id) with { PeopleNotified = notified, TermUpdated = termUpdated };
         return StatusCode(StatusCodes.Status201Created, result);
     }
@@ -301,6 +355,7 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
             .GroupBy(d => d.ImportJobId!.Value).Select(g => new { g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.Key, x => x.Count);
         var names = await BuildNamesAsync(jobs.Select(j => j.CreatedByUserId));
+        var attention = await AttentionCountsAsync(organizationId, jobs);
 
         return Ok(jobs.Select(j =>
         {
@@ -316,10 +371,115 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
                 RotaSlotsCreated = summary.RotaSlotsCreated,
                 Undone = summary.UndoneAt.HasValue,
                 UndoneAt = summary.UndoneAt,
-                Protected = protectedCounts.TryGetValue(j.Id, out var p) ? p : 0
+                Protected = protectedCounts.TryGetValue(j.Id, out var p) ? p : 0,
+                NeedsAttention = summary.UndoneAt.HasValue ? 0 : attention.GetValueOrDefault(j.Id)
             };
         }).ToList());
     }
+
+    // ---- Import health (E10): what an import left without a register ------------------------------------
+
+    /// <summary>
+    /// What one import left for somebody to finish: meetings it wrote as calendar events only, registers with nobody
+    /// named to take them, and the rows the server refused. "Give this a register" on the calendar turns such an event
+    /// into a meeting with a register, so an earlier upload is repaired without importing it again.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/calendar/import/jobs/{jobId:guid}/health")]
+    [RequirePermission(Permissions.CalendarManage)]
+    [ProducesResponseType(typeof(ProgrammeImportHealthDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Health(Guid branchId, Guid jobId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+        var job = await Db.RosterImportJobs.IgnoreQueryFilters().AsNoTracking()
+            .FirstOrDefaultAsync(j => j.Id == jobId && j.OrganizationId == organizationId && j.BranchId == branchId && j.Kind == RosterImportKind.Programme);
+        if (job == null) return NotFoundProblem("Import not found");
+
+        var summary = ReadSummary(job.RowsJson);
+        var zone = await ZoneAsync(branchId);
+        var today = QMgr.Application.BranchClock.Today(zone);
+
+        var events = await EventOnlyMeetingsAsync(organizationId, new List<Guid> { jobId });
+        var withoutRecorder = await Db.StaffDuties.IgnoreQueryFilters().AsNoTracking()
+            .Where(d => d.OrganizationId == organizationId && d.ImportJobId == jobId && d.IsActive && d.Kind == DutyKind.Session && d.RecorderUserIds.Length == 0)
+            .OrderBy(d => d.StartsAt).ToListAsync();
+
+        return Ok(new ProgrammeImportHealthDto
+        {
+            JobId = job.Id,
+            CreatedAt = job.CreatedAt,
+            SourceFiles = summary.SourceFiles,
+            MeetingsWithoutRegister = events.Select(e => new ImportHealthItemDto
+            {
+                EventId = e.Id,
+                Title = e.Title,
+                Date = e.StartsOn,
+                StartTime = SchoolEventMapping.Time(e.StartTime),
+                Location = e.Location,
+                ResponsibleText = e.ResponsibleText,
+                Reason = (e.SourceKey != null ? summary.NoRegisterReasons.GetValueOrDefault(e.SourceKey) : null)
+                         ?? "Imported as a calendar event only, so nobody takes a register.",
+                InPast = e.StartsOn < today
+            }).ToList(),
+            RegistersWithoutRecorder = withoutRecorder.Select(d =>
+            {
+                var local = TimeZoneInfo.ConvertTimeFromUtc(d.StartsAt, zone);
+                return new ImportHealthItemDto
+                {
+                    DutyId = d.Id,
+                    Title = d.Title,
+                    Date = DateOnly.FromDateTime(local),
+                    StartTime = local.ToString("HH:mm", CultureInfo.InvariantCulture),
+                    Location = d.Location,
+                    Reason = "Nobody is named to take the register, so only duty managers can.",
+                    InPast = DateOnly.FromDateTime(local) < today
+                };
+            }).ToList(),
+            Refused = summary.Refused,
+            RefusalsRecorded = summary.RefusedRecorded
+        });
+    }
+
+    /// <summary>Events an import made that read as a staff meeting and have no live register.</summary>
+    private async Task<List<SchoolEvent>> EventOnlyMeetingsAsync(Guid organizationId, List<Guid> jobIds)
+    {
+        var events = await Db.SchoolEvents.IgnoreQueryFilters().AsNoTracking()
+            .Where(e => e.OrganizationId == organizationId && e.ImportJobId != null && jobIds.Contains(e.ImportJobId.Value)
+                        && e.IsActive && e.Status == SchoolEventStatus.Scheduled
+                        && (e.DutyId == null || !Db.StaffDuties.Any(d => d.Id == e.DutyId && d.IsActive)))
+            .OrderBy(e => e.StartsOn).ThenBy(e => e.StartTime)
+            .ToListAsync();
+        return events.Where(e => ProgrammeTableParser.IsStaffMeeting(e.Title)).ToList();
+    }
+
+    private async Task<Dictionary<Guid, int>> AttentionCountsAsync(Guid organizationId, List<RosterImportJob> jobs)
+    {
+        var ids = jobs.Select(j => j.Id).ToList();
+        var counts = ids.ToDictionary(id => id, _ => 0);
+        if (ids.Count == 0) return counts;
+        foreach (var e in await EventOnlyMeetingsAsync(organizationId, ids)) counts[e.ImportJobId!.Value]++;
+        foreach (var d in await Db.StaffDuties.IgnoreQueryFilters().AsNoTracking()
+                     .Where(d => d.OrganizationId == organizationId && d.ImportJobId != null && ids.Contains(d.ImportJobId.Value)
+                                 && d.IsActive && d.Kind == DutyKind.Session && d.RecorderUserIds.Length == 0)
+                     .Select(d => d.ImportJobId!.Value).ToListAsync())
+            counts[d]++;
+        foreach (var j in jobs) counts[j.Id] += ReadSummary(j.RowsJson).Refused.Count;
+        return counts;
+    }
+
+    /// <summary>The refused rows of a commit, named: the title and date the reader would recognise, and the reason.</summary>
+    private static List<ImportHealthItemDto> RefusedRows(ProgrammeImportRequest request, Evaluation plan)
+        => plan.Rows.Where(r => r.Outcome == ProgrammeRowOutcome.Refused).Select(r =>
+        {
+            var (title, date) = r.Kind switch
+            {
+                "event" => request.Events.Where(e => e.SourceKey?.Trim() == r.SourceKey).Select(e => (e.Title, e.StartsOn)).FirstOrDefault(),
+                "meeting" => request.Meetings.Where(m => m.SourceKey?.Trim() == r.SourceKey).Select(m => (m.Title, m.Date)).FirstOrDefault(),
+                _ => request.RotaSlots.Where(s => s.SourceKey?.Trim() == r.SourceKey).Select(s => (s.RotaName, s.StartsOn)).FirstOrDefault()
+            };
+            return new ImportHealthItemDto { Title = title ?? r.SourceKey, Date = date, Reason = r.Reason ?? "Refused." };
+        }).ToList();
 
     [HttpPost("branches/{branchId:guid}/calendar/import/jobs/{jobId:guid}/undo")]
     [RequirePermission(Permissions.CalendarManage)]
@@ -348,17 +508,39 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
         var eventsRemoved = 0;
         var dutiesRemoved = 0;
         var dutiesKept = 0;
+        var updatesRestored = 0;
+        var updatesLeft = new List<string>();
         var strategy = Db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {
-            eventsRemoved = dutiesRemoved = dutiesKept = 0;
+            eventsRemoved = dutiesRemoved = dutiesKept = updatesRestored = 0;
+            updatesLeft.Clear();
             Db.ChangeTracker.Clear();
             await using var tx = await Db.Database.BeginTransactionAsync();
             var lockKey = $"staff-rota:{branchId}";
             await Db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtext({lockKey})::bigint)");
 
             var job = await Db.RosterImportJobs.IgnoreQueryFilters().FirstAsync(j => j.Id == jobId);
-            var kept = await ProtectedDutiesQuery(organizationId, new List<Guid> { jobId }).Select(d => d.Id).ToListAsync();
+            var kept = (await ProtectedDutiesQuery(organizationId, new List<Guid> { jobId }).Select(d => d.Id).ToListAsync()).ToHashSet();
+
+            // B13: a LATER import that found these rows "Unchanged" relies on them — undoing this one must not pull them
+            // out from under it. Matched ids are recorded on every commit since 2026-09-26.
+            var laterJobs = await Db.RosterImportJobs.IgnoreQueryFilters().AsNoTracking()
+                .Where(j => j.OrganizationId == organizationId && j.BranchId == branchId && j.Kind == RosterImportKind.Programme
+                            && j.Id != jobId && j.CreatedAt > job.CreatedAt)
+                .Select(j => new { j.CreatedAt, j.RowsJson }).ToListAsync();
+            var reliedOn = new Dictionary<Guid, DateTime>();
+            foreach (var later in laterJobs)
+            {
+                var laterSummary = ReadSummary(later.RowsJson);
+                if (laterSummary.UndoneAt != null) continue;
+                // A re-submission that created and changed nothing (the same document sent twice) built nothing on these
+                // rows; it is the same import, not a later one. Only an import that did something of its own relies on them.
+                if (laterSummary.EventsCreated + laterSummary.EventsUpdated + laterSummary.MeetingsCreated
+                    + laterSummary.MeetingsUpdated + laterSummary.RotaSlotsCreated == 0) continue;
+                foreach (var id in laterSummary.Matched) reliedOn.TryAdd(id, later.CreatedAt);
+            }
+
             var duties = await Db.StaffDuties.IgnoreQueryFilters()
                 .Where(d => d.OrganizationId == organizationId && d.ImportJobId == jobId && d.IsActive)
                 .ToListAsync();
@@ -366,7 +548,21 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
             var me = CurrentUserId();
             foreach (var d in duties)
             {
+                // B13: the register's own lock, then look again — a register opened a moment ago is history now.
+                var registerKey = $"staff-register:{d.Id}";
+                await Db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtext({registerKey})::bigint)");
+                if (!kept.Contains(d.Id))
+                {
+                    await Db.Entry(d).ReloadAsync();
+                    if (d.RegisterOpenedAt != null || await Db.StaffPerformanceRecords.IgnoreQueryFilters().AnyAsync(r => r.DutyId == d.Id)) kept.Add(d.Id);
+                }
                 if (kept.Contains(d.Id)) { dutiesKept++; continue; }
+                if (reliedOn.TryGetValue(d.Id, out var reliedAt))
+                {
+                    updatesLeft.Add($"{d.Title} (the import of {reliedAt:dd MMM yyyy} relies on it)");
+                    dutiesKept++;
+                    continue;
+                }
                 d.IsActive = false;
                 d.UpdatedAt = now;
                 d.UpdatedBy = me == Guid.Empty ? null : me;
@@ -380,15 +576,51 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
             {
                 // An event that IS a meeting whose register was taken stays with it.
                 if (e.DutyId is { } dutyId && kept.Contains(dutyId)) continue;
+                if (reliedOn.TryGetValue(e.Id, out var reliedAt))
+                {
+                    updatesLeft.Add($"{e.Title} (the import of {reliedAt:dd MMM yyyy} relies on it)");
+                    continue;
+                }
                 Db.SchoolEvents.Remove(e);
                 eventsRemoved++;
             }
 
             var summary = ReadSummary(job.RowsJson);
+
+            // Rows the import UPDATED go back to what they were (2026-09-25). A row somebody has
+            // edited since keeps its edit and is named; so does a meeting whose register was taken.
+            foreach (var before in summary.MeetingsBefore)
+            {
+                var d = await Db.StaffDuties.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == before.Id && x.OrganizationId == organizationId);
+                if (d == null) continue;
+                if (!SameStamp(d.UpdatedAt, before.AppliedUpdatedAt)) { updatesLeft.Add($"{d.Title} (changed since the import)"); continue; }
+                if (d.RegisterOpenedAt != null || await Db.StaffPerformanceRecords.IgnoreQueryFilters().AnyAsync(r => r.DutyId == d.Id))
+                { updatesLeft.Add($"{d.Title} (its register was taken)"); continue; }
+                d.Title = before.Title;
+                d.StartsAt = before.StartsAt;
+                d.EndsAt = before.EndsAt;
+                d.Location = before.Location;
+                d.ExpectedUserIds = before.ExpectedUserIds;
+                d.RecorderUserIds = before.RecorderUserIds ?? Array.Empty<Guid>();
+                d.UpdatedBy = me == Guid.Empty ? null : me;
+                updatesRestored++;
+            }
+            foreach (var before in summary.EventsBefore)
+            {
+                var e = await Db.SchoolEvents.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == before.Id && x.OrganizationId == organizationId);
+                if (e == null) continue;
+                if (!SameStamp(e.UpdatedAt, before.AppliedUpdatedAt)) { updatesLeft.Add($"{e.Title} (changed since the import)"); continue; }
+                before.ApplyTo(e);
+                e.UpdatedBy = me == Guid.Empty ? null : me;
+                updatesRestored++;
+            }
+
             summary.UndoneAt = now;
             summary.EventsRemoved = eventsRemoved;
             summary.DutiesRemoved = dutiesRemoved;
             summary.DutiesKept = dutiesKept;
+            summary.UpdatesRestored = updatesRestored;
+            summary.UpdatesLeft = updatesLeft.ToList();
             job.RowsJson = JsonSerializer.Serialize(summary);
 
             await Db.SaveChangesAsync();
@@ -396,10 +628,14 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
         });
 
         await Activity.RecordAsync(ActionUndone, nameof(RosterImportJob), jobId, null,
-            $"Programme import undone: {eventsRemoved} event(s) removed, {dutiesRemoved} duty slot(s) cancelled, {dutiesKept} kept because their register was taken.",
-            new { jobId, eventsRemoved, dutiesRemoved, dutiesKept }, branchId, organizationId);
+            $"Programme import undone: {eventsRemoved} event(s) removed, {dutiesRemoved} duty slot(s) cancelled, {dutiesKept} kept because their register was taken, {updatesRestored} updated row(s) put back, {updatesLeft.Count} left because they changed since.",
+            new { jobId, eventsRemoved, dutiesRemoved, dutiesKept, updatesRestored, updatesLeft }, branchId, organizationId);
 
-        return Ok(new ProgrammeUndoResultDto { EventsRemoved = eventsRemoved, DutiesRemoved = dutiesRemoved, DutiesKept = dutiesKept });
+        return Ok(new ProgrammeUndoResultDto
+        {
+            EventsRemoved = eventsRemoved, DutiesRemoved = dutiesRemoved, DutiesKept = dutiesKept,
+            UpdatesRestored = updatesRestored, UpdatesLeft = updatesLeft
+        });
     }
 
     /// <summary>Duties of these jobs that a register has touched: opened, or pointed at by any record.</summary>
@@ -449,8 +685,11 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
 
     private sealed class Evaluation
     {
+        /// <summary>What each row an import UPDATED looked like before it (2026-09-25), so undo can put it back.</summary>
+        public List<(MeetingBefore Before, StaffDuty Entity)> MeetingsBefore { get; } = new();
+        public List<(EventBefore Before, SchoolEvent Entity)> EventsBefore { get; } = new();
         public List<ProgrammeRowResultDto> Rows { get; } = new();
-        public List<(ProgrammeEventRow Row, int Index, Guid? ExistingId, ProgrammeRowOutcome Outcome)> Events { get; } = new();
+        public List<(ProgrammeEventRow Row, int Index, Guid? ExistingId, ProgrammeRowOutcome Outcome, bool HandEdited)> Events { get; } = new();
         public List<(ProgrammeMeetingRow Row, int Index, Guid? ExistingId, ProgrammeRowOutcome Outcome, DateTime StartsAt, DateTime EndsAt, Guid[]? Expected, Guid[] Recorders)> Meetings { get; } = new();
         public List<(ProgrammeRotaRow Row, int Index, Guid? ExistingId, ProgrammeRowOutcome Outcome, DateTime StartsAt, DateTime EndsAt)> Rota { get; } = new();
         public HashSet<Guid> Departments { get; set; } = new();
@@ -556,10 +795,25 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
                 Location = Clean(row.Location, 200), ResponsibleText = Clean(row.ResponsibleText, 300),
                 ResponsibleUserIds = responsible, ResponsibleDepartmentIds = departments, SeriesName = Clean(row.SeriesName, 200)
             };
+            StaffAudience.Apply(candidate, row.StaffAudience ?? StaffAudienceDto.Everyone());
             var changes = existing == null ? new List<string>() : EventChanges(existing, candidate);
+
+            // B6: an event somebody edited BY HAND keeps their edit. A re-import used to put back what the document said
+            // over every field, silently; it now says which of the document's changes it did not apply.
+            var handEdited = false;
+            if (existing?.EditedByHandAt is { } editedAt && changes.Count > 0)
+            {
+                warnings.Add(string.Create(CultureInfo.InvariantCulture,
+                    $"Edited by hand on {editedAt:dd MMM yyyy}, so the document's {string.Join(", ", changes)} {(changes.Count == 1 ? "was" : "were")} not applied."));
+                changes.Clear();
+                handEdited = true;
+            }
+            // An event imported before as an event only, now the same line of a meeting with a register: linked, not doubled.
+            if (existing != null && existing.DutyId == null && !string.IsNullOrWhiteSpace(row.SameAsMeetingKey)) changes.Add("linked to its register");
+
             var outcome = existing == null ? ProgrammeRowOutcome.New : changes.Count == 0 ? ProgrammeRowOutcome.Unchanged : ProgrammeRowOutcome.Update;
             Count(eval, "event", outcome);
-            eval.Events.Add((row, i, existing?.Id, outcome));
+            eval.Events.Add((row, i, existing?.Id, outcome, handEdited));
             eval.Rows.Add(new ProgrammeRowResultDto { Kind = "event", SourceKey = key, Outcome = outcome, Changes = changes, Warnings = warnings, RecordId = existing?.Id });
         }
 
@@ -573,7 +827,7 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
         if (request.Meetings.Count > 0)
         {
             var parameter = await Db.PerformanceParameters.IgnoreQueryFilters().AsNoTracking()
-                .Where(p => p.OrganizationId == organizationId && (meetingParameterId != null ? p.Id == meetingParameterId : p.Name.ToLower() == MeetingParameterName.ToLower()))
+                .Where(p => p.OrganizationId == organizationId && (meetingParameterId != null ? p.Id == meetingParameterId : p.Name.ToLower() == MeetingParameter.Name.ToLower()))
                 .Select(p => new { p.IsActive }).FirstOrDefaultAsync();
             meetingParameterActive = parameter?.IsActive ?? true;
         }
@@ -621,6 +875,7 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
                 if (expected.Length < row.ExpectedUserIds.Distinct().Count()) warnings.Add("Somebody named as expected is not an active member of staff and was left off.");
             }
             var recorders = (row.RecorderUserIds ?? new List<Guid>()).Where(eval.ActiveUsers.Contains).Distinct().ToArray();
+            if (recorders.Length == 0) warnings.Add("Nobody is named to take the register — only duty managers will be able to.");
             if (!meetingParameterActive) warnings.Add("The Meeting Attendance parameter is retired — its register cannot be taken until it is reinstated.");
             if (StaffRota.IsHoliday(policy, row.Date)) warnings.Add("The date is outside every term.");
             AddNationalWarnings(warnings, national, row.Date, row.Date);
@@ -628,8 +883,11 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
 
             var titleKey = ProgrammeText.TitleKey(title);
             var localDay = row.Date;
-            var existing = sessions.FirstOrDefault(d => ProgrammeText.TitleKey(d.Title) == titleKey
-                                                        && DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(d.StartsAt, zone)) == localDay);
+            // B7: by the line it came from first. Title and day only for a meeting imported before keys were kept — and
+            // never a meeting some other line of a document claims, or two meetings of one title on one day would merge.
+            var existing = sessions.FirstOrDefault(d => d.SourceKey == key)
+                           ?? sessions.FirstOrDefault(d => d.SourceKey == null && ProgrammeText.TitleKey(d.Title) == titleKey
+                                                           && DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(d.StartsAt, zone)) == localDay);
             var changes = new List<string>();
             if (existing != null)
             {
@@ -763,11 +1021,17 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
             || !SameSet(existing.ResponsibleUserIds, row.ResponsibleUserIds) || !SameSet(existing.ResponsibleDepartmentIds, row.ResponsibleDepartmentIds))
             changes.Add("responsible");
         if (existing.Audience != row.Audience) changes.Add("audience");
+        if (AudienceKey(existing) != AudienceKey(row)) changes.Add("who it is for");
         if (!existing.ClassNames.OrderBy(c => c, StringComparer.Ordinal).SequenceEqual(row.ClassNames.OrderBy(c => c, StringComparer.Ordinal))) changes.Add("classes");
         if ((existing.Description ?? string.Empty) != (row.Description ?? string.Empty)) changes.Add("description");
         if ((existing.SeriesName ?? string.Empty) != (row.SeriesName ?? string.Empty)) changes.Add("programme");
         return changes;
     }
+
+    private static string AudienceKey(SchoolEvent e)
+        => string.Join("|", e.AllStaff, string.Join(",", e.AudienceStaffGroups.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)),
+            string.Join(",", e.AudienceRoleCodes.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)),
+            string.Join(",", e.AudienceDepartmentIds.OrderBy(x => x)), string.Join(",", e.AudienceUserIds.OrderBy(x => x)));
 
     private static string TimeText(TimeOnly? start, TimeOnly? end)
         => start == null ? "all day" : end == null ? $"{start:HH:mm} onwards" : string.Create(CultureInfo.InvariantCulture, $"{start:HH:mm}–{end:HH:mm}");
@@ -809,13 +1073,21 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
             if (m.Outcome == ProgrammeRowOutcome.Unchanged && m.ExistingId is { } same) { meetingIdsByKey[key] = same; continue; }
             if (m.Outcome == ProgrammeRowOutcome.Update && m.ExistingId is { } id)
             {
-                var duty = await Db.StaffDuties.IgnoreQueryFilters().FirstAsync(d => d.Id == id);
+                // B6: FirstOrDefault — a row removed meanwhile is skipped, never a 500 for the whole batch.
+                var duty = await Db.StaffDuties.IgnoreQueryFilters().FirstOrDefaultAsync(d => d.Id == id);
+                if (duty == null) continue;
+                plan.MeetingsBefore.Add((new MeetingBefore
+                {
+                    Id = duty.Id, Title = duty.Title, StartsAt = duty.StartsAt, EndsAt = duty.EndsAt, Location = duty.Location,
+                    ExpectedUserIds = duty.ExpectedUserIds, RecorderUserIds = duty.RecorderUserIds
+                }, duty));
                 duty.Title = m.Row.Title.Trim();
                 duty.StartsAt = m.StartsAt;
                 duty.EndsAt = m.EndsAt;
                 duty.Location = Clean(m.Row.Location, 200);
                 duty.ExpectedUserIds = m.Expected;
                 duty.RecorderUserIds = m.Recorders;
+                duty.SourceKey = Truncate(key, 200);
                 duty.UpdatedAt = now;
                 duty.UpdatedBy = actor;
                 meetingIdsByKey[key] = duty.Id;
@@ -835,6 +1107,7 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
                 ExpectedUserIds = m.Expected,
                 RecorderUserIds = m.Recorders,
                 ImportJobId = job.Id,
+                SourceKey = Truncate(key, 200),
                 CreatedByUserId = me,
                 CreatedBy = actor
             };
@@ -887,13 +1160,26 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
             SchoolEvent target;
             if (e.Outcome == ProgrammeRowOutcome.Update && e.ExistingId is { } id)
             {
-                target = await Db.SchoolEvents.IgnoreQueryFilters().FirstAsync(x => x.Id == id);
+                var found = await Db.SchoolEvents.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id);
+                if (found == null) continue; // B6: removed meanwhile
+                target = found;
+                plan.EventsBefore.Add((EventBefore.Of(target), target));
                 target.UpdatedAt = now;
                 target.UpdatedBy = actor;
+                // Hand-edited: nothing of the document is written over it; only the link to its register, when that is new.
+                if (e.HandEdited)
+                {
+                    if (!string.IsNullOrWhiteSpace(row.SameAsMeetingKey) && meetingIdsByKey.TryGetValue(row.SameAsMeetingKey.Trim(), out var linkId))
+                        target.DutyId = linkId;
+                    continue;
+                }
+                // The change is announced in the import's one summary per person, not once per event.
+                target.Version++;
+                target.NotifiedVersion = target.Version;
             }
             else
             {
-                target = new SchoolEvent { OrganizationId = organizationId, BranchId = branchId, ImportJobId = job.Id, CreatedBy = actor };
+                target = new SchoolEvent { OrganizationId = organizationId, BranchId = branchId, ImportJobId = job.Id, CreatedBy = actor, Version = 1, NotifiedVersion = 1 };
                 Db.SchoolEvents.Add(target);
                 createdEvents.Add(target);
                 plan.CreatedIds["event|" + row.SourceKey.Trim()] = target.Id;
@@ -913,6 +1199,7 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
             target.ResponsibleText = Clean(row.ResponsibleText, 300);
             target.ResponsibleUserIds = (row.ResponsibleUserIds ?? new List<Guid>()).Where(plan.ActiveUsers.Contains).Distinct().ToArray();
             target.ResponsibleDepartmentIds = (row.ResponsibleDepartmentIds ?? new List<Guid>()).Where(plan.Departments.Contains).Distinct().ToArray();
+            StaffAudience.Apply(target, row.StaffAudience ?? StaffAudienceDto.Everyone());
             target.SourceKey = Truncate(row.SourceKey.Trim(), 200);
             target.SeriesName = Clean(row.SeriesName, 200);
             if (target.SeriesName is { } seriesName)
@@ -1028,14 +1315,16 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
     // ---- One notice per person ------------------------------------------------------------------------------
 
     /// <summary>
-    /// "You are Teacher on Duty on Wed 23 Sep and Wed 11 Nov." — ONE notice per person listing every new duty of this
-    /// import, after the commit; never one per slot. A notice that did not land never undoes the import. Only duties
-    /// still ahead are mentioned, and a meeting that expects everyone is not announced to everyone.
+    /// "You are Teacher on Duty on Wed 23 Sep and Wed 11 Nov. 7 events were added to your calendar." — ONE notice per
+    /// person listing every new duty of this import AND how many of its events are for them (calendar-audiences plan E5),
+    /// after the commit; never one per row. A notice that did not land never undoes the import. Only what is still ahead
+    /// is mentioned, and a meeting that expects everyone is not announced to everyone.
     /// </summary>
-    private async Task<int> NotifyPeopleAsync(Guid branchId, Guid organizationId, List<StaffDuty> duties)
+    private async Task<int> NotifyPeopleAsync(Guid branchId, Guid organizationId, List<StaffDuty> duties, List<SchoolEvent> events)
     {
         var zone = await ZoneAsync(branchId);
         var now = DateTime.UtcNow;
+        var today = QMgr.Application.BranchClock.Today(zone);
         var perPerson = new Dictionary<Guid, List<StaffDuty>>();
         foreach (var d in duties.Where(d => d.EndsAt > now && d.ExpectedUserIds != null))
             foreach (var id in d.ExpectedUserIds!)
@@ -1043,6 +1332,19 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
                 if (!perPerson.TryGetValue(id, out var list)) perPerson[id] = list = new List<StaffDuty>();
                 list.Add(d);
             }
+
+        // The events are counted per person through the ONE audience rule. An event that IS a meeting is not counted
+        // twice: the meeting's own sentence covers it.
+        var eventCounts = new Dictionary<Guid, int>();
+        var upcoming = events.Where(e => e.EndsOn >= today && e.DutyId == null && (e.Audience & EventAudience.Staff) == EventAudience.Staff).ToList();
+        if (upcoming.Count > 0)
+        {
+            var members = await StaffAudience.MembersAsync(Db, _policy, organizationId, branchId);
+            foreach (var e in upcoming)
+                foreach (var id in StaffAudience.RecipientsOf(e, members))
+                    eventCounts[id] = eventCounts.GetValueOrDefault(id) + 1;
+        }
+        foreach (var id in eventCounts.Keys) perPerson.TryAdd(id, new List<StaffDuty>());
 
         var sent = 0;
         foreach (var (userId, list) in perPerson)
@@ -1052,6 +1354,8 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
                 sentences.Add($"You are {group.Key} on {JoinDates(group.OrderBy(d => d.StartsAt).Select(d => Span(d, zone)).ToList())}.");
             foreach (var m in list.Where(d => d.Kind == DutyKind.Session).OrderBy(d => d.StartsAt))
                 sentences.Add(string.Create(CultureInfo.InvariantCulture, $"You are expected at {m.Title} on {TimeZoneInfo.ConvertTimeFromUtc(m.StartsAt, zone):ddd d MMM} at {TimeZoneInfo.ConvertTimeFromUtc(m.StartsAt, zone):HH:mm}."));
+            var eventCount = eventCounts.GetValueOrDefault(userId);
+            if (eventCount > 0) sentences.Add(eventCount == 1 ? "1 event was added to your calendar." : $"{eventCount} events were added to your calendar.");
             if (sentences.Count == 0) continue;
             var hasRota = list.Any(d => d.Kind == DutyKind.Rota);
             try
@@ -1061,13 +1365,17 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
                     UserId = userId,
                     OrganizationId = organizationId,
                     BranchId = branchId,
-                    Title = hasRota ? "Your duties this term" : "Meetings you are expected at",
+                    Title = hasRota ? "Your duties this term" : list.Count > 0 ? "Meetings you are expected at" : "Your calendar was updated",
                     Message = Truncate(string.Join(" ", sentences), 1000),
-                    Type = NotificationType.StaffPerformance,
+                    Type = list.Count > 0 ? NotificationType.StaffPerformance : NotificationType.Calendar,
                     Priority = NotificationPriority.Normal,
                     Channels = NotificationChannel.InApp | NotificationChannel.Email,
-                    EventKey = hasRota ? NotificationEventKeys.StaffRotaAssigned : NotificationEventKeys.StaffDutyReminder,
-                    ActionUrl = hasRota ? "/portal#on-duty" : "/my-day",
+                    // A person whose preferences turn one of these off is still told of the other: the key follows
+                    // what the message is mostly about.
+                    EventKey = hasRota ? NotificationEventKeys.StaffRotaAssigned
+                             : list.Count > 0 ? NotificationEventKeys.StaffDutyReminder
+                             : NotificationEventKeys.CalendarImportSummary,
+                    ActionUrl = hasRota ? "/portal#on-duty" : list.Count > 0 ? "/my-day" : "/calendar",
                     IconClass = "calendar-week"
                 });
                 sent++;
@@ -1103,41 +1411,7 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
         return null;
     }
 
-    private async Task<Guid> EnsureMeetingParameterAsync(Guid organizationId)
-    {
-        var existing = await Db.PerformanceParameters.IgnoreQueryFilters().AsNoTracking()
-            .Where(p => p.OrganizationId == organizationId && p.Name.ToLower() == MeetingParameterName.ToLower())
-            .OrderByDescending(p => p.IsActive).Select(p => new { p.Id }).FirstOrDefaultAsync();
-        if (existing != null) return existing.Id;
-
-        var maxSort = await Db.PerformanceParameters.IgnoreQueryFilters().Where(p => p.OrganizationId == organizationId).MaxAsync(p => (int?)p.SortOrder) ?? 0;
-        var parameter = new PerformanceParameter { OrganizationId = organizationId };
-        StaffPerformanceMapping.Apply(parameter, new SavePerformanceParameterRequest
-        {
-            Name = MeetingParameterName,
-            Kind = ParameterKind.Attendance,
-            DefaultPoints = 1,
-            MaxPointsPerEntry = 1,
-            Weight = 1,
-            Purpose = "Attendance at staff, departmental and committee meetings, from the register taken by the named recorder.",
-            Color = "#3f8a80",
-            SortOrder = maxSort + 1
-        });
-        Db.PerformanceParameters.Add(parameter);
-        try
-        {
-            await Db.SaveChangesAsync();
-            return parameter.Id;
-        }
-        catch (DbUpdateException ex)
-        {
-            _logger.LogWarning(ex, "{Parameter} seed for {OrganizationId} collided with a concurrent seed; reading it back", MeetingParameterName, organizationId);
-            Db.Entry(parameter).State = EntityState.Detached;
-            return await Db.PerformanceParameters.IgnoreQueryFilters().AsNoTracking()
-                .Where(p => p.OrganizationId == organizationId && p.Name.ToLower() == MeetingParameterName.ToLower())
-                .Select(p => p.Id).FirstAsync();
-        }
-    }
+    private Task<Guid> EnsureMeetingParameterAsync(Guid organizationId) => MeetingParameter.EnsureAsync(Db, organizationId, _logger);
 
     private Task<string?> OrganizationSettingsJsonAsync(Guid organizationId)
         => Db.Organizations.IgnoreQueryFilters().AsNoTracking().Where(o => o.Id == organizationId).Select(o => o.Settings).FirstOrDefaultAsync();
@@ -1173,6 +1447,76 @@ public class ProgrammeImportController : StaffPerformanceControllerBase
         public int EventsRemoved { get; set; }
         public int DutiesRemoved { get; set; }
         public int DutiesKept { get; set; }
+        public int UpdatesRestored { get; set; }
+        public List<string> UpdatesLeft { get; set; } = new();
+        public List<MeetingBefore> MeetingsBefore { get; set; } = new();
+        public List<EventBefore> EventsBefore { get; set; } = new();
+        /// <summary>Rows the server refused, named (since 2026-09-26; earlier imports did not keep them).</summary>
+        public List<ImportHealthItemDto> Refused { get; set; } = new();
+        public bool RefusedRecorded { get; set; }
+        /// <summary>Existing rows this import matched (Unchanged or Update): undoing an EARLIER import must not remove them (B13).</summary>
+        public List<Guid> Matched { get; set; } = new();
+        /// <summary>For a meeting the reader sent as an event only: why, by source key (Import health).</summary>
+        public Dictionary<string, string> NoRegisterReasons { get; set; } = new();
+    }
+
+    /// <summary>Postgres keeps microseconds and .NET ticks 100ns, so a stamp read back is equal to the millisecond.</summary>
+    private static bool SameStamp(DateTime? a, DateTime? b)
+        => a.HasValue && b.HasValue && Math.Abs((a.Value - b.Value).TotalMilliseconds) < 1;
+
+    /// <summary>A meeting as it was before an import updated it — the fields the import writes, and no others.</summary>
+    private sealed record MeetingBefore
+    {
+        public Guid Id { get; init; }
+        public string Title { get; init; } = string.Empty;
+        public DateTime StartsAt { get; init; }
+        public DateTime EndsAt { get; init; }
+        public string? Location { get; init; }
+        public Guid[]? ExpectedUserIds { get; init; }
+        public Guid[]? RecorderUserIds { get; init; }
+        public DateTime? AppliedUpdatedAt { get; init; }
+    }
+
+    /// <summary>An event as it was before an import updated it — the fields ApplyAsync writes, and no others.</summary>
+    private sealed record EventBefore
+    {
+        public Guid Id { get; init; }
+        public string Title { get; init; } = string.Empty;
+        public string? Description { get; init; }
+        public DateOnly StartsOn { get; init; }
+        public DateOnly EndsOn { get; init; }
+        public TimeOnly? StartTime { get; init; }
+        public TimeOnly? EndTime { get; init; }
+        public string? Category { get; init; }
+        public EventAudience Audience { get; init; }
+        public string[]? ClassNames { get; init; }
+        public string? Location { get; init; }
+        public string? ResponsibleText { get; init; }
+        public Guid[]? ResponsibleUserIds { get; init; }
+        public Guid[]? ResponsibleDepartmentIds { get; init; }
+        public string? SourceKey { get; init; }
+        public string? SeriesName { get; init; }
+        public Guid? SeriesId { get; init; }
+        public Guid? DutyId { get; init; }
+        public DateTime? AppliedUpdatedAt { get; init; }
+
+        public static EventBefore Of(SchoolEvent e) => new()
+        {
+            Id = e.Id, Title = e.Title, Description = e.Description, StartsOn = e.StartsOn, EndsOn = e.EndsOn,
+            StartTime = e.StartTime, EndTime = e.EndTime, Category = e.Category, Audience = e.Audience,
+            ClassNames = e.ClassNames, Location = e.Location, ResponsibleText = e.ResponsibleText,
+            ResponsibleUserIds = e.ResponsibleUserIds, ResponsibleDepartmentIds = e.ResponsibleDepartmentIds,
+            SourceKey = e.SourceKey, SeriesName = e.SeriesName, SeriesId = e.SeriesId, DutyId = e.DutyId
+        };
+
+        public void ApplyTo(SchoolEvent e)
+        {
+            e.Title = Title; e.Description = Description; e.StartsOn = StartsOn; e.EndsOn = EndsOn;
+            e.StartTime = StartTime; e.EndTime = EndTime; e.Category = Category; e.Audience = Audience;
+            e.ClassNames = ClassNames ?? Array.Empty<string>(); e.Location = Location; e.ResponsibleText = ResponsibleText;
+            e.ResponsibleUserIds = ResponsibleUserIds ?? Array.Empty<Guid>(); e.ResponsibleDepartmentIds = ResponsibleDepartmentIds ?? Array.Empty<Guid>();
+            e.SourceKey = SourceKey; e.SeriesName = SeriesName; e.SeriesId = SeriesId; e.DutyId = DutyId;
+        }
     }
 
     private static ProgrammeJobSummary ReadSummary(string? json)

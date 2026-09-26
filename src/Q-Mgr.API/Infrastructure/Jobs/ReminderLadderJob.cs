@@ -35,6 +35,7 @@ public class ReminderLadderJob
     private readonly IStaffPerformancePolicyService _policy;
     private readonly IReminderLadderService _ladders;
     private readonly IModuleAccessService _modules;
+    private readonly ISchoolEventNotifier _events;
     private readonly ILogger<ReminderLadderJob> _logger;
 
     private readonly Dictionary<Guid, bool> _moduleActive = new();
@@ -49,8 +50,10 @@ public class ReminderLadderJob
         IStaffPerformancePolicyService policy,
         IReminderLadderService ladders,
         IModuleAccessService modules,
+        ISchoolEventNotifier events,
         ILogger<ReminderLadderJob> logger)
     {
+        _events = events;
         _context = context;
         _notifications = notifications;
         _policy = policy;
@@ -72,6 +75,232 @@ public class ReminderLadderJob
         await RunAsync("my-day", () => MyDayAsync(now));
         await RunAsync("minute-action", () => MinuteActionAsync(now));
         await RunAsync("timetable-expiring", () => TimetableExpiringAsync(now));
+        await RunAsync("school-event-start", () => SchoolEventStartAsync(now));
+        await RunAsync("plan-due", () => PlanDueAsync(now));
+        await RunAsync("plan-review", () => PlanReviewAsync(now));
+    }
+
+    // ---- Lesson plans (2026-09-26) ------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A lesson with no submitted plan by the school's deadline (the day before, at the policy's hour). Only when the school
+    /// requires a plan for every lesson. Each lesson's stage is claimed on <see cref="StaffDuty.PlanReminderStage"/>; the
+    /// teacher then gets ONE message listing every lesson that came due in this sweep, never one per lesson. A stage for
+    /// the heads tells the subject's head of department, also in one message.
+    /// </summary>
+    internal async Task<int> PlanDueAsync(DateTime now)
+    {
+        var lessons = await _context.StaffDuties.IgnoreQueryFilters().AsNoTracking()
+            .Include(d => d.Branch)
+            .Where(d => d.IsActive && d.Kind == DutyKind.Lesson && d.RecoversDutyId == null && d.ExpectedUserIds != null && d.SubjectId != null
+                        && d.StartsAt > now && d.StartsAt <= now.AddDays(3))
+            .OrderBy(d => d.StartsAt).Take(3000).ToListAsync();
+        if (lessons.Count == 0) return 0;
+
+        var ids = lessons.Select(l => l.Id).ToList();
+        var planned = (await _context.TeachingPlans.IgnoreQueryFilters().AsNoTracking()
+                .Where(p => p.DutyId != null && ids.Contains(p.DutyId.Value)
+                            && (p.Status == TeachingPlanStatus.Submitted || p.Status == TeachingPlanStatus.Forwarded || p.Status == TeachingPlanStatus.Approved))
+                .Select(p => p.DutyId!.Value).ToListAsync()).ToHashSet();
+
+        var byTeacher = new Dictionary<(Guid Org, Guid Branch, Guid Teacher), List<(StaffDuty Lesson, ReminderStageDto Stage)>>();
+        var sent = 0;
+        foreach (var lesson in lessons.Where(l => !planned.Contains(l.Id)))
+        {
+            try
+            {
+                if (!await ModuleActiveAsync(lesson.OrganizationId)) continue;
+                var policy = await PolicyAsync(lesson.OrganizationId);
+                var settings = _policy.PlanSettings(policy);
+                if (settings.Requirement != PlanRequirement.EveryLesson) continue;
+                var zone = AppointmentScheduling.ResolveTimeZone(lesson.Branch?.Timezone);
+                var day = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(lesson.StartsAt, zone));
+                var deadline = TimeZoneInfo.ConvertTimeToUtc(day.AddDays(-1).ToDateTime(new TimeOnly(settings.DeadlineHourDayBefore, 0)), zone);
+                var stage = _ladders.DueStage(_policy.LadderFor(policy, ReminderSubject.PlanDue), deadline, lesson.PlanReminderStage, now, zone, policy.QuietHours);
+                if (stage == null) continue;
+                var previous = lesson.PlanReminderStage;
+                var claimed = await _context.StaffDuties.IgnoreQueryFilters()
+                    .Where(d => d.Id == lesson.Id && d.PlanReminderStage == previous)
+                    .ExecuteUpdateAsync(s => s.SetProperty(d => d.PlanReminderStage, stage.Stage));
+                if (claimed == 0) continue;
+                sent++;
+                var teacher = lesson.ExpectedUserIds!.FirstOrDefault();
+                if (teacher == Guid.Empty) continue;
+                var key = (lesson.OrganizationId, lesson.BranchId, teacher);
+                if (!byTeacher.TryGetValue(key, out var list)) byTeacher[key] = list = new();
+                list.Add((lesson, stage));
+            }
+            catch (Exception ex) { _logger.LogError(ex, "Plan-due reminder failed for lesson {DutyId}", lesson.Id); }
+        }
+
+        foreach (var ((org, branch, teacher), due) in byTeacher)
+        {
+            var channels = due.Select(d => _ladders.ChannelsFor(d.Stage)).Aggregate(NotificationChannel.None, (a, b) => a | b);
+            var zone = AppointmentScheduling.ResolveTimeZone(due[0].Lesson.Branch?.Timezone);
+            string Line(StaffDuty l) => $"{l.ClassName} at {TimeZoneInfo.ConvertTimeFromUtc(l.StartsAt, zone).ToString("ddd HH:mm", System.Globalization.CultureInfo.InvariantCulture)}";
+            if (channels != NotificationChannel.None)
+                await SafeSendAsync(new CreateNotificationRequest
+                {
+                    UserId = teacher, OrganizationId = org, BranchId = branch,
+                    Title = due.Count == 1 ? "A lesson of yours has no plan yet" : $"{due.Count} lessons of yours have no plan yet",
+                    Message = string.Join("; ", due.Take(6).Select(d => Line(d.Lesson))) + (due.Count > 6 ? "…" : "") + ". Plan them from My Workspace.",
+                    Type = NotificationType.StaffPerformance, Priority = NotificationPriority.Normal, Channels = channels,
+                    EventKey = NotificationEventKeys.StaffPlanDue, ActionUrl = "/portal?tab=teaching", IconClass = "journal-text"
+                }, teacher);
+
+            // The heads' stage: the subject's head of department hears once, naming the teacher.
+            var forHeads = due.Where(d => d.Stage.Audience.HasFlag(ReminderAudience.Heads)).ToList();
+            if (forHeads.Count == 0) continue;
+            var teacherName = (await StaffLookups.LoadNamesAsync(_context, new Guid?[] { teacher }))[teacher];
+            foreach (var group in forHeads.GroupBy(d => d.Lesson.SubjectId!.Value))
+            {
+                var chain = await QMgr.API.Application.Services.TeachingPlans.ChainAsync(_context, org, group.Key);
+                foreach (var head in chain.Stage1For(teacher))
+                    await SafeSendAsync(new CreateNotificationRequest
+                    {
+                        UserId = head, OrganizationId = org, BranchId = branch,
+                        Title = $"{teacherName} has lessons with no plan",
+                        Message = string.Join("; ", group.Take(6).Select(d => Line(d.Lesson))) + ".",
+                        Type = NotificationType.StaffPerformance, Priority = NotificationPriority.Normal, Channels = NotificationChannel.InApp,
+                        EventKey = NotificationEventKeys.StaffPlanDue, ActionUrl = "/admin/timetable?tab=plans", IconClass = "journal-text"
+                    }, teacher);
+            }
+        }
+        return sent;
+    }
+
+    /// <summary>
+    /// A plan waiting on its reviewer (the head of department) or approver. Anchored on when it reached them, claimed on
+    /// <see cref="TeachingPlan.ReviewReminderStage"/>, and gathered into one message per reviewer. The heads' stage of a plan
+    /// stuck at the head of department also tells the approvers, who can see it is waiting.
+    /// </summary>
+    internal async Task<int> PlanReviewAsync(DateTime now)
+    {
+        var waiting = await _context.TeachingPlans.IgnoreQueryFilters().AsNoTracking()
+            .Where(p => (p.Status == TeachingPlanStatus.Submitted || p.Status == TeachingPlanStatus.Forwarded) && p.WaitingSince != null
+                        && p.WaitingSince < now.AddDays(-1))
+            .OrderBy(p => p.WaitingSince).Take(2000).ToListAsync();
+        var byReviewer = new Dictionary<(Guid Org, Guid Branch, Guid Reviewer), List<TeachingPlan>>();
+        var sent = 0;
+        foreach (var plan in waiting)
+        {
+            try
+            {
+                if (!await ModuleActiveAsync(plan.OrganizationId)) continue;
+                var policy = await PolicyAsync(plan.OrganizationId);
+                var zone = AppointmentScheduling.ResolveTimeZone(await _context.Branches.IgnoreQueryFilters().Where(b => b.Id == plan.BranchId).Select(b => b.Timezone).FirstOrDefaultAsync());
+                var stage = _ladders.DueStage(_policy.LadderFor(policy, ReminderSubject.PlanReview), plan.WaitingSince!.Value, plan.ReviewReminderStage, now, zone, policy.QuietHours);
+                if (stage == null) continue;
+                var previous = plan.ReviewReminderStage;
+                var status = plan.Status;
+                var claimed = await _context.TeachingPlans.IgnoreQueryFilters()
+                    .Where(p => p.Id == plan.Id && p.Status == status && p.ReviewReminderStage == previous)
+                    .ExecuteUpdateAsync(s => s.SetProperty(p => p.ReviewReminderStage, stage.Stage));
+                if (claimed == 0) continue;
+                sent++;
+                if (_ladders.ChannelsFor(stage) == NotificationChannel.None) continue;
+
+                var reviewers = new List<Guid>();
+                if (plan.Status == TeachingPlanStatus.Submitted)
+                {
+                    var chain = await QMgr.API.Application.Services.TeachingPlans.ChainAsync(_context, plan.OrganizationId, plan.SubjectId);
+                    reviewers.AddRange(chain.Stage1For(plan.AuthorUserId));
+                    if (stage.Audience.HasFlag(ReminderAudience.Heads))
+                        reviewers.AddRange((await StaffLookups.UsersWithPermissionAsync(_context, plan.OrganizationId, Permissions.TeachingPlansApprove, default, plan.BranchId)).Where(u => u != plan.AuthorUserId));
+                }
+                else
+                {
+                    reviewers.AddRange((await StaffLookups.UsersWithPermissionAsync(_context, plan.OrganizationId, Permissions.TeachingPlansApprove, default, plan.BranchId))
+                        .Where(u => u != plan.AuthorUserId && u != plan.ForwardedByUserId));
+                }
+                foreach (var r in reviewers.Distinct())
+                {
+                    var key = (plan.OrganizationId, plan.BranchId, r);
+                    if (!byReviewer.TryGetValue(key, out var list)) byReviewer[key] = list = new();
+                    list.Add(plan);
+                }
+            }
+            catch (Exception ex) { _logger.LogError(ex, "Plan-review reminder failed for plan {PlanId}", plan.Id); }
+        }
+        foreach (var ((org, branch, reviewer), plans) in byReviewer)
+            await SafeSendAsync(new CreateNotificationRequest
+            {
+                UserId = reviewer, OrganizationId = org, BranchId = branch,
+                Title = plans.Count == 1 ? "A plan has been waiting for your review" : $"{plans.Count} plans have been waiting for your review",
+                Message = string.Join("; ", plans.Take(5).Select(p => p.Title)) + (plans.Count > 5 ? "…" : ""),
+                Type = NotificationType.StaffPerformance, Priority = NotificationPriority.Normal, Channels = NotificationChannel.InApp | NotificationChannel.Email,
+                EventKey = NotificationEventKeys.StaffPlanDue, ActionUrl = "/admin/timetable?tab=plans", IconClass = "journal-check"
+            }, reviewer);
+        return sent;
+    }
+
+    // ---- A school event approaching (calendar-audiences plan E6, 2026-09-26) ------------------------------
+
+    /// <summary>
+    /// The day before an event at the morning hour, and an hour before one with a start time, to the event's own audience.
+    ///
+    /// <para><b>NO MODULE CHECK, deliberately.</b> Every other ladder here belongs to Welfare &amp; Performance and skips
+    /// an organization without it; the calendar is base product (D8), and a school that bought nothing else still keeps
+    /// a calendar and still wants to be reminded of it.</para>
+    ///
+    /// The stage is claimed on <see cref="QMgr.Domain.Entities.Calendar.SchoolEvent.ReminderStage"/> with a conditional
+    /// update before anything is sent, like every other ladder; moving an event resets the column so its new date is
+    /// reminded afresh. An all-day event has no "an hour before": that stage is claimed and not sent.
+    /// </summary>
+    internal async Task<int> SchoolEventStartAsync(DateTime now)
+    {
+        var floor = DateOnly.FromDateTime(now.AddDays(-1));
+        var horizon = DateOnly.FromDateTime(now.AddDays(2));
+        var events = await _context.SchoolEvents.IgnoreQueryFilters().AsNoTracking()
+            .Where(e => e.IsActive && e.RemindersOn && e.Status == SchoolEventStatus.Scheduled
+                        && (e.Audience & EventAudience.Staff) == EventAudience.Staff
+                        && e.StartsOn >= floor && e.StartsOn <= horizon && e.ReminderStage < 2)
+            .OrderBy(e => e.StartsOn)
+            .Take(2000)
+            .ToListAsync();
+        if (events.Count == 0) return 0;
+
+        var orgIds = events.Select(e => e.OrganizationId).Distinct().ToList();
+        var branches = await _context.Branches.IgnoreQueryFilters().AsNoTracking()
+            .Where(b => orgIds.Contains(b.OrganizationId) && b.IsActive)
+            .OrderBy(b => b.CreatedAt)
+            .Select(b => new { b.Id, b.OrganizationId, b.Timezone })
+            .ToListAsync();
+
+        var sent = 0;
+        foreach (var e in events)
+        {
+            try
+            {
+                var branch = e.BranchId is { } bid ? branches.FirstOrDefault(b => b.Id == bid) : branches.FirstOrDefault(b => b.OrganizationId == e.OrganizationId);
+                if (branch == null) continue;
+                var zone = QMgr.Application.BranchClock.Resolve(branch.Timezone);
+                var policy = await PolicyAsync(e.OrganizationId);
+                var anchor = QMgr.Application.BranchClock.ToUtc(e.StartsOn.ToDateTime(e.StartTime ?? TimeOnly.MinValue), zone);
+                if (now >= anchor.AddMinutes(e.StartTime == null ? 24 * 60 : 0)) continue;
+
+                var stage = _ladders.DueStage(_policy.LadderFor(policy, ReminderSubject.SchoolEventStart), anchor, e.ReminderStage, now, zone, policy.QuietHours);
+                if (stage == null) continue;
+
+                var previous = e.ReminderStage;
+                var claimed = await _context.SchoolEvents.IgnoreQueryFilters()
+                    .Where(x => x.Id == e.Id && x.ReminderStage == previous && x.Status == SchoolEventStatus.Scheduled)
+                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.ReminderStage, stage.Stage));
+                if (claimed == 0) continue;
+                if (stage.Stage >= 2 && e.StartTime == null) continue;
+
+                var today = QMgr.Application.BranchClock.Today(zone);
+                var when = e.StartsOn == today ? (e.StartTime != null ? "Starting soon" : "Today")
+                         : e.StartsOn == today.AddDays(1) ? "Tomorrow"
+                         : e.StartsOn.ToString("ddd dd MMM", CultureInfo.InvariantCulture);
+                sent += await _events.RemindAsync(e, when) > 0 ? 1 : 0;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "School event {EventId}: reminder failed", e.Id);
+            }
+        }
+        return sent;
     }
 
     // ---- A published timetable running out (2026-09-22) ---------------------------------------------------

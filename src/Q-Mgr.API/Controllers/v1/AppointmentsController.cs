@@ -1053,13 +1053,7 @@ internal static class AppointmentScheduling
     }
 
     /// <summary>Branch.Timezone is an IANA id ("Africa/Kampala"); an unknown one falls back to UTC.</summary>
-    internal static TimeZoneInfo ResolveTimeZone(string? id)
-    {
-        if (string.IsNullOrWhiteSpace(id)) return TimeZoneInfo.Utc;
-        try { return TimeZoneInfo.FindSystemTimeZoneById(id); }
-        catch (TimeZoneNotFoundException) { return TimeZoneInfo.Utc; }
-        catch (InvalidTimeZoneException) { return TimeZoneInfo.Utc; }
-    }
+    internal static TimeZoneInfo ResolveTimeZone(string? id) => QMgr.Application.BranchClock.Resolve(id);
 
     /// <summary>
     /// Opening window for one weekday, from the existing Branch.OperatingHours JSON

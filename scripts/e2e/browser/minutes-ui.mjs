@@ -119,7 +119,16 @@ check('2c: …and signature lines for chair, secretary and date', draftSheet.sig
 // ---------------------------------------------------------------- 3. adoption closes the door
 hdr('Adoption');
 await api('POST', `/duties/${duty.id}/minutes/circulate`);
-await api('POST', `/duties/${duty.id}/minutes/approve`, {});
+// Adopted by somebody other than the writer (DutySeparation G4): the Director of Studies, who manages duties too.
+const dosToken = await (async () => {
+  for (const pw of ['E2eTeacher!2026', 'Rwenzori#Peaks-2026']) {
+    const j = await fetch(`${API}/api/v1/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'e2e.sp.dos@qmgr.local', password: pw }) }).then(r => r.json()).catch(() => ({}));
+    if (j.accessToken) return j.accessToken;
+  }
+  return null;
+})();
+await fetch(`${B}/duties/${duty.id}/minutes/approve`, { method: 'POST', headers: { Authorization: `Bearer ${dosToken}`, 'Content-Type': 'application/json' }, body: '{}' });
 await t.goto(url);
 await t.waitFor(`!!document.querySelector('.min-page .q-card')`, 25000);
 await t.sleep(1500);

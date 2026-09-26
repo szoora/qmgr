@@ -10,6 +10,7 @@
 @inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
+@inject IImportInboxApiService InboxApi
 @inject IJSRuntime JS
 @inject HttpClient Http
 @inject System.Text.Json.JsonSerializerOptions JsonOptions
@@ -841,6 +842,7 @@
         </p>
 
         <QImportPanel TRow="RosterImportRow"
+                      InitialCsv="@inbox?.Csv" InitialFileName="@inbox?.FileName"
                       BranchId="@branchId"
                       InputId="roster-file-input"
                       Noun="student"
@@ -2612,6 +2614,13 @@
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
 
+        // A roll handed over by the Import inbox (E11), opened as ?inbox=…&section=…: the import dialog opens with it.
+        if (canManageStudents)
+        {
+            inbox = await InboxHandoff.FromQueryAsync(Navigation, InboxApi, branchId);
+            if (inbox != null) showImportModal = true;
+        }
+
         NotificationClient.OnRosterImportProgressReceived += HandleImportProgress;
 
         // A SuperAdmin arrives with no organization chosen, so CurrentBranchId is empty and every
@@ -3355,8 +3364,15 @@
         => await StudentApi.GetImportJobEntriesAsync(branchId, jobId);
 
     /// <summary>The roster changed underneath the modal — reload the list behind it.</summary>
+    private InboxHandoff? inbox;
+
     private async Task OnRosterImportCompleted()
     {
+        if (inbox != null && await inbox.CompleteAsync(InboxApi, branchId))
+        {
+            NotificationService.Notify(ToastSeverity.Success, "Marked done in the Import inbox", "The roll from the inbox has been imported.");
+            inbox = null;
+        }
         try { await LoadStudents(); }
         catch { /* the panel already shows the outcome */ }
         StateHasChanged();

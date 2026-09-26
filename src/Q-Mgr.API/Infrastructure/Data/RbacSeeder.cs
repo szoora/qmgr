@@ -200,6 +200,10 @@ public class RbacSeeder
         new("staff.dutyreports.review", "Review Duty Reports", "Comment on duty reports, return them for changes and mark them reviewed", "Staff Performance", 15, true),
         new("timetable.manage", "Manage the Timetable", "Build, check and publish the timetable, bell schedule and rooms — the timetable master", "Staff Performance", 16, true),
         new("timetable.lessons.flag", "Flag Lessons", "Confirm or override lessons taught, missed and recovered for the staff in scope", "Staff Performance", 17, true),
+        // Lesson plans (2026-09-26) — mirrored in Permissions.All and the Web copy
+        new("teaching.plans.review", "Review Lesson Plans", "Forward or return the lesson plans and schemes of work of a department (the head of department's post grants it)", "Staff Performance", 18, true),
+        new("teaching.plans.approve", "Approve Lesson Plans", "Approve or return lesson plans and schemes of work forwarded by heads of department", "Staff Performance", 19, true),
+        new("teaching.plans.view", "View Lesson Plans", "Read approved lesson plans and schemes of work across the school, and the planning reports", "Staff Performance", 20, true),
         // School calendar (2026-09-23) — mirrored in Permissions.All and the Web copy
         new("calendar.manage", "Manage the School Calendar", "Create and edit school events and import the term programme, meetings and duty rotas", "Calendar", 1, true),
 
@@ -441,6 +445,7 @@ public class RbacSeeder
                 // Duty rota plan §15 decisions 4 and 10: the DoS reads and reviews duty reports, is a timetable
                 // master, and supervises lessons school-wide.
                 "staff.dutyreports.view", "staff.dutyreports.review", "timetable.manage", "timetable.lessons.flag",
+                "teaching.plans.approve", "teaching.plans.view",
                 "calendar.manage",
             },
             DataScope: RoleDataScope.Organization,
@@ -464,6 +469,7 @@ public class RbacSeeder
                 "staff.reports.view", "staff.notices.manage", "staff.recognition.give",
                 // Duty rota plan §15 decision 10: the academic assistant is a timetable master and reads duty reports.
                 "staff.dutyreports.view", "timetable.manage", "timetable.lessons.flag",
+                "teaching.plans.approve", "teaching.plans.view",
                 "calendar.manage",
             },
             DataScope: RoleDataScope.Organization,

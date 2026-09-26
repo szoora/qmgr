@@ -79,6 +79,24 @@ public class ModulesController : ControllerBase
             return Unauthorized(new { message = "Unable to determine your organization context." });
 
         var status = await _moduleAccessService.GetOrganizationModuleStatusAsync(OrganizationId);
+
+        // Every page's module gate reads this, so it stays open to everyone signed in — but the
+        // price the school agreed, its billing cycle and its trial and activation dates are the
+        // bursar's business, not a teacher's (2026-09-25). Without billing.view the answer says
+        // which modules are on and nothing about what they cost.
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var mayReadBilling = Guid.TryParse(userId, out var uid)
+            && (await QMgr.API.Application.Services.PostPermissionService.EffectiveCodesAsync(_dbContext, uid))
+                .Contains(Permissions.BillingView);
+        if (!mayReadBilling)
+            status = status.Select(m => m with
+            {
+                ActivatedAt = null,
+                TrialEndsAt = null,
+                AgreedPriceUgx = null,
+                BillingCycle = null
+            }).ToList();
+
         return Ok(status);
     }
 

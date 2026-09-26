@@ -124,11 +124,15 @@ try {
   truthy("…and the categories", Array.isArray(tView.json?.categories) && tView.json.categories.includes(category));
   truthy("…and the caller's duties list", Array.isArray(tView.json?.myDuties));
 
-  const aView = await get(AD, CAL + range);
+  // E4 (2026-09-26): "My events" is everybody's default, the keeper's too; the whole school is scope=all.
+  const aView = await get(AD, CAL + range + "&scope=all");
   const aIds = new Set((aView.json?.events ?? []).map((e) => e.id));
-  truthy("the calendar-keeper sees every one of them", created.every((id) => aIds.has(id)), `${created.length} created, ${[...aIds].length} seen`);
+  truthy("the calendar-keeper sees every one of them on the whole-school view", created.every((id) => aIds.has(id)), `${created.length} created, ${[...aIds].length} seen`);
   eq("…and may manage", aView.json?.canManage, true);
-  eq("a teacher opening a Students-only event → 404, never 403", (await get(T, `${EV}/${studentsEv.json?.id}`)).status, 404);
+  // E3: the school calendar is readable by all staff; only an event marked audience-only is withheld from them.
+  eq("a teacher may OPEN a Students-only event (the school calendar is readable by staff)", (await get(T, `${EV}/${studentsEv.json?.id}`)).status, 200);
+  const privateEv = await mk("audience-only", { staffAudience: { allStaff: false, userIds: [ad.user.id] }, audienceOnly: true });
+  eq("…but an audience-only event they are not in → 404, never 403", (await get(T, `${EV}/${privateEv.json?.id}`)).status, 404);
   eq("…a Staff one → 200", (await get(T, `${EV}/${staffEv.json?.id}`)).status, 200);
   eq("an unknown event → 404", (await get(AD, `${EV}/${crypto.randomUUID()}`)).status, 404);
   eq("a teacher cannot edit → 403", (await put(T, `${EV}/${staffEv.json?.id}`, { title: "x", startsOn: TODAY, endsOn: TODAY, audience: 1 })).status, 403);

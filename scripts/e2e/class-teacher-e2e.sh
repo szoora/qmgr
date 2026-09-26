@@ -1343,5 +1343,95 @@ else
   printf '  \033[33mSKIP\033[0m  node is not installed; section 39 did not run\n'
 fi
 
+hdr "40. What a role can see is what it may use"
+# 2026-09-25 (docs/plans/CLOSE_OUT_RBAC_AND_ACCOUNT.md): every seeded tenant role against the messaging secrets, the
+# channel flags, ticket printing, a colleague's HR fields, module prices, feedback links, the account list's phone
+# book and the account's own endpoints. Registers and purges its own tenant. 40.9 needs PSQL + PGPASSWORD (skips).
+if command -v node > /dev/null 2>&1; then
+  RB_OUT=$(API="$API" SA_USER="$SA_USER" SA_PASS="$SA_PASS" node "$(dirname "$0")/rbac-settings-e2e.mjs" 2>&1)
+  echo "$RB_OUT" | sed 's/^/  /'
+  RB_PASS=$(echo "$RB_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  RB_FAIL=$(echo "$RB_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$RB_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 40 did not report a summary\n'
+  else PASS=$((PASS+RB_PASS)); FAIL=$((FAIL+RB_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 40 did not run\n'
+fi
+
+
+hdr "41. WHO AN EVENT IS FOR, AND TELLING THEM ONCE (Node)"
+# 2026-09-26 (docs/plans/CALENDAR_AUDIENCES_AND_IMPORT_ROUTING.md): targeted audiences and the My events / Whole school
+# scopes, exactly-once notices (five racing creates, one event, one notice), a typo is not news, cancel keeps the event
+# and the feed says CANCELLED, a stale save is 409, a weekly series told once, clashes, view choices, the push opt-out
+# surviving a save, and "Give it a register" moving and removing its meeting.
+if command -v node > /dev/null 2>&1; then
+  CU_OUT=$(API="$API" BRANCH="$BRANCH" node "$(dirname "$0")/calendar-audiences-e2e.mjs" 2>&1)
+  echo "$CU_OUT" | sed 's/^/  /'
+  CU_PASS=$(echo "$CU_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  CU_FAIL=$(echo "$CU_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$CU_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 41 did not report a summary\n'
+  else PASS=$((PASS+CU_PASS)); FAIL=$((FAIL+CU_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 41 did not run\n'
+fi
+
+hdr "42. IMPORTED MEETINGS THAT BECOME REGISTERS (Node)"
+# Two meetings of one title on one day, a hand edit a re-import leaves alone, an event-only meeting linked to its
+# register rather than doubled, Import health (and "Give it a register" clearing it), undo keeping what a later import
+# relies on, one message per person — and, with E2E_DOCS_DIR, no meeting left "event only" by default.
+if command -v node > /dev/null 2>&1; then
+  IR_OUT=$(API="$API" BRANCH="$BRANCH" E2E_DOCS_DIR="${E2E_DOCS_DIR:-}" node "$(dirname "$0")/import-routing-e2e.mjs" 2>&1)
+  echo "$IR_OUT" | sed 's/^/  /'
+  IR_PASS=$(echo "$IR_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  IR_FAIL=$(echo "$IR_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$IR_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 42 did not report a summary\n'
+  else PASS=$((PASS+IR_PASS)); FAIL=$((FAIL+IR_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 42 did not run\n'
+fi
+
+hdr "43. THE IMPORT INBOX (Node)"
+# A document staged and nothing written; who sees a part; the second-approver rule; approving through the programme
+# import's own commit, once under five racing approvers; reject with a reason, withdraw, a handed-off staff list.
+if command -v node > /dev/null 2>&1; then
+  IN_OUT=$(API="$API" BRANCH="$BRANCH" SA_USER="$SA_USER" SA_PASS="$SA_PASS" node "$(dirname "$0")/import-inbox-e2e.mjs" 2>&1)
+  echo "$IN_OUT" | sed 's/^/  /'
+  IN_PASS=$(echo "$IN_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  IN_FAIL=$(echo "$IN_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$IN_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 43 did not report a summary\n'
+  else PASS=$((PASS+IN_PASS)); FAIL=$((FAIL+IN_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 43 did not run\n'
+fi
+
+
+hdr "44. SEGREGATION OF DUTIES (Node)"
+# Each gap the lesson-plan audit found, attempted by the person who must be refused and then done by the right one:
+# an appraisal signed by its reviewer or subject, a record about oneself, adopting minutes one wrote, excusing one's
+# own report, appointing oneself to lead a department.
+if command -v node > /dev/null 2>&1; then
+  SD_OUT=$(API="$API" BRANCH="$BRANCH" node "$(dirname "$0")/separation-of-duties-e2e.mjs" 2>&1)
+  echo "$SD_OUT" | sed 's/^/  /'
+  SD_PASS=$(echo "$SD_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  SD_FAIL=$(echo "$SD_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$SD_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 44 did not report a summary\n'
+  else PASS=$((PASS+SD_PASS)); FAIL=$((FAIL+SD_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 44 did not run\n'
+fi
+
+hdr "45. LESSON PLANS AND SCHEMES OF WORK (Node)"
+# The chain end to end: pre-filled, submitted, one stage and two, returned, revised, five racing approvals, the author who
+# heads the department, hostile PDFs refused by the server, the Word template filled and read back, and the gates.
+if command -v node > /dev/null 2>&1; then
+  TPL_OUT=$(API="$API" BRANCH="$BRANCH" node "$(dirname "$0")/teaching-plans-e2e.mjs" 2>&1)
+  echo "$TPL_OUT" | sed 's/^/  /'
+  TPL_PASS=$(echo "$TPL_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  TPL_FAIL=$(echo "$TPL_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$TPL_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 45 did not report a summary\n'
+  else PASS=$((PASS+TPL_PASS)); FAIL=$((FAIL+TPL_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 45 did not run\n'
+fi
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 exit "$FAIL"

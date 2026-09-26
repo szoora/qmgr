@@ -2,49 +2,52 @@
 @using QMgr.Domain.Enums
 @using QMgr.Web.Services
 @inject IStaffPerformanceApiService StaffApi
+@inject IAccountApiService Account
 @inject IToastService Toast
 
 @*
-    My own staff file, on my own portal (2026-09-19).
+    My own contact detail, and what the school holds about me (2026-09-19, split 2026-09-25).
 
-    "do you suggest that staff member can update their profile from their portal, except for admin
-    configured information" — yes, and the split is drawn here because it is drawn on the server:
+    THE ONE HOME FOR A PERSON'S OWN CONTACT DETAIL. It is on My file, and — for a tenant without
+    Welfare & Performance, which has no My Workspace — on the account page with ShowEmployment off.
+    One component and one endpoint (api/v1/profile/contact, no module), so a phone number is edited
+    in exactly one place. The account page used to edit the phone through a second writer with a
+    different rule, which is how a changed number kept its old confirmation.
 
-      I may edit      phone, second phone, office, emergency contact name and number. These go
-                      stale constantly and I am the only one who knows when they change.
-      I may READ      employment dates and terms, qualification, registration number, date of
-                      birth, sex, national ID, employee number, job title, department, line
-                      manager. My file is mine to read — subject access assumes it — but editing my
-                      own start date or registration number would make the school's MoES return
-                      unauditable.
+      I may edit      phone, second phone, office, emergency contact name and number.
+      I may READ      employment dates and terms, qualification, registration number, employee
+                      number, job title, department, line manager (the portal's read; the module
+                      is on wherever this half shows).
       nobody here     role, permissions, branch. RoleAssignmentGuard owns those.
 
-    The portal endpoint takes UpdateStaffContactRequest, which has nowhere to put an employment
-    field, so it cannot be persuaded to write one. This card is the explanation of that rule, not
-    the thing enforcing it.
+    UpdateStaffContactRequest has nowhere to put an employment field, so the endpoint cannot be
+    persuaded to write one. This card is the explanation of that rule, not the thing enforcing it.
 *@
 
-<QCard id="my-details" Title="My details" Subtitle="What the school has on file for you" Icon="person-vcard" Class="portal-card">
+<QCard id="my-details" Title="@(ShowEmployment ? "My details" : "Contact details")"
+       Subtitle="@(ShowEmployment ? "What the school has on file for you" : "How people at work reach you")"
+       Icon="person-vcard" Class="portal-card">
     <HeaderActions>
-        @if (!editing && profile is not null)
+        @if (!editing && contact is not null)
         {
-            <QButton Text="Update my contact detail" Icon="pencil" Size="sm" Variant="secondary" OnClick="StartEdit" />
+            <QButton Text="Edit" Icon="pencil" Size="sm" Variant="secondary" OnClick="StartEdit" />
         }
     </HeaderActions>
     <ChildContent>
         @if (isLoading)
         {
-            <div class="md-loading"><QSpinner Size="sm" /><span>Loading your file…</span></div>
+            <div class="md-loading"><QSpinner Size="sm" /><span>Loading your details…</span></div>
         }
-        else if (profile is null)
+        else if (contact is null)
         {
-            <QEmptyState Icon="person-x" Title="File unavailable" Text="Reload the page, or tell an administrator if it keeps happening." />
+            <QEmptyState Icon="person-x" Title="Details unavailable" Text="Reload the page, or tell an administrator if it keeps happening." />
         }
         else if (editing)
         {
             <div class="form-row">
                 <div class="form-group">
-                    <QInput TValue="string" Label="Phone" @bind-Value="form.Phone" Placeholder="0770 000 000" />
+                    <QInput TValue="string" Label="Phone" @bind-Value="form.Phone" Placeholder="0770 000 000"
+                            Hint="A new number has to be confirmed again with a code: password resets by text go to it." />
                 </div>
                 <div class="form-group">
                     <QInput TValue="string" Label="Second phone" @bind-Value="form.AlternatePhone" Placeholder="Staff room or out of hours" />
@@ -67,36 +70,57 @@
         else
         {
             <dl class="md-list">
-                <div><dt>Phone</dt><dd>@Show(profile.Phone)</dd></div>
-                <div><dt>Second phone</dt><dd>@Show(profile.AlternatePhone)</dd></div>
-                <div><dt>Where to find you</dt><dd>@Show(profile.OfficeLocation)</dd></div>
-                <div><dt>Emergency contact</dt><dd>@Show(profile.EmergencyContactName)</dd></div>
-                <div><dt>Emergency number</dt><dd>@Show(profile.EmergencyContactPhone)</dd></div>
+                <div class="md-phone">
+                    <dt>Phone</dt>
+                    <dd>
+                        <span>@Show(contact.Phone)</span>
+                        @if (!string.IsNullOrWhiteSpace(contact.Phone))
+                        {
+                            @if (contact.PhoneVerifiedAt.HasValue)
+                            {
+                                <QChip Text="Confirmed" Icon="check2" Variant="success" Size="sm" />
+                            }
+                            else
+                            {
+                                <QChip Text="Not confirmed" Variant="warning" Size="sm" />
+                                <PhoneConfirm SendText="Confirm" OnConfirmed="LoadAsync" />
+                            }
+                        }
+                    </dd>
+                </div>
+                <div><dt>Second phone</dt><dd>@Show(contact.AlternatePhone)</dd></div>
+                <div><dt>Where to find you</dt><dd>@Show(contact.OfficeLocation)</dd></div>
+                <div><dt>Emergency contact</dt><dd>@Show(contact.EmergencyContactName)</dd></div>
+                <div><dt>Emergency number</dt><dd>@Show(contact.EmergencyContactPhone)</dd></div>
             </dl>
 
-            <div class="md-sep">
-                <span>
-                    Held by the school
-                    <QInfo Label="Held by the school" Align="right"
-                           Text="Your employment record is part of the school's own file and its MoES staff return, so an administrator maintains it rather than you. If something here is wrong, tell them — it is theirs to correct, and every change is recorded." />
-                </span>
-            </div>
+            @if (ShowEmployment && profile is not null)
+            {
+                <div class="md-sep">
+                    <span>
+                        Held by the school
+                        <QInfo Label="Held by the school" Align="right"
+                               Text="Your employment record is part of the school's own file and its MoES staff return, so an administrator maintains it rather than you. If something here is wrong, tell them — it is theirs to correct, and every change is recorded." />
+                    </span>
+                </div>
 
-            <dl class="md-list md-list--locked">
-                <div><dt>Job title</dt><dd>@Show(profile.JobTitle)</dd></div>
-                <div><dt>Role</dt><dd>@Show(profile.RoleName)</dd></div>
-                <div><dt>Department</dt><dd>@(profile.DepartmentNames.Count == 0 ? "—" : string.Join(", ", profile.DepartmentNames))</dd></div>
-                <div><dt>Line manager</dt><dd>@Show(profile.LineManagerName)</dd></div>
-                <div><dt>Employee number</dt><dd>@Show(profile.EmployeeNumber)</dd></div>
-                <div><dt>Terms</dt><dd>@(profile.EmploymentType ?? "—")</dd></div>
-                <div><dt>Appointed</dt><dd>@(profile.EmploymentStartDate.HasValue ? QDateFormat.D(profile.EmploymentStartDate.Value) : "—")</dd></div>
-                @if (profile.EmploymentEndDate.HasValue)
-                {
-                    <div><dt>Leaving</dt><dd>@QDateFormat.D(profile.EmploymentEndDate.Value)</dd></div>
-                }
-                <div><dt>Qualification</dt><dd>@Show(profile.Qualification)</dd></div>
-                <div><dt>Registration number</dt><dd>@Show(profile.TeachingRegistrationNumber)</dd></div>
-            </dl>
+                <dl class="md-list md-list--locked">
+                    <div><dt>Name</dt><dd>@Show(profile.FullName)</dd></div>
+                    <div><dt>Job title</dt><dd>@Show(profile.JobTitle)</dd></div>
+                    <div><dt>Role</dt><dd>@Show(profile.RoleName)</dd></div>
+                    <div><dt>Department</dt><dd>@(profile.DepartmentNames.Count == 0 ? "—" : string.Join(", ", profile.DepartmentNames))</dd></div>
+                    <div><dt>Line manager</dt><dd>@Show(profile.LineManagerName)</dd></div>
+                    <div><dt>Staff number</dt><dd>@Show(profile.EmployeeNumber)</dd></div>
+                    <div><dt>Terms</dt><dd>@(profile.EmploymentType ?? "—")</dd></div>
+                    <div><dt>Appointed</dt><dd>@(profile.EmploymentStartDate.HasValue ? QDateFormat.D(profile.EmploymentStartDate.Value) : "—")</dd></div>
+                    @if (profile.EmploymentEndDate.HasValue)
+                    {
+                        <div><dt>Leaving</dt><dd>@QDateFormat.D(profile.EmploymentEndDate.Value)</dd></div>
+                    }
+                    <div><dt>Qualification</dt><dd>@Show(profile.Qualification)</dd></div>
+                    <div><dt>Registration number</dt><dd>@Show(profile.TeachingRegistrationNumber)</dd></div>
+                </dl>
+            }
         }
     </ChildContent>
 </QCard>
@@ -107,6 +131,7 @@
     .md-list div { display: flex; flex-direction: column; min-width: 0; }
     .md-list dt { margin: 0; font-size: var(--qm-text-xs); color: var(--qm-text-muted); }
     .md-list dd { margin: 0; font-size: var(--qm-text-base); overflow-wrap: anywhere; }
+    .md-list .md-phone dd { display: flex; align-items: center; gap: var(--q-row-gap); flex-wrap: wrap; }
     .md-list--locked dd { color: var(--qm-text-secondary); }
     .md-sep { display: flex; align-items: center; gap: 8px; margin: 14px 0 8px; font-size: var(--qm-text-xs); text-transform: uppercase; letter-spacing: 0.05em; color: var(--qm-text-muted); }
     .md-sep span { display: inline-flex; align-items: center; gap: 4px; }
@@ -115,6 +140,14 @@
 </style>
 
 @code {
+    /// <summary>
+    /// Whether to show the school's employment record under the contact detail. On for My file; off
+    /// on the account page, which shows this card only for a tenant without My Workspace — and
+    /// there the portal's read (which needs the module) is never called.
+    /// </summary>
+    [Parameter] public bool ShowEmployment { get; set; } = true;
+
+    private StaffContactDto? contact;
     private StaffProfileDto? profile;
     private UpdateStaffContactRequest form = new();
     private bool isLoading = true, isSaving, editing;
@@ -128,7 +161,12 @@
         isLoading = true;
         try
         {
-            profile = await StaffApi.GetMyProfileAsync();
+            contact = await Account.GetContactAsync();
+            if (ShowEmployment)
+            {
+                try { profile = await StaffApi.GetMyProfileAsync(); }
+                catch (Exception) { profile = null; /* the contact half still works without it */ }
+            }
         }
         catch (Exception ex)
         {
@@ -142,14 +180,14 @@
 
     private void StartEdit()
     {
-        if (profile is null) return;
+        if (contact is null) return;
         form = new UpdateStaffContactRequest
         {
-            Phone = profile.Phone,
-            AlternatePhone = profile.AlternatePhone,
-            OfficeLocation = profile.OfficeLocation,
-            EmergencyContactName = profile.EmergencyContactName,
-            EmergencyContactPhone = profile.EmergencyContactPhone
+            Phone = contact.Phone,
+            AlternatePhone = contact.AlternatePhone,
+            OfficeLocation = contact.OfficeLocation,
+            EmergencyContactName = contact.EmergencyContactName,
+            EmergencyContactPhone = contact.EmergencyContactPhone
         };
         editing = true;
     }
@@ -161,7 +199,7 @@
         isSaving = true;
         try
         {
-            profile = await StaffApi.UpdateMyContactAsync(form);
+            contact = await Account.UpdateContactAsync(form);
             editing = false;
             Toast.Notify(ToastSeverity.Success, "Your details are updated", "Thank you — this is how people reach you.");
         }

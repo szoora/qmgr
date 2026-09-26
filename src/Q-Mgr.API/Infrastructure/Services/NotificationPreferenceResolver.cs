@@ -165,13 +165,15 @@ public class NotificationPreferenceResolver : INotificationPreferenceResolver
 
         // Only known keys are persisted — the endpoint is user-facing, and an unbounded key set
         // would let anyone grow the blob indefinitely.
-        var clean = new UserNotificationPreferencesDto
+        //
+        // A COPY WITH `with`, NEVER A HAND-LISTED INITIALIZER (2026-09-26). The initializer this replaced
+        // listed EmailEnabled, SmsEnabled, LastStaffDigestSentAt and Events — and not PushEnabled, which
+        // arrived later. Every save therefore reset a person's push opt-out to ON, and the weekly digest
+        // saves every recipient's preferences, so the opt-out was wiped once a week. Copying the record
+        // carries every property there is and every one added later; only the event list is narrowed.
+        // scripts/e2e/preferences-roundtrip-check.mjs fails if this goes back to a hand-listed copy.
+        var clean = preferences with
         {
-            EmailEnabled = preferences.EmailEnabled,
-            SmsEnabled = preferences.SmsEnabled,
-            // Job state, not a preference — carried through so a round-trip of the panel does not
-            // reset the digest gate and re-send the same week's digest.
-            LastStaffDigestSentAt = preferences.LastStaffDigestSentAt,
             Events = preferences.Events
                 .Where(e => NotificationEventKeys.IsKnown(e.EventKey))
                 .GroupBy(e => e.EventKey)

@@ -56,11 +56,73 @@ public record SchoolEventDto
 
     /// <summary>True when the caller may edit or delete it (calendar.manage).</summary>
     public bool CanEdit { get; init; }
+
+    // ---- Audience, lifecycle and the rest (plan CALENDAR_AUDIENCES_AND_IMPORT_ROUTING, 2026-09-26) ----
+
+    /// <summary>Who among staff it is for. Meaningful while <see cref="Audience"/> includes Staff.</summary>
+    public StaffAudienceDto StaffAudience { get; init; } = new();
+    /// <summary>The audience in words ("Teaching staff, Administrator").</summary>
+    public string? StaffAudienceText { get; init; }
+    /// <summary>Only its audience, the people responsible and the calendar's keepers can see it.</summary>
+    public bool AudienceOnly { get; init; }
+    public bool AttendanceRequired { get; init; }
+    /// <summary>True when the event is the caller's own: for them, or theirs to run. What "My events" shows.</summary>
+    public bool IsMine { get; init; }
+
+    public SchoolEventStatus Status { get; init; }
+    public string? CancelReason { get; init; }
+    public DateTime? CancelledAt { get; init; }
+    /// <summary>The iCalendar SEQUENCE: bumped on a material change.</summary>
+    public int Version { get; init; } = 1;
+    public bool RemindersOn { get; init; } = true;
+    /// <summary>Set when an imported event was edited by hand; a re-import leaves it alone.</summary>
+    public DateTime? EditedByHandAt { get; init; }
+    public string? Recurrence { get; init; }
+    public Guid? LibraryDocumentId { get; init; }
+    public string? LibraryDocumentTitle { get; init; }
+    /// <summary>Send it back with an edit; a save made against an older version is refused with 409.</summary>
+    public uint RowVersion { get; init; }
+    /// <summary>For an event that IS a meeting: may the caller take its register (a named recorder, or a duty manager).</summary>
+    public bool CanOpenRegister { get; init; }
+}
+
+/// <summary>How a new event repeats (E12, Arbor's model): every week or fortnight, in term time, until a date.</summary>
+public record RepeatRuleDto
+{
+    /// <summary>"weekly" | "fortnightly".</summary>
+    public string Frequency { get; set; } = "weekly";
+    public DateOnly Until { get; set; }
+    /// <summary>Skip holidays: a date outside every term, or on a national holiday, is left out.</summary>
+    public bool TermTimeOnly { get; set; } = true;
+}
+
+public static class EventEditScopes
+{
+    public const string This = "this";
+    public const string Following = "following";
+    public const string All = "all";
+    public static string Normalize(string? s) => s is Following or All ? s : This;
 }
 
 public record SaveSchoolEventRequest
 {
     public Guid? BranchId { get; set; }
+
+    public StaffAudienceDto StaffAudience { get; set; } = new();
+    public bool AudienceOnly { get; set; }
+    public bool AttendanceRequired { get; set; }
+    public bool RemindersOn { get; set; } = true;
+    /// <summary>Tell the audience now. Ignored for an event that has already happened, and for a change that is not material.</summary>
+    public bool NotifyAudience { get; set; } = true;
+    /// <summary>The version the editor was looking at. Null skips the check (a create).</summary>
+    public uint? RowVersion { get; set; }
+    /// <summary>The dialog's idempotency key, fixed for the life of one open dialog.</summary>
+    public Guid? ClientRequestId { get; set; }
+    /// <summary>On a create only: make a series.</summary>
+    public RepeatRuleDto? Repeat { get; set; }
+    /// <summary>On an edit of one occurrence of a series: this one, this and following, or all.</summary>
+    public string? EditScope { get; set; }
+    public Guid? LibraryDocumentId { get; set; }
 
     [Required(ErrorMessage = "Give the event a title.")]
     [MaxLength(200, ErrorMessage = "A title cannot exceed 200 characters.")]
@@ -108,6 +170,86 @@ public record CalendarRangeDto
     /// <summary>The organization's calendar categories, for the filter chips and the editor.</summary>
     public List<string> Categories { get; init; } = new();
     public bool CanManage { get; init; }
+
+    /// <summary>What was asked for: "mine" or "all".</summary>
+    public string Scope { get; init; } = CalendarScopes.Mine;
+    /// <summary>Today on the SCHOOL's clock (B9) — the Web never reads the server's own.</summary>
+    public DateOnly Today { get; init; }
+    /// <summary>The branch's time zone id, so duty instants are drawn on the school's clock.</summary>
+    public string? TimeZone { get; init; }
+    /// <summary>May the caller manage duties — for "Give it a register" and "Open the register".</summary>
+    public bool CanManageDuties { get; init; }
+}
+
+/// <summary>Cancel an event (it stays on the calendar, struck through) and tell its audience.</summary>
+public record CancelSchoolEventRequest
+{
+    [MaxLength(300)]
+    public string? Reason { get; set; }
+    public bool NotifyAudience { get; set; } = true;
+    public string? EditScope { get; set; }
+    public uint? RowVersion { get; set; }
+}
+
+/// <summary>Who would be double-booked by an event, asked before saving. Warns; never refuses (D6 of the calendar plan).</summary>
+public record EventClashRequest
+{
+    public StaffAudienceDto StaffAudience { get; set; } = new();
+    public List<Guid> ResponsibleUserIds { get; set; } = new();
+    public DateOnly StartsOn { get; set; }
+    public DateOnly EndsOn { get; set; }
+    public string? StartTime { get; set; }
+    public string? EndTime { get; set; }
+}
+
+public record EventClashDto
+{
+    public int AudienceCount { get; init; }
+    /// <summary>People teaching a lesson in the window (lessons are known two weeks ahead).</summary>
+    public int Teaching { get; init; }
+    /// <summary>People on another duty or meeting in the window.</summary>
+    public int OnDuty { get; init; }
+    public List<string> Examples { get; init; } = new();
+    public bool LessonsKnown { get; init; } = true;
+}
+
+/// <summary>"Give this a register": turn an event into a staff meeting whose attendance is taken (E10).</summary>
+public record EventRegisterRequest
+{
+    /// <summary>Who is expected. Null = the event's own staff audience.</summary>
+    public StaffAudienceDto? Expected { get; set; }
+    /// <summary>Who takes the register. At least one: a register nobody may take is not a register.</summary>
+    public List<Guid> RecorderUserIds { get; set; } = new();
+    /// <summary>Needed when the event is all day: a register needs a time.</summary>
+    public string? StartTime { get; set; }
+    public string? EndTime { get; set; }
+    public bool NotifyPeople { get; set; } = true;
+}
+
+/// <summary>What an import left without a register, or without anybody to take one (E10, "Import health").</summary>
+public record ProgrammeImportHealthDto
+{
+    public Guid JobId { get; init; }
+    public DateTime CreatedAt { get; init; }
+    public List<string> SourceFiles { get; init; } = new();
+    public List<ImportHealthItemDto> MeetingsWithoutRegister { get; init; } = new();
+    public List<ImportHealthItemDto> RegistersWithoutRecorder { get; init; } = new();
+    public List<ImportHealthItemDto> Refused { get; init; } = new();
+    /// <summary>False for an import made before refusals were kept (26 Sep 2026): its refusals are not known.</summary>
+    public bool RefusalsRecorded { get; init; }
+}
+
+public record ImportHealthItemDto
+{
+    public Guid? EventId { get; init; }
+    public Guid? DutyId { get; init; }
+    public string Title { get; init; } = string.Empty;
+    public DateOnly Date { get; init; }
+    public string? StartTime { get; init; }
+    public string? Location { get; init; }
+    public string? ResponsibleText { get; init; }
+    public string Reason { get; init; } = string.Empty;
+    public bool InPast { get; init; }
 }
 
 /// <summary>
@@ -189,6 +331,14 @@ public record ProgrammeImportRequest
 
     /// <summary>Tell each person their duties once, after the batch commits (decision D8 of the rota: one message per person).</summary>
     public bool NotifyPeople { get; set; } = true;
+
+    /// <summary>
+    /// Set when an approver commits one section of a document waiting in the Import inbox (E11): the commit is checked
+    /// against that section — still waiting, the caller may approve it, not the uploader when a second approver is
+    /// required — and marks it approved in the same transaction. Null for an import made directly.
+    /// </summary>
+    public Guid? InboxJobId { get; set; }
+    public string? InboxSection { get; set; }
 }
 
 public record ProgrammeTermUpdate
@@ -231,6 +381,14 @@ public record ProgrammeEventRow
     public string? SeriesName { get; set; }
     /// <summary>The <see cref="ProgrammeMeetingRow.SourceKey"/> this event is the same thing as, when it is also a staff meeting.</summary>
     public string? SameAsMeetingKey { get; set; }
+    /// <summary>Who among staff it is for. Null = every member of staff, which is what an imported event always was.</summary>
+    public StaffAudienceDto? StaffAudience { get; set; }
+    /// <summary>
+    /// For a MEETING sent as an event only: why, in the reader's words ("Event only — you chose it", "Welfare &amp;
+    /// Performance is not held"). Kept on the import so Import health can say why a meeting has no register (E10).
+    /// </summary>
+    [MaxLength(300)]
+    public string? NoRegisterReason { get; set; }
 }
 
 public record ProgrammeMeetingRow
@@ -319,6 +477,8 @@ public record ProgrammeImportJobDto
     public DateTime? UndoneAt { get; init; }
     /// <summary>Records the undo will keep because a register was already taken on them.</summary>
     public int Protected { get; init; }
+    /// <summary>Meetings this import left without a register, registers with nobody to take them, rows refused (E10).</summary>
+    public int NeedsAttention { get; init; }
 }
 
 public record ProgrammeUndoResultDto
@@ -327,6 +487,10 @@ public record ProgrammeUndoResultDto
     public int DutiesRemoved { get; init; }
     /// <summary>Duties kept because their register had been taken (the timetable's rule).</summary>
     public int DutiesKept { get; init; }
+    /// <summary>Existing events and meetings the import UPDATED, put back as they were (2026-09-25).</summary>
+    public int UpdatesRestored { get; init; }
+    /// <summary>Updated rows left as they are, each named with why: edited since, or a register taken.</summary>
+    public List<string> UpdatesLeft { get; init; } = new();
 }
 
 /// <summary>
@@ -346,4 +510,9 @@ public record OfficeAliasDto
 {
     public List<Guid> DepartmentIds { get; set; } = new();
     public List<Guid> UserIds { get; set; } = new();
+    /// <summary>Roles the words mean ("Administration" → the Administrator and the Head Teacher) — learned from an answer (2026-09-26).</summary>
+    public List<string> RoleCodes { get; set; } = new();
+    public List<string> StaffGroups { get; set; } = new();
+    /// <summary>The words mean every member of staff ("Whole staff").</summary>
+    public bool AllStaff { get; set; }
 }

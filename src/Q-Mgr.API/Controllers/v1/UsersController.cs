@@ -160,6 +160,8 @@ public class UsersController : ControllerBase
         // Signed AFTER materialisation: UploadLinks.Sign cannot translate to SQL, so the
         // projection above carries the raw column and the token is minted here.
         users = users.Select(d => Named(d) with { PhotoUrl = UploadLinks.Sign(d.PhotoUrl) }).ToList();
+        if (!await CallerMayReadPhonesAsync())
+            users = users.Select(d => d with { Phone = null }).ToList();
 
         return Ok(users);
     }
@@ -231,7 +233,23 @@ public class UsersController : ControllerBase
                 Status = StatusCodes.Status404NotFound
             });
 
-        return Ok(Named(user) with { PhotoUrl = UploadLinks.Sign(user.PhotoUrl) });
+        var dto = Named(user) with { PhotoUrl = UploadLinks.Sign(user.PhotoUrl) };
+        if (dto.Id != GetCurrentUserIdOrNull() && !await CallerMayReadPhonesAsync())
+            dto = dto with { Phone = null };
+        return Ok(dto);
+    }
+
+    /// <summary>
+    /// Whether the caller may read other people's phone numbers off the account list: only those
+    /// who may edit accounts (2026-09-25). users.view reaches the Front Office Manager, the Academic
+    /// Assistant, the DoS and the Deputy, and handed every one of them the whole school's phone book.
+    /// A colleague's WORK number is on the staff directory, under its own gate.
+    /// </summary>
+    private async Task<bool> CallerMayReadPhonesAsync()
+    {
+        var me = GetCurrentUserIdOrNull();
+        return me.HasValue
+            && (await PostPermissionService.EffectiveCodesAsync(_dbContext, me.Value)).Contains(Permissions.UsersEdit);
     }
 
     /// <summary>

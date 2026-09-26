@@ -152,7 +152,7 @@
     [Parameter, EditorRequired] public StaffPerformancePolicyDto Policy { get; set; } = new();
 
     /// <summary>The ladders whose feature is live. Each phase of the duty rota build adds its own.</summary>
-    [Parameter] public IReadOnlyList<ReminderSubject> Subjects { get; set; } = new[] { ReminderSubject.RotaStart, ReminderSubject.ReportDue, ReminderSubject.LessonStart, ReminderSubject.SessionStart, ReminderSubject.RegisterChase, ReminderSubject.TimetableClash };
+    [Parameter] public IReadOnlyList<ReminderSubject> Subjects { get; set; } = new[] { ReminderSubject.RotaStart, ReminderSubject.ReportDue, ReminderSubject.LessonStart, ReminderSubject.SessionStart, ReminderSubject.RegisterChase, ReminderSubject.TimetableClash, ReminderSubject.SchoolEventStart };
 
     public enum OffsetUnit { Minutes, Hours, Days }
 
@@ -207,6 +207,7 @@
         ReminderSubject.ReportDue => new("Duty report overdue", "Sent to the report's author from its due time, escalating to the administrator on duty and then the heads' digest. Stops when the report is submitted.", false, true, new[] { ReminderAudience.Supervisor, ReminderAudience.Heads }, null),
         ReminderSubject.LessonStart => new("Before a lesson", "Sent to the teacher of a timetabled lesson.", true, false, Array.Empty<ReminderAudience>(), "Lesson reminder minutes"),
         ReminderSubject.TimetableClash => new("New timetable clash", "Sent to timetable masters when a published timetable develops a clash.", false, false, Array.Empty<ReminderAudience>(), null),
+        ReminderSubject.SchoolEventStart => new("Before a calendar event", "Sent to an event's own audience and the people responsible for it. An event can switch its reminders off; an all-day event gets only the day-before stage.", true, false, Array.Empty<ReminderAudience>(), null),
         _ => new(subject.ToString(), "", true, false, Array.Empty<ReminderAudience>(), null)
     };
 

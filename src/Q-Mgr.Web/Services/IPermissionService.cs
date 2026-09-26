@@ -301,6 +301,11 @@ public static class Permissions
     public const string TimetableManage = "timetable.manage";
     public const string TimetableLessonsFlag = "timetable.lessons.flag";
 
+    // Lesson plans and schemes of work (2026-09-26) — mirrors Permissions.cs and RbacSeeder.AllPermissions
+    public const string TeachingPlansReview = "teaching.plans.review";
+    public const string TeachingPlansApprove = "teaching.plans.approve";
+    public const string TeachingPlansView = "teaching.plans.view";
+
     // School calendar (2026-09-23) — mirrors Permissions.cs and RbacSeeder.AllPermissions
     public const string CalendarManage = "calendar.manage";
 

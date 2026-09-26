@@ -513,7 +513,26 @@ public class StaffStructureController : StaffPerformanceControllerBase
         var me = CurrentUserId();
         if (user.Id != me && !await StaffScope.CanSeeStaffAsync(branchId, userId)) return StaffMemberNotFound();
 
-        return Ok(await BuildProfileAsync(user, organizationId, user.Id == me));
+        var profile = await BuildProfileAsync(user, organizationId, user.Id == me);
+
+        // A colleague's identity and next of kin are the school's HR record, not something every
+        // reader of staff records needs (2026-09-25). staff.records.view reaches the Academic
+        // Assistant with a whole-school scope, and this handed them every colleague's national ID,
+        // date of birth and emergency contact. Blanked by the server, never hidden in markup.
+        if (user.Id != me
+            && !await HasPermissionAsync(Permissions.StaffStructureManage)
+            && !await HasPermissionAsync(Permissions.StaffConfidentialView))
+        {
+            profile = profile with
+            {
+                NationalId = null,
+                DateOfBirth = null,
+                EmergencyContactName = null,
+                EmergencyContactPhone = null
+            };
+        }
+
+        return Ok(profile);
     }
 
     /// <summary>
@@ -745,6 +764,19 @@ public class StaffStructureController : StaffPerformanceControllerBase
         if (request.Code.Trim().Length > 20) return BadRequestProblem("Department code is too long", "20 characters at most.");
         if (request.HeadUserId.HasValue && request.HeadUserId == request.DeputyHeadUserId)
             return BadRequestProblem("The head and deputy head must be different people");
+
+        // G7 (2026-09-26): the head-of-department post GRANTS permissions and reach, so appointing oneself is choosing
+        // one's own privilege. A post somebody already holds is left alone on an unrelated edit.
+        var me = CurrentUserId();
+        if (request.HeadUserId == me || request.DeputyHeadUserId == me)
+        {
+            var existing = excludeId == null ? null : await Db.Departments.AsNoTracking()
+                .Where(d => d.Id == excludeId.Value).Select(d => new { d.HeadUserId, d.DeputyHeadUserId }).FirstOrDefaultAsync();
+            var newlyHead = request.HeadUserId == me && existing?.HeadUserId != me;
+            var newlyDeputy = request.DeputyHeadUserId == me && existing?.DeputyHeadUserId != me;
+            if ((newlyHead || newlyDeputy) && DutySeparation.Refusal(me, me, "appoint yourself to lead a department") is { } self)
+                return DutySeparation.Problem(self);
+        }
 
         if (request.BranchId.HasValue && !await Db.Branches.AnyAsync(b => b.Id == request.BranchId.Value && b.OrganizationId == organizationId))
             return BadRequestProblem("The branch was not found");

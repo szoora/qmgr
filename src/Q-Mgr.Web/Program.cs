@@ -118,7 +118,12 @@ builder.Services.AddScoped<IStudentApiService, StudentApiService>();
 builder.Services.AddScoped<IClassTeacherApiService, ClassTeacherApiService>();
 builder.Services.AddScoped<IStaffPerformanceApiService, StaffPerformanceApiService>();
 builder.Services.AddScoped<IProgrammeImportApiService, ProgrammeImportApiService>();
+// The Import inbox and the person's own view choices (calendar-audiences plan E8, E11).
+builder.Services.AddScoped<IImportInboxApiService, ImportInboxApiService>();
+builder.Services.AddScoped<ITeachingPlanApiService, TeachingPlanApiService>();
+builder.Services.AddScoped<IUiPreferencesService, UiPreferencesService>();
 builder.Services.AddScoped<IStaffOnboardingApiService, StaffOnboardingApiService>();
+builder.Services.AddScoped<IAccountApiService, AccountApiService>();
 builder.Services.AddScoped<IModuleApiService, ModuleApiService>();
 // The download page and the native app's sign-in handoff. Scoped like the rest: it uses the
 // circuit's own HttpClient, which is the only one carrying the right token.

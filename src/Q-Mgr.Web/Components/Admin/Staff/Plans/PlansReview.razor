@@ -1,0 +1,290 @@
+@using QMgr.Application.DTOs
+@inherits BranchAwareComponentBase
+@inject ITeachingPlanApiService PlanApi
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IToastService Toast
+
+@*
+    PLANS, a tab of the Timetable hub (lesson plans plan §5.9). The review queue — stage 1 for a head of department,
+    stage 2 for an approver, approved plans for a reader — and the planning reports. The queue lists only what the
+    server's own rule (TeachingPlanAccess) lets the caller read; "Waiting on me" is the plans the caller can act on now.
+
+    A section of a hub: no @page, and ?view= (never ?tab=, which the hub owns) chooses Queue or Reports.
+*@
+
+<QPageActions Embedded="@Embedded">
+    <Title><h1>Lesson plans</h1></Title>
+    <Actions>
+        @if (canReport)
+        {
+            <QButton Text="@(view == "reports" ? "Queue" : "Reports")" Icon="@(view == "reports" ? "list-ul" : "bar-chart-line")" Variant="ghost"
+                     OnClick="@(() => SetView(view == "reports" ? "queue" : "reports"))" id="plans-view-toggle" />
+        }
+    </Actions>
+</QPageActions>
+
+@if (view == "reports" && canReport)
+{
+    <QFilterBar>
+        <QDateRangePicker Range="@range" RangeChanged="@OnRangeAsync" />
+    </QFilterBar>
+    @if (report == null) { <QEmptyState Icon="hourglass-split" Title="Loading" /> }
+    else
+    {
+        <QStatRow>
+            <QStatTile Label="Taught with an approved plan" Value="@CoverageText" Icon="journal-check" />
+            <QStatTile Label="Waiting for review" Value="@report.Review.Waiting.ToString()" Sub="@(report.Review.WaitingOverTwoDays > 0 ? $"{report.Review.WaitingOverTwoDays} for over two days" : null)" SubVariant="warning" Icon="hourglass" />
+            <QStatTile Label="Reviewed with a comment" Value="@(report.Review.Reviewed == 0 ? "—" : $"{report.Review.ReviewedWithComment} of {report.Review.Reviewed}")" Icon="chat-left-text" />
+            <QStatTile Label="Median time to a decision" Value="@(report.Review.MedianHoursToDecision is { } h ? (h < 48 ? $"{h:0.#} h" : $"{h / 24:0.#} days") : "—")" Icon="stopwatch" />
+            <QStatTile Label="Schemes approved this term" Value="@($"{report.SchemesApproved} of {report.SchemesExpected}")" Icon="journal-bookmark" />
+        </QStatRow>
+        <QInfo Text="Coverage counts lessons the lesson flags say were taught. A lesson nobody recorded is left out rather than counted either way. 'Reviewed with a comment' is how many decided plans carried a reviewer's note: a plan reviewed without comment is the common gap." Label="About these figures" />
+        @* ---- Schemes of work, teacher by teacher (2026-09-26) ---- *@
+        <QCard Title="@($"Schemes of work — {report.Schemes.PeriodName}")" Icon="journal-bookmark"
+               Subtitle="@(report.Schemes.DueBy is { } due ? $"Due by {QDateFormat.D(due)}" : null)">
+            <QStatRow>
+                <QStatTile Label="Approved" Value="@($"{report.Schemes.Approved} of {report.Schemes.Expected}")" Icon="check2-circle" />
+                <QStatTile Label="With head of department" Value="@report.Schemes.WithHeadOfDepartment.ToString()" Icon="hourglass-split" />
+                <QStatTile Label="With approver" Value="@report.Schemes.WithApprover.ToString()" Icon="send-check" />
+                <QStatTile Label="Returned" Value="@report.Schemes.Returned.ToString()" Icon="reply" />
+                <QStatTile Label="Draft" Value="@report.Schemes.Draft.ToString()" Icon="pencil" />
+                <QStatTile Label="Not started" Value="@report.Schemes.NotStarted.ToString()" Icon="dash-circle" Sub="@(report.Schemes.Late > 0 ? $"{report.Schemes.Late} late" : null)" SubVariant="warning" />
+            </QStatRow>
+            <QFilterBar>
+                <QSelect TValue="string" TItem="string" Value="@schemeFilter" ValueChanged="@(v => { schemeFilter = v ?? "all"; schemePaging.Reset(); })" Items="@SchemeFilters"
+                         TextSelector="@SchemeFilterText" Label="Show" />
+            </QFilterBar>
+            @if (report.Schemes.Expected == 0)
+            {
+                <p class="cell-sub">Nobody is assigned to teach a subject yet, so no scheme is expected.</p>
+            }
+            else
+            {
+                var shown = SchemeRows.ToList();
+                <table class="data-table q-stack" id="plans-schemes">
+                    <thead><tr><th>Teacher</th><th>Subject</th><th>Classes</th><th>State</th><th>Submitted</th><th>Approved</th><th class="row-actions"></th></tr></thead>
+                    <tbody>
+                        @foreach (var r in schemePaging.Apply(shown))
+                        {
+                            <tr data-teacher="@r.TeacherUserId" data-progress="@r.Progress">
+                                <td>@r.TeacherName</td>
+                                <td>@r.SubjectName @if (r.DepartmentName is { } d) { <span class="cell-sub">@d</span> }</td>
+                                <td>@string.Join(", ", r.ClassNames)</td>
+                                <td>
+                                    <QChip Text="@ProgressText(r.Progress)" Variant="@ProgressVariant(r.Progress)" Size="sm" />
+                                    @if (r.Late) { <QChip Text="Late" Variant="warning" Size="sm" /> }
+                                </td>
+                                <td>@(r.SubmittedAt is { } s ? QDateFormat.D(s.ToLocalTime()) : "—")</td>
+                                <td>@(r.ApprovedAt is { } a ? QDateFormat.D(a.ToLocalTime()) : "—") @if (r.ApprovedByName is { } by) { <span class="cell-sub">@by</span> }</td>
+                                <td class="row-actions">
+                                    @if (r.PlanId is { } pid) { <QButton Text="Open" Size="sm" Variant="ghost" OnClick="@(() => Navigation.NavigateTo($"/plans/{pid}"))" /> }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                <QPager Count="@shown.Count" PageSize="@schemePaging.PageSize" PageIndex="@schemePaging.PageIndex" PageIndexChanged="@(i => schemePaging.PageIndex = i)"
+                        PageSizeOptions="@QPagerDefaults.Sizes" PageSizeChanged="@(s => schemePaging.SetSize(s))" StorageKey="plans-schemes" ItemLabel="schemes" />
+            }
+        </QCard>
+
+        <QCard Title="Lesson plans by teacher" Icon="people" Subtitle="@range.Caption">
+            @if (report.ByTeacher.Count == 0) { <p class="cell-sub">No taught lessons in this period.</p> }
+            else
+            {
+                <table class="data-table q-stack" id="plans-by-teacher">
+                    <thead><tr><th>Teacher</th><th>Department</th><th class="num">Taught</th><th class="num">Approved plan</th><th class="num">Waiting</th><th class="num">Returned</th><th class="num">No plan</th><th class="num">Coverage</th></tr></thead>
+                    <tbody>
+                        @foreach (var t in teacherPaging.Apply(report.ByTeacher))
+                        {
+                            <tr><td>@t.TeacherName</td><td>@t.DepartmentName</td><td class="num">@t.LessonsTaught</td><td class="num">@t.WithApprovedPlan</td><td class="num">@t.Submitted</td><td class="num">@t.Returned</td><td class="num">@t.NoPlan</td><td class="num">@(t.CoveragePercent is { } c ? $"{c:0.#}%" : "—")</td></tr>
+                        }
+                    </tbody>
+                </table>
+                <QPager Count="@report.ByTeacher.Count" PageSize="@teacherPaging.PageSize" PageIndex="@teacherPaging.PageIndex" PageIndexChanged="@(i => teacherPaging.PageIndex = i)"
+                        PageSizeOptions="@QPagerDefaults.Sizes" PageSizeChanged="@(s => teacherPaging.SetSize(s))" StorageKey="plans-by-teacher" ItemLabel="teachers" />
+            }
+        </QCard>
+
+        <div class="plans-report-grid">
+            <QCard Title="By department" Icon="diagram-3">@CoverageTable(report.ByDepartment, "Department")</QCard>
+            <QCard Title="By subject" Icon="book">@CoverageTable(report.BySubject, "Subject")</QCard>
+        </div>
+    }
+}
+else
+{
+    <QFilterBar>
+        <QSwitch Value="@awaitingMe" ValueChanged="@(async v => { awaitingMe = v; await LoadAsync(); })" Label="Waiting on me" />
+        <QSelect TValue="TeachingPlanStatus?" TItem="TeachingPlanStatus?" Value="@status" ValueChanged="@(async v => { status = v; await LoadAsync(); })"
+                 Items="@Statuses" TextSelector="@(s => s == null ? "Any state" : PlanDisplay.Status(s.Value))" Placeholder="Any state" AllowClear="true" />
+        <QSelect TValue="TeachingPlanKind?" TItem="TeachingPlanKind?" Value="@kind" ValueChanged="@(async v => { kind = v; await LoadAsync(); })"
+                 Items="@Kinds" TextSelector="@(k => k == null ? "Plans and schemes" : PlanDisplay.Kind(k.Value))" Placeholder="Plans and schemes" AllowClear="true" />
+        <QInput TValue="string" Value="@search" ValueChanged="@(async v => { search = v; await LoadAsync(); })" Placeholder="Search titles" IconLeft="search" Clearable="true" />
+    </QFilterBar>
+
+    @if (queue == null) { <QEmptyState Icon="hourglass-split" Title="Loading" /> }
+    else if (queue.Items.Count == 0)
+    {
+        <QEmptyState Icon="journal-check" Title="@(awaitingMe ? "Nothing waiting on you" : "No plans")" Text="@(awaitingMe ? null : "Plans appear here once teachers submit them.")" />
+    }
+    else
+    {
+        <p class="cell-sub" id="plans-queue-count">@queue.Total plan@(queue.Total == 1 ? "" : "s")@(queue.AwaitingMe > 0 ? $" · {queue.AwaitingMe} waiting on you" : "")</p>
+        <table class="data-table q-stack" id="plans-queue">
+            <thead><tr><th>Plan</th><th>Teacher</th><th>Subject</th><th>When</th><th>State</th><th class="row-actions"></th></tr></thead>
+            <tbody>
+                @foreach (var p in paging.Apply(queue.Items))
+                {
+                    <tr data-plan="@p.Id" class="@(p.AwaitsMe ? "plans-awaits" : "")">
+                        <td>@p.Title <span class="cell-sub">@PlanDisplay.Kind(p.Kind)@(p.HasFile ? " · PDF" : "")@(p.Version > 1 ? $" · version {p.Version}" : "")</span></td>
+                        <td>@p.AuthorName</td>
+                        <td>@p.SubjectName @if (p.DepartmentName is { } d) { <span class="cell-sub">@d</span> }</td>
+                        <td>@(p.LessonDate is { } ld ? QDateFormat.D(ld) : p.PeriodKey)</td>
+                        <td>
+                            <QChip Text="@PlanDisplay.Status(p.Status)" Variant="@PlanDisplay.Variant(p.Status)" Size="sm" />
+                            @if (p.AwaitsMe) { <span class="cell-sub">Waiting on you</span> }
+                            else if (p.WaitingOn is { } w) { <span class="cell-sub">@w</span> }
+                        </td>
+                        <td class="row-actions"><QButton Text="@(p.AwaitsMe ? "Review" : "Open")" Size="sm" Variant="@(p.AwaitsMe ? "primary" : "ghost")" OnClick="@(() => Navigation.NavigateTo($"/plans/{p.Id}"))" /></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <QPager Count="@queue.Items.Count" PageSize="@paging.PageSize" PageIndex="@paging.PageIndex" PageIndexChanged="@(i => paging.PageIndex = i)"
+                PageSizeOptions="@QPagerDefaults.Sizes" PageSizeChanged="@(s => paging.SetSize(s))" StorageKey="plans-queue" ItemLabel="plans" />
+    }
+}
+
+<style>
+    #plans-queue tr.plans-awaits td:first-child { box-shadow: inset 3px 0 0 var(--qm-primary); }
+    .plans-report-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--qm-block-gap); margin-top: var(--qm-block-gap); }
+</style>
+
+@code {
+    [Parameter] public bool Embedded { get; set; }
+    [SupplyParameterFromQuery(Name = "view")] public string? ViewParam { get; set; }
+
+    private static readonly List<TeachingPlanStatus?> Statuses = new() { TeachingPlanStatus.Submitted, TeachingPlanStatus.Forwarded, TeachingPlanStatus.Approved, TeachingPlanStatus.Returned };
+    private static readonly List<TeachingPlanKind?> Kinds = new() { TeachingPlanKind.LessonPlan, TeachingPlanKind.SchemeOfWork };
+
+    private Guid branchId;
+    private TeachingPlanQueueDto? queue;
+    private TeachingPlanReportDto? report;
+    private readonly QPaging paging = new();
+    private readonly QPaging schemePaging = new();
+    private readonly QPaging teacherPaging = new();
+    private string schemeFilter = "pending";
+    private static readonly List<string> SchemeFilters = new() { "pending", "notstarted", "late", "approved", "all" };
+    private static string SchemeFilterText(string f) => f switch
+    {
+        "pending" => "Not yet approved",
+        "notstarted" => "Not started",
+        "late" => "Late",
+        "approved" => "Approved",
+        _ => "Everyone"
+    };
+    private IEnumerable<SchemeStatusRowDto> SchemeRows => (report?.Schemes.Rows ?? new()).Where(r => schemeFilter switch
+    {
+        "pending" => r.Progress != SchemeProgress.Approved,
+        "notstarted" => r.Progress == SchemeProgress.NotStarted,
+        "late" => r.Late,
+        "approved" => r.Progress == SchemeProgress.Approved,
+        _ => true
+    });
+    private static string ProgressText(SchemeProgress p) => p switch
+    {
+        SchemeProgress.NotStarted => "Not started",
+        SchemeProgress.Draft => "Draft",
+        SchemeProgress.WithHeadOfDepartment => "With head of department",
+        SchemeProgress.WithApprover => "With approver",
+        SchemeProgress.Returned => "Returned",
+        _ => "Approved"
+    };
+    private static string ProgressVariant(SchemeProgress p) => p switch
+    {
+        SchemeProgress.Approved => "success",
+        SchemeProgress.WithHeadOfDepartment or SchemeProgress.WithApprover => "info",
+        SchemeProgress.Returned => "warning",
+        SchemeProgress.NotStarted => "danger",
+        _ => "muted"
+    };
+    private bool awaitingMe = true, canReport;
+    private TeachingPlanStatus? status;
+    private TeachingPlanKind? kind;
+    private string? search;
+    private string view = "queue";
+    private DateRange range = DateRange.LastDays(28);
+
+    private string CoverageText
+    {
+        get
+        {
+            var taught = report!.ByDepartment.Sum(r => r.LessonsTaught);
+            var with = report.ByDepartment.Sum(r => r.WithApprovedPlan);
+            return taught == 0 ? "—" : $"{100.0 * with / taught:0.#}%";
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        canReport = await PermissionService.HasPermissionAsync(Permissions.TeachingPlansView) || await PermissionService.HasPermissionAsync(Permissions.TeachingPlansApprove);
+        view = ViewParam == "reports" && canReport ? "reports" : "queue";
+        await LoadAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) TrackBranch();
+        await base.OnAfterRenderAsync(firstRender);
+    }
+
+    protected override async Task OnBranchChangedAsync(Guid newBranchId)
+    {
+        branchId = newBranchId;
+        queue = null; report = null;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (branchId == Guid.Empty) return;
+        paging.Reset();
+        try
+        {
+            if (view == "reports") report = await PlanApi.GetReportAsync(branchId, range.From, range.To);
+            else queue = await PlanApi.GetQueueAsync(branchId, status, kind, awaitingMe: awaitingMe, search: string.IsNullOrWhiteSpace(search) ? null : search);
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not load the plans", ex.Message); queue ??= new(); }
+    }
+
+    private async Task SetView(string v)
+    {
+        view = v;
+        Navigation.NavigateTo(Navigation.GetUriWithQueryParameter("view", v == "queue" ? null : v), replace: true);
+        await LoadAsync();
+    }
+
+    private async Task OnRangeAsync(DateRange r) { range = r; await LoadAsync(); }
+
+    private static RenderFragment CoverageTable(List<PlanCoverageRowDto> rows, string label) => __builder =>
+    {
+        if (rows.Count == 0)
+        {
+            <p class="cell-sub">No taught lessons in this period.</p>
+            return;
+        }
+        <table class="data-table">
+            <thead><tr><th>@label</th><th class="num">Taught</th><th class="num">Approved plan</th><th class="num">Coverage</th></tr></thead>
+            <tbody>
+                @foreach (var r in rows)
+                {
+                    <tr><td>@r.Group</td><td class="num">@r.LessonsTaught</td><td class="num">@r.WithApprovedPlan</td><td class="num">@(r.CoveragePercent is { } c ? $"{c:0.#}%" : "—")</td></tr>
+                }
+            </tbody>
+        </table>
+    };
+}

@@ -1,6 +1,6 @@
 # A post grants its own access: deriving permissions from assignments
 
-**Status:** plan only. No code written. 2026-09-22.
+**Status:** BUILT 2026-09-22 (`753da33`) — `PostPermissionService`, the six readers of "what may this person do", the retired roles. See CLAUDE.md "A POST grants permissions AND scope". (Header corrected 2026-09-25; it read "plan only".)
 **Three pieces of work, asked for together:** derive post permissions (§0–2), split the class-teacher
 page (§3), and stop the roster import demanding a guardian (§4b).
 **Asked for as:** *"derive class teacher permissions from the assignment, and split the page. the same

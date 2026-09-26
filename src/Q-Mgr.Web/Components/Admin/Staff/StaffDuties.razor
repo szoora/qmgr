@@ -11,6 +11,7 @@
 @inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
 @inject IAuthService AuthService
+@inject IUiPreferencesService UiPreferences
 
 <QPageTitle Text="Duties & Registers" />
 
@@ -357,6 +358,9 @@
 
         branchId = BranchState.CurrentBranchId;
         TrackBranch();
+        // B9: the branch's zone, so a duty is drawn on the SCHOOL's day — not the Blazor host's.
+        await UiPreferences.LoadAsync(branchId);
+        zone = QMgr.Application.BranchClock.Resolve(UiPreferences.TimeZone);
 
         // The hub owns the URL: /admin/staff/duties?tab=rota is the one link to the rota, and the
         // sections carry no routes of their own.
@@ -437,8 +441,14 @@
 
     // ---- Display helpers ---------------------------------------------------------------------
 
-    private static DateTime Local(DateTime value) => value.Kind == DateTimeKind.Utc ? value.ToLocalTime() : value;
-    private static DateTime ToUtc(DateTime local) => DateTime.SpecifyKind(local, DateTimeKind.Local).ToUniversalTime();
+    /// <summary>
+    /// B9 (2026-09-26): instants on the SCHOOL's clock, both ways. These were ToLocalTime()/ToUniversalTime(), which on Blazor
+    /// Server are the HOST's zone — so a duty was grouped under the wrong day, and a time typed here was saved an offset
+    /// away, whenever the server did not run in the school's zone.
+    /// </summary>
+    private TimeZoneInfo zone = TimeZoneInfo.Utc;
+    private DateTime Local(DateTime value) => QMgr.Application.BranchClock.ToLocal(value, zone);
+    private DateTime ToUtc(DateTime local) => QMgr.Application.BranchClock.ToUtc(local, zone);
 
     private static string StaffLabel(StaffMemberDto s) => string.IsNullOrEmpty(s.JobTitle) ? s.FullName : $"{s.FullName} — {s.JobTitle}";
 
@@ -458,7 +468,7 @@
         editingId = null;
         form = new SaveStaffDutyRequest();
         formParameterId = null;
-        var start = DateTime.Now.AddHours(1);
+        var start = QMgr.Application.BranchClock.Now(zone).AddHours(1);
         start = new DateTime(start.Year, start.Month, start.Day, start.Hour, 0, 0);
         if (range.From > DateOnly.FromDateTime(start)) start = range.From.ToDateTime(new TimeOnly(8, 0));
         formStartsAt = start;

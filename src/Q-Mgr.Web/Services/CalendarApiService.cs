@@ -19,11 +19,21 @@ namespace QMgr.Web.Services;
 /// </summary>
 public interface ICalendarApiService
 {
-    Task<CalendarRangeDto> GetRangeAsync(Guid branchId, DateOnly from, DateOnly to);
+    /// <param name="scope">"mine" (the default) or "all" — the whole school's calendar (E4).</param>
+    Task<CalendarRangeDto> GetRangeAsync(Guid branchId, DateOnly from, DateOnly to, string? scope = null);
     Task<SchoolEventDto> GetEventAsync(Guid branchId, Guid id);
     Task<SchoolEventDto> CreateEventAsync(Guid branchId, SaveSchoolEventRequest request);
+    /// <summary>Throws <see cref="ApiFieldException"/> with Code <c>EVENT_CHANGED</c> when somebody saved it first (B5).</summary>
     Task<SchoolEventDto> UpdateEventAsync(Guid branchId, Guid id, SaveSchoolEventRequest request);
     Task DeleteEventAsync(Guid branchId, Guid id);
+    Task<SchoolEventDto> CancelEventAsync(Guid branchId, Guid id, CancelSchoolEventRequest request);
+    Task<SchoolEventDto> ReinstateEventAsync(Guid branchId, Guid id, CancelSchoolEventRequest request);
+    /// <summary>"Give this a register" (E10): the event becomes a staff meeting with a register.</summary>
+    Task<SchoolEventDto> GiveRegisterAsync(Guid branchId, Guid id, EventRegisterRequest request);
+    /// <summary>One event as an .ics file ("Add to my calendar").</summary>
+    Task<byte[]> GetEventIcsAsync(Guid branchId, Guid id);
+    Task<AudienceOptionsDto> GetAudienceOptionsAsync(Guid branchId);
+    Task<EventClashDto> CheckClashesAsync(Guid branchId, EventClashRequest request);
 
     Task<CalendarSettingsDto> GetSettingsAsync();
     Task<CalendarSettingsDto> UpdateSettingsAsync(CalendarSettingsDto settings);
@@ -59,8 +69,34 @@ public class CalendarApiService : ICalendarApiService
     private static string Iso(DateOnly d) => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
     private static string Branch(Guid branchId) => $"api/v1/branches/{branchId}/calendar";
 
-    public async Task<CalendarRangeDto> GetRangeAsync(Guid branchId, DateOnly from, DateOnly to)
-        => await ReadAsync<CalendarRangeDto>(await _http.GetAsync($"{Branch(branchId)}?from={Iso(from)}&to={Iso(to)}")) ?? new CalendarRangeDto { From = from, To = to };
+    public async Task<CalendarRangeDto> GetRangeAsync(Guid branchId, DateOnly from, DateOnly to, string? scope = null)
+        => await ReadAsync<CalendarRangeDto>(await _http.GetAsync($"{Branch(branchId)}?from={Iso(from)}&to={Iso(to)}&scope={Uri.EscapeDataString(CalendarScopes.Normalize(scope))}"))
+           ?? new CalendarRangeDto { From = from, To = to };
+
+    public async Task<SchoolEventDto> CancelEventAsync(Guid branchId, Guid id, CancelSchoolEventRequest request)
+        => await ReadAsync<SchoolEventDto>(await _http.PostAsJsonAsync($"{Branch(branchId)}/events/{id}/cancel", request, _json))
+           ?? throw new InvalidOperationException("The event was not returned.");
+
+    public async Task<SchoolEventDto> ReinstateEventAsync(Guid branchId, Guid id, CancelSchoolEventRequest request)
+        => await ReadAsync<SchoolEventDto>(await _http.PostAsJsonAsync($"{Branch(branchId)}/events/{id}/reinstate", request, _json))
+           ?? throw new InvalidOperationException("The event was not returned.");
+
+    public async Task<SchoolEventDto> GiveRegisterAsync(Guid branchId, Guid id, EventRegisterRequest request)
+        => await ReadAsync<SchoolEventDto>(await _http.PostAsJsonAsync($"{Branch(branchId)}/events/{id}/register", request, _json))
+           ?? throw new InvalidOperationException("The event was not returned.");
+
+    public async Task<byte[]> GetEventIcsAsync(Guid branchId, Guid id)
+    {
+        var response = await _http.GetAsync($"{Branch(branchId)}/events/{id}/ics");
+        await EnsureAsync(response);
+        return await response.Content.ReadAsByteArrayAsync();
+    }
+
+    public async Task<AudienceOptionsDto> GetAudienceOptionsAsync(Guid branchId)
+        => await ReadAsync<AudienceOptionsDto>(await _http.GetAsync($"api/v1/branches/{branchId}/calendar/audience-options")) ?? new AudienceOptionsDto();
+
+    public async Task<EventClashDto> CheckClashesAsync(Guid branchId, EventClashRequest request)
+        => await ReadAsync<EventClashDto>(await _http.PostAsJsonAsync($"api/v1/branches/{branchId}/calendar/clashes", request, _json)) ?? new EventClashDto();
 
     public async Task<SchoolEventDto> GetEventAsync(Guid branchId, Guid id)
         => await ReadAsync<SchoolEventDto>(await _http.GetAsync($"{Branch(branchId)}/events/{id}"))

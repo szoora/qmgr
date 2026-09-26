@@ -792,10 +792,47 @@ namespace QMgr.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<bool>("AllStaff")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
+
+                    b.Property<bool>("AttendanceRequired")
+                        .HasColumnType("boolean");
+
                     b.Property<int>("Audience")
                         .HasColumnType("integer");
 
+                    b.PrimitiveCollection<Guid[]>("AudienceDepartmentIds")
+                        .IsRequired()
+                        .HasColumnType("uuid[]");
+
+                    b.Property<bool>("AudienceOnly")
+                        .HasColumnType("boolean");
+
+                    b.PrimitiveCollection<string[]>("AudienceRoleCodes")
+                        .IsRequired()
+                        .HasColumnType("text[]");
+
+                    b.PrimitiveCollection<string[]>("AudienceStaffGroups")
+                        .IsRequired()
+                        .HasColumnType("text[]");
+
+                    b.PrimitiveCollection<Guid[]>("AudienceUserIds")
+                        .IsRequired()
+                        .HasColumnType("uuid[]");
+
                     b.Property<Guid?>("BranchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CancelReason")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<DateTime?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CancelledByUserId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("Category")
@@ -805,6 +842,9 @@ namespace QMgr.Infrastructure.Migrations
                     b.PrimitiveCollection<string[]>("ClassNames")
                         .IsRequired()
                         .HasColumnType("text[]");
+
+                    b.Property<Guid?>("ClientRequestId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -819,6 +859,9 @@ namespace QMgr.Infrastructure.Migrations
                     b.Property<Guid?>("DutyId")
                         .HasColumnType("uuid");
 
+                    b.Property<DateTime?>("EditedByHandAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<TimeOnly?>("EndTime")
                         .HasColumnType("time without time zone");
 
@@ -831,12 +874,30 @@ namespace QMgr.Infrastructure.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
+                    b.Property<Guid?>("LibraryDocumentId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Location")
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<int>("NotifiedVersion")
+                        .HasColumnType("integer");
+
                     b.Property<Guid>("OrganizationId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("Recurrence")
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
+                    b.Property<int>("ReminderStage")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("RemindersOn")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
 
                     b.PrimitiveCollection<Guid[]>("ResponsibleDepartmentIds")
                         .IsRequired()
@@ -849,6 +910,12 @@ namespace QMgr.Infrastructure.Migrations
                     b.PrimitiveCollection<Guid[]>("ResponsibleUserIds")
                         .IsRequired()
                         .HasColumnType("uuid[]");
+
+                    b.Property<uint>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
 
                     b.Property<Guid?>("SeriesId")
                         .HasColumnType("uuid");
@@ -867,6 +934,9 @@ namespace QMgr.Infrastructure.Migrations
                     b.Property<DateOnly>("StartsOn")
                         .HasColumnType("date");
 
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -877,6 +947,11 @@ namespace QMgr.Infrastructure.Migrations
 
                     b.Property<Guid?>("UpdatedBy")
                         .HasColumnType("uuid");
+
+                    b.Property<int>("Version")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.HasKey("Id");
 
@@ -889,6 +964,11 @@ namespace QMgr.Infrastructure.Migrations
                     b.HasIndex("ImportJobId")
                         .HasDatabaseName("idx_school_events_import_job")
                         .HasFilter("\"ImportJobId\" IS NOT NULL");
+
+                    b.HasIndex("OrganizationId", "ClientRequestId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_school_events_client_request")
+                        .HasFilter("\"ClientRequestId\" IS NOT NULL");
 
                     b.HasIndex("OrganizationId", "SourceKey")
                         .HasDatabaseName("idx_school_events_source_key")
@@ -2019,6 +2099,9 @@ namespace QMgr.Infrastructure.Migrations
 
                     b.Property<DateTime?>("TemporaryPasswordExpiresAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UiPreferences")
+                        .HasColumnType("text");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -4424,6 +4507,9 @@ namespace QMgr.Infrastructure.Migrations
                     b.Property<Guid?>("ReportMediaContentId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("ReviewedByUserId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("SelfComments")
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)");
@@ -4705,6 +4791,9 @@ namespace QMgr.Infrastructure.Migrations
                     b.Property<Guid>("ParameterId")
                         .HasColumnType("uuid");
 
+                    b.Property<int>("PlanReminderStage")
+                        .HasColumnType("integer");
+
                     b.PrimitiveCollection<Guid[]>("RecorderUserIds")
                         .IsRequired()
                         .HasColumnType("uuid[]");
@@ -4751,6 +4840,10 @@ namespace QMgr.Infrastructure.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<string>("SourceKey")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<DateTime>("StartsAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -4785,8 +4878,6 @@ namespace QMgr.Infrastructure.Migrations
                         .HasDatabaseName("idx_staff_duties_import_job")
                         .HasFilter("\"ImportJobId\" IS NOT NULL");
 
-                    b.HasIndex("OrganizationId");
-
                     b.HasIndex("ParameterId");
 
                     b.HasIndex("RecoversDutyId")
@@ -4806,6 +4897,10 @@ namespace QMgr.Infrastructure.Migrations
 
                     b.HasIndex("Kind", "StartsAt")
                         .HasDatabaseName("idx_staff_duties_kind_start");
+
+                    b.HasIndex("OrganizationId", "SourceKey")
+                        .HasDatabaseName("idx_staff_duties_source_key")
+                        .HasFilter("\"SourceKey\" IS NOT NULL");
 
                     b.HasIndex("TimetableLessonId", "StartsAt")
                         .IsUnique()
@@ -5384,6 +5479,228 @@ namespace QMgr.Infrastructure.Migrations
                         .HasFilter("\"IsActive\" = true");
 
                     b.ToTable("Subjects", "qmgr");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Staff.TeachingPlan", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ApprovedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ApprovedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AuthorUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("BranchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ClassKey")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)");
+
+                    b.PrimitiveCollection<string[]>("ClassNames")
+                        .IsRequired()
+                        .HasColumnType("text[]");
+
+                    b.Property<Guid?>("ClientRequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("DutyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("FileName")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<int?>("FilePages")
+                        .HasColumnType("integer");
+
+                    b.Property<long?>("FileSizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("FileUrl")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("ForwardedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ForwardedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsCurrent")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("LastRemindedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateOnly?>("LessonDate")
+                        .HasColumnType("date");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long?>("OriginalSizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("PeriodKey")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("Reflection")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<DateTime?>("ReflectionAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("ReminderStage")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ReturnReason")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTime?>("ReturnedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ReturnedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ReviewReminderStage")
+                        .HasColumnType("integer");
+
+                    b.Property<uint>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.Property<string>("RowsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValueSql("'[]'::jsonb");
+
+                    b.Property<Guid?>("SchemeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SchemeRowKey")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("SectionsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValueSql("'{}'::jsonb");
+
+                    b.Property<string>("StageSkippedReason")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<int>("Stages")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(2);
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("SubjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("SubmittedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("SupersedesId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("TimetableLessonId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("TrailJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValueSql("'[]'::jsonb");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Version")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<DateTime?>("WaitingSince")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DutyId");
+
+                    b.HasIndex("SchemeId")
+                        .HasDatabaseName("idx_teaching_plans_scheme_ref")
+                        .HasFilter("\"SchemeId\" IS NOT NULL");
+
+                    b.HasIndex("SubjectId");
+
+                    b.HasIndex("SupersedesId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_teaching_plans_open_revision")
+                        .HasFilter("\"SupersedesId\" IS NOT NULL AND NOT \"IsCurrent\" AND \"Status\" <> 5");
+
+                    b.HasIndex("AuthorUserId", "DutyId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_teaching_plans_lesson")
+                        .HasFilter("\"DutyId\" IS NOT NULL AND \"IsCurrent\" AND \"Status\" <> 5");
+
+                    b.HasIndex("AuthorUserId", "LessonDate")
+                        .HasDatabaseName("idx_teaching_plans_author_date");
+
+                    b.HasIndex("OrganizationId", "ClientRequestId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_teaching_plans_client_request")
+                        .HasFilter("\"ClientRequestId\" IS NOT NULL");
+
+                    b.HasIndex("BranchId", "Status", "SubjectId")
+                        .HasDatabaseName("idx_teaching_plans_queue");
+
+                    b.HasIndex("BranchId", "AuthorUserId", "SubjectId", "ClassKey", "PeriodKey")
+                        .IsUnique()
+                        .HasDatabaseName("ux_teaching_plans_scheme")
+                        .HasFilter("\"Kind\" = 1 AND \"IsCurrent\" AND \"Status\" <> 5");
+
+                    b.ToTable("TeachingPlans", "qmgr");
                 });
 
             modelBuilder.Entity("QMgr.Domain.Entities.Staff.Timetable", b =>
@@ -6862,6 +7179,11 @@ namespace QMgr.Infrastructure.Migrations
                         .HasForeignKey("BranchId")
                         .OnDelete(DeleteBehavior.Restrict);
 
+                    b.HasOne("QMgr.Domain.Entities.Staff.StaffDuty", null)
+                        .WithMany()
+                        .HasForeignKey("DutyId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("QMgr.Domain.Entities.Organization.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId")
@@ -7694,6 +8016,30 @@ namespace QMgr.Infrastructure.Migrations
                     b.Navigation("Department");
 
                     b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Staff.TeachingPlan", b =>
+                {
+                    b.HasOne("QMgr.Domain.Entities.Staff.StaffDuty", null)
+                        .WithMany()
+                        .HasForeignKey("DutyId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("QMgr.Domain.Entities.Staff.TeachingPlan", null)
+                        .WithMany()
+                        .HasForeignKey("SchemeId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("QMgr.Domain.Entities.Staff.Subject", null)
+                        .WithMany()
+                        .HasForeignKey("SubjectId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("QMgr.Domain.Entities.Staff.TeachingPlan", null)
+                        .WithMany()
+                        .HasForeignKey("SupersedesId")
+                        .OnDelete(DeleteBehavior.SetNull);
                 });
 
             modelBuilder.Entity("QMgr.Domain.Entities.Staff.TimetableLesson", b =>

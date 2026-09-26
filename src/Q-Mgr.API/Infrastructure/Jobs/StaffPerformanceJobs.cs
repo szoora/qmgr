@@ -193,7 +193,7 @@ public class StaffPerformanceJobs
                 // Left unstamped while the module is off, so it goes out if the tenant renews.
                 if (!await ModuleActiveAsync(notice.OrganizationId)) continue;
                 // The same helper the controller uses; it stamps NotificationsSentAt itself.
-                await StaffNoticeFanOut.FanOutAsync(_context, _notifications, notice, _logger);
+                await StaffNoticeFanOut.FanOutAsync(_context, _policy, _notifications, notice, _logger);
                 published++;
             }
             catch (Exception ex)
@@ -608,6 +608,49 @@ public class StaffPerformanceJobs
                         }), rows.Count));
                     if (report.RecoverySchedule.Any(r => r.Status is LessonStatus.NotRecovered or LessonStatus.MissedWithoutPermission or LessonStatus.MissedWithPermission or LessonStatus.NotTaughtSelfReported))
                         body.Append(EmailTemplates.ReportCallout($"{report.RecoverySchedule.Count(r => r.RecoveryAt == null)} missed lesson(s) have no recovery scheduled.", danger: true));
+
+                    // Lesson plans (2026-09-26): the Director of Studies hears of lesson plans HERE, once a week, rather than
+                    // one message per approval (decision L4). Same scope as the figures above; the same builder as the page.
+                    try
+                    {
+                        var plans = await QMgr.API.Application.Services.TeachingPlanReportBuilder.BuildAsync(_context, b.OrganizationId, b.BranchId,
+                            lastWeek.Start, lastWeek.End, zone, policy, _policy, visible);
+                        var taughtWithPlan = plans.ByDepartment.Sum(r => r.WithApprovedPlan);
+                        var taughtAll = plans.ByDepartment.Sum(r => r.LessonsTaught);
+                        body.Append(EmailTemplates.ReportSection("Lesson plans"));
+                        body.Append(EmailTemplates.ReportStat("Lessons taught with an approved plan",
+                            taughtAll == 0 ? "—" : string.Create(CultureInfo.InvariantCulture, $"{taughtWithPlan} of {taughtAll} ({100.0 * taughtWithPlan / taughtAll:0.#}%)")));
+                        body.Append(EmailTemplates.ReportStat("Waiting for review", plans.Review.Waiting.ToString(CultureInfo.InvariantCulture), alert: plans.Review.WaitingOverTwoDays > 0));
+                        body.Append(EmailTemplates.ReportStat("Reviewed with a comment", plans.Review.Reviewed == 0 ? "—"
+                            : string.Create(CultureInfo.InvariantCulture, $"{plans.Review.ReviewedWithComment} of {plans.Review.Reviewed}")));
+                        body.Append(EmailTemplates.ReportStat("Schemes of work approved this term", string.Create(CultureInfo.InvariantCulture, $"{plans.SchemesApproved} of {plans.SchemesExpected}"),
+                            alert: plans.SchemesExpected > 0 && plans.SchemesApproved < plans.SchemesExpected));
+                        // Who is still owed a scheme, by name: the list a Director of Studies acts on, not a total.
+                        var pending = plans.Schemes.Rows.Where(r => r.Progress != SchemeProgress.Approved).ToList();
+                        if (pending.Count > 0)
+                            body.Append(EmailTemplates.ReportTable(new[] { "Teacher", "Subject", "Scheme" },
+                                pending.Take(20).Select(r => new[]
+                                {
+                                    EmailTemplates.P(r.TeacherName), EmailTemplates.P(r.SubjectName),
+                                    EmailTemplates.P(r.Progress switch
+                                    {
+                                        SchemeProgress.NotStarted => "Not started",
+                                        SchemeProgress.Draft => "Draft",
+                                        SchemeProgress.WithHeadOfDepartment => "With head of department",
+                                        SchemeProgress.WithApprover => "With approver",
+                                        SchemeProgress.Returned => "Returned",
+                                        _ => ""
+                                    } + (r.Late ? " (late)" : ""))
+                                }), pending.Count));
+                        if (plans.ByDepartment.Count > 1)
+                            body.Append(EmailTemplates.ReportTable(new[] { "Department", "Taught", "With an approved plan", "Coverage" },
+                                plans.ByDepartment.Select(r => new[]
+                                {
+                                    EmailTemplates.P(r.Group), r.LessonsTaught.ToString(CultureInfo.InvariantCulture), r.WithApprovedPlan.ToString(CultureInfo.InvariantCulture),
+                                    r.CoveragePercent is { } c ? c.ToString("0.#", CultureInfo.InvariantCulture) + "%" : "—"
+                                }), plans.ByDepartment.Count));
+                    }
+                    catch (Exception ex) { _logger.LogWarning(ex, "Plan figures for the weekly analysis of {BranchId} could not be built", b.BranchId); }
 
                     var range = string.Create(CultureInfo.InvariantCulture, $"{lastWeek.Start:dd MMM} – {lastWeek.End:dd MMM yyyy}");
                     var html = EmailTemplates.ReportShell($"Weekly lesson analysis — {range}", $"{branch.Name}", body.ToString(),

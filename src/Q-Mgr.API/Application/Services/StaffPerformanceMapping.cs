@@ -334,8 +334,9 @@ public static class StaffPerformanceMapping
             ReportMediaContentId = a.ReportMediaContentId,
             CreatedAt = a.CreatedAt,
             CanISelfAssess = isSubject && a.Stage is AppraisalStage.Open or AppraisalStage.SelfAssessment,
-            CanIAppraise = (isAppraiser && callerMayConduct || callerMayApprove) && a.Stage is AppraisalStage.SelfAssessment or AppraisalStage.AppraiserReview,
-            CanIModerate = callerMayApprove && a.Stage is AppraisalStage.Moderation or AppraisalStage.Appealed,
+            CanIAppraise = (isAppraiser && callerMayConduct || callerMayApprove) && !isSubject && a.Stage is AppraisalStage.SelfAssessment or AppraisalStage.AppraiserReview,
+            CanIModerate = callerMayApprove && a.Stage is AppraisalStage.Moderation or AppraisalStage.Appealed
+                           && DutySeparation.AppraisalSignOff(a, callerId, "sign") == null,
             CanIAppeal = isSubject && a.Stage == AppraisalStage.Signed
         };
     }

@@ -42,6 +42,7 @@ public class StaffNoticesController : ControllerBase
     private readonly ITenantContextAccessor _tenantAccessor;
     private readonly INotificationService _notifications;
     private readonly IActivityLogger _activity;
+    private readonly IStaffPerformancePolicyService _policy;
     private readonly ILogger<StaffNoticesController> _logger;
 
     public StaffNoticesController(
@@ -49,8 +50,10 @@ public class StaffNoticesController : ControllerBase
         ITenantContextAccessor tenantAccessor,
         INotificationService notifications,
         IActivityLogger activity,
+        IStaffPerformancePolicyService policy,
         ILogger<StaffNoticesController> logger)
     {
+        _policy = policy;
         _context = context;
         _tenantAccessor = tenantAccessor;
         _notifications = notifications;
@@ -107,10 +110,9 @@ public class StaffNoticesController : ControllerBase
 
         var organizationId = await ResolveOrganizationIdAsync(branchId);
         var me = CurrentUserId();
-        var caller = await _context.Users.IgnoreQueryFilters().AsNoTracking()
-            .Where(u => u.Id == me)
-            .Select(u => new { u.AssignedBranchId, RoleCode = u.Role.Code, u.DepartmentIds })
-            .FirstOrDefaultAsync();
+        // The caller's facts from the one home — the staff group resolved WITH its fallback. This list used to pass no
+        // group at all, so a notice for "Teaching staff" never appeared on a teacher's own list (found 2026-09-26).
+        var caller = await StaffAudience.MemberAsync(_context, _policy, organizationId, me);
         if (caller == null) return Ok(new List<StaffNoticeDto>());
 
         var now = DateTime.UtcNow;
@@ -123,7 +125,7 @@ public class StaffNoticesController : ControllerBase
             .ToListAsync();
 
         // The reader-side filter is the fan-out's own predicate: what you see is what you were told about.
-        var mine = notices.Where(n => StaffNoticeFanOut.IsRecipient(n, caller.AssignedBranchId ?? branchId, caller.RoleCode, caller.DepartmentIds)).ToList();
+        var mine = notices.Where(n => StaffNoticeFanOut.IsRecipient(n, caller.BranchId ?? branchId, caller.RoleCode, caller.DepartmentIds.ToArray(), caller.StaffGroup)).ToList();
         return Ok(await MapManyAsync(mine, organizationId, me, withRecipientCounts: false));
     }
 
@@ -160,7 +162,7 @@ public class StaffNoticesController : ControllerBase
             .FirstOrDefaultAsync(n => n.Id == noticeId && n.OrganizationId == organizationId && (n.BranchId == null || n.BranchId == branchId));
         if (notice == null) return NotFoundNotice();
 
-        var recipients = await StaffNoticeFanOut.ResolveRecipientsAsync(_context, notice);
+        var recipients = await StaffNoticeFanOut.ResolveRecipientsAsync(_context, _policy, notice);
         var acks = StaffPerformanceMapping.ParseAcknowledgements(notice.Acknowledgements);
 
         // Read state comes from the fan-out's own Notification rows, matched on the noticeId the
@@ -221,7 +223,7 @@ public class StaffNoticesController : ControllerBase
 
         // After the commit; the helper swallows per-recipient failures and stamps NotificationsSentAt.
         if (!scheduled)
-            await StaffNoticeFanOut.FanOutAsync(_context, _notifications, notice, _logger);
+            await StaffNoticeFanOut.FanOutAsync(_context, _policy, _notifications, notice, _logger);
 
         var dto = (await MapManyAsync(new List<StaffNotice> { notice }, organizationId, me, withRecipientCounts: true)).First();
         return CreatedAtAction(nameof(GetManage), new { branchId }, dto);
@@ -254,7 +256,7 @@ public class StaffNoticesController : ControllerBase
         await _activity.RecordAsync(ActivityActions.NoticeUpdated, nameof(StaffNotice), notice.Id, null,
             $"Notice \"{notice.Title}\" updated", new { notice.PublishAt, notice.ExpiresAt, notice.IsPinned, notice.RequiresAcknowledgement }, branchId, organizationId);
 
-        await StaffNoticeFanOut.FanOutAsync(_context, _notifications, notice, _logger);
+        await StaffNoticeFanOut.FanOutAsync(_context, _policy, _notifications, notice, _logger);
 
         return Ok((await MapManyAsync(new List<StaffNotice> { notice }, organizationId, me, withRecipientCounts: true)).First());
     }
@@ -366,15 +368,11 @@ public class StaffNoticesController : ControllerBase
 
         // Recipient counts: one candidate load, the predicate applied per notice in memory. A branch
         // has a few hundred staff at most; this is cheaper than a query per notice.
-        List<(Guid? Branch, string? Role, Guid[]? Depts)>? candidates = null;
+        List<AudienceMemberDto>? candidates = null;
         if (withRecipientCounts)
         {
-            candidates = (await _context.Users.IgnoreQueryFilters().AsNoTracking()
-                    .Where(u => u.OrganizationId == organizationId && u.IsActive && u.Role.Code != RoleCodes.SuperAdmin)
-                    .Select(u => new { u.AssignedBranchId, RoleCode = u.Role.Code, u.DepartmentIds })
-                    .ToListAsync())
-                .Select(u => (u.AssignedBranchId, (string?)u.RoleCode, u.DepartmentIds))
-                .ToList();
+            // The count a keeper reads is the count the fan-out will reach: the same facts, group and leavers included.
+            candidates = await StaffAudience.MembersAsync(_context, _policy, organizationId, null);
         }
 
         return notices.Select(n =>
@@ -383,7 +381,7 @@ public class StaffNoticesController : ControllerBase
                 .Where(media.ContainsKey)
                 .Select(id => new NoticeAttachmentDto { MediaContentId = id, Name = media[id].Name, FileUrl = UploadLinks.Sign(media[id].Url) ?? media[id].Url })
                 .ToList();
-            var recipientCount = candidates?.Count(c => StaffNoticeFanOut.IsRecipient(n, c.Branch, c.Role, c.Depts)) ?? 0;
+            var recipientCount = candidates?.Count(c => StaffNoticeFanOut.IsRecipient(n, c)) ?? 0;
             return StaffPerformanceMapping.ToDto(n, names, callerId, recipientCount, attachments);
         }).ToList();
     }

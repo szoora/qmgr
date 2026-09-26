@@ -283,6 +283,7 @@ public class StaffDutyReportsController : StaffPerformanceControllerBase
         if (branchError != null) return branchError;
         var (report, access, policy) = await LoadAsync(branchId, id);
         if (report == null || !access!.CanRead) return NotFoundProblem("Report not found");
+        if (DutySeparation.Refusal(CurrentUserId(), report.AuthorUserId, "return your own report") is { } own) return DutySeparation.Problem(own);
         if (!access.CanReview) return access.IsAuthor ? StatusCode(StatusCodes.Status403Forbidden) : BadRequestProblem("Only a submitted report can be returned");
         if (string.IsNullOrWhiteSpace(request.Body)) return BadRequestProblem("Say what needs changing");
 
@@ -318,6 +319,7 @@ public class StaffDutyReportsController : StaffPerformanceControllerBase
         if (branchError != null) return branchError;
         var (report, access, policy) = await LoadAsync(branchId, id);
         if (report == null || !access!.CanRead) return NotFoundProblem("Report not found");
+        if (DutySeparation.Refusal(CurrentUserId(), report.AuthorUserId, "review your own report") is { } own) return DutySeparation.Problem(own);
         // Plan §13.8: the author cannot mark their own report reviewed, and neither can a supervisor their own.
         if (!access.CanReview) return access.IsAuthor ? StatusCode(StatusCodes.Status403Forbidden) : BadRequestProblem("Only a submitted report can be marked reviewed");
 
@@ -345,8 +347,9 @@ public class StaffDutyReportsController : StaffPerformanceControllerBase
         if (branchError != null) return branchError;
         var (report, access, policy) = await LoadAsync(branchId, id);
         if (report == null || (!access!.CanRead && !access.CanMarkNoDuty)) return NotFoundProblem("Report not found");
-        if (!access.CanMarkNoDuty || access.IsAuthor && !await HasPermissionAsync(Permissions.StaffDutiesManage) && !report.Duty!.SupervisorUserIds.Contains(CurrentUserId()))
-            return StatusCode(StatusCodes.Status403Forbidden);
+        if (access.IsAuthor && DutySeparation.Refusal(CurrentUserId(), report.AuthorUserId, "excuse your own report") is { } own)
+            return DutySeparation.Problem(own);
+        if (!access.CanMarkNoDuty) return StatusCode(StatusCodes.Status403Forbidden);
         if (string.IsNullOrWhiteSpace(request.Body)) return BadRequestProblem("Say why there was no duty");
 
         var now = DateTime.UtcNow;

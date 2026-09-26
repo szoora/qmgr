@@ -1581,7 +1581,8 @@ public class VisitorsController : ControllerBase
     /// check-in response isn't persisted anywhere, by design; a new one is just as valid).
     /// </summary>
     [HttpPost("branches/{branchId:guid}/visitors/{visitorId:guid}/badge-token")]
-    [RequirePermission(Permissions.VisitorsView)]
+    // visitors.checkin: minting a signed badge is the front desk's act, not a reader's.
+    [RequirePermission(Permissions.VisitorsCheckIn)]
     [ProducesResponseType(typeof(VisitorDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

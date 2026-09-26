@@ -62,8 +62,10 @@
                 <ul class="myday-simple">
                     @foreach (var e in day.Events.OrderBy(e => e.StartTime != null).ThenBy(e => e.StartTime))
                     {
-                        <li class="myday-event">
+                        <li class="myday-event @(e.Status == QMgr.Domain.Enums.SchoolEventStatus.Cancelled ? "myday-event--cancelled" : "")">
                             <strong>@e.Title</strong>
+                            @if (e.Status == QMgr.Domain.Enums.SchoolEventStatus.Cancelled) { <QChip Text="Cancelled" Size="sm" Variant="danger" /> }
+                            else if (e.AttendanceRequired) { <QChip Text="Attendance required" Size="sm" Variant="warning" /> }
                             <span>@CalendarDisplay.When(e)@(string.IsNullOrWhiteSpace(e.Location) ? "" : $" · {e.Location}")@(CalendarDisplay.Responsible(e) is { } who ? $" · {who}" : "")</span>
                         </li>
                     }
@@ -198,7 +200,8 @@
             {
                 <QCard Title="Welfare actions" Icon="heart-pulse" Class="myday-card">
                     <p class="myday-muted">@(day.WelfareActionsOwed == 1 ? "1 welfare record has" : $"{day.WelfareActionsOwed} welfare records have") an action assigned to you.</p>
-                    <QButton Text="Open welfare" Icon="box-arrow-in-right" Variant="ghost" Size="sm" OnClick="@(() => Navigation.NavigateTo("/admin/welfare-reports"))" />
+                    @* Their own actions, not Welfare Reports, which needs welfare.reports.* and refused the teacher this card is for. *@
+                    <QButton Text="Open my actions" Icon="box-arrow-in-right" Variant="ghost" Size="sm" OnClick="@(() => Navigation.NavigateTo("/admin/welfare-my-actions"))" />
                 </QCard>
             }
         </div>
@@ -265,6 +268,7 @@
     .myday-simple { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: var(--qm-text-base); }
     .myday-simple li { display: flex; flex-direction: column; gap: 2px; }
     .myday-simple li span { color: var(--qm-text-secondary); font-size: var(--qm-text-sm); }
+    .myday-event--cancelled strong { text-decoration: line-through; }
     .myday-note { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
 </style>
 

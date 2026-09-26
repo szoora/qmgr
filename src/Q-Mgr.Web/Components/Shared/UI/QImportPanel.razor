@@ -611,6 +611,15 @@
     /// </summary>
     [Parameter] public EventCallback<string?> OnFileChosen { get; set; }
 
+    /// <summary>
+    /// A table handed over by the Import inbox (plan CALENDAR_AUDIENCES_AND_IMPORT_ROUTING E11): read as if the file had
+    /// been chosen here, straight into the "match the columns" step. The reader still checks the mapping and presses
+    /// Import — the inbox routes a table to its owner, it does not import it for them.
+    /// </summary>
+    [Parameter] public string? InitialCsv { get; set; }
+    [Parameter] public string? InitialFileName { get; set; }
+    private string? loadedInitialCsv;
+
     /// <summary>Where the reader is. Running covers the job and its result, which have no way back.</summary>
     private enum Stage { Pick, Map, Review, Running }
 
@@ -676,6 +685,33 @@
     {
         NotificationClient.OnRosterImportProgressReceived += HandleProgress;
         subscribed = true;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (string.IsNullOrWhiteSpace(InitialCsv) || InitialCsv == loadedInitialCsv || stage != Stage.Pick) return;
+        loadedInitialCsv = InitialCsv;
+        try
+        {
+            FileName = InitialFileName ?? "table.csv";
+            await OnFileChosen.InvokeAsync(FileName);
+            document = null;
+            sheetNames = new List<string> { FileName };
+            sheetName = FileName;
+            lastCsv = InitialCsv;
+            grid = ImportParsing.ReadGrid(lastCsv, Columns);
+            mapping = ImportParsing.AutoMap(grid, Columns);
+            await RestoreRememberedMappingAsync();
+            RefreshMappingOptions();
+            preview = null;
+            existing = null;
+            duplicatesConfirmed = false;
+            stage = Stage.Map;
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not read the table", ex.Message);
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

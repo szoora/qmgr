@@ -261,26 +261,43 @@ else if (hasCoreQueue && queueStatus != null)
         </QCard>
 
         <!-- Quick Actions -->
+        @* Each button follows NavGates, the rule the sidebar uses (2026-09-25). They were gated on the
+           module alone, so a teacher was offered Counter Terminal and Reports and refused on press. *@
+        @if (QuickActionCount > 0)
+        {
         <QCard Class="quick-actions-card" Title="Quick Actions" Icon="lightning-fill">
             <div class="quick-actions-grid">
+                @if (NavGates.Kiosk(HasCode, HasModuleCode))
+                {
                 <button class="quick-action-btn" @onclick="OpenKiosk">
                     <QIcon Name="hand-index-fill" />
                     <span>Open Kiosk</span>
                 </button>
+                }
+                @if (NavGates.CounterTerminal(HasCode, HasModuleCode))
+                {
                 <button class="quick-action-btn" @onclick="OpenCounterTerminal">
                     <QIcon Name="shop" />
                     <span>Counter Terminal</span>
                 </button>
+                }
+                @if (NavGates.CustomerDisplay(HasCode, HasModuleCode))
+                {
                 <button class="quick-action-btn" @onclick="OpenCustomerDisplay">
                     <QIcon Name="tv-fill" />
                     <span>Customer Display</span>
                 </button>
+                }
+                @if (NavGates.Reports(HasCode, HasModuleCode))
+                {
                 <button class="quick-action-btn" @onclick="OpenReports">
                     <QIcon Name="bar-chart-fill" />
                     <span>View Reports</span>
                 </button>
+                }
             </div>
         </QCard>
+        }
     </div>
 }
 
@@ -1142,6 +1159,8 @@ else if (hasCoreQueue && queueStatus != null)
         // What the stat cards are allowed to link to. A card whose destination the caller can't
         // open stays a plain tile rather than a link that bounces them off /unauthorized — see
         // StatHref below.
+        permissionCodes = await PermissionService.GetPermissionsAsync();
+        callerIsSuperAdmin = await PermissionService.IsSuperAdminAsync();
         canViewReports = await PermissionService.HasPermissionAsync(Permissions.ReportsView);
         canViewQueue = await PermissionService.HasPermissionAsync(Permissions.QueueView);
         canViewStudents = await PermissionService.HasPermissionAsync(Permissions.StudentsView);
@@ -1158,6 +1177,15 @@ else if (hasCoreQueue && queueStatus != null)
     }
 
     private bool hasCoreQueue = true;
+
+    /// <summary>The caller's whole permission set, for the synchronous NavGates rules the quick actions share with the sidebar.</summary>
+    private HashSet<string> permissionCodes = new();
+    private bool callerIsSuperAdmin;
+    private bool HasCode(string code) => callerIsSuperAdmin || permissionCodes.Contains(code);
+    private bool HasModuleCode(string code) => code == ModuleCodes.CoreQueue && hasCoreQueue;
+    private int QuickActionCount =>
+        (NavGates.Kiosk(HasCode, HasModuleCode) ? 1 : 0) + (NavGates.CounterTerminal(HasCode, HasModuleCode) ? 1 : 0)
+        + (NavGates.CustomerDisplay(HasCode, HasModuleCode) ? 1 : 0) + (NavGates.Reports(HasCode, HasModuleCode) ? 1 : 0);
 
     /// <summary>True when the module list could not be read and hasCoreQueue is the fail-open guess,
     /// not a fact. A refused queue call then means "not owned", not "the API is down".</summary>

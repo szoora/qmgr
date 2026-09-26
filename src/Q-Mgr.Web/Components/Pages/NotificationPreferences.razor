@@ -4,6 +4,8 @@
 @inject NavigationManager Navigation
 @inject IAppInitializationService AppInit
 @inject IPermissionService PermissionService
+@inject IUiPreferencesService UiPreferences
+@inject IJSRuntime JS
 @using QMgr.Application.DTOs
 
 <QPageTitle Text="Notification Preferences" />
@@ -75,6 +77,40 @@
                 </div>
                 <QCheckbox Value="@prefs.SmsEnabled" ValueChanged="@(v => prefs.SmsEnabled = v)" Label="Text me" />
             </div>
+            @* Push had a stored switch and a per-event default from 2026-09-22 and no control on this page at all — and
+               the server dropped the switch on every save until 2026-09-26, so an opt-out lasted a week at most. *@
+            <div class="np-master" id="np-push">
+                <div class="np-master-icon"><QIcon Name="phone-vibrate" /></div>
+                <div class="np-master-text">
+                    <strong>Phone</strong>
+                    <span>@(prefs.PushEnabled ? "On — the app on your phone shows the events ticked below." : "Off — nothing on your phone, whatever is ticked below.")</span>
+                </div>
+                <QCheckbox Value="@prefs.PushEnabled" ValueChanged="@(v => prefs.PushEnabled = v)" Label="Notify my phone" />
+            </div>
+            <div class="np-master" id="np-sound">
+                <div class="np-master-icon"><QIcon Name="volume-up" /></div>
+                <div class="np-master-text">
+                    <strong>Sound</strong>
+                    <span>
+                        @if (sound.Enabled)
+                        {
+                            <text>A short chime when a notification arrives while this site is open@(sound.ImportantOnly ? " — only for important ones" : "").
+                                  Never during the school's quiet hours, and always with a message on screen.</text>
+                        }
+                        else
+                        {
+                            <text>Off — notifications arrive silently.</text>
+                        }
+                    </span>
+                    <div class="np-sound-options">
+                        <QCheckbox Value="@sound.ImportantOnly" ValueChanged="@(v => sound.ImportantOnly = v)" Disabled="@(!sound.Enabled)" Label="Important ones only" id="np-sound-important" />
+                        <QSwitch Value="@mutedHere" ValueChanged="@SetMutedHereAsync" Label="Mute on this device" id="np-sound-muted"
+                                 Hint="For a shared office computer. It applies at once, and only to this browser." />
+                        <QButton Text="Play a test sound" Icon="play-circle" Variant="ghost" Size="sm" OnClick="@TestSoundAsync" Disabled="@(!sound.Enabled)" id="np-sound-test" />
+                    </div>
+                </div>
+                <QCheckbox Value="@sound.Enabled" ValueChanged="@(v => sound.Enabled = v)" Label="Play a sound" id="np-sound-enabled" />
+            </div>
         </div>
 
         @if (!events.Any())
@@ -116,6 +152,10 @@
                                            ValueChanged="@(v => choice.Sms = v)"
                                            Disabled="@(!prefs.SmsEnabled)"
                                            Label="SMS" Class="np-toggle" />
+                                <QCheckbox Value="@(choice.Push ?? ev.DefaultPush)"
+                                           ValueChanged="@(v => choice.Push = v)"
+                                           Disabled="@(!prefs.PushEnabled)"
+                                           Label="Phone" Class="np-toggle" />
                             </div>
                         </div>
                     }
@@ -140,6 +180,9 @@
 
     private List<NotificationEventDefinition> events = new();
     private UserNotificationPreferencesDto prefs = new();
+    /// <summary>The sound lives in the person's UI preferences, not the notification blob (E8); saved by the same button.</summary>
+    private NotificationSoundPreferencesDto sound = new();
+    private bool mutedHere;
 
     // OnAfterRenderAsync, never OnInitialized: there is no JS interop during prerendering, so the
     // token read that authorises these calls returns null in that pass. See CLAUDE.md.
@@ -170,6 +213,9 @@
                     shown.Add(ev);
             events = shown;
             prefs = await NotificationApi.GetPreferencesAsync();
+            var ui = await UiPreferences.LoadAsync();
+            sound = (ui.Sound ?? new NotificationSoundPreferencesDto()) with { };
+            mutedHere = await UiPreferences.IsMutedOnThisDeviceAsync();
         }
         catch (Exception ex)
         {
@@ -205,6 +251,26 @@
         return created;
     }
 
+    private async Task SetMutedHereAsync(bool muted)
+    {
+        mutedHere = muted;
+        await UiPreferences.SetMutedOnThisDeviceAsync(muted);
+    }
+
+    /// <summary>From a press, so the browser lets it play even before anything else has.</summary>
+    private async Task TestSoundAsync()
+    {
+        try
+        {
+            if (!await JS.InvokeAsync<bool>("qmgrSound.test"))
+                NotificationService.Notify(ToastSeverity.Warning, "No sound", "This browser would not play it. Check the tab is not muted, and the device volume.");
+        }
+        catch (JSException)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "No sound", "This browser cannot play sounds.");
+        }
+    }
+
     private async Task SaveAsync()
     {
         isSaving = true;
@@ -216,6 +282,7 @@
             foreach (var ev in events) ChoiceFor(ev.Key);
 
             await NotificationApi.SavePreferencesAsync(prefs);
+            await UiPreferences.SaveAsync(UiPreferences.Current with { Sound = sound with { } });
             NotificationService.Notify(ToastSeverity.Success, "Preferences saved", "This takes effect on the next notification sent to you.");
         }
         catch (Exception ex)
@@ -287,6 +354,7 @@
     .np-row-text p { margin: 2px 0 0; font-size: var(--qm-text-sm); color: var(--qm-text-secondary); line-height: 1.5; }
 
     .np-row-toggles { display: flex; gap: 16px; flex-shrink: 0; flex-wrap: wrap; }
+    .np-sound-options { display: flex; flex-wrap: wrap; align-items: center; gap: var(--q-row-gap); margin-top: 6px; }
 
     .np-alert {
         display: flex; gap: 12px; align-items: flex-start;

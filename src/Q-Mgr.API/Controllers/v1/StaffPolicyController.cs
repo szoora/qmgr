@@ -450,6 +450,19 @@ public class StaffPolicyController : StaffPerformanceControllerBase
         if (template.Select(s => s.Key.Trim().ToLowerInvariant()).Distinct().Count() != template.Count)
             return BadRequestProblem("Report section keys must be unique", "A submitted report stores its answers by key.");
 
+        // Lesson plans (2026-09-26). The limits are clamped on read; the template's shape is refused here, in the
+        // same words the settings page shows before it sends.
+        var plans = p.TeachingPlans ?? new TeachingPlanSettingsDto();
+        if (plans.LessonPlanTemplate.Count > 30) return BadRequestProblem("A lesson plan has at most 30 sections");
+        if (plans.SchemeColumns.Count > 16) return BadRequestProblem("A scheme of work has at most 16 columns");
+        if (plans.ProcedurePhases.Count > 12) return BadRequestProblem("The procedure has at most 12 phases");
+        if (TeachingPlanRules.TemplateProblem(plans.LessonPlanTemplate, plans.SchemeColumns, plans.ProcedurePhases) is { } templateProblem)
+            return BadRequestProblem(templateProblem, "Answers are stored under each key, so a key that is used cannot be removed.");
+        foreach (var s in plans.LessonPlanTemplate.Where(s => s.Kind is PlanSectionKind.Choice or PlanSectionKind.MultiChoice))
+            if (s.Choices.Count(c => !string.IsNullOrWhiteSpace(c)) < 2)
+                return BadRequestProblem($"The choice section '{s.Title}' needs at least two choices");
+        if (plans.LessonPlanStages is not (1 or 2)) return BadRequestProblem("A lesson plan takes one stage or two");
+
         var norms = p.TeachingLoadNorms ?? new TeachingLoadNormsDto();
         if (norms.MinLessonsPerWeek < 0 || norms.MaxLessonsPerWeek > 80 || norms.MinLessonsPerWeek > norms.MaxLessonsPerWeek)
             return BadRequestProblem("The weekly lesson band must run from a minimum to a higher maximum, at most 80");

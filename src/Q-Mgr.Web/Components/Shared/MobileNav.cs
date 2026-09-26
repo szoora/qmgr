@@ -40,7 +40,10 @@ public static class MobileNav
         string Icon,
         string Href,
         string? Permission = null,
-        string? Module = null);
+        string? Module = null,
+        // A rule that is not one permission — the Settings hub, which is the OR of its sections.
+        // Takes the same two predicates as everything else here; see NavGates.
+        Func<Func<string, bool>, Func<string, bool>, bool>? Gate = null);
 
     /// <summary>A named run of destinations in the More sheet, in sidebar order.</summary>
     public sealed record Group(string Title, IReadOnlyList<Slot> Items);
@@ -164,15 +167,15 @@ public static class MobileNav
             }),
             new("Reports", new Slot[]
             {
-                new("reports", "Overview", "bar-chart", "/reports", Permissions.ReportsView),
+                new("reports", "Overview", "bar-chart", "/reports", Gate: NavGates.Reports),
             }),
             new("Administration", new Slot[]
             {
                 new("branches", "Branches", "building", "/admin/branches", Permissions.BranchesView),
                 new("users", "Users & Roles", "people", "/admin/users", Permissions.UsersView),
                 new("appearance", "Appearance", "palette", "/admin/appearance", Permissions.SettingsView),
-                new("settings", "Settings", "gear", "/admin/settings", Permissions.SettingsView),
-                new("billing", "Billing", "credit-card", "/billing"),
+                new("settings", "Settings", "gear", "/admin/settings", Gate: NavGates.SettingsHub),
+                new("billing", "Billing", "credit-card", "/billing", Permissions.BillingView),
             }),
             new("You", new Slot[]
             {
@@ -194,6 +197,7 @@ public static class MobileNav
         // Module first, the same order the sidebar uses: a tenant without the module does not see
         // the destination whatever their permissions say.
         if (slot.Module != null && !hasModule(slot.Module)) return false;
+        if (slot.Gate != null && !slot.Gate(hasPermission, hasModule)) return false;
         return slot.Permission == null || hasPermission(slot.Permission);
     }
 

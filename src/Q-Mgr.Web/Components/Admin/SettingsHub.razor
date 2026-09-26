@@ -50,15 +50,9 @@
     private const string IndustryTab = "industry";
     private const string IntegrationsTab = "integrations";
 
-    private static readonly HubTabs.Section[] Sections =
-    {
-        new(new QTab(GeneralTab, "General", "sliders"), Permissions.SettingsView),
-        new(new QTab(NotificationsTab, "Notifications", "bell-fill"), Permissions.NotificationsView),
-        new HubTabs.Section(new QTab(IndustryTab, "Industry", "buildings"), Permissions.SettingsView)
-            .RequiringModule(ModuleCodes.CoreQueue),
-        new HubTabs.Section(new QTab(IntegrationsTab, "Integrations", "plug"), Permissions.SettingsView)
-            .RequiringModule(ModuleCodes.IntegrationsApi),
-    };
+    // The sections live in NavGates, because the sidebar, the user menu and the phone sheet must
+    // decide "may this person see Settings" from the SAME list the hub renders (2026-09-25).
+    private static HubTabs.Section[] Sections => NavGates.SettingsSections;
 
     private IReadOnlyList<QTab> tabs = Array.Empty<QTab>();
     private string hubTab = GeneralTab;

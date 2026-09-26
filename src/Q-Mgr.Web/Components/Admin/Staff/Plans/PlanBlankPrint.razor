@@ -1,0 +1,118 @@
+@page "/plans/blank/print"
+@layout QMgr.Web.Components.Layout.MinimalLayout
+@using QMgr.Application.DTOs
+@inject ITeachingPlanApiService PlanApi
+@inject IBranchStateService BranchState
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+@*
+    A BLANK lesson plan or scheme of work in the school's own format, headed by the school, for a teacher who writes by
+    hand (plan §5.2, 2026-09-26). Drawn from the same sections, phases and columns as the form and the Word template, so
+    the three can never disagree. ?kind=lesson (default) or ?kind=scheme. Ruled lines to write on; every choice list as
+    boxes to tick; the signature lines for the head of department and the Director of Studies.
+*@
+
+<QPageTitle Text="Blank plan" />
+
+<QPrintSheet SheetId="pb-sheet" Title="@DocTitle" Landscape="@IsScheme" Ready="@(template != null)" BackText="Back to My Workspace"
+             OnBack="@(() => Navigation.NavigateTo("/portal?tab=teaching"))" OnPrint="@PrintAsync" Disabled="@(template == null)">
+    <ChildContent>
+        @if (template != null)
+        {
+            <PlanSheetHead Title="@DocTitle" Subtitle="@template.PeriodName" />
+            @if (!IsScheme)
+            {
+                <dl class="ps-fields" id="pb-fields">
+                    @foreach (var f in new[] { "Teacher", "Subject", "Class", "Number of learners", "Date", "Time", "Duration", "Term / week" })
+                    {
+                        <div><dt>@f</dt><dd>@(f == "Teacher" ? template.TeacherName : "")</dd></div>
+                    }
+                </dl>
+                @foreach (var s in template.Sections)
+                {
+                    @if (s.Kind == PlanSectionKind.Procedure)
+                    {
+                        <div class="ps-box">
+                            <h3>@s.Title</h3>
+                            <table class="ps-table" id="pb-procedure">
+                                <thead><tr><th style="width:16%">Phase</th><th style="width:8%">Minutes</th><th>Teacher's activities</th><th>Learners' activities</th></tr></thead>
+                                <tbody>
+                                    @foreach (var ph in template.Phases)
+                                    {
+                                        <tr style="height:92px"><td><strong>@ph</strong></td><td></td><td class="ps-lines"></td><td class="ps-lines"></td></tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                    else if (s.Kind is PlanSectionKind.MultiChoice or PlanSectionKind.Choice)
+                    {
+                        <div class="ps-box">
+                            <h3>@s.Title<span class="ps-hint">@(s.Kind == PlanSectionKind.Choice ? "tick one" : "tick all that apply")</span></h3>
+                            <div class="ps-choices">@foreach (var ch in s.Choices) { <span>@ch</span> }</div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="ps-box" data-section="@s.Key">
+                            <h3>@s.Title @if (!string.IsNullOrWhiteSpace(s.Hint)) { <span class="ps-hint">@s.Hint</span> }</h3>
+                            <div class="ps-lines" style="height:@(Lines(s))px"></div>
+                        </div>
+                    }
+                }
+            }
+            else
+            {
+                <dl class="ps-fields" id="pb-fields">
+                    <div><dt>Teacher</dt><dd>@template.TeacherName</dd></div>
+                    <div><dt>Subject</dt><dd></dd></div>
+                    <div><dt>Class</dt><dd></dd></div>
+                    <div><dt>Term</dt><dd>@template.PeriodName</dd></div>
+                </dl>
+                <table class="ps-table" id="pb-scheme">
+                    <thead><tr><th style="width:4%">Week</th><th style="width:5%">Periods</th>@foreach (var c in template.Columns) { <th>@c.Title</th> }</tr></thead>
+                    <tbody>
+                        @for (var w = 1; w <= template.Weeks; w++)
+                        {
+                            <tr style="height:66px"><td><strong>@w</strong></td><td></td>@foreach (var c in template.Columns) { <td></td> }</tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            <div class="ps-sign">
+                <div><strong>Teacher</strong>Signature and date</div>
+                <div><strong>Head of department</strong>Signature and date</div>
+                <div><strong>Director of Studies</strong>Signature and date</div>
+            </div>
+            <div class="ps-foot"><span>Blank @DocTitle.ToLowerInvariant() — the school's format</span><span>Printed @QDateFormat.D(DateTime.Now)</span></div>
+        }
+    </ChildContent>
+</QPrintSheet>
+
+@code {
+    [SupplyParameterFromQuery(Name = "kind")] public string? Kind { get; set; }
+    private PlanTemplateDto? template;
+    private bool IsScheme => string.Equals(Kind, "scheme", StringComparison.OrdinalIgnoreCase);
+    private string DocTitle => IsScheme ? "Scheme of work" : "Lesson plan";
+
+    /// <summary>Writing room by section: outcomes and the self-evaluation get more, a sub-topic less.</summary>
+    private static int Lines(PlanSectionDto s) => s.Key switch
+    {
+        TeachingPlanDefaults.OutcomesKey => 110,
+        TeachingPlanDefaults.ReflectionKey => 110,
+        TeachingPlanDefaults.TopicKey or TeachingPlanDefaults.SubTopicKey => 44,
+        _ => 66
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await BranchState.InitializeAsync();
+        try { template = await PlanApi.GetTemplateAsync(BranchState.CurrentBranchId); } catch { template = null; }
+    }
+
+    private async Task PrintAsync()
+    {
+        try { await JS.InvokeVoidAsync("window.print"); } catch { }
+    }
+}

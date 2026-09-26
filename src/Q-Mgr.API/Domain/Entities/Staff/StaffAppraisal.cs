@@ -63,6 +63,9 @@ public class StaffAppraisal : BaseAuditableEntity
 
     public DateTime? SelfSubmittedAt { get; set; }
     public DateTime? AppraiserSubmittedAt { get; set; }
+    /// <summary>Who actually wrote the review — the appraiser, or an approver standing in. Sign-off is never by them
+    /// (DutySeparation, 2026-09-26). Null on reviews written before that; the appraiser is assumed.</summary>
+    public Guid? ReviewedByUserId { get; set; }
     public DateTime? ModeratedAt { get; set; }
     [MaxLength(1000)] public string? ModerationReason { get; set; }
     public DateTime? SignedAt { get; set; }

@@ -123,8 +123,8 @@ const surface = async (name, url, scope, ready) => {
 await surface('header', '/portal', '.qm-header', `!!document.querySelector('.qm-header .q-avatar')`);
 await surface('my workspace greeting', '/portal', '.portal-greeting, .qm-main',
   `!!document.querySelector('.qm-main .q-avatar')`);
-await surface('profile', '/profile', '.profile-header',
-  `!!document.querySelector('.profile-header')`);
+await surface('profile', '/profile', '.acct-id',
+  `!!document.querySelector('.acct-id')`);
 
 // THE TWO LISTS HAVE TO BE FILTERED TO THIS PERSON FIRST. The dev tenant carries 143 people and the
 // lists show 25 and 10 of them; without narrowing, the probe reads twenty-five colleagues who have
@@ -185,8 +185,9 @@ if (!await t.waitFor(`!!document.querySelector('.qm-main .q-avatar')`, 20000)) {
 
 // The profile page is also the only place a photo can be CHANGED once onboarding is finished.
 await t.goto(`${BASE}/profile`);
-await t.waitFor(`!!document.querySelector('.profile-header')`, 20000);
-const changer = await t.eval(`!!document.querySelector('.avatar-large__change input[type="file"]')`);
+await t.waitFor(`!!document.querySelector('.acct-id')`, 20000);
+// The account page was rebuilt 2026-09-25: the photo is the picker (.acct-photo), and its native input is invisible.
+const changer = await t.eval(`!!document.querySelector('.acct-photo input[type="file"]')`);
 check('profile offers a way to change the photo', changer, 'no file input beside the avatar');
 
 // An expired or wrong token must not leave a broken-image glyph on the page.

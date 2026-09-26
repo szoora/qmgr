@@ -34,27 +34,32 @@ public partial class PublicCalendarController : ControllerBase
     private const int FeedDaysAhead = 365;
 
     private readonly QMgrDbContext _db;
+    private readonly QMgr.Infrastructure.Services.IStaffPerformancePolicyService _policy;
     private readonly ILogger<PublicCalendarController> _logger;
 
-    public PublicCalendarController(QMgrDbContext db, ILogger<PublicCalendarController> logger)
+    public PublicCalendarController(QMgrDbContext db, QMgr.Infrastructure.Services.IStaffPerformancePolicyService policy, ILogger<PublicCalendarController> logger)
     {
         _db = db;
+        _policy = policy;
         _logger = logger;
     }
 
     [GeneratedRegex("^[A-Za-z0-9_-]{20,64}$")]
     private static partial Regex SecretShape();
 
+    /// <param name="categories">Only these calendar categories, comma-separated ("Academic,Meetings"). Empty = every one.
+    /// A phone can subscribe to the same link twice with different categories, which is how "subscribe per category"
+    /// works without a second secret.</param>
     [HttpGet("calendar/{token}.ics")]
     [Produces("text/calendar")]
-    public async Task<IActionResult> GetFeed(string token)
+    public async Task<IActionResult> GetFeed(string token, [FromQuery] string? categories = null)
     {
         if (string.IsNullOrEmpty(token) || !SecretShape().IsMatch(token)) return NotFound();
 
         var hash = CalendarController.FeedTokenHash(token);
         var user = await _db.Users.IgnoreQueryFilters().AsNoTracking()
             .Where(u => u.CalendarFeedTokenHash == hash)
-            .Select(u => new { u.Id, u.OrganizationId, u.IsActive, u.DepartmentIds, u.AssignedBranchId })
+            .Select(u => new { u.Id, u.OrganizationId, u.IsActive, u.AssignedBranchId })
             .FirstOrDefaultAsync();
         if (user == null || !user.IsActive) return NotFound();
 
@@ -72,12 +77,15 @@ public partial class PublicCalendarController : ControllerBase
         var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(now, zone));
         var from = today.AddDays(-FeedDaysBack);
         var to = today.AddDays(FeedDaysAhead);
-        var departments = (IReadOnlyCollection<Guid>)(user.DepartmentIds ?? Array.Empty<Guid>());
 
-        // Everything personal (plan §9): staff-audience events and the ones this person is responsible for — the
-        // same rule My School Day reads, without the calendar-keeper's "every event" override.
+        // Everything personal: the events this person is in the audience of or responsible for — the same rule My School
+        // Day reads (StaffAudience.IsMine), without the calendar-keeper's whole-school view.
+        var viewer = await StaffAudience.MemberAsync(_db, _policy, user.OrganizationId, user.Id);
+        var wanted = (categories ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var events = await SchoolEventQueries.InRangeAsync(_db, user.OrganizationId, branch?.Id, from, to);
-        var mine = SchoolEventVisibility.Ordered(events.Where(e => SchoolEventVisibility.IsPersonal(e, user.Id, departments))).ToList();
+        var mine = SchoolEventVisibility.Ordered(events.Where(e => StaffAudience.IsMine(e, viewer, user.Id)
+                                                                  && (wanted.Count == 0 || (e.Category != null && wanted.Contains(e.Category))))).ToList();
 
         var fromUtc = CalendarController.LocalToUtc(from.ToDateTime(TimeOnly.MinValue), zone);
         var toUtc = CalendarController.LocalToUtc(to.AddDays(1).ToDateTime(TimeOnly.MinValue), zone);
@@ -87,26 +95,18 @@ public partial class PublicCalendarController : ControllerBase
                 .OrderBy(d => d.StartsAt).Take(1000).ToListAsync();
 
         var ics = new IcsWriter($"{orgName} — my calendar");
-        foreach (var e in mine)
-        {
-            var uid = $"{e.Id}@qmgr";
-            var modified = e.UpdatedAt ?? e.CreatedAt;
-            if (e.StartTime is { } st)
+        foreach (var e in mine) IcsEvents.Write(ics, e, zone);
+
+        // A duty that IS an event on this feed is written once, as the event (B1's rule, in the feed). A category filter
+        // means "these kinds of school event", which a duty is not.
+        var linked = mine.Where(e => e.DutyId.HasValue).Select(e => e.DutyId!.Value).ToHashSet();
+        if (wanted.Count == 0)
+            foreach (var d in duties.Where(d => !linked.Contains(d.Id)))
             {
-                var start = CalendarController.LocalToUtc(e.StartsOn.ToDateTime(st), zone);
-                DateTime? end = e.EndTime is { } et ? CalendarController.LocalToUtc(e.EndsOn.ToDateTime(et), zone) : null;
-                ics.TimedEvent(uid, now, start, end, e.Title, e.Location, e.Description, e.Category, modified);
+                var category = d.Kind == DutyKind.Rota ? "Duty" : "Meeting";
+                var modified = d.UpdatedAt ?? d.CreatedAt;
+                ics.TimedEvent($"{d.Id}@qmgr", modified, d.StartsAt, d.EndsAt, d.Title, d.Location, d.Description, category, modified);
             }
-            else
-            {
-                ics.AllDayEvent(uid, now, e.StartsOn, e.EndsOn, e.Title, e.Location, e.Description, e.Category, modified);
-            }
-        }
-        foreach (var d in duties)
-        {
-            var category = d.Kind == DutyKind.Rota ? "Duty" : "Meeting";
-            ics.TimedEvent($"{d.Id}@qmgr", now, d.StartsAt, d.EndsAt, d.Title, d.Location, d.Description, category, d.UpdatedAt ?? d.CreatedAt);
-        }
 
         // Calendar applications poll; a short private cache spares the database a burst of identical polls.
         Response.Headers.CacheControl = "private, max-age=300";

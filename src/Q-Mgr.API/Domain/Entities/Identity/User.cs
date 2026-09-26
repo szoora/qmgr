@@ -151,6 +151,14 @@ public class User : BaseAuditableEntity
     public string? NotificationPreferences { get; set; }
 
     /// <summary>
+    /// How this person likes the app to look and behave — the calendar's view and scope, whether past events show, the
+    /// notification sound (plan CALENDAR_AUDIENCES_AND_IMPORT_ROUTING E8, 2026-09-26). jsonb, read and written only
+    /// through <c>IUserPreferencesService</c>. NOT in <see cref="NotificationPreferences"/>: the portal reads a non-null
+    /// value there as "notification preferences reviewed", and a calendar view choice must not tick that step.
+    /// </summary>
+    public string? UiPreferences { get; set; }
+
+    /// <summary>
     /// Reference to the user's role (database-backed RBAC)
     /// </summary>
     public Guid RoleId { get; set; }

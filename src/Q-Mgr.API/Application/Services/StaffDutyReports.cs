@@ -153,7 +153,7 @@ public static class StaffDutyReports
 
         if (isAuthor)
             return new Access(true, true, CanEdit: open, CanComment: false, CanRespond: report.Status != DutyReportStatus.Draft, CanReview: false,
-                CanMarkNoDuty: open && (mayManage || isSupervisor));
+                CanMarkNoDuty: false); // G5 (2026-09-26): the author asks; a supervisor or duty manager decides.
 
         // Nobody but the author reads a draft.
         if (report.Status == DutyReportStatus.Draft && !(isSupervisor || mayManage))

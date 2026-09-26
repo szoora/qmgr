@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using QMgr.API.Application.Services;
 using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
+using QMgr.Domain.Enums;
 using QMgr.Domain.Identity;
 using QMgr.Infrastructure.Data;
 using QMgr.Infrastructure.Services;
@@ -129,33 +130,40 @@ public class ProfileController : ControllerBase
                 Status = StatusCodes.Status404NotFound
             });
 
-        // Validate email uniqueness if changed
-        if (!string.IsNullOrWhiteSpace(request.Email) && request.Email.ToLowerInvariant() != user.Email)
+        // The email is the sign-in and recovery address, so it is the one field here a person
+        // maintains themselves. Checked on its CANONICAL form, the column the unique index is on:
+        // comparing the raw text let a variant of a colleague's address pass this check and then
+        // fail at the index as a 500 (2026-09-25).
+        if (!string.IsNullOrWhiteSpace(request.Email)
+            && !string.Equals(request.Email.Trim(), user.Email, StringComparison.OrdinalIgnoreCase))
         {
-            var emailExists = await _dbContext.Users.AnyAsync(u => u.Email == request.Email.ToLowerInvariant() && u.Id != currentUserId);
-            if (emailExists)
+            var email = request.Email.Trim();
+            if (!new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(email))
+                return BadRequest(new ProblemDetails
+                {
+                    Title = "Email address not valid",
+                    Detail = "Enter an email address like name@example.com.",
+                    Status = StatusCodes.Status400BadRequest
+                });
+            var canonical = RegistrationIdentity.NormalizeEmail(email) ?? email.ToLowerInvariant();
+            if (await _dbContext.Users.IgnoreQueryFilters().AnyAsync(u => u.NormalizedEmail == canonical && u.Id != currentUserId))
                 return BadRequest(new ProblemDetails
                 {
                     Title = "Email already in use",
-                    Detail = $"The email '{request.Email}' is already associated with another account.",
+                    Detail = $"The email '{email}' is already associated with another account.",
                     Status = StatusCodes.Status400BadRequest
                 });
-            user.Email = request.Email.ToLowerInvariant();
+            user.Email = email.ToLowerInvariant();
         }
 
-        // Update allowed fields
-        if (!string.IsNullOrWhiteSpace(request.FirstName))
-            user.FirstName = request.FirstName;
-        if (!string.IsNullOrWhiteSpace(request.LastName))
-            user.LastName = request.LastName;
-        if (request.Phone != null) // Allow empty to clear
-        {
-            // A confirmation belongs to a number, not to a person: a changed number is unconfirmed
-            // again (the onboarding checklist, plan §12.3, asks for it once more).
-            if (RegistrationIdentity.NormalizePhone(request.Phone) != RegistrationIdentity.NormalizePhone(user.Phone))
-                user.PhoneVerifiedAt = null;
-            user.Phone = request.Phone;
-        }
+        // FirstName / LastName are IGNORED (decision D3, 2026-09-25): a person's name is on the
+        // school's record (registers, MoES returns and printed slips carry it) and changes through
+        // the staff directory. The fields stay on the request so an older client does not fail.
+        //
+        // Phone is still accepted, for an older client; the confirmation reset is the DbContext's
+        // rule now, applied whoever writes the number.
+        if (request.Phone != null)
+            user.Phone = string.IsNullOrWhiteSpace(request.Phone) ? null : request.Phone.Trim();
 
         user.UpdatedAt = DateTime.UtcNow;
 
@@ -181,6 +189,82 @@ public class ProfileController : ControllerBase
             LastLogin = user.LastLogin,
             CreatedAt = user.CreatedAt
         });
+    }
+
+    /// <summary>
+    /// My own contact detail: phone, second phone, where to find me, who to call about me. The ONE
+    /// home for it (2026-09-25). It was on the staff portal, which a tenant without Welfare &amp;
+    /// Performance does not have, while the account page edited the phone through a second writer.
+    /// No permission: self is always visible and is not scope.
+    /// </summary>
+    [HttpGet("contact")]
+    [ProducesResponseType(typeof(StaffContactDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetMyContact()
+    {
+        var currentUserId = GetCurrentUserId();
+        if (currentUserId == null) return Unauthorized();
+        var user = await _dbContext.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == currentUserId);
+        if (user == null) return NotFound();
+        return Ok(ToContactDto(user));
+    }
+
+    /// <summary>
+    /// Maintains my own contact detail. Contact only: <see cref="UpdateStaffContactRequest"/> has no
+    /// field for an employment term, and its <c>JobTitle</c> is ignored, because what the school calls
+    /// somebody is the school's decision. The line manager is not told (a routine correction); the
+    /// change is recorded in the activity log, which is where "who changed this number" is answered.
+    /// </summary>
+    [HttpPut("contact")]
+    [ProducesResponseType(typeof(StaffContactDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> UpdateMyContact([FromBody] UpdateStaffContactRequest request)
+    {
+        var currentUserId = GetCurrentUserId();
+        if (currentUserId == null) return Unauthorized();
+        var me = await _dbContext.Users.FirstOrDefaultAsync(u => u.Id == currentUserId);
+        if (me == null) return NotFound();
+
+        var before = new { me.Phone, me.AlternatePhone, me.OfficeLocation, me.EmergencyContactName, me.EmergencyContactPhone };
+        me.Phone = TrimTo(request.Phone, 30);
+        me.AlternatePhone = TrimTo(request.AlternatePhone, 30);
+        me.OfficeLocation = TrimTo(request.OfficeLocation, 200);
+        me.EmergencyContactName = TrimTo(request.EmergencyContactName, 120);
+        me.EmergencyContactPhone = TrimTo(request.EmergencyContactPhone, 30);
+        me.UpdatedBy = me.Id;
+        await _dbContext.SaveChangesAsync();
+
+        var changed = new List<string>();
+        if (before.Phone != me.Phone) changed.Add("phone");
+        if (before.AlternatePhone != me.AlternatePhone) changed.Add("second phone");
+        if (before.OfficeLocation != me.OfficeLocation) changed.Add("office");
+        if (before.EmergencyContactName != me.EmergencyContactName) changed.Add("emergency contact");
+        if (before.EmergencyContactPhone != me.EmergencyContactPhone) changed.Add("emergency number");
+
+        if (changed.Count > 0)
+            await _activity.RecordAsync(ActivityActions.StaffContactSelfUpdated, nameof(QMgr.Domain.Entities.Identity.User),
+                me.Id, me.Id,
+                $"{me.FullName} updated their own {string.Join(", ", changed)}",
+                new { Changed = changed }, me.AssignedBranchId, me.OrganizationId,
+                visibility: WelfareVisibility.Confidential);
+
+        return Ok(ToContactDto(me));
+    }
+
+    private static StaffContactDto ToContactDto(QMgr.Domain.Entities.Identity.User u) => new()
+    {
+        Phone = u.Phone,
+        PhoneVerifiedAt = u.PhoneVerifiedAt,
+        AlternatePhone = u.AlternatePhone,
+        OfficeLocation = u.OfficeLocation,
+        EmergencyContactName = u.EmergencyContactName,
+        EmergencyContactPhone = u.EmergencyContactPhone
+    };
+
+    private static string? TrimTo(string? value, int max)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var t = value.Trim();
+        return t.Length <= max ? t : t[..max];
     }
 
     /// <summary>
@@ -424,25 +508,6 @@ public class ProfileController : ControllerBase
 }
 
 #region DTOs
-
-public record ProfileDto
-{
-    public Guid Id { get; init; }
-    public string Username { get; init; } = string.Empty;
-    public string Email { get; init; } = string.Empty;
-    public string? FirstName { get; init; }
-    public string? LastName { get; init; }
-    public string FullName { get; init; } = string.Empty;
-    public string? Phone { get; init; }
-    public DateTime? PhoneVerifiedAt { get; init; }
-    public string? PhotoUrl { get; init; }
-    public string? EmployeeNumber { get; init; }
-    public string Role { get; init; } = string.Empty;
-    public Guid? AssignedBranchId { get; init; }
-    public string? AssignedBranchName { get; init; }
-    public DateTime? LastLogin { get; init; }
-    public DateTime CreatedAt { get; init; }
-}
 
 public record UpdateProfileRequest
 {

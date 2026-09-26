@@ -1,0 +1,138 @@
+@page "/plans/{Id:guid}/print"
+@layout QMgr.Web.Components.Layout.MinimalLayout
+@using QMgr.Application.DTOs
+@inject ITeachingPlanApiService PlanApi
+@inject IBranchStateService BranchState
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+@*
+    A FILLED lesson plan or scheme of work, printed from the form (2026-09-26) — the hard copy a teacher carries into the
+    classroom or files for inspection. Headed by the school (logo, name, its colour) through PlanSheetHead; laid out in the
+    school's own sections; every choice list shows ALL the options with the chosen ones ticked, as the paper form would;
+    the review is filled in on the signature lines when it has happened, and left as lines to sign when it has not.
+
+    Printing is the browser's job ("Save as PDF" is the browser's own), and nothing is stored. A plan that is not approved
+    carries a stamp saying so, so an unapproved sheet never stands in a file as the approved one (the minutes rule).
+*@
+
+<QPageTitle Text="Plan print" />
+
+<QPrintSheet SheetId="pp-sheet" Title="@(plan?.Title ?? "Plan")" Class="pp-sheet" Landscape="@(plan?.Kind == TeachingPlanKind.SchemeOfWork)"
+             Ready="@(plan != null)" BackText="Back to the plan" OnBack="@(() => Navigation.NavigateTo($"/plans/{Id}"))" OnPrint="@PrintAsync" Disabled="@(plan == null)">
+    <ChildContent>
+        @if (plan != null)
+        {
+            <PlanSheetHead Title="@PlanDisplay.Kind(plan.Kind)" Subtitle="@SubtitleText" Stamp="@StampText" />
+
+            @if (plan.Kind == TeachingPlanKind.LessonPlan && plan.Content is { } c)
+            {
+                <dl class="ps-fields" id="pp-fields">
+                    <div><dt>Teacher</dt><dd>@plan.AuthorName</dd></div>
+                    <div><dt>Subject</dt><dd>@plan.SubjectName</dd></div>
+                    <div><dt>Class</dt><dd>@string.Join(", ", plan.ClassNames)</dd></div>
+                    <div><dt>Number of learners</dt><dd>@c.Header.Learners</dd></div>
+                    <div><dt>Date</dt><dd>@QDateFormat.D(plan.LessonDate)</dd></div>
+                    <div><dt>Time</dt><dd>@c.Header.Time</dd></div>
+                    <div><dt>Duration</dt><dd>@(c.Header.DurationMinutes is { } dm ? $"{dm} minutes" : "")</dd></div>
+                    <div><dt>Term / week</dt><dd>@plan.PeriodName@(c.Header.Week is { } wk ? $", week {wk}" : "")</dd></div>
+                </dl>
+
+                @foreach (var s in plan.Sections)
+                {
+                    @if (s.Kind == PlanSectionKind.Procedure)
+                    {
+                        <div class="ps-box">
+                            <h3>@s.Title</h3>
+                            <table class="ps-table">
+                                <thead><tr><th style="width:16%">Phase</th><th style="width:8%">Minutes</th><th>Teacher's activities</th><th>Learners' activities</th></tr></thead>
+                                <tbody>
+                                    @foreach (var st in c.Procedure)
+                                    {
+                                        <tr><td><strong>@st.Phase</strong></td><td>@st.Minutes</td><td class="ps-text">@st.Teacher</td><td class="ps-text">@st.Learner</td></tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                    else if (s.Kind is PlanSectionKind.MultiChoice or PlanSectionKind.Choice)
+                    {
+                        var chosen = (c.Answers.TryGetValue(s.Key, out var v) ? v : "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                        <div class="ps-box">
+                            <h3>@s.Title</h3>
+                            <div class="ps-choices">
+                                @foreach (var choice in s.Choices) { <span class="@(chosen.Contains(choice) ? "ps-on" : "")">@choice</span> }
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        var text = s.AfterLesson ? plan.Reflection : (c.Answers.TryGetValue(s.Key, out var t) ? t : null);
+                        <div class="ps-box" data-section="@s.Key">
+                            <h3>@s.Title</h3>
+                            <div class="ps-text @(string.IsNullOrWhiteSpace(text) && s.AfterLesson ? "ps-lines" : "")" style="@(string.IsNullOrWhiteSpace(text) && s.AfterLesson ? "min-height:88px" : "")">@text</div>
+                        </div>
+                    }
+                }
+            }
+            else if (plan.Rows is { } rows)
+            {
+                <dl class="ps-fields" id="pp-fields">
+                    <div><dt>Teacher</dt><dd>@plan.AuthorName</dd></div>
+                    <div><dt>Subject</dt><dd>@plan.SubjectName</dd></div>
+                    <div><dt>Class</dt><dd>@string.Join(", ", plan.ClassNames)</dd></div>
+                    <div><dt>Term</dt><dd>@plan.PeriodName</dd></div>
+                </dl>
+                <table class="ps-table" id="pp-scheme">
+                    <thead><tr><th style="width:4%">Week</th><th style="width:5%">Periods</th>@foreach (var col in plan.Columns) { <th>@col.Title</th> }</tr></thead>
+                    <tbody>
+                        @foreach (var r in rows)
+                        {
+                            <tr><td><strong>@r.Week</strong></td><td>@r.Periods</td>@foreach (var col in plan.Columns) { <td class="ps-text">@r.Cells.GetValueOrDefault(col.Key)</td> }</tr>
+                        }
+                    </tbody>
+                </table>
+            }
+
+            <div class="ps-sign" id="pp-sign">
+                <div><strong>Teacher</strong>@plan.AuthorName@(plan.SubmittedAt is { } sa ? $" · submitted {QDateFormat.D(sa.ToLocalTime())}" : "")</div>
+                <div><strong>Head of department</strong>@(plan.ForwardedByName is { } f ? $"{f} · {QDateFormat.D(plan.ForwardedAt?.ToLocalTime())}" : plan.Stages == 1 && plan.ApprovedByName is { } a1 ? $"{a1} · {QDateFormat.D(plan.ApprovedAt?.ToLocalTime())}" : "")</div>
+                <div><strong>Director of Studies</strong>@(plan.Stages == 2 && plan.ApprovedByName is { } a2 ? $"{a2} · {QDateFormat.D(plan.ApprovedAt?.ToLocalTime())}" : "")</div>
+            </div>
+            <div class="ps-foot"><span>@plan.Title@(plan.Version > 1 ? $" · version {plan.Version}" : "")</span><span>Printed @QDateFormat.DT(DateTime.Now)</span></div>
+        }
+    </ChildContent>
+</QPrintSheet>
+
+<style>
+    .pp-sheet { font-size: 10pt; }
+</style>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+    private TeachingPlanDto? plan;
+
+    private string? SubtitleText => plan == null ? null
+        : plan.Kind == TeachingPlanKind.LessonPlan
+            ? $"{plan.SubjectName} · {string.Join(", ", plan.ClassNames)} · {QDateFormat.D(plan.LessonDate)}"
+            : $"{plan.SubjectName} · {string.Join(", ", plan.ClassNames)} · {plan.PeriodName}";
+
+    private string? StampText => plan?.Status switch
+    {
+        TeachingPlanStatus.Approved => "Approved",
+        TeachingPlanStatus.Draft => "Draft",
+        null => null,
+        _ => "Not yet approved"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await BranchState.InitializeAsync();
+        try { plan = await PlanApi.GetAsync(BranchState.CurrentBranchId, Id); } catch { plan = null; }
+    }
+
+    private async Task PrintAsync()
+    {
+        try { await JS.InvokeVoidAsync("window.print"); } catch { }
+    }
+}

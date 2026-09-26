@@ -54,6 +54,7 @@
     else if (hubTab == "subjects") { <StaffSubjects Embedded="true" /> }
     else if (hubTab == "schoolday"){ <TimetableSettings Embedded="true" /> }
     else if (hubTab == "reports")  { <TeachingReports Embedded="true" /> }
+    else if (hubTab == "plans")    { <QMgr.Web.Components.Admin.Staff.Plans.PlansReview Embedded="true" /> }
     else
     {
 
@@ -560,6 +561,8 @@
         new(new QTab("schoolday", "School Day", "calendar-range")),
         new(new QTab("reports", "Teaching Reports", "bar-chart-line"),
             Permissions.StaffReportsView, Permissions.TimetableLessonsFlag, Permissions.TimetableManage),
+        // Lesson plans (2026-09-26): heads of department (the post grants review), approvers and readers.
+        new(new QTab("plans", "Plans", "journal-text"), Permissions.TeachingPlansReview, Permissions.TeachingPlansApprove, Permissions.TeachingPlansView),
     };
 
     private IReadOnlyList<QTab> hubTabs = Array.Empty<QTab>();

@@ -177,7 +177,9 @@ public enum NotificationType
     CounterAlert,       // Counter-specific alerts
     VisitorArrived,     // A visitor has checked in for a host
     Custom,             // Custom notifications
-    StaffPerformance    // Staff Performance Monitor: records, points, duties, appraisals, notices (appended 2026-09-16)
+    StaffPerformance,   // Staff Performance Monitor: records, points, duties, appraisals, notices (appended 2026-09-16)
+    Calendar,           // School events: added, changed, cancelled, reminders; import summaries (appended 2026-09-26)
+    Imports             // A document routed to you for approval (appended 2026-09-26)
 }
 
 /// <summary>

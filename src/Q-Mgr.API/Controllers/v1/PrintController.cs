@@ -286,7 +286,9 @@ public class PrintController : ControllerBase
     /// Print a ticket for a token
     /// </summary>
     [HttpPost("branches/{branchId:guid}/tokens/{tokenId:guid}/print")]
-    [RequirePermission(Permissions.TokensView)]
+    // tokens.create, not .view: printing is a write, and until 2026-09-25 a view-only role (the
+    // Viewer, used for self-service) could reach it. A view permission never gates a write.
+    [RequirePermission(Permissions.TokensCreate)]
     [ProducesResponseType(typeof(PrintResultDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> PrintTicket(Guid branchId, Guid tokenId, [FromBody] PrintTicketRequest? request = null)
@@ -342,7 +344,11 @@ public class PrintController : ControllerBase
             Method = request?.PrintMethod ?? branchSettings?.PreferredPrintMethod ?? PrintMethod.BrowserPrint,
             Type = branchSettings?.PrinterType ?? PrinterType.Thermal,
             PrinterName = branchSettings?.PrinterName,
-            IpAddress = request?.PrinterIpAddress ?? branchSettings?.PrinterIpAddress,
+            // ONLY the branch's stored printer. The request's address used to win, so any caller
+            // could make this server open a TCP connection to an address of their choosing and read
+            // the error back — a probe of the school's network from inside it. The address is set
+            // on the Printing tab (settings.edit) and nowhere else.
+            IpAddress = branchSettings?.PrinterIpAddress,
             Port = branchSettings?.PrinterPort ?? 9100,
             PaperWidth = branchSettings?.ThermalPaperWidth ?? 80,
             PrintLogo = branchSettings?.PrintLogo ?? true,
@@ -556,7 +562,6 @@ public record UpdatePrinterSettingsRequest
 public record PrintTicketRequest
 {
     public PrintMethod? PrintMethod { get; init; }
-    public string? PrinterIpAddress { get; init; }
 }
 
 public record PrintResultDto

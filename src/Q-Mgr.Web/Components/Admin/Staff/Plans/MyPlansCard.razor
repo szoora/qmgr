@@ -1,0 +1,228 @@
+@using QMgr.Application.DTOs
+@inject ITeachingPlanApiService PlanApi
+@inject IToastService Toast
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+@*
+    MY PLANS, on My Workspace's My teaching tab (lesson plans plan §5.3, §5.9). The teacher's own week, lesson by lesson,
+    with each plan's state and one press to plan it — the form fills itself from the timetable, the roll and the scheme.
+    Below, the term's schemes of work and the school's templates. Hidden for somebody who teaches nothing.
+
+    Compact="true" is the Today tab's one to-do line: "3 lessons tomorrow have no plan", nothing else.
+*@
+
+@if (book == null) { }
+else if (Compact)
+{
+    @if (DueCount > 0)
+    {
+        <div class="portal-item portal-item--plans" id="plans-due-todo">
+            <QIcon Name="journal-text" Class="portal-item__icon" />
+            <div class="portal-item__main">
+                <a href="/portal?tab=teaching">@DueCount lesson@(DueCount == 1 ? "" : "s") coming up @(DueCount == 1 ? "has" : "have") no plan yet</a>
+                <span class="portal-item__detail">A plan is due by the evening before each lesson.</span>
+            </div>
+        </div>
+    }
+}
+else if (book.Teaching.Count > 0 || book.Lessons.Count > 0)
+{
+    <div id="my-plans">
+    <QCard Title="My plans" Icon="journal-text" Class="@Class">
+        <HeaderActions>
+            <QButton Icon="chevron-left" Variant="ghost" Size="sm" OnClick="@(() => MoveAsync(-7))" aria-label="Previous week" id="plans-prev" />
+            <QButton Text="This week" Variant="ghost" Size="sm" OnClick="@(() => MoveAsync(0))" id="plans-this-week" />
+            <QButton Icon="chevron-right" Variant="ghost" Size="sm" OnClick="@(() => MoveAsync(7))" aria-label="Next week" id="plans-next" />
+        </HeaderActions>
+        <ChildContent>
+            <p class="cell-sub plans-week">
+                @book.PeriodName@(book.Week is { } wk ? $", week {wk}" : "") · @QDateFormat.D(book.WeekStart) – @QDateFormat.D(book.WeekStart.AddDays(6))
+                @if (book.Requirement == PlanRequirement.EveryLesson) { <span> · a plan is due by the evening before each lesson</span> }
+            </p>
+
+            @if (book.Lessons.Count == 0)
+            {
+                <QEmptyState Icon="calendar-x" Title="No lessons this week" Text="Your timetabled lessons appear here once the timetable is published." />
+            }
+            else
+            {
+                <table class="data-table q-stack plans-table" id="plans-week">
+                    <thead><tr><th>When</th><th>Lesson</th><th>Plan</th><th class="row-actions"></th></tr></thead>
+                    <tbody>
+                        @foreach (var l in book.Lessons)
+                        {
+                            var local = BranchClock.ToLocal(l.StartsAt, BranchClock.Resolve(book.TimeZone));
+                            <tr class="@(l.Due ? "plan-due" : "")" data-duty="@l.DutyId">
+                                <td>@local.ToString("ddd dd MMM", System.Globalization.CultureInfo.InvariantCulture) <span class="cell-sub">@QDateFormat.T(local)</span></td>
+                                <td>@l.SubjectName · @l.ClassName @if (PlanDisplay.Outcome(l.Outcome) is { } o) { <span class="cell-sub">@o</span> }</td>
+                                <td>
+                                    @if (l.PlanStatus is { } st)
+                                    {
+                                        <QChip Text="@PlanDisplay.Status(st)" Variant="@PlanDisplay.Variant(st)" Size="sm" />
+                                    }
+                                    else if (l.Due)
+                                    {
+                                        <QChip Text="Due" Variant="warning" Size="sm" />
+                                    }
+                                    else { <span class="cell-sub">None yet</span> }
+                                </td>
+                                <td class="row-actions">
+                                    @if (l.PlanId is { } pid)
+                                    {
+                                        <QButton Text="Open" Size="sm" Variant="ghost" OnClick="@(() => Navigation.NavigateTo($"/plans/{pid}"))" />
+                                    }
+                                    else if (l.SubjectId != null)
+                                    {
+                                        <QButton Text="Plan this lesson" Icon="plus-lg" Size="sm" Variant="primary" Loading="@(creating == l.DutyId)"
+                                                 OnClick="@(() => PlanLessonAsync(l))" Class="plan-lesson" />
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+
+            <div class="plans-schemes">
+                <h3>Schemes of work, @book.PeriodName</h3>
+                @if (book.Schemes.Count == 0)
+                {
+                    <p class="cell-sub">No scheme for this term yet. A scheme's weekly lines fill in your lesson plans' topics.</p>
+                }
+                else
+                {
+                    <ul class="plans-scheme-list">
+                        @foreach (var s in book.Schemes)
+                        {
+                            <li>
+                                <span>@s.Title</span>
+                                <QChip Text="@PlanDisplay.Status(s.Status)" Variant="@PlanDisplay.Variant(s.Status)" Size="sm" />
+                                <QButton Text="Open" Size="sm" Variant="ghost" OnClick="@(() => Navigation.NavigateTo($"/plans/{s.Id}"))" />
+                            </li>
+                        }
+                    </ul>
+                }
+                <div class="card-actions">
+                    @if (book.Teaching.Count > 0)
+                    {
+                        <QButton Text="Start a scheme of work" Icon="journal-plus" Variant="secondary" Size="sm" OnClick="@(() => schemeOpen = true)" id="plans-new-scheme" />
+                    }
+                    <QButton Text="Print a blank lesson plan" Icon="printer" Variant="ghost" Size="sm" OnClick="@(() => Navigation.NavigateTo("/plans/blank/print?kind=lesson"))" id="plans-blank-lesson" />
+                    <QButton Text="Print a blank scheme" Icon="printer" Variant="ghost" Size="sm" OnClick="@(() => Navigation.NavigateTo("/plans/blank/print?kind=scheme"))" id="plans-blank-scheme" />
+                    <QButton Text="Lesson plan template (Word)" Icon="file-earmark-word" Variant="ghost" Size="sm" OnClick="@(() => DownloadAsync(TeachingPlanKind.LessonPlan))" id="plans-template-lesson" />
+                    <QButton Text="Scheme template (Word)" Icon="file-earmark-word" Variant="ghost" Size="sm" OnClick="@(() => DownloadAsync(TeachingPlanKind.SchemeOfWork))" id="plans-template-scheme" />
+                </div>
+            </div>
+        </ChildContent>
+    </QCard>
+    </div>
+
+    <QModal Visible="@schemeOpen" VisibleChanged="@(v => schemeOpen = v)" Title="Start a scheme of work" Icon="journal-plus">
+        <ChildContent>
+            <div class="form-row">
+                <QSelect TValue="Guid?" TItem="PlanTeachingDto" Value="@schemeSubject" ValueChanged="@(v => { schemeSubject = v; schemeClasses = new(); })"
+                         Items="@SubjectChoices" ValueSelector="@(t => (Guid?)t.SubjectId)" TextSelector="@(t => t.SubjectName)" Label="Subject" Required="true" Sorted="true" />
+                <QMultiSelect TValue="string" TItem="PlanTeachingDto" SelectedValues="@schemeClasses" SelectedValuesChanged="@(v => schemeClasses = v.ToList())"
+                              Items="@ClassChoices" ValueSelector="@(t => t.ClassName)" TextSelector="@(t => t.ClassName)" Label="Classes" Required="true" Sorted="true"
+                              Hint="Parallel streams taught from one scheme can share it." />
+            </div>
+            <p class="cell-sub">For @book.PeriodName. The weeks are filled from the school's curriculum list where it has one.</p>
+        </ChildContent>
+        <FooterContent>
+            <QButton Text="Cancel" Variant="ghost" OnClick="@(() => schemeOpen = false)" />
+            <QButton Text="Start" Variant="primary" Loading="@creatingScheme" Disabled="@(schemeSubject == null || schemeClasses.Count == 0)" OnClick="@StartSchemeAsync" id="scheme-start" />
+        </FooterContent>
+    </QModal>
+}
+
+<style>
+    .plans-week { margin: 0 0 8px; }
+    .plans-table tr.plan-due td:first-child { box-shadow: inset 3px 0 0 var(--qm-warning); }
+    .plans-schemes { margin-top: var(--qm-block-gap); }
+    .plans-schemes h3 { margin: 0 0 6px; }
+    .plans-scheme-list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+    .plans-scheme-list li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .plans-scheme-list li > span { flex: 1 1 auto; min-width: 0; }
+</style>
+
+@code {
+    [Parameter] public Guid BranchId { get; set; }
+    [Parameter] public string? Class { get; set; }
+    /// <summary>The Today tab's one-line to-do.</summary>
+    [Parameter] public bool Compact { get; set; }
+
+    private PlanbookDto? book;
+    private Guid loadedFor;
+    private DateOnly? weekStart;
+    private Guid? creating;
+    private bool schemeOpen, creatingScheme;
+    private Guid? schemeSubject;
+    private List<string> schemeClasses = new();
+
+    private int DueCount => book?.Lessons.Count(l => l.Due) ?? 0;
+    private IEnumerable<PlanTeachingDto> SubjectChoices => book!.Teaching.GroupBy(t => t.SubjectId).Select(g => g.First());
+    private IEnumerable<PlanTeachingDto> ClassChoices => book!.Teaching.Where(t => t.SubjectId == schemeSubject);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (BranchId == Guid.Empty || loadedFor == BranchId) return;
+        loadedFor = BranchId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try { book = await PlanApi.GetPlanbookAsync(BranchId, weekStart); }
+        catch { book = new PlanbookDto(); }
+    }
+
+    private async Task MoveAsync(int days)
+    {
+        weekStart = days == 0 || book == null ? null : book.WeekStart.AddDays(days);
+        await LoadAsync();
+    }
+
+    private async Task PlanLessonAsync(PlanbookLessonDto l)
+    {
+        creating = l.DutyId;
+        try
+        {
+            var plan = await PlanApi.CreateAsync(BranchId, new CreateTeachingPlanRequest { Kind = TeachingPlanKind.LessonPlan, DutyId = l.DutyId, ClientRequestId = Guid.NewGuid() });
+            Navigation.NavigateTo($"/plans/{plan.Id}");
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not start the plan", ex.Message); }
+        finally { creating = null; }
+    }
+
+    private async Task StartSchemeAsync()
+    {
+        if (schemeSubject == null || schemeClasses.Count == 0) return;
+        creatingScheme = true;
+        try
+        {
+            var plan = await PlanApi.CreateAsync(BranchId, new CreateTeachingPlanRequest
+            {
+                Kind = TeachingPlanKind.SchemeOfWork, SubjectId = schemeSubject, ClassNames = schemeClasses, PeriodKey = book?.PeriodKey, ClientRequestId = Guid.NewGuid()
+            });
+            schemeOpen = false;
+            Navigation.NavigateTo($"/plans/{plan.Id}");
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not start the scheme", ex.Message); }
+        finally { creatingScheme = false; }
+    }
+
+    private async Task DownloadAsync(TeachingPlanKind kind)
+    {
+        try
+        {
+            var bytes = kind == TeachingPlanKind.LessonPlan
+                ? await PlanApi.DownloadLessonTemplateAsync(BranchId, null)
+                : await PlanApi.DownloadSchemeTemplateAsync(BranchId, null, null, book?.PeriodKey);
+            await JS.InvokeAsync<bool>("qmgrPlanPdf.saveBytes", bytes,
+                kind == TeachingPlanKind.LessonPlan ? "Lesson plan template.docx" : "Scheme of work template.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not download the template", ex.Message); }
+    }
+}

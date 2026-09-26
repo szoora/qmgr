@@ -124,54 +124,9 @@ public class StaffPortalController : StaffPerformanceControllerBase
         return Ok(await BuildMyProfileAsync(self.User!, self.OrganizationId));
     }
 
-    /// <summary>
-    /// Maintains my own contact detail. Contact only — see the note above.
-    ///
-    /// <para>The line manager is NOT told. A phone number changing is a routine correction, and a
-    /// notification on every one of them is noise that trains people to ignore the bell. It is
-    /// recorded in the activity log, which is where "who changed this number" is answered.</para>
-    /// </summary>
-    [HttpPut("profile/contact")]
-    [ProducesResponseType(typeof(StaffProfileDto), StatusCodes.Status200OK)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> UpdateMyContact([FromBody] UpdateStaffContactRequest request)
-    {
-        var self = await ResolveSelfAsync();
-        if (self.Error != null) return self.Error;
-        var me = self.User!;
-
-        // JobTitle is on the shared record because the class-teacher card writes it. IGNORED here:
-        // what the school calls somebody is the school's decision, not theirs.
-        var before = new
-        {
-            me.Phone, me.AlternatePhone, me.OfficeLocation, me.EmergencyContactName, me.EmergencyContactPhone
-        };
-
-        me.Phone = TrimTo(request.Phone, 30);
-        me.AlternatePhone = TrimTo(request.AlternatePhone, 30);
-        me.OfficeLocation = TrimTo(request.OfficeLocation, 200);
-        me.EmergencyContactName = TrimTo(request.EmergencyContactName, 120);
-        me.EmergencyContactPhone = TrimTo(request.EmergencyContactPhone, 30);
-        me.UpdatedAt = DateTime.UtcNow;
-        me.UpdatedBy = me.Id;
-        await Db.SaveChangesAsync();
-
-        var changed = new List<string>();
-        if (before.Phone != me.Phone) changed.Add("phone");
-        if (before.AlternatePhone != me.AlternatePhone) changed.Add("second phone");
-        if (before.OfficeLocation != me.OfficeLocation) changed.Add("office");
-        if (before.EmergencyContactName != me.EmergencyContactName) changed.Add("emergency contact");
-        if (before.EmergencyContactPhone != me.EmergencyContactPhone) changed.Add("emergency number");
-
-        if (changed.Count > 0)
-            await Activity.RecordAsync(ActivityActions.StaffContactSelfUpdated, nameof(QMgr.Domain.Entities.Identity.User),
-                me.Id, me.Id,
-                $"{StaffPerformanceMapping.FullName(me)} updated their own {string.Join(", ", changed)}",
-                new { Changed = changed }, self.BranchId, self.OrganizationId,
-                visibility: WelfareVisibility.Confidential);
-
-        return Ok(await BuildMyProfileAsync(me, self.OrganizationId));
-    }
+    // PUT profile/contact moved to ProfileController (2026-09-25): contact detail is maintained on
+    // one endpoint that needs no module, so a tenant without Welfare & Performance keeps it too.
+    // The portal still READS the whole record above, for My file's employment block.
 
     private async Task<StaffProfileDto> BuildMyProfileAsync(QMgr.Domain.Entities.Identity.User me, Guid organizationId)
     {
@@ -213,12 +168,6 @@ public class StaffPortalController : StaffPerformanceControllerBase
         };
     }
 
-    private static string? TrimTo(string? value, int max)
-    {
-        var t = value?.Trim();
-        if (string.IsNullOrEmpty(t)) return null;
-        return t.Length <= max ? t : t[..max];
-    }
     // The hub
     // ---------------------------------------------------------------------
 
@@ -264,8 +213,8 @@ public class StaffPortalController : StaffPerformanceControllerBase
         // Personal, as My School Day is: staff-audience or mine to run, never the calendar-keeper's whole calendar.
         var branchZone = AppointmentScheduling.ResolveTimeZone(await Db.Branches.Where(b => b.Id == branchId).Select(b => b.Timezone).FirstOrDefaultAsync());
         var branchToday = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(now, branchZone));
-        var upcomingEvents = await SchoolEventQueries.PersonalAsync(Db, organizationId, branchId, me.Id, myDepartments,
-            branchToday, branchToday.AddDays(30), await HasPermissionAsync(Permissions.CalendarManage), take: 10);
+        var upcomingEvents = await SchoolEventQueries.PersonalAsync(Db, _policy, organizationId, branchId, me.Id,
+            branchToday, branchToday.AddDays(30), await HasPermissionAsync(Permissions.CalendarManage), mayManageDuties, take: 10);
 
         // ---- Reports to write (plan §4.3): my started, unwritten duty reports on slots under way or recently over ----
         var myRotaSlots = await Db.StaffDuties.AsNoTracking()
@@ -396,10 +345,13 @@ public class StaffPortalController : StaffPerformanceControllerBase
         }
 
         // ---- Notices for my audience ----
-        var notices = await NoticesForMeQuery(organizationId, branchId, me.Id, myDepartments, myRole, myGroup, now)
-            .OrderByDescending(n => n.IsPinned).ThenByDescending(n => n.PublishAt)
+        var notices = (await NoticesForMeQuery(organizationId, branchId, me.Id, myDepartments, myRole, now)
+                .OrderByDescending(n => n.IsPinned).ThenByDescending(n => n.PublishAt)
+                .Take(200)
+                .ToListAsync())
+            .Where(n => StaffGroups.Applies(n.AudienceStaffGroup, myGroup))
             .Take(10)
-            .ToListAsync();
+            .ToList();
         var noticeDtos = await MapNoticesAsync(notices, me.Id);
         openItems.AddRange(noticeDtos.Where(n => n.RequiresAcknowledgement && n.AcknowledgedByMeAt == null).Select(n => new PortalItemDto
         {
@@ -743,9 +695,12 @@ public class StaffPortalController : StaffPerformanceControllerBase
         var me = self.User!;
         var now = DateTime.UtcNow;
 
-        var notice = await NoticesForMeQuery(self.OrganizationId, self.BranchId, me.Id, me.DepartmentIds ?? Array.Empty<Guid>(), me.Role?.Code ?? string.Empty, me.Role?.StaffGroup, now)
+        var notice = await NoticesForMeQuery(self.OrganizationId, self.BranchId, me.Id, me.DepartmentIds ?? Array.Empty<Guid>(), me.Role?.Code ?? string.Empty, now)
             .FirstOrDefaultAsync(n => n.Id == id);
-        if (notice == null) return NotFoundProblem("Notice not found");
+        // The group through GroupFor with its fallback, compared by StaffGroups.Key — the fan-out's rule. This passed the
+        // raw role group, so somebody whose role had none could never acknowledge a group notice they were sent.
+        if (notice == null || !StaffGroups.Applies(notice.AudienceStaffGroup, _policy.GroupFor(me.Role?.StaffGroup, await _policy.GetAsync(self.OrganizationId))))
+            return NotFoundProblem("Notice not found");
 
         var acks = StaffPerformanceMapping.ParseAcknowledgements(notice.Acknowledgements);
         if (!acks.ContainsKey(me.Id))
@@ -816,15 +771,18 @@ public class StaffPortalController : StaffPerformanceControllerBase
     /// (null or AllStaff = any). This is <see cref="StaffNoticeFanOut.IsRecipient"/> translated to
     /// SQL — the fan-out decides who is TOLD, this decides who can SEE, and the two must agree or a
     /// person is notified about a notice their portal then hides.
+    ///
+    /// THE STAFF GROUP IS NOT IN IT (2026-09-26): SQL compared it with <c>==</c>, the fan-out with
+    /// <c>StaffGroups.Key</c> ("Teaching staff" vs "teaching-staff"). Callers apply
+    /// <c>StaffGroups.Applies</c> to the rows, so there is one comparison, not two.
     /// </summary>
-    private IQueryable<StaffNotice> NoticesForMeQuery(Guid organizationId, Guid branchId, Guid me, Guid[] myDepartments, string myRole, string? myGroup, DateTime now)
+    private IQueryable<StaffNotice> NoticesForMeQuery(Guid organizationId, Guid branchId, Guid me, Guid[] myDepartments, string myRole, DateTime now)
         => Db.StaffNotices
             .Where(n => n.OrganizationId == organizationId && n.IsActive
                         && n.PublishAt <= now && (n.ExpiresAt == null || n.ExpiresAt > now)
                         && (n.BranchId == null || n.BranchId == branchId)
                         && (n.AudienceDepartmentIds == null || n.AudienceDepartmentIds.Length == 0 || n.AudienceDepartmentIds.Any(id => myDepartments.Contains(id)))
-                        && (n.AudienceRoleCodes == null || n.AudienceRoleCodes.Length == 0 || n.AudienceRoleCodes.Contains(myRole))
-                        && (n.AudienceStaffGroup == null || n.AudienceStaffGroup == myGroup));
+                        && (n.AudienceRoleCodes == null || n.AudienceRoleCodes.Length == 0 || n.AudienceRoleCodes.Contains(myRole)));
 
     private async Task<List<StaffNoticeDto>> MapNoticesAsync(IReadOnlyCollection<StaffNotice> notices, Guid me)
     {

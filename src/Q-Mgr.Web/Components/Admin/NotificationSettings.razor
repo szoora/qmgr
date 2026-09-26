@@ -830,7 +830,7 @@
     protected override async Task OnInitializedAsync()
     {
         // Check permission
-        if (!await PermissionService.HasPermissionAsync(Permissions.NotificationsView))
+        if (!await PermissionService.HasPermissionAsync(Permissions.NotificationsManage))
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
             return;

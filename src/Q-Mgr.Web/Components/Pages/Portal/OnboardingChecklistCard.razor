@@ -128,7 +128,6 @@
     .obc-sub { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
     .obc-link { font-size: var(--qm-text-base); }
     .obc-inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .obc-code { width: 9em; letter-spacing: 4px; }
 
     @@media (max-width: 640px) {
         .ob-strip__next { padding-left: 12px; }
@@ -143,8 +142,7 @@
 
     private const string OpenKey = "qmgr-onboarding-open";
 
-    private bool busy, codeSent, open, stateRead;
-    private string? code;
+    private bool busy, open, stateRead;
 
     /// <summary>
     /// One step. The collapsed row and the open list render the SAME control through
@@ -193,12 +191,8 @@
         _ => NoticeAction
     };
 
-    private RenderFragment PhoneAction => !codeSent
-        ? @<QButton Text="Send me a code" Icon="phone" Variant="secondary" Size="sm" OnClick="@SendCodeAsync" Loading="@busy" Disabled="@busy" />
-        : @<div class="obc-inline">
-               <input class="form-control obc-code" inputmode="numeric" maxlength="6" aria-label="Code from the SMS" @bind="code" @bind:event="oninput" />
-               <QButton Text="Confirm" Variant="primary" Size="sm" OnClick="@VerifyAsync" Loading="@busy" Disabled="@(busy || string.IsNullOrWhiteSpace(code))" />
-           </div>;
+    // The confirm flow's one home is PhoneConfirm (2026-09-25); My details uses the same control.
+    private RenderFragment PhoneAction => @<PhoneConfirm OnConfirmed="@(() => OnChanged.InvokeAsync())" />;
 
     private RenderFragment NotifyAction => @<a class="obc-link" href="/profile/notifications">Open notification settings</a>;
 
@@ -234,35 +228,6 @@
         open = !open;
         try { await JS.InvokeVoidAsync("localStorage.setItem", OpenKey, open ? "1" : "0"); }
         catch { }
-    }
-
-    private async Task SendCodeAsync()
-    {
-        busy = true;
-        try
-        {
-            await Onboarding.SendPhoneCodeAsync();
-            codeSent = true;
-            Toast.Notify(ToastSeverity.Success, "Code sent", "Check your phone for a six-digit code.");
-        }
-        catch (InvalidOperationException ex) { Toast.Notify(ToastSeverity.Error, "Could not send the code", ex.Message); }
-        finally { busy = false; }
-    }
-
-    private async Task VerifyAsync()
-    {
-        if (string.IsNullOrWhiteSpace(code)) return;
-        busy = true;
-        try
-        {
-            await Onboarding.VerifyPhoneCodeAsync(code.Trim());
-            Toast.Notify(ToastSeverity.Success, "Phone number confirmed");
-            codeSent = false;
-            code = null;
-            await OnChanged.InvokeAsync();
-        }
-        catch (InvalidOperationException ex) { Toast.Notify(ToastSeverity.Error, "That code did not work", ex.Message); }
-        finally { busy = false; }
     }
 
     private async Task UploadPhotoAsync(InputFileChangeEventArgs e)

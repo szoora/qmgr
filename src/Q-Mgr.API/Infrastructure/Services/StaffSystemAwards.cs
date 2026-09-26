@@ -43,6 +43,8 @@ public class StaffSystemAwards : IStaffSystemAwards
     public const string CustomerServed = "Customer served";
     public const string VisitorHosted = "Visitor hosted";
     public const string PositiveFeedback = "Positive feedback";
+    /// <summary>A lesson plan or scheme of work submitted by the school's deadline and then approved (2026-09-26).</summary>
+    public const string PlanApprovedOnTime = "Plan approved on time";
 
     private readonly QMgrDbContext _db;
     private readonly IStaffPerformancePolicyService _policy;

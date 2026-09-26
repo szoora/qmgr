@@ -20,6 +20,7 @@
 @inject IJSRuntime JS
 @inject IAuthService AuthService
 @inject IPeopleNamesService PeopleNames
+@inject IImportInboxApiService InboxApi
 
 @* Since 2026-09-18 this is normally EMBEDDED in the Staff hub (StaffDirectory), which owns the
    page header and the tab strip — the sidebar had 16 Staff Performance entries against Student
@@ -199,7 +200,12 @@
                     </QInfo>
                 </p>
 
+                @if (inbox != null)
+                {
+                    <p class="cell-sub"><QIcon Name="inbox" Size="sm" /> <span>A staff list sent through the Import inbox is loaded below. Check the columns and import it; the inbox is marked done when it finishes.</span></p>
+                }
                 <QImportPanel TRow="StaffImportRow" @ref="importPanel" OnFileChosen="@(_ => firstFullName = null)"
+                              InitialCsv="@inbox?.Csv" InitialFileName="@inbox?.FileName"
                               BranchId="@branchId"
                               InputId="ss-import-file"
                               Noun="person"
@@ -484,9 +490,13 @@
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
         TrackBranch();
+        // A staff list handed over by the Import inbox (E11), opened as ?tab=import&inbox=…&section=….
+        if (canImport) inbox = await InboxHandoff.FromQueryAsync(Navigation, InboxApi, branchId);
 
         await LoadAllAsync();
     }
+
+    private InboxHandoff? inbox;
 
     private async Task LoadAllAsync()
     {
@@ -984,6 +994,11 @@
     /// <summary>The job landed: refresh the history and the staff list behind it.</summary>
     private async Task OnImportCompleted()
     {
+        if (inbox != null && await inbox.CompleteAsync(InboxApi, branchId))
+        {
+            Toast.Notify(ToastSeverity.Success, "Marked done in the Import inbox", "The staff list from the inbox has been imported.");
+            inbox = null;
+        }
         try
         {
             recentJobs = await StaffApi.GetStaffImportJobsAsync(branchId, 10);

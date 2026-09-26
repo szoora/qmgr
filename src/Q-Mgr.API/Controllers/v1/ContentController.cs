@@ -168,14 +168,9 @@ public class ContentController : ControllerBase
     /// sets an absolute value (like ActiveUsers/ActiveBranches), it doesn't increment, so a
     /// stale delta would silently drift over time if a caller ever passed one.
     /// </summary>
-    private async Task RecalculateStorageUsageAsync(Guid organizationId)
-    {
-        var totalBytes = await _dbContext.MediaContents
-            .Where(m => m.OrganizationId == organizationId)
-            .SumAsync(m => (long?)m.FileSizeBytes) ?? 0;
-
-        await _usageTracking.UpdateStorageUsageAsync(organizationId, totalBytes);
-    }
+    private Task RecalculateStorageUsageAsync(Guid organizationId)
+        // Every kind of upload counts now, not the Library alone (2026-09-26): StorageUsage is the one sum.
+        => QMgr.API.Application.Services.StorageUsage.RecalculateAsync(_dbContext, _usageTracking, organizationId);
 
     /// <summary>
     /// SECURITY: Playlist/Display/DisplayZone have no global EF query filter (unlike

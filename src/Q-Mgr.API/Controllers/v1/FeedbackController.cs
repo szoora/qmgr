@@ -351,7 +351,10 @@ public class FeedbackController : ControllerBase
     /// </summary>
     [HttpPost("branches/{branchId:guid}/tokens/{tokenId:guid}/feedback-link")]
     [Authorize]
-    [RequirePermission(Permissions.FeedbackView)]
+    // tokens.create, which whoever issued the ticket already holds (the kiosk calls this straight
+    // after issuing one). It was feedback.view — a view permission on a write that copies a
+    // customer's contact details into a new row and mints a code the public page accepts.
+    [RequirePermission(Permissions.TokensCreate)]
     [RequireModule(ModuleCodes.EngagementCommunications)]
     [ProducesResponseType(typeof(FeedbackLinkDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]

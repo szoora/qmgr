@@ -366,9 +366,8 @@ appointing somebody is that the chase goes to them.
 
 ### 7.6 What was NOT built, stated rather than implied
 
-- **The exam-supervision duty series** (§1's recommendation). Nothing groups a set of invigilation
-  duties under a name and an owner yet; the publish refusal only stops a school reaching for a second
-  `Timetable` instead.
+- ~~**The exam-supervision duty series**~~ **BUILT 2026-09-23** (`f2762c4`): the Duties hub's Exams tab,
+  `DutySeriesAccess`, section 35. (Corrected 2026-09-25.)
 - **A dated split of a timetable's date range.** A permanent swap replaces the whole version rather
   than starting a new arrangement from a date. A school that genuinely needs "this from the 10th" is
   asking for a split, which shifts cycle-day anchoring and is its own decision.
@@ -376,6 +375,5 @@ appointing somebody is that the chase goes to them.
   exceptions cascade with the version they were against. Carrying them across by matching teacher,
   slot and class would be a guess, and a wrongly carried cover puts the wrong person in front of a
   class. The count is logged; the people affected were told when it was withdrawn.
-- **No browser suite.** The e2e is API-level plus the live cover check. The editor's appoint dialog,
-  the override banner, the replace confirmation and `LessonSwapCard` were built and compile clean but
-  have not been driven in a browser.
+- ~~**No browser suite.**~~ **BUILT 2026-09-23**: `browser/timetable-ownership-ui.mjs` drives the appoint dialog,
+  the override banner, the replace confirmation and `LessonSwapCard`. (Corrected 2026-09-25.)

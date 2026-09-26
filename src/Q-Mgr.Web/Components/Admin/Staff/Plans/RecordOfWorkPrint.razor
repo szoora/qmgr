@@ -1,0 +1,63 @@
+@page "/plans/{Id:guid}/record-of-work/print"
+@layout QMgr.Web.Components.Layout.MinimalLayout
+@using QMgr.Application.DTOs
+@inject ITeachingPlanApiService PlanApi
+@inject IBranchStateService BranchState
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+@*
+    Records of work (lesson plans plan §5.3): DERIVED, never typed — the scheme's weekly lines against the lessons the lesson
+    flags say were taught. A teacher does not keep a second book of what they already recorded when they flagged the lesson.
+*@
+
+<QPageTitle Text="Record of work" />
+
+<QPrintSheet SheetId="rw-sheet" Title="@($"Record of work — {row?.Title}")" Landscape="true"
+             Ready="@(row != null)" BackText="Back to the scheme" OnBack="@(() => Navigation.NavigateTo($"/plans/{Id}"))" OnPrint="@PrintAsync" Disabled="@(row == null)">
+    <ChildContent>
+        @if (row != null)
+        {
+            <PlanSheetHead Title="Record of work" Subtitle="@($"{row.SubjectName} · {string.Join(", ", row.ClassNames)} · {row.PeriodName} · {row.AuthorName}")" />
+            <table class="pp-table" id="rw-table">
+                <thead><tr><th>Week</th><th>Topic</th><th>Sub-topic</th><th>Periods planned</th><th>Lessons taught</th><th>Missed</th><th>Taught on</th><th>Remarks</th></tr></thead>
+                <tbody>
+                    @foreach (var r in row.Rows)
+                    {
+                        <tr>
+                            <td>@r.Week</td><td>@r.Topic</td><td>@r.SubTopic</td><td>@r.PeriodsPlanned</td><td>@r.LessonsTaught</td><td>@r.LessonsMissed</td>
+                            <td>@string.Join(", ", r.TaughtOn.Select(d => QDateFormat.C(d)))</td><td class="pp-pre">@r.Remarks</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <p class="pp-note">Lessons counted from the lesson registers. A lesson nobody recorded is not counted either way.</p>
+        }
+    </ChildContent>
+</QPrintSheet>
+
+<style>
+    .pp-head { text-align: center; margin-bottom: 10px; }
+    .pp-doc { font-weight: 700; letter-spacing: 0.04em; }
+    .pp-table { width: 100%; border-collapse: collapse; font-size: 10pt; }
+    .pp-table th, .pp-table td { border: 1px solid #777; padding: 4px 6px; vertical-align: top; text-align: left; }
+    .pp-table tr { break-inside: avoid; }
+    .pp-pre { white-space: pre-wrap; }
+    .pp-note { font-size: 9pt; margin-top: 8px; }
+</style>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+    private RecordOfWorkDto? row;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await BranchState.InitializeAsync();
+        try { row = await PlanApi.GetRecordOfWorkAsync(BranchState.CurrentBranchId, Id); } catch { row = null; }
+    }
+
+    private async Task PrintAsync()
+    {
+        try { await JS.InvokeVoidAsync("window.print"); } catch { }
+    }
+}

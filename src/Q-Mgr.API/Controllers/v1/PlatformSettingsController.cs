@@ -329,7 +329,7 @@ public class PlatformSettingsController : ControllerBase
     /// used in its summary rows, so the editor's password fields show it too and a Save that
     /// leaves it untouched keeps the stored value.
     /// </summary>
-    internal const string SecretMask = "••••••••";
+    internal const string SecretMask = QMgr.API.Application.Services.SecretMask.Value;
 
     /// <summary>
     /// Which JSON properties in each category are secrets. Until 2026-09-15 GET returned every one

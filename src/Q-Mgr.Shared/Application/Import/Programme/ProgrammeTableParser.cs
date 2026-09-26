@@ -171,6 +171,7 @@ public static class ProgrammeTableParser
             var time = cell(r, ProgrammeColumnRole.Time);
             if (time.Length > 0) ApplyTime(c, time);
             Finish(c, file, "activities");
+            MakeMeetingIfOne(c);
             file.Candidates.Add(c);
         }
     }
@@ -196,6 +197,7 @@ public static class ProgrammeTableParser
             ApplyTime(c, c.TimeText);
             Finish(c, file, "programme");
             c.Audience = EventAudience.Staff | EventAudience.Students;
+            MakeMeetingIfOne(c);
             file.Candidates.Add(c);
         }
     }
@@ -232,20 +234,41 @@ public static class ProgrammeTableParser
     }
 
     /// <summary>
-    /// A staff meeting (a Session duty with a register) rather than an event: the title says "meeting" and it is not
-    /// a students' meeting — a dorm meeting, or an academic meeting for named classes. Retreats, assemblies,
-    /// briefings and guidance sessions are events.
+    /// A MEETING in a term-activities table or a timed programme is a meeting too (2026-09-26). Those two table kinds
+    /// hard-coded every row as an event, so a staff meeting written in the term's activities — the commonest place a
+    /// school writes one — could never get a register. A multi-day row stays an event (a register is one sitting); the
+    /// row keeps its source key, so an event imported from the same line before is matched and linked, not doubled.
+    /// </summary>
+    private static void MakeMeetingIfOne(ProgrammeCandidate c)
+    {
+        if (!IsStaffMeeting(c.Title)) return;
+        if (c.StartsOn is { } s && c.EndsOn is { } e && e != s) return;
+        c.Kind = ProgrammeRowKind.Meeting;
+        c.Category = "Meetings";
+        c.Audience = EventAudience.Staff;
+        c.Attendance = DefaultAttendance(c.Title);
+        if (c.StartTime == null) c.Notes.Add("No time is written — a meeting needs a start time.");
+    }
+
+    /// <summary>
+    /// A staff meeting (a Session duty with a register) rather than an event: the title says "meeting", "briefing",
+    /// "conference" or "panel", and it is not a students' meeting — a dorm meeting, a parents' meeting, or an academic
+    /// meeting for named classes. Retreats, assemblies and guidance sessions are events.
     /// </summary>
     public static bool IsStaffMeeting(string? title)
     {
         var words = ProgrammeText.Words(title);
-        if (!words.Any(w => w is "MEETING" or "MEETINGS")) return false;
+        if (!words.Any(w => w is "MEETING" or "MEETINGS" or "BRIEFING" or "BRIEFINGS" or "CONFERENCE" or "PANEL")) return false;
         if (words.Any(w => StudentWords.Contains(w))) return false;
         if (ClassGroupRx.IsMatch(title ?? string.Empty)) return false;
         return true;
     }
 
-    /// <summary>Who a meeting expects by default, from its title alone. Anything unclear stays an event until the reader says.</summary>
+    /// <summary>
+    /// Who a meeting expects by default, from its title alone. Anything the title does not settle is
+    /// <see cref="MeetingAttendance.Undecided"/>: the page then reads the attendance words, and asks what it cannot read.
+    /// It was EventOnly until 2026-09-26, and a school's meetings disappeared from the registers with nothing asked.
+    /// </summary>
     public static MeetingAttendance DefaultAttendance(string title)
     {
         var key = " " + ProgrammeText.TitleKey(title) + " ";
@@ -253,7 +276,7 @@ public static class ProgrammeTableParser
             return MeetingAttendance.Everyone;
         if (key.Contains(" HEADS DEPARTMENT", StringComparison.Ordinal) || key.Contains(" HODS ", StringComparison.Ordinal) || key.Contains(" HOD ", StringComparison.Ordinal))
             return MeetingAttendance.DepartmentHeads;
-        return MeetingAttendance.EventOnly;
+        return MeetingAttendance.Undecided;
     }
 
     // ---- Notes under a table -----------------------------------------------------------------------------
@@ -451,7 +474,11 @@ public static class ProgrammeTableParser
             }
         var date = c.StartsOn?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? "undated";
         var time = c.StartTime?.Replace(":", string.Empty, StringComparison.Ordinal);
-        var key = $"{kindShort}:{ProgrammeText.Slug(c.Title, 120)}:{date}{(kindShort == "programme" && time != null ? ":" + time : string.Empty)}";
+        // A meeting's key carries its TIME (B7): two meetings of one title on one day were one key, and the second was
+        // refused as "the same meeting twice". Activities keep the old shape so a document imported before still matches
+        // its own events.
+        var withTime = kindShort is "programme" or "meeting" && time != null;
+        var key = $"{kindShort}:{ProgrammeText.Slug(c.Title, 120)}:{date}{(withTime ? ":" + time : string.Empty)}";
         c.SourceKey = key.Length <= 200 ? key : key[..200];
     }
 

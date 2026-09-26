@@ -347,6 +347,11 @@ public static class StaffSelfService
         if (request.RequestedByUserId == deciderId)
             return "You cannot decide your own request. Somebody else has to.";
 
+        // G6 (2026-09-26): the colleague in a swap or cover agrees; somebody else decides. One person doing both is two
+        // of the three people in the flow.
+        if (DutySeparation.Refusal(deciderId, null, "decide a request you are part of", request.CounterpartUserId, request.CoverUserId) is { } party)
+            return party;
+
         if (request.State != ConfigRequestState.Pending)
             return "That request has already been decided.";
 

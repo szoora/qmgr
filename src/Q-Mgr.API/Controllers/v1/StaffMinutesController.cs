@@ -238,6 +238,9 @@ public class StaffMinutesController : StaffPerformanceControllerBase
             return BadRequestProblem("There is nothing to adopt", "Write the minutes first.");
         if (duty.MinutesStatus == MinutesStatus.Approved)
             return ConflictProblem("These minutes have already been adopted");
+        // G4 (2026-09-26): whoever last wrote the minutes does not adopt them; the check below compares MEETINGS, never people.
+        if (DutySeparation.Refusal(CurrentUserId(), duty.MinutesUpdatedByUserId, "adopt minutes you wrote") is { } wrote)
+            return DutySeparation.Problem(wrote);
 
         var policy = await _policy.GetAsync(organizationId);
         if (_policy.ClosureFor(policy, duty.StartsAt) is { } closure)
@@ -479,7 +482,8 @@ public class StaffMinutesController : StaffPerformanceControllerBase
             MinutesMediaContentId = duty.MinutesMediaContentId,
             MinutesFileUrl = fileUrl,
             CanWrite = canWrite && duty.MinutesStatus != MinutesStatus.Approved,
-            CanApprove = await HasPermissionAsync(Permissions.StaffDutiesManage) && duty.MinutesStatus is MinutesStatus.Draft or MinutesStatus.Circulated,
+            CanApprove = await HasPermissionAsync(Permissions.StaffDutiesManage) && duty.MinutesStatus is MinutesStatus.Draft or MinutesStatus.Circulated
+                         && DutySeparation.Allows(CurrentUserId(), duty.MinutesUpdatedByUserId),
             CanRead = canRead
         };
     }

@@ -1,0 +1,796 @@
+@page "/plans/{Id:guid}"
+@using QMgr.Application.DTOs
+@inherits BranchAwareComponentBase
+@inject ITeachingPlanApiService PlanApi
+@inject IToastService Toast
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+@*
+    ONE LESSON PLAN OR SCHEME OF WORK (plan LESSON_PLANS_AND_SCHEMES_OF_WORK). The FORM IS THE MAIN ROUTE (decision L2):
+    it arrives filled from the timetable, the roll and this week's line of the scheme. A filled Word template is read INTO
+    the form, never stored. A PDF is the fallback, shrunk in this browser before it is sent.
+
+    Every button is drawn from the plan's own CanI… flags, which the server computes with the rule it enforces
+    (TeachingPlanAccess and DutySeparation) — a button the server would refuse is never drawn.
+*@
+
+<QPageTitle Text="@(plan?.Title ?? "Plan")" />
+
+<div class="admin-page plan-editor">
+    @if (loading)
+    {
+        <QEmptyState Icon="hourglass-split" Title="Loading" />
+    }
+    else if (plan == null)
+    {
+        <QEmptyState Icon="journal-x" Title="Plan not available" Text="It may have been discarded, or it is not one you can open." />
+    }
+    else
+    {
+        <QPageActions Embedded="false">
+            <Title><h1>@PlanDisplay.Kind(plan.Kind)<QInfo Text="Fill it in on this page — the header and the topic are already filled. You can also fill the school's Word template and upload it here: it is read into the form. A PDF is the last resort, and is shrunk before it is sent." Label="About plans" /></h1></Title>
+            <Actions>
+                <QButton Text="Print" Icon="printer" Variant="ghost" OnClick="@(() => Navigation.NavigateTo($"/plans/{plan.Id}/print"))" id="plan-print" aria-label="Print this plan, filled in, headed by the school" />
+                @if (plan.Kind == TeachingPlanKind.SchemeOfWork && plan.Status == TeachingPlanStatus.Approved)
+                {
+                    <QButton Text="Record of work" Icon="list-check" Variant="ghost" OnClick="@(() => Navigation.NavigateTo($"/plans/{plan.Id}/record-of-work/print"))" id="plan-row" />
+                }
+                @if (plan.CanIEdit)
+                {
+                    <QButton Text="Save" Icon="floppy" Variant="secondary" Loading="@saving" OnClick="@SaveAsync" id="plan-save" />
+                }
+                @if (plan.CanISubmit)
+                {
+                    <QButton Text="@(plan.Status == TeachingPlanStatus.Returned ? "Resubmit" : "Submit")" Icon="send" Variant="primary" Loading="@working" OnClick="@SubmitAsync" id="plan-submit" />
+                }
+                @if (plan.CanIWithdraw)
+                {
+                    <QButton Text="Withdraw" Icon="arrow-counterclockwise" Variant="ghost" Loading="@working" OnClick="@WithdrawAsync" id="plan-withdraw" />
+                }
+                @if (plan.CanIForward)
+                {
+                    <QButton Text="Forward for approval" Icon="send-check" Variant="primary" OnClick="@(() => Ask("forward"))" id="plan-forward" />
+                }
+                @if (plan.CanIApprove)
+                {
+                    <QButton Text="Approve" Icon="check2-circle" Variant="primary" OnClick="@(() => Ask("approve"))" id="plan-approve" />
+                }
+                @if (plan.CanIReturn)
+                {
+                    <QButton Text="Return for changes" Icon="reply" Variant="secondary" OnClick="@(() => Ask("return"))" id="plan-return" />
+                }
+                @if (plan.CanIRevise)
+                {
+                    <QButton Text="Revise" Icon="pencil" Variant="secondary" Loading="@working" OnClick="@ReviseAsync" id="plan-revise" />
+                }
+            </Actions>
+        </QPageActions>
+
+        <div class="plan-band">
+            <h2 class="plan-title">@plan.Title</h2>
+            <div class="plan-meta">
+                <QChip Text="@PlanDisplay.Status(plan.Status)" Variant="@PlanDisplay.Variant(plan.Status)" id="plan-status" />
+                @if (plan.Version > 1) { <QChip Text="@($"Version {plan.Version}")" Size="sm" /> }
+                <span>@plan.AuthorName · @plan.SubjectName@(plan.DepartmentName is { } d ? $" ({d})" : "") · @string.Join(", ", plan.ClassNames)@(plan.PeriodName is { } pn ? $" · {pn}" : "")</span>
+                @if (plan.WaitingOn is { } w && plan.Status is TeachingPlanStatus.Submitted or TeachingPlanStatus.Forwarded) { <span class="cell-sub" id="plan-waiting">@w</span> }
+                @if (plan.Stages == 1 && plan.Kind == TeachingPlanKind.LessonPlan) { <span class="cell-sub">Approved by the head of department</span> }
+            </div>
+        </div>
+
+        @if (plan.Status == TeachingPlanStatus.Returned && plan.ReturnReason is { } why)
+        {
+            <div class="plan-callout plan-callout--warning" id="plan-returned"><i class="bi bi-reply"></i><span>Returned: @why</span></div>
+        }
+        @if (plan.StageSkippedReason is { } skipped)
+        {
+            <div class="plan-callout"><i class="bi bi-skip-forward"></i><span>@skipped</span></div>
+        }
+        @if (plan.WhyNot is { } refused)
+        {
+            <div class="plan-callout" id="plan-whynot"><i class="bi bi-person-x"></i><span>@refused</span></div>
+        }
+        @if (!plan.IsCurrent && plan.SupersedesId is { } prev && plan.Status != TeachingPlanStatus.Approved)
+        {
+            <div class="plan-callout"><i class="bi bi-files"></i><span>A revision. The approved version stays in use until this one is approved. <a href="/plans/@prev">Open the approved version</a>.</span></div>
+        }
+
+        @if (plan.CanIEdit)
+        {
+            <QCard Title="Start faster" Icon="lightning" Class="plan-shortcuts">
+                <div class="card-actions">
+                    @if (plan.Kind == TeachingPlanKind.LessonPlan)
+                    {
+                        <QButton Text="Copy from my last plan for this class" Icon="files" Variant="secondary" Size="sm" Loading="@copying" OnClick="@CopyLastAsync" id="plan-copy-last" />
+                        <QButton Text="Also for another stream" Icon="diagram-2" Variant="ghost" Size="sm" OnClick="@OpenAlsoForAsync" id="plan-also-for" />
+                        <QButton Text="Move to another lesson" Icon="arrow-left-right" Variant="ghost" Size="sm" OnClick="@OpenBumpAsync" id="plan-bump" />
+                    }
+                    <QButton Text="Word template" Icon="file-earmark-word" Variant="ghost" Size="sm" OnClick="@DownloadTemplateAsync" id="plan-template" />
+                    <label class="q-btn q-btn--ghost q-btn--sm plan-file-label" for="plan-docx-input"><i class="bi bi-upload"></i> Fill from a Word file</label>
+                    <InputFile id="plan-docx-input" accept=".docx" OnChange="@ReadDocxAsync" class="visually-hidden" />
+                </div>
+            </QCard>
+        }
+
+        @if (plan.Kind == TeachingPlanKind.LessonPlan && content != null)
+        {
+            <QCard Title="Lesson" Icon="info-circle">
+                <dl class="plan-header">
+                    <div><dt>Date</dt><dd>@QDateFormat.D(plan.LessonDate)</dd></div>
+                    <div><dt>Time</dt><dd>@(content.Header.Time ?? "—")</dd></div>
+                    <div><dt>Duration</dt><dd>@(content.Header.DurationMinutes is { } dm ? $"{dm} minutes" : "—")</dd></div>
+                    <div><dt>Week</dt><dd>@(content.Header.Week?.ToString() ?? "—")</dd></div>
+                    <div><dt>Room</dt><dd>@(content.Header.Room ?? "—")</dd></div>
+                    <div>
+                        <dt>Learners</dt>
+                        <dd>
+                            @if (plan.CanIEdit)
+                            {
+                                <QInput TValue="int?" Value="@content.Header.Learners" ValueChanged="@(v => content.Header.Learners = v)" Type="number" Min="0" Max="999" id="plan-learners" />
+                            }
+                            else { @(content.Header.Learners?.ToString() ?? "—") }
+                        </dd>
+                    </div>
+                </dl>
+                @if (scheme != null)
+                {
+                    <div class="plan-scheme-link">
+                        @if (plan.CanIEdit)
+                        {
+                            <QSelect TValue="string" TItem="SchemeRowDto" Value="@plan.SchemeRowKey" ValueChanged="@PickSchemeRow"
+                                     Items="@(scheme.Rows ?? new())" ValueSelector="@(r => r.Key)" TextSelector="@(r => $"Week {r.Week}: {r.Cells.GetValueOrDefault(TeachingPlanDefaults.TopicKey)}")"
+                                     Label="From the scheme of work" AllowClear="true" Hint="Choosing a line fills the topic, competency and outcomes." />
+                        }
+                        else if (scheme.Rows?.FirstOrDefault(r => r.Key == plan.SchemeRowKey) is { } row)
+                        {
+                            <span class="cell-sub">From the scheme: week @row.Week, @row.Cells.GetValueOrDefault(TeachingPlanDefaults.TopicKey)</span>
+                        }
+                    </div>
+                }
+            </QCard>
+
+            <QCard Title="Plan" Icon="journal-text">
+                @foreach (var s in plan.Sections.Where(s => !s.AfterLesson))
+                {
+                    @if (s.Kind == PlanSectionKind.Procedure)
+                    {
+                        <div class="plan-section" data-section="@s.Key">
+                            <h3>@s.Title@(s.Required ? " *" : "")@if (s.Hint is { } h) {<QInfo Text="@h" Label="@s.Title" />}</h3>
+                            <div class="plan-procedure">
+                                <table class="data-table q-stack" id="plan-procedure">
+                                    <thead><tr><th>Phase</th><th>Minutes</th><th>Teacher's activities</th><th>Learners' activities</th>@if (plan.CanIEdit) {<th class="row-actions"></th>}</tr></thead>
+                                    <tbody>
+                                        @foreach (var step in content.Procedure)
+                                        {
+                                            var st = step;
+                                            <tr>
+                                                @if (plan.CanIEdit)
+                                                {
+                                                    <td><QInput TValue="string" @bind-Value="@st.Phase" MaxLength="60" /></td>
+                                                    <td class="plan-minutes"><QInput TValue="int?" @bind-Value="@st.Minutes" Type="number" Min="0" Max="600" /></td>
+                                                    <td><QInput TValue="string" @bind-Value="@st.Teacher" Type="textarea" Rows="3" MaxLength="2000" /></td>
+                                                    <td><QInput TValue="string" @bind-Value="@st.Learner" Type="textarea" Rows="3" MaxLength="2000" /></td>
+                                                    <td class="row-actions"><QButton Icon="x-lg" Variant="ghost" Size="sm" OnClick="@(() => content.Procedure.Remove(st))" aria-label="Remove this step" /></td>
+                                                }
+                                                else
+                                                {
+                                                    <td>@st.Phase</td><td>@st.Minutes</td><td class="plan-pre">@st.Teacher</td><td class="plan-pre">@st.Learner</td>
+                                                }
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                                @if (plan.CanIEdit)
+                                {
+                                    <QButton Text="Add a step" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@(() => content.Procedure.Add(new ProcedureStepDto()))" id="plan-add-step" />
+                                }
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="plan-section" data-section="@s.Key">
+                            @if (plan.CanIEdit)
+                            {
+                                @if (s.Kind == PlanSectionKind.Choice)
+                                {
+                                    <QSelect TValue="string" TItem="string" Value="@Answer(s.Key)" ValueChanged="@(v => SetAnswer(s.Key, v))" Items="@s.Choices"
+                                             Label="@s.Title" Required="@s.Required" Hint="@s.Hint" AllowClear="true" />
+                                }
+                                else if (s.Kind == PlanSectionKind.MultiChoice)
+                                {
+                                    <QMultiSelect TValue="string" TItem="string" SelectedValues="@Picked(s.Key)" SelectedValuesChanged="@(v => SetAnswer(s.Key, string.Join("; ", v)))"
+                                                  Items="@s.Choices" Label="@s.Title" Required="@s.Required" Hint="@s.Hint" />
+                                }
+                                else
+                                {
+                                    <QInput TValue="string" Value="@Answer(s.Key)" ValueChanged="@(v => SetAnswer(s.Key, v))" Label="@s.Title" Required="@s.Required" Hint="@s.Hint"
+                                            Type="textarea" Rows="@(s.Key == TeachingPlanDefaults.OutcomesKey ? 4 : 2)" MaxLength="4000" id="@($"plan-s-{s.Key}")" />
+                                }
+                            }
+                            else
+                            {
+                                <h3>@s.Title</h3>
+                                <p class="plan-pre">@(Answer(s.Key) ?? "—")</p>
+                            }
+                        </div>
+                    }
+                }
+            </QCard>
+
+            @if (plan.Sections.FirstOrDefault(s => s.AfterLesson) is { } after && (plan.CanIReflect || !string.IsNullOrWhiteSpace(plan.Reflection)))
+            {
+                <QCard Title="@after.Title" Icon="chat-left-text">
+                    @if (plan.CanIReflect)
+                    {
+                        <QInput TValue="string" @bind-Value="@reflection" Type="textarea" Rows="3" MaxLength="4000" Hint="@after.Hint" id="plan-reflection" />
+                        <div class="card-actions"><QButton Text="Save the self-evaluation" Variant="secondary" Size="sm" Loading="@working" OnClick="@ReflectAsync" id="plan-reflect" /></div>
+                    }
+                    else { <p class="plan-pre">@plan.Reflection</p> }
+                </QCard>
+            }
+        }
+
+        @if (plan.Kind == TeachingPlanKind.SchemeOfWork && rows != null)
+        {
+            <QCard Title="Weeks" Icon="calendar-week">
+                <div class="plan-scheme-wrap">
+                    <table class="data-table plan-scheme" id="plan-scheme">
+                        <thead>
+                            <tr>
+                                <th>Week</th><th>Periods</th>
+                                @foreach (var c in plan.Columns) { <th>@c.Title@(c.Required ? " *" : "")</th> }
+                                @if (plan.CanIEdit) { <th class="row-actions"></th> }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var r in rows)
+                            {
+                                var row = r;
+                                <tr data-row="@row.Key">
+                                    @if (plan.CanIEdit)
+                                    {
+                                        <td class="plan-minutes"><QInput TValue="int" @bind-Value="@row.Week" Type="number" Min="1" Max="52" /></td>
+                                        <td class="plan-minutes"><QInput TValue="int?" @bind-Value="@row.Periods" Type="number" Min="0" Max="60" /></td>
+                                        @foreach (var c in plan.Columns)
+                                        {
+                                            var key = c.Key;
+                                            <td><QInput TValue="string" Value="@row.Cells.GetValueOrDefault(key)" ValueChanged="@(v => SetCell(row, key, v))" Type="textarea" Rows="2" MaxLength="2000" /></td>
+                                        }
+                                        <td class="row-actions"><QButton Icon="x-lg" Variant="ghost" Size="sm" OnClick="@(() => rows.Remove(row))" aria-label="Remove this week" /></td>
+                                    }
+                                    else
+                                    {
+                                        <td>@row.Week</td><td>@row.Periods</td>
+                                        @foreach (var c in plan.Columns) { <td class="plan-pre">@row.Cells.GetValueOrDefault(c.Key)</td> }
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                @if (plan.CanIEdit)
+                {
+                    <QButton Text="Add a week" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@AddWeek" id="plan-add-week" />
+                }
+            </QCard>
+        }
+
+        @* ---- The fallback: a PDF, shrunk here before it is sent (plan §5.4) ---- *@
+        @if (plan.FileUrl != null || (plan.CanIEdit && plan.UploadsEnabled))
+        {
+            <QCard Title="Attached PDF" Icon="file-earmark-pdf">
+                @if (plan.FileUrl is { } url)
+                {
+                    <p id="plan-file">
+                        <a href="@url" target="_blank" rel="noopener">@plan.FileName</a>
+                        <span class="cell-sub">@PlanDisplay.Size(plan.FileSizeBytes)@(plan.FilePages is { } fp ? $", {fp} page{(fp == 1 ? "" : "s")}" : "")@(plan.OriginalSizeBytes > plan.FileSizeBytes ? $" — shrunk from {PlanDisplay.Size(plan.OriginalSizeBytes)}" : "")</span>
+                        @if (plan.CanIEdit) { <QButton Text="Remove" Variant="ghost" Size="sm" OnClick="@RemoveFileAsync" id="plan-file-remove" /> }
+                    </p>
+                }
+                @if (plan.CanIEdit && plan.UploadsEnabled)
+                {
+                    <p class="cell-sub">
+                        Only if the plan cannot be typed here. It is shrunk on this computer first — the school allows @plan.FileCapKb KB and @plan.FileMaxPages page@(plan.FileMaxPages == 1 ? "" : "s").
+                    </p>
+                    <label class="q-btn q-btn--secondary q-btn--sm plan-file-label" for="plan-pdf-input"><i class="bi bi-file-earmark-arrow-up"></i> Choose a PDF</label>
+                    <input type="file" id="plan-pdf-input" accept=".pdf,application/pdf" class="visually-hidden" @onchange="@ShrinkAsync" />
+                    @if (shrinking) { <p class="cell-sub" id="plan-shrinking">Shrinking the file on this computer…</p> }
+                }
+            </QCard>
+        }
+
+        @* ---- The trail: every step, comment and return, oldest first ---- *@
+        <QCard Title="History" Icon="clock-history">
+            @if (plan.Trail.Count == 0) { <p class="cell-sub">Nothing yet.</p> }
+            else
+            {
+                <ul class="plan-trail" id="plan-trail">
+                    @foreach (var t in plan.Trail)
+                    {
+                        <li class="plan-trail-@t.Kind.ToString().ToLowerInvariant()">
+                            <span class="cell-sub">@QDateFormat.DT(t.At.ToLocalTime())</span>
+                            <span><strong>@(t.ByName ?? "")</strong> @PlanDisplay.Trail(t.Kind)@(t.SectionKey is { } sk && plan.Sections.FirstOrDefault(x => x.Key == sk) is { } sec ? $" on \"{sec.Title}\"" : "")</span>
+                            @if (!string.IsNullOrWhiteSpace(t.Body)) { <span class="plan-pre plan-trail-body">@t.Body</span> }
+                        </li>
+                    }
+                </ul>
+            }
+            @if (plan.CanIComment)
+            {
+                <div class="plan-comment">
+                    <QInput TValue="string" @bind-Value="@comment" Type="textarea" Rows="2" Label="Comment" MaxLength="2000" id="plan-comment" />
+                    <div class="card-actions"><QButton Text="Add comment" Variant="secondary" Size="sm" Loading="@working" Disabled="@string.IsNullOrWhiteSpace(comment)" OnClick="@CommentAsync" id="plan-comment-send" /></div>
+                </div>
+            }
+        </QCard>
+
+        @if (plan.CanIEdit)
+        {
+            <div class="plan-danger"><QButton Text="Discard this plan" Icon="trash" Variant="ghost" Size="sm" OnClick="@(() => discardOpen = true)" id="plan-discard" /></div>
+        }
+    }
+</div>
+
+@* ---- Decision (forward / approve / return) ---- *@
+<QModal Visible="@(decision != null)" VisibleChanged="@(v => { if (!v) decision = null; })" Title="@DecisionTitle" Icon="@(decision == "return" ? "reply" : "check2-circle")">
+    <ChildContent>
+        @if (decision == "return")
+        {
+            <QSelect TValue="string" TItem="PlanSectionDto" Value="@decisionSection" ValueChanged="@(v => decisionSection = v)" Items="@(plan?.Sections ?? new())"
+                     ValueSelector="@(s => s.Key)" TextSelector="@(s => s.Title)" Label="About which section (optional)" AllowClear="true" />
+        }
+        <QInput TValue="string" @bind-Value="@decisionNote" Type="textarea" Rows="3" MaxLength="2000" id="plan-decision-note"
+                Label="@(decision == "return" ? "What to change" : "Note (optional)")" Required="@(decision == "return")"
+                Hint="@(decision == "return" ? "At least ten characters. The teacher reads this." : "A comment the teacher will read.")" />
+        @if (decisionProblem is { } dp) { <p class="form-error">@dp</p> }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => decision = null)" />
+        <QButton Text="@DecisionButton" Variant="@(decision == "return" ? "secondary" : "primary")" Loading="@working" OnClick="@DecideAsync" id="plan-decision-confirm" />
+    </FooterContent>
+</QModal>
+
+@* ---- The shrunk PDF, before it is sent ---- *@
+<QModal Visible="@(shrunk != null)" VisibleChanged="@(v => { if (!v) CancelShrunk(); })" Title="Attach this PDF?" Icon="file-earmark-pdf" Size="lg">
+    <ChildContent>
+        @if (shrunk != null)
+        {
+            @if (!shrunk.Ok)
+            {
+                <p class="form-error" id="plan-shrink-problem">@shrunk.Problem</p>
+            }
+            else
+            {
+                <p id="plan-shrink-summary"><strong>@PlanDisplay.Size(shrunk.OriginalSize) → @PlanDisplay.Size(shrunk.Size)</strong>, @shrunk.Pages page@(shrunk.Pages == 1 ? "" : "s").</p>
+                @foreach (var n in shrunk.Notes) { <p class="cell-sub">@n</p> }
+            }
+            <div class="plan-previews">
+                @if (shrunk.PreviewBefore is { } b) { <figure><img src="@b" alt="Your file, first page" /><figcaption>Your file</figcaption></figure> }
+                @if (shrunk.PreviewAfter is { } a && shrunk.Ok) { <figure><img src="@a" alt="What will be stored, first page" /><figcaption>What will be stored</figcaption></figure> }
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@CancelShrunk" />
+        @if (shrunk?.Ok == true) { <QButton Text="Attach" Variant="primary" Loading="@working" OnClick="@AttachShrunkAsync" id="plan-attach" /> }
+    </FooterContent>
+</QModal>
+
+@* ---- Also for another stream ---- *@
+<QModal Visible="@alsoOpen" VisibleChanged="@(v => alsoOpen = v)" Title="Also for another stream" Icon="diagram-2">
+    <ChildContent>
+        <p class="cell-sub">The same plan then covers these classes too: one plan, several classes. Only classes you teach in this subject are offered.</p>
+        <QMultiSelect TValue="string" TItem="string" SelectedValues="@alsoClasses" SelectedValuesChanged="@(v => alsoClasses = v.ToList())" Items="@alsoChoices" Label="Classes" Sorted="true" />
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => alsoOpen = false)" />
+        <QButton Text="Add" Variant="primary" Loading="@working" Disabled="@(alsoClasses.Count == 0)" OnClick="@AlsoForAsync" id="plan-also-confirm" />
+    </FooterContent>
+</QModal>
+
+@* ---- Move to another lesson ---- *@
+<QModal Visible="@bumpOpen" VisibleChanged="@(v => bumpOpen = v)" Title="Move to another lesson" Icon="arrow-left-right">
+    <ChildContent>
+        @if (bumpChoices.Count == 0) { <p class="cell-sub">None of your lessons in this subject in the next fortnight is free of a plan.</p> }
+        else
+        {
+            <QSelect TValue="Guid?" TItem="PlanbookLessonDto" Value="@bumpTo" ValueChanged="@(v => bumpTo = v)" Items="@bumpChoices" ValueSelector="@(l => (Guid?)l.DutyId)"
+                     TextSelector="@(l => $"{QDateFormat.DD(BranchClock.ToLocal(l.StartsAt, zone))} {QDateFormat.T(BranchClock.ToLocal(l.StartsAt, zone))} · {l.ClassName}")" Label="Lesson" />
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => bumpOpen = false)" />
+        <QButton Text="Move" Variant="primary" Loading="@working" Disabled="@(bumpTo == null)" OnClick="@BumpAsync" id="plan-bump-confirm" />
+    </FooterContent>
+</QModal>
+
+<QModal Visible="@discardOpen" VisibleChanged="@(v => discardOpen = v)" Title="Discard this plan?" Icon="trash">
+    <ChildContent><p>It disappears from your plans. Nobody else has seen a draft.</p></ChildContent>
+    <FooterContent>
+        <QButton Text="Keep it" Variant="ghost" OnClick="@(() => discardOpen = false)" />
+        <QButton Text="Discard" Variant="danger" Loading="@working" OnClick="@DiscardAsync" id="plan-discard-confirm" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .plan-editor { display: flex; flex-direction: column; gap: var(--qm-block-gap); }
+    .plan-band { display: flex; flex-direction: column; gap: 4px; }
+    .plan-title { margin: 0; }
+    .plan-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+    .plan-callout { display: flex; gap: 8px; align-items: flex-start; padding: 8px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); }
+    .plan-callout--warning { border-color: var(--qm-warning); }
+    .plan-header { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px 16px; margin: 0; }
+    .plan-header dt { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
+    .plan-header dd { margin: 0; }
+    .plan-scheme-link { margin-top: 10px; }
+    .plan-section { margin-bottom: var(--qm-field-gap); }
+    .plan-section h3 { margin: 0 0 4px; display: flex; align-items: center; gap: 4px; }
+    .plan-pre { white-space: pre-wrap; margin: 0; }
+    .plan-minutes { width: 90px; }
+    .plan-scheme-wrap { overflow-x: auto; }
+    .plan-scheme td { min-width: 150px; vertical-align: top; }
+    .plan-scheme td.plan-minutes { min-width: 70px; }
+    .plan-file-label { cursor: pointer; }
+    .plan-trail { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+    .plan-trail li { display: flex; flex-direction: column; gap: 2px; }
+    .plan-trail-body { padding-left: 10px; border-left: 2px solid var(--qm-border); }
+    .plan-trail-returned .plan-trail-body { border-left-color: var(--qm-warning); }
+    .plan-previews { display: flex; flex-wrap: wrap; gap: 12px; }
+    .plan-previews figure { margin: 0; }
+    .plan-previews img { width: 240px; max-width: 100%; border: 1px solid var(--qm-border); }
+    .plan-previews figcaption { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
+    .plan-danger { display: flex; justify-content: flex-end; }
+</style>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private TeachingPlanDto? plan;
+    private TeachingPlanDto? scheme;
+    private LessonPlanContentDto? content;
+    private List<SchemeRowDto>? rows;
+    private bool loading = true, saving, working, copying, shrinking, discardOpen, alsoOpen, bumpOpen;
+    private string? reflection, comment;
+    private string? decision, decisionNote, decisionSection, decisionProblem;
+    private ShrinkResult? shrunk;
+    private List<string> alsoChoices = new(), alsoClasses = new();
+    private List<PlanbookLessonDto> bumpChoices = new();
+    private Guid? bumpTo;
+    private TimeZoneInfo zone = TimeZoneInfo.Utc;
+    private Guid branchId;
+    private Guid loadedId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (loadedId == Id) return;
+        loadedId = Id;
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        TrackBranch();
+        await LoadAsync();
+    }
+
+    /// <summary>A plan belongs to one branch: after a switch it reads as not found, which is the truth.</summary>
+    protected override async Task OnBranchChangedAsync(Guid newBranchId)
+    {
+        branchId = newBranchId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        try
+        {
+            Take(await PlanApi.GetAsync(branchId, Id));
+            if (plan!.Kind == TeachingPlanKind.LessonPlan && plan.SchemeId is { } sid)
+            {
+                try { scheme = await PlanApi.GetAsync(branchId, sid); } catch { scheme = null; }
+            }
+        }
+        catch { plan = null; }
+        finally { loading = false; }
+    }
+
+    private void Take(TeachingPlanDto p)
+    {
+        plan = p;
+        content = p.Content is { } c ? c with { Answers = new(c.Answers), Procedure = c.Procedure.Select(s => s with { }).ToList() } : null;
+        rows = p.Rows?.Select(r => r with { Cells = new(r.Cells) }).ToList();
+        reflection = p.Reflection;
+    }
+
+    private string? Answer(string key) => content?.Answers.TryGetValue(key, out var v) == true ? v : null;
+    private IEnumerable<string> Picked(string key) => (Answer(key) ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    private void SetAnswer(string key, string? value)
+    {
+        if (content == null) return;
+        if (string.IsNullOrWhiteSpace(value)) content.Answers.Remove(key); else content.Answers[key] = value;
+    }
+    private static void SetCell(SchemeRowDto row, string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) row.Cells.Remove(key); else row.Cells[key] = value;
+    }
+    private void AddWeek()
+    {
+        rows ??= new();
+        rows.Add(new SchemeRowDto { Key = Guid.NewGuid().ToString("N")[..12], Week = (rows.Count == 0 ? 0 : rows.Max(r => r.Week)) + 1 });
+    }
+
+    private void PickSchemeRow(string? key)
+    {
+        if (plan == null || content == null) return;
+        plan.SchemeRowKey = key;
+        var row = scheme?.Rows?.FirstOrDefault(r => r.Key == key);
+        if (row == null) return;
+        foreach (var k in new[] { TeachingPlanDefaults.TopicKey, TeachingPlanDefaults.SubTopicKey, TeachingPlanDefaults.CompetencyKey, TeachingPlanDefaults.OutcomesKey })
+            if (row.Cells.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v)) content.Answers[k] = v;
+    }
+
+    private SaveTeachingPlanRequest Request() => new()
+    {
+        Content = content,
+        Rows = rows,
+        SchemeId = plan!.SchemeId,
+        SchemeRowKey = plan.SchemeRowKey,
+        RowVersion = plan.RowVersion
+    };
+
+    private async Task<bool> SaveQuietlyAsync()
+    {
+        if (plan == null || !plan.CanIEdit) return true;
+        try { Take(await PlanApi.SaveAsync(branchId, plan.Id, Request())); return true; }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not save", ex.Message); return false; }
+    }
+
+    private async Task SaveAsync()
+    {
+        saving = true;
+        if (await SaveQuietlyAsync()) Toast.Notify(ToastSeverity.Success, "Saved", plan!.Title);
+        saving = false;
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (plan == null) return;
+        // The page refuses first what the server would refuse, in the same words (TeachingPlanRules).
+        var problems = TeachingPlanRules.SubmitProblems(plan.Kind, content, rows, plan.Sections, plan.Columns, plan.FileUrl != null);
+        if (problems.Count > 0) { Toast.Notify(ToastSeverity.Warning, "Finish the plan first", string.Join(" ", problems)); return; }
+        working = true;
+        try
+        {
+            if (!await SaveQuietlyAsync()) return;
+            Take(await PlanApi.SubmitAsync(branchId, plan!.Id));
+            Toast.Notify(ToastSeverity.Success, "Submitted", plan!.WaitingOn ?? "");
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not submit", ex.Message); }
+        finally { working = false; }
+    }
+
+    private async Task WithdrawAsync() => await Act(() => PlanApi.WithdrawAsync(branchId, plan!.Id), "Withdrawn to draft");
+
+    private async Task ReviseAsync()
+    {
+        working = true;
+        try { var r = await PlanApi.ReviseAsync(branchId, plan!.Id); Navigation.NavigateTo($"/plans/{r.Id}"); }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not start a revision", ex.Message); }
+        finally { working = false; }
+    }
+
+    private async Task ReflectAsync() => await Act(() => PlanApi.ReflectAsync(branchId, plan!.Id, reflection), "Self-evaluation saved");
+
+    private async Task CommentAsync()
+    {
+        if (string.IsNullOrWhiteSpace(comment)) return;
+        await Act(() => PlanApi.CommentAsync(branchId, plan!.Id, comment!.Trim()), "Comment added");
+        comment = null;
+    }
+
+    private async Task Act(Func<Task<TeachingPlanDto>> call, string done)
+    {
+        working = true;
+        try { Take(await call()); Toast.Notify(ToastSeverity.Success, done, plan!.Title); }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "That did not work", ex.Message); }
+        finally { working = false; }
+    }
+
+    private void Ask(string what) { decision = what; decisionNote = null; decisionSection = null; decisionProblem = null; }
+    private string DecisionTitle => decision switch { "forward" => "Forward for approval", "approve" => "Approve this plan", "return" => "Return for changes", _ => "" };
+    private string DecisionButton => decision switch { "forward" => "Forward", "approve" => "Approve", "return" => "Return", _ => "OK" };
+
+    private async Task DecideAsync()
+    {
+        if (plan == null || decision == null) return;
+        if (decision == "return" && (decisionNote?.Trim().Length ?? 0) < 10) { decisionProblem = "Say what to change, in at least ten characters."; return; }
+        working = true;
+        try
+        {
+            Take(decision switch
+            {
+                "forward" => await PlanApi.ForwardAsync(branchId, plan.Id, decisionNote),
+                "approve" => await PlanApi.ApproveAsync(branchId, plan.Id, decisionNote),
+                _ => await PlanApi.ReturnAsync(branchId, plan.Id, decisionNote!.Trim(), decisionSection)
+            });
+            Toast.Notify(ToastSeverity.Success, DecisionButton == "Return" ? "Returned" : DecisionButton == "Forward" ? "Forwarded" : "Approved", plan!.Title);
+            decision = null;
+        }
+        catch (Exception ex) { decisionProblem = ex.Message; }
+        finally { working = false; }
+    }
+
+    private async Task DiscardAsync()
+    {
+        working = true;
+        try { await PlanApi.DiscardAsync(branchId, plan!.Id); Navigation.NavigateTo("/portal?tab=teaching"); }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not discard", ex.Message); }
+        finally { working = false; discardOpen = false; }
+    }
+
+    // ---- Start faster ----
+
+    private async Task CopyLastAsync()
+    {
+        if (plan == null || content == null) return;
+        copying = true;
+        try
+        {
+            var mine = await PlanApi.GetMineAsync(branchId, TeachingPlanKind.LessonPlan);
+            var classKey = TeachingPlanRules.ClassKey(plan.ClassNames);
+            var last = mine.Where(m => m.Id != plan.Id && m.SubjectId == plan.SubjectId && TeachingPlanRules.ClassKey(m.ClassNames) == classKey)
+                .OrderByDescending(m => m.LessonDate).FirstOrDefault()
+                ?? mine.Where(m => m.Id != plan.Id && m.SubjectId == plan.SubjectId).OrderByDescending(m => m.LessonDate).FirstOrDefault();
+            if (last == null) { Toast.Notify(ToastSeverity.Info, "Nothing to copy", "You have no earlier plan in this subject."); return; }
+            var source = await PlanApi.GetAsync(branchId, last.Id);
+            if (source.Content == null) return;
+            foreach (var kv in source.Content.Answers.Where(kv => kv.Key != TeachingPlanDefaults.ReflectionKey)) content.Answers[kv.Key] = kv.Value;
+            content.Procedure = source.Content.Procedure.Select(s => s with { }).ToList();
+            Toast.Notify(ToastSeverity.Success, "Copied", $"From {source.Title}. Check it, then save.");
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not copy", ex.Message); }
+        finally { copying = false; }
+    }
+
+    private async Task OpenAlsoForAsync()
+    {
+        try
+        {
+            var book = await PlanApi.GetPlanbookAsync(branchId);
+            var have = plan!.ClassNames.Select(QMgr.Domain.Identity.ClassName.Key).ToHashSet();
+            alsoChoices = book.Teaching.Where(t => t.SubjectId == plan.SubjectId && !have.Contains(QMgr.Domain.Identity.ClassName.Key(t.ClassName))).Select(t => t.ClassName).Distinct().ToList();
+            alsoClasses = new();
+            alsoOpen = true;
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not load your classes", ex.Message); }
+    }
+
+    private async Task AlsoForAsync()
+    {
+        if (!await SaveQuietlyAsync()) return;
+        await Act(() => PlanApi.AlsoForAsync(branchId, plan!.Id, alsoClasses), "Classes added");
+        alsoOpen = false;
+    }
+
+    private async Task OpenBumpAsync()
+    {
+        try
+        {
+            var now = await PlanApi.GetPlanbookAsync(branchId);
+            var next = await PlanApi.GetPlanbookAsync(branchId, now.WeekStart.AddDays(7));
+            zone = BranchClock.Resolve(now.TimeZone);
+            bumpChoices = now.Lessons.Concat(next.Lessons)
+                .Where(l => l.SubjectId == plan!.SubjectId && l.PlanId == null && l.DutyId != plan.DutyId && l.StartsAt > DateTime.UtcNow).ToList();
+            bumpTo = null;
+            bumpOpen = true;
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not load your lessons", ex.Message); }
+    }
+
+    private async Task BumpAsync()
+    {
+        if (bumpTo is not { } to) return;
+        if (!await SaveQuietlyAsync()) return;
+        await Act(() => PlanApi.BumpAsync(branchId, plan!.Id, to), "Moved");
+        bumpOpen = false;
+    }
+
+    private async Task DownloadTemplateAsync()
+    {
+        if (plan == null) return;
+        try
+        {
+            var bytes = plan.Kind == TeachingPlanKind.LessonPlan
+                ? await PlanApi.DownloadLessonTemplateAsync(branchId, plan.DutyId)
+                : await PlanApi.DownloadSchemeTemplateAsync(branchId, plan.SubjectId, plan.ClassNames, plan.PeriodKey);
+            await JS.InvokeAsync<bool>("qmgrPlanPdf.saveBytes", bytes, $"{plan.Title.Replace('·', '-')}.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not download the template", ex.Message); }
+    }
+
+    private async Task ReadDocxAsync(InputFileChangeEventArgs e)
+    {
+        if (plan == null) return;
+        try
+        {
+            using var ms = new MemoryStream();
+            await e.File.OpenReadStream(5 * 1024 * 1024).CopyToAsync(ms);
+            var read = await PlanApi.ReadTemplateAsync(branchId, ms.ToArray(), e.File.Name);
+            if (read.Kind != plan.Kind) { Toast.Notify(ToastSeverity.Warning, "That is the other template", $"This is a {PlanDisplay.KindWord(plan.Kind)}; the file is a {PlanDisplay.KindWord(read.Kind)} template."); return; }
+            if (plan.Kind == TeachingPlanKind.LessonPlan && read.Content != null && content != null)
+            {
+                foreach (var kv in read.Content.Answers) content.Answers[kv.Key] = kv.Value;
+                if (read.Content.Procedure.Count > 0) content.Procedure = read.Content.Procedure;
+                if (read.Content.Header.Learners is { } n) content.Header.Learners = n;
+            }
+            else if (read.Rows is { Count: > 0 }) rows = read.Rows;
+            Toast.Notify(read.Warnings.Count > 0 ? ToastSeverity.Warning : ToastSeverity.Success,
+                $"Read {read.SectionsRead} part{(read.SectionsRead == 1 ? "" : "s")} from the Word file", read.Warnings.Count > 0 ? string.Join(" ", read.Warnings) : "Check it, then save. The file itself is not kept.");
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not read the Word file", ex.Message); }
+    }
+
+    // ---- The PDF fallback ----
+
+    public sealed class ShrinkResult
+    {
+        public bool Ok { get; set; }
+        public string? Problem { get; set; }
+        public string? FileName { get; set; }
+        public long OriginalSize { get; set; }
+        public long Size { get; set; }
+        public int Pages { get; set; }
+        public string? Mode { get; set; }
+        public List<string> Notes { get; set; } = new();
+        public int RemovedPictures { get; set; }
+        public string? Token { get; set; }
+        public string? PreviewBefore { get; set; }
+        public string? PreviewAfter { get; set; }
+    }
+
+    private async Task ShrinkAsync(ChangeEventArgs _)
+    {
+        if (plan == null) return;
+        shrinking = true;
+        StateHasChanged();
+        try
+        {
+            shrunk = await JS.InvokeAsync<ShrinkResult>("qmgrPlanPdf.shrink", "plan-pdf-input",
+                new { targetKb = plan.FileTargetKb, capKb = plan.FileCapKb, maxPages = plan.FileMaxPages, readLimitMb = TeachingPlanLimits.ReadLimitMb });
+        }
+        catch (Exception ex) { shrunk = new ShrinkResult { Ok = false, Problem = "The file could not be shrunk here: " + ex.Message }; }
+        finally { shrinking = false; await JS.InvokeVoidAsync("qmgrPlanPdf.clear", "plan-pdf-input"); }
+    }
+
+    private async void CancelShrunk()
+    {
+        var token = shrunk?.Token;
+        shrunk = null;
+        if (token != null) { try { await JS.InvokeVoidAsync("qmgrPlanPdf.drop", token); } catch { } }
+    }
+
+    private async Task AttachShrunkAsync()
+    {
+        if (plan == null || shrunk?.Token is not { } token) return;
+        working = true;
+        try
+        {
+            if (!await SaveQuietlyAsync()) return;
+            var bytes = await JS.InvokeAsync<byte[]>("qmgrPlanPdf.take", token);
+            var name = string.IsNullOrWhiteSpace(shrunk.FileName) ? "plan.pdf" : shrunk.FileName!;
+            Take(await PlanApi.UploadFileAsync(branchId, plan.Id, bytes, name, shrunk.OriginalSize));
+            shrunk = null;
+            Toast.Notify(ToastSeverity.Success, "PDF attached", PlanDisplay.Size(plan!.FileSizeBytes));
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not attach the PDF", ex.Message); }
+        finally { working = false; }
+    }
+
+    private async Task RemoveFileAsync()
+    {
+        working = true;
+        try { await PlanApi.RemoveFileAsync(branchId, plan!.Id); Take(await PlanApi.GetAsync(branchId, plan.Id)); }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not remove the file", ex.Message); }
+        finally { working = false; }
+    }
+}

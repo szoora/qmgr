@@ -5,6 +5,8 @@
 @using QMgr.Web.Services
 @using QMgr.Web.Components.Shared
 @inject HttpClient Http
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
 @inject JsonSerializerOptions JsonOptions
 @inject IToastService NotificationService
 
@@ -366,6 +368,13 @@
 
     protected override async Task OnInitializedAsync()
     {
+        // Platform page: refuse a tenant user here rather than render a shell whose every call the
+        // API refuses (2026-09-25; the other platform pages already did).
+        if (!await PermissionService.IsSuperAdminAsync())
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
         await LoadAttempts();
     }
 

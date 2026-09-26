@@ -121,9 +121,8 @@ public class StaffLessonsController : StaffPerformanceControllerBase
 
         // School events on this day that are the caller's own (calendar plan §9): staff-audience, or theirs to run.
         // PERSONAL — the calendar-keeper's "sees every event" override does not apply to their own day.
-        var myDepartments = await Db.Users.AsNoTracking().Where(u => u.Id == me).Select(u => u.DepartmentIds).FirstOrDefaultAsync() ?? Array.Empty<Guid>();
-        var dayEvents = await SchoolEventQueries.PersonalAsync(Db, organizationId, branchId, me, myDepartments, day, day,
-            await HasPermissionAsync(Permissions.CalendarManage), take: 30);
+        var dayEvents = await SchoolEventQueries.PersonalAsync(Db, _policy, organizationId, branchId, me, day, day,
+            await HasPermissionAsync(Permissions.CalendarManage), await HasPermissionAsync(Permissions.StaffDutiesManage), take: 30);
 
         return Ok(new MyDayDto
         {

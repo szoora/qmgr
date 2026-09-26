@@ -71,6 +71,18 @@ public static class NotificationEventKeys
     public const string StaffDutyReportComment = "staff.duty-report-comment";
     /// <summary>My duty report was returned for changes.</summary>
     public const string StaffDutyReportReturned = "staff.duty-report-returned";
+    /// <summary>A lesson plan or scheme of work awaits my review (head of department, stage 1).</summary>
+    public const string StaffPlanSubmitted = "staff.plan-submitted";
+    /// <summary>A plan was forwarded for approval (approvers, stage 2); the author hears it moved on.</summary>
+    public const string StaffPlanForwarded = "staff.plan-forwarded";
+    /// <summary>A plan was approved: the author, the approvers and the head of department who forwarded it.</summary>
+    public const string StaffPlanApproved = "staff.plan-approved";
+    /// <summary>My plan was returned for changes.</summary>
+    public const string StaffPlanReturned = "staff.plan-returned";
+    /// <summary>A comment on a plan I wrote or review.</summary>
+    public const string StaffPlanComment = "staff.plan-comment";
+    /// <summary>A lesson of mine has no plan yet, or a plan waits on me to review it (the reminder ladder).</summary>
+    public const string StaffPlanDue = "staff.plan-due";
     /// <summary>A lesson of mine starts soon. Bell only by default.</summary>
     public const string StaffLessonReminder = "staff.lesson-reminder";
     /// <summary>The morning "My Day" digest.</summary>
@@ -116,6 +128,25 @@ public static class NotificationEventKeys
 
     /// <summary>A module trial is ending soon, or has ended.</summary>
     public const string BillingTrial = "billing.trial";
+
+    // ---- The school calendar (plan CALENDAR_AUDIENCES_AND_IMPORT_ROUTING E5/E6, 2026-09-26). Category "Calendar". ----
+    // Each is sent to the event's own audience only, once per change (claimed on SchoolEvent.NotifiedVersion).
+
+    /// <summary>An event for me was put on the calendar.</summary>
+    public const string CalendarEventAdded = "calendar.event-added";
+    /// <summary>An event for me moved: its date, time, venue or audience changed.</summary>
+    public const string CalendarEventChanged = "calendar.event-changed";
+    /// <summary>An event for me was cancelled.</summary>
+    public const string CalendarEventCancelled = "calendar.event-cancelled";
+    /// <summary>An event for me is tomorrow, or starts within the hour.</summary>
+    public const string CalendarEventReminder = "calendar.event-reminder";
+    /// <summary>A document added several things to my calendar — ONE message, never one per row.</summary>
+    public const string CalendarImportSummary = "calendar.import-summary";
+
+    // ---- The Import inbox (E11, 2026-09-26) ----
+
+    /// <summary>A document was routed to a section I approve. Sent only to that section's owners.</summary>
+    public const string ImportsAwaitingReview = "imports.awaiting-review";
 
     // ---- Access (2026-09-24) ----
 
@@ -202,6 +233,24 @@ public static class NotificationEventKeys
         new(StaffDutyReportReturned, "My duty report was returned for changes",
             "A reviewer asked you to revise a report.",
             "Duty Rota", DefaultEmail: true, DefaultSms: false),
+        new(StaffPlanSubmitted, "A lesson plan or scheme of work awaits my review",
+            "For heads of department. Names the plan and its author, never its content.",
+            "Lesson plans", DefaultEmail: false, DefaultSms: false, Permission: "teaching.plans.review"),
+        new(StaffPlanForwarded, "A plan was forwarded",
+            "Approvers hear a plan is waiting; the author hears it has moved on.",
+            "Lesson plans", DefaultEmail: false, DefaultSms: false),
+        new(StaffPlanApproved, "A plan was approved",
+            "The author, and the Director of Studies and head of department who handled it. Lesson plans reach approvers in the weekly digest instead.",
+            "Lesson plans", DefaultEmail: true, DefaultSms: false),
+        new(StaffPlanReturned, "My plan was returned for changes",
+            "A reviewer asked you to revise a lesson plan or scheme of work.",
+            "Lesson plans", DefaultEmail: true, DefaultSms: false),
+        new(StaffPlanComment, "A comment on a plan",
+            "Someone commented on a plan you wrote or review.",
+            "Lesson plans", DefaultEmail: false, DefaultSms: false),
+        new(StaffPlanDue, "A plan is due",
+            "A lesson of yours has no plan by the school's deadline, or a plan has waited on you to review it.",
+            "Lesson plans", DefaultEmail: false, DefaultSms: false),
         new(StaffLessonReminder, "A lesson of mine starts soon",
             "A few minutes before each lesson. In-app by default: the morning digest already carries the day.",
             "Lessons", DefaultEmail: false, DefaultSms: false),
@@ -253,6 +302,24 @@ public static class NotificationEventKeys
         new(BillingTrial, "A trial is ending",
             "A module's free trial ends soon, or has ended. Only for people who can open Billing.",
             "Billing", DefaultEmail: false, DefaultSms: false, Permission: "billing.view"),
+        new(CalendarEventAdded, "An event for me was added",
+            "Somebody put an event on the calendar for you, your group, your role or your department.",
+            "Calendar", DefaultEmail: false, DefaultSms: false, DefaultPush: false),
+        new(CalendarEventChanged, "An event for me moved",
+            "The date, time, venue or audience of an event for you changed. Spelling fixes are never sent.",
+            "Calendar", DefaultEmail: true, DefaultSms: false, DefaultPush: true),
+        new(CalendarEventCancelled, "An event for me was cancelled",
+            "An event for you was called off, with the reason when one was given.",
+            "Calendar", DefaultEmail: true, DefaultSms: false, DefaultPush: true),
+        new(CalendarEventReminder, "Reminder of an event for me",
+            "The day before an event for you, and an hour before one with a start time.",
+            "Calendar", DefaultEmail: false, DefaultSms: false, DefaultPush: true),
+        new(CalendarImportSummary, "A programme added things to my calendar",
+            "One message when a term programme or duty rota puts events, meetings or duties on your calendar.",
+            "Calendar", DefaultEmail: true, DefaultSms: false),
+        new(ImportsAwaitingReview, "A document is waiting for my approval",
+            "A term programme, rota or list was sent to a section you approve. Nothing is added until it is approved.",
+            "Calendar", DefaultEmail: true, DefaultSms: false),
         new(General, "Everything else",
             "System alerts and anything not covered above.",
             "General", DefaultEmail: false, DefaultSms: false),

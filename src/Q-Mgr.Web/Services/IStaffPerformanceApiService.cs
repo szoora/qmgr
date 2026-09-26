@@ -44,8 +44,7 @@ public interface IStaffPerformanceApiService
     /// <summary>My own file. Self is always visible and is not scope — the ProfileController rule.</summary>
     Task<StaffProfileDto> GetMyProfileAsync();
 
-    /// <summary>Maintains my own contact detail. Contact only; the employment half is the school's.</summary>
-    Task<StaffProfileDto> UpdateMyContactAsync(UpdateStaffContactRequest request);
+    // Contact detail is written through IAccountApiService (api/v1/profile/contact) since 2026-09-25.
     Task<StaffMemberDto> UpdateMemberStructureAsync(Guid branchId, Guid userId, UpdateStaffStructureRequest request);
     Task<StructureCoverageDto> GetCoverageAsync(Guid branchId, string? period = null);
 
@@ -423,7 +422,6 @@ public class StaffPerformanceApiService : IStaffPerformanceApiService
     public Task<StaffProfileDto> UpdateStaffProfileAsync(Guid branchId, Guid userId, UpdateStaffProfileRequest request) => SendAsync<StaffProfileDto>(HttpMethod.Put, $"{B(branchId)}/structure/members/{userId}/profile", request);
     public Task<CreateStaffMemberResult> CreateStaffMemberAsync(Guid branchId, CreateStaffMemberRequest request) => SendAsync<CreateStaffMemberResult>(HttpMethod.Post, $"{B(branchId)}/structure/members", request);
     public Task<StaffProfileDto> GetMyProfileAsync() => GetAsync<StaffProfileDto>("api/v1/staff/portal/profile");
-    public Task<StaffProfileDto> UpdateMyContactAsync(UpdateStaffContactRequest request) => SendAsync<StaffProfileDto>(HttpMethod.Put, "api/v1/staff/portal/profile/contact", request);
     public Task<List<SubjectDto>> GetSubjectsAsync(Guid branchId, bool includeInactive = false) => GetAsync<List<SubjectDto>>($"{B(branchId)}/subjects{Q(("includeInactive", includeInactive ? "true" : null))}");
     public Task<SubjectDto> CreateSubjectAsync(Guid branchId, SaveSubjectRequest request) => SendAsync<SubjectDto>(HttpMethod.Post, $"{B(branchId)}/subjects", request);
     public Task<SubjectDto> UpdateSubjectAsync(Guid branchId, Guid id, SaveSubjectRequest request) => SendAsync<SubjectDto>(HttpMethod.Put, $"{B(branchId)}/subjects/{id}", request);

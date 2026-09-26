@@ -109,6 +109,10 @@ public class StaffDuty : BaseAuditableEntity
     /// <summary>The ladder's claim column for "these minutes have not been circulated yet".</summary>
     public int MinutesReminderStage { get; set; }
 
+    /// <summary>On a LESSON: the highest "no plan yet" reminder stage sent (lesson plans plan §5.8). A lesson with no plan
+    /// has no plan row to claim a stage on, so the lesson carries it. Claimed by a conditional UPDATE like every ladder.</summary>
+    public int PlanReminderStage { get; set; }
+
     /// <summary>Set when the ahead-of-time reminder went out. One reminder per row, gated by a timestamp.</summary>
     public DateTime? ReminderSentAt { get; set; }
 
@@ -147,6 +151,14 @@ public class StaffDuty : BaseAuditableEntity
     /// every duty carrying it EXCEPT one whose register has been taken, which is never deleted.
     /// </summary>
     public Guid? ImportJobId { get; set; }
+
+    /// <summary>
+    /// The line of the document an imported meeting came from (plan CALENDAR_AUDIENCES_AND_IMPORT_ROUTING, B7). A re-import
+    /// matches a meeting by this key first — before it, a meeting was matched by title and day alone, so a hand-made duty
+    /// with the same title that day was quietly overwritten, and two meetings of one title on one day could not coexist.
+    /// </summary>
+    [MaxLength(200)]
+    public string? SourceKey { get; set; }
 
     /// <summary>
     /// The administrator(s) on duty: they supervise the people on duty, take the close-out register, read the

@@ -1,0 +1,91 @@
+@using QMgr.Application.DTOs
+@using System.Text.RegularExpressions
+@inject IAuthService AuthService
+@inject IOrganizationApiService OrganizationApi
+@inject IBranchStateService BranchState
+
+@*
+    THE SCHOOL'S HEAD ON A PRINTED PLAN (2026-09-26): its logo, its name and the document's title, over a rule in the
+    school's own colour. Shared by the printed plan, the printed scheme and the blank sheets, so all four carry the same
+    head. Colour is used for a RULE and the title only, never a shaded band: most school printers are black and white, and
+    the project's print rule is that meaning is carried by line and weight, never a tint.
+
+    It also exposes the ps-* print classes both sheets use (a ruled writing box, the signature lines).
+*@
+
+<header class="ps-head" style="--ps-brand: @Brand">
+    @if (!string.IsNullOrWhiteSpace(branding?.LogoUrl))
+    {
+        <img class="ps-logo" src="@branding!.LogoUrl" alt="" />
+    }
+    <div class="ps-head__text">
+        <div class="ps-school">@School</div>
+        <div class="ps-title">@Title</div>
+        @if (!string.IsNullOrWhiteSpace(Subtitle)) { <div class="ps-subtitle">@Subtitle</div> }
+    </div>
+    @if (!string.IsNullOrWhiteSpace(Stamp)) { <div class="ps-stamp">@Stamp</div> }
+</header>
+
+<style>
+    /* Paper is white whatever the screen theme: every part of a printed sheet takes print-black explicitly, or a heading
+       inherits the dark theme's light heading colour and prints as white on white (found by looking, 2026-09-26). */
+    .ps-head, .ps-box, .ps-box h3, .ps-fields, .ps-fields dd, .ps-table, .ps-table th, .ps-sign, .ps-sign strong, .ps-choices, .ps-text { color: #111; }
+    .ps-head { display: flex; align-items: center; gap: 14px; padding-bottom: 8px; margin-bottom: 12px; border-bottom: 2.5px solid var(--ps-brand, #7a2847); }
+    .ps-logo { height: 58px; width: auto; max-width: 110px; object-fit: contain; }
+    .ps-head__text { flex: 1 1 auto; min-width: 0; }
+    .ps-school { font-size: 15pt; font-weight: 800; letter-spacing: 0.02em; line-height: 1.15; }
+    .ps-title { font-size: 12pt; font-weight: 700; letter-spacing: 0.12em; color: var(--ps-brand, #7a2847); text-transform: uppercase; margin-top: 2px; }
+    .ps-subtitle { font-size: 9.5pt; margin-top: 2px; }
+    .ps-stamp { border: 1.5px solid currentColor; padding: 3px 8px; font-size: 9pt; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
+    .ps-fields { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border: 1px solid #555; margin-bottom: 10px; }
+    .ps-fields > div { border-right: 1px solid #999; border-bottom: 1px solid #999; padding: 4px 6px; min-height: 30px; }
+    .ps-fields dt { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.06em; color: #444; }
+    .ps-fields dd { margin: 1px 0 0; font-size: 10pt; min-height: 13pt; }
+    .ps-box { border: 1px solid #555; margin-bottom: 8px; break-inside: avoid; }
+    .ps-box h3 { margin: 0; padding: 3px 6px; font-size: 9.5pt; font-weight: 700; border-bottom: 1px solid #999; }
+    .ps-box .ps-hint { font-weight: 400; font-size: 8pt; color: #444; margin-left: 6px; }
+    .ps-lines { background: repeating-linear-gradient(to bottom, transparent 0, transparent calc(22px - 1px), #bbb calc(22px - 1px), #bbb 22px); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .ps-text { padding: 4px 6px; white-space: pre-wrap; font-size: 10pt; min-height: 22px; }
+    .ps-choices { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 5px 6px; font-size: 9.5pt; }
+    .ps-choices span::before { content: "☐ "; }
+    .ps-choices span.ps-on::before { content: "☒ "; }
+    .ps-table { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
+    .ps-table th, .ps-table td { border: 1px solid #555; padding: 3px 5px; vertical-align: top; text-align: left; }
+    .ps-table th { font-size: 8.5pt; }
+    .ps-table tr { break-inside: avoid; }
+    .ps-sign { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 14px; font-size: 9pt; break-inside: avoid; }
+    .ps-sign div { border-top: 1px solid #333; padding-top: 3px; }
+    .ps-sign strong { display: block; }
+    .ps-foot { margin-top: 10px; font-size: 7.5pt; color: #555; display: flex; justify-content: space-between; gap: 10px; }
+    @@media print { .ps-head { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = string.Empty;
+    [Parameter] public string? Subtitle { get; set; }
+    /// <summary>A mark in the corner — "Draft", "Not yet approved", "Approved".</summary>
+    [Parameter] public string? Stamp { get; set; }
+
+    private OrganizationBrandingDto? branding;
+
+    private string? userSchool;
+    private string School => !string.IsNullOrWhiteSpace(branding?.OrganizationName) ? branding!.OrganizationName! : userSchool ?? "";
+
+    /// <summary>The school's primary colour, only when it is a real hex colour — it goes into a style attribute.</summary>
+    private string Brand => branding?.PrimaryColor is { } c && Regex.IsMatch(c, "^#[0-9a-fA-F]{6}$") ? c : "#7a2847";
+
+    protected override async Task OnInitializedAsync()
+    {
+        // The BRANCH's public branding, never the settings endpoint: that one needs settings.view, which a teacher does
+        // not hold, and the head of a teacher's own plan must not depend on an administrator's permission. The public one
+        // is what the kiosk and the sign-in page already read.
+        try
+        {
+            userSchool = (await AuthService.GetCurrentUserAsync())?.OrganizationName;
+            await BranchState.InitializeAsync();
+            if (BranchState.CurrentBranchId != Guid.Empty)
+                branding = await OrganizationApi.GetBranchBrandingAsync(BranchState.CurrentBranchId);
+        }
+        catch { branding = null; }
+    }
+}

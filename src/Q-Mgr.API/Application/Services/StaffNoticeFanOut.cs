@@ -8,6 +8,7 @@ using QMgr.Domain.Entities.Notification;
 using QMgr.Domain.Entities.Staff;
 using QMgr.Domain.Enums;
 using QMgr.Infrastructure.Data;
+using QMgr.Infrastructure.Services;
 
 namespace QMgr.API.Application.Services;
 
@@ -53,19 +54,24 @@ public static class StaffNoticeFanOut
         return true;
     }
 
-    /// <summary>Every active staff member of the organization the notice is addressed to.</summary>
-    public static async Task<List<(Guid UserId, string FullName)>> ResolveRecipientsAsync(QMgrDbContext db, StaffNotice notice, CancellationToken ct = default)
+    /// <summary>
+    /// Every current member of staff the notice is addressed to. The facts come from <see cref="StaffAudience"/>
+    /// (calendar-audiences plan B14, 2026-09-26): until then this read the raw <c>Role.StaffGroup</c> with no
+    /// <c>GroupFor</c> fallback — so somebody whose role had no group could SEE a group notice on the portal (which
+    /// applies the fallback) and was never told of it — and it notified people whose employment had ended.
+    /// </summary>
+    public static async Task<List<(Guid UserId, string FullName)>> ResolveRecipientsAsync(QMgrDbContext db, IStaffPerformancePolicyService policy, StaffNotice notice, CancellationToken ct = default)
     {
-        var candidates = await db.Users.IgnoreQueryFilters().AsNoTracking()
-            .Where(u => u.OrganizationId == notice.OrganizationId && u.IsActive && u.Role.Code != RoleCodes.SuperAdmin)
-            .Select(u => new { u.Id, u.FirstName, u.LastName, u.Username, u.AssignedBranchId, RoleCode = u.Role.Code, StaffGroup = u.Role.StaffGroup, u.DepartmentIds })
-            .ToListAsync(ct);
-
-        return candidates
-            .Where(u => IsRecipient(notice, u.AssignedBranchId, u.RoleCode, u.DepartmentIds, u.StaffGroup))
-            .Select(u => (u.Id, PersonNames.Display(notice.OrganizationId, u.FirstName, u.LastName, u.Username)))
+        var members = await StaffAudience.MembersAsync(db, policy, notice.OrganizationId, null, ct);
+        return members
+            .Where(m => IsRecipient(notice, m))
+            .Select(m => (m.UserId, m.FullName))
             .ToList();
     }
+
+    /// <summary>The fan-out's predicate over the shared audience facts — the group already resolved with its fallback.</summary>
+    public static bool IsRecipient(StaffNotice notice, AudienceMemberDto m)
+        => IsRecipient(notice, m.BranchId, m.RoleCode, m.DepartmentIds.ToArray(), m.StaffGroup);
 
     /// <summary>
     /// Creates one Notification per recipient and stamps NotificationsSentAt. Returns the number
@@ -74,7 +80,7 @@ public static class StaffNoticeFanOut
     /// the stamp is written regardless so a partial failure does not re-notify everyone next pass
     /// (the AppointmentJobs rationale). Call AFTER the notice row is committed.
     /// </summary>
-    public static async Task<int> FanOutAsync(QMgrDbContext db, INotificationService notifications, StaffNotice notice, ILogger logger, CancellationToken ct = default)
+    public static async Task<int> FanOutAsync(QMgrDbContext db, IStaffPerformancePolicyService policy, INotificationService notifications, StaffNotice notice, ILogger logger, CancellationToken ct = default)
     {
         if (!notice.IsActive || notice.NotificationsSentAt.HasValue || notice.PublishAt > DateTime.UtcNow) return 0;
 
@@ -91,7 +97,7 @@ public static class StaffNoticeFanOut
         if (claimed == 0) return 0;
         notice.NotificationsSentAt = claimedAt;
 
-        var recipients = await ResolveRecipientsAsync(db, notice, ct);
+        var recipients = await ResolveRecipientsAsync(db, policy, notice, ct);
         var summary = Summary(notice.BodyHtml, 160);
         var sent = 0;
 

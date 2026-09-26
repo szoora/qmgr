@@ -494,7 +494,7 @@
 
     protected override async Task OnInitializedAsync()
     {
-        if (!await PermissionService.HasPermissionAsync(Permissions.SettingsView))
+        if (!await PermissionService.HasPermissionAsync(Permissions.SettingsEdit))
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
             return;

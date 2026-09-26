@@ -1,0 +1,65 @@
+@using QMgr.Web.Services
+@inject IStaffOnboardingApiService Onboarding
+@inject IToastService Toast
+
+@*
+    Confirm my phone number: send a code, type it, confirm. ONE home (2026-09-25), used by the
+    onboarding strip and by My details beside the phone field, so the flow cannot drift between them.
+    A confirmation belongs to a number: changing the number clears it (QMgrDbContext), and this is how
+    it is given back.
+*@
+
+@if (!codeSent)
+{
+    <QButton Text="@SendText" Icon="phone" Variant="secondary" Size="sm" OnClick="@SendCodeAsync" Loading="@busy" Disabled="@busy" />
+}
+else
+{
+    <div class="pc-inline">
+        <QInput TValue="string" @bind-Value="code" Placeholder="6-digit code" aria-label="Code from the SMS" Class="pc-code" />
+        <QButton Text="Confirm" Variant="primary" Size="sm" OnClick="@VerifyAsync" Loading="@busy" Disabled="@(busy || string.IsNullOrWhiteSpace(code))" />
+    </div>
+}
+
+<style>
+    .pc-inline { display: inline-flex; align-items: center; gap: var(--q-row-gap); flex-wrap: wrap; }
+    .pc-code { width: 9em; }
+</style>
+
+@code {
+    /// <summary>Raised once the number is confirmed, so the host can re-read its state.</summary>
+    [Parameter] public EventCallback OnConfirmed { get; set; }
+    [Parameter] public string SendText { get; set; } = "Send me a code";
+
+    private bool busy, codeSent;
+    private string? code;
+
+    private async Task SendCodeAsync()
+    {
+        busy = true;
+        try
+        {
+            await Onboarding.SendPhoneCodeAsync();
+            codeSent = true;
+            Toast.Notify(ToastSeverity.Success, "Code sent", "Check your phone for a six-digit code.");
+        }
+        catch (InvalidOperationException ex) { Toast.Notify(ToastSeverity.Error, "Could not send the code", ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task VerifyAsync()
+    {
+        if (string.IsNullOrWhiteSpace(code)) return;
+        busy = true;
+        try
+        {
+            await Onboarding.VerifyPhoneCodeAsync(code.Trim());
+            Toast.Notify(ToastSeverity.Success, "Phone number confirmed");
+            codeSent = false;
+            code = null;
+            await OnConfirmed.InvokeAsync();
+        }
+        catch (InvalidOperationException ex) { Toast.Notify(ToastSeverity.Error, "That code did not work", ex.Message); }
+        finally { busy = false; }
+    }
+}

@@ -33,7 +33,10 @@ public enum UploadOwnerKind
     /// because a kiosk, a public display and a sign-in page all fetch it with no login at all. A
     /// tenant that white-labels its sign-in page is publishing that logo by definition.
     /// </summary>
-    Branding = 10
+    Branding = 10,
+    /// <summary>A lesson plan's or scheme of work's PDF (2026-09-26). Readable exactly by those who may read the plan —
+    /// a draft's file is its author's alone.</summary>
+    TeachingPlan = 11
 }
 
 /// <summary>
@@ -173,6 +176,14 @@ public class UploadAuthorizer : IUploadAuthorizer
             .FirstOrDefaultAsync(ct);
         if (dutyReport != null)
             return new UploadClassification(UploadOwnerKind.DutyReportAttachment, IsPublic: false, dutyReport.OrganizationId, dutyReport.BranchId, dutyReport.ReportId);
+
+        // 1d. A lesson plan's PDF: the plan's own read rule decides (TeachingPlans.AccessForAsync). StudentId carries the PLAN id.
+        var plan = await _db.TeachingPlans.IgnoreQueryFilters().AsNoTracking()
+            .Where(p => p.FileUrl != null && p.FileUrl.EndsWith(suffix))
+            .Select(p => new { p.OrganizationId, p.BranchId, p.Id })
+            .FirstOrDefaultAsync(ct);
+        if (plan != null)
+            return new UploadClassification(UploadOwnerKind.TeachingPlan, IsPublic: false, plan.OrganizationId, plan.BranchId, plan.Id);
 
         // 2. Student photographs: roster-gated and row-scoped.
         var student = await _db.Students.IgnoreQueryFilters().AsNoTracking()
@@ -328,6 +339,21 @@ public class UploadAuthorizer : IUploadAuthorizer
                 var access = await QMgr.API.Application.Services.StaffDutyReports.AccessForAsync(callerId, report, report.Duty, policy,
                     code => HasPermissionAsync(code, cancellationToken), _staffScope.CanSeeStaffAsync);
                 return access.CanRead;
+            }
+
+            case UploadOwnerKind.TeachingPlan:
+            {
+                var callerRaw = _httpContextAccessor.HttpContext?.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                if (!Guid.TryParse(callerRaw, out var callerId) || c.StudentId == null) return false;
+                var p = await _db.TeachingPlans.IgnoreQueryFilters().AsNoTracking().FirstOrDefaultAsync(x => x.Id == c.StudentId.Value, cancellationToken);
+                if (p == null) return false;
+                var planPolicy = await _staffPolicy.GetAsync(p.OrganizationId);
+                var chain = await QMgr.API.Application.Services.TeachingPlans.ChainAsync(_db, p.OrganizationId, p.SubjectId, cancellationToken);
+                var planAccess = await QMgr.API.Application.Services.TeachingPlans.AccessForAsync(callerId, p, chain, _staffPolicy.PlanSettings(planPolicy),
+                    code => HasPermissionAsync(code, cancellationToken),
+                    () => _staffScope.CanSeeStaffAsync(p.BranchId, p.AuthorUserId),
+                    async () => chain.DepartmentId is { } dept && await _db.Users.IgnoreQueryFilters().AsNoTracking().AnyAsync(u => u.Id == callerId && u.DepartmentIds.Contains(dept), cancellationToken));
+                return planAccess.CanRead;
             }
 
             default:

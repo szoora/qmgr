@@ -164,13 +164,14 @@ public record EndClassTeacherRequest
 ///
 /// <para>Used by two endpoints, deliberately the same record: the class-teacher contact card
 /// (<c>ClassTeachersController.UpdateContact</c>) and, since 2026-09-19, a member of staff
-/// maintaining their OWN detail from their portal (<c>StaffPortalController.UpdateMyContact</c>).
+/// maintaining their OWN detail (<c>ProfileController.UpdateMyContact</c> since 2026-09-25; it was on the
+/// portal, which a tenant without Welfare &amp; Performance does not have).
 /// It is CONTACT ONLY and must stay that way — the portal endpoint cannot be persuaded to write an
 /// employment field because there is nowhere in this record to put one. Employment terms,
 /// qualification, registration number and national ID are the school's auditable record and go
 /// through <see cref="UpdateStaffProfileRequest"/>, which needs staff.structure.manage.</para>
 ///
-/// <para><c>JobTitle</c> is the exception and the portal endpoint IGNORES it: what the school calls
+/// <para><c>JobTitle</c> is the exception and the self-service endpoint IGNORES it: what the school calls
 /// somebody is the school's decision, not theirs.</para>
 /// </summary>
 public record UpdateStaffContactRequest
@@ -193,4 +194,20 @@ public record UpdateStaffContactRequest
 
     [MaxLength(30, ErrorMessage = "Emergency contact number cannot exceed 30 characters")]
     public string? EmergencyContactPhone { get; set; }
+}
+
+/// <summary>
+/// A person's OWN contact detail, as <c>GET/PUT api/v1/profile/contact</c> answer it (2026-09-25).
+/// The one home for self-maintained contact: My file and, for a tenant without My Workspace, the
+/// account page both use it, so a phone number is edited in exactly one place.
+/// </summary>
+public record StaffContactDto
+{
+    public string? Phone { get; init; }
+    /// <summary>When the phone was confirmed by a code; null once the number changes.</summary>
+    public DateTime? PhoneVerifiedAt { get; init; }
+    public string? AlternatePhone { get; init; }
+    public string? OfficeLocation { get; init; }
+    public string? EmergencyContactName { get; init; }
+    public string? EmergencyContactPhone { get; init; }
 }

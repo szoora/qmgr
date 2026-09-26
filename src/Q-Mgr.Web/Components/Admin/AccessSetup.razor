@@ -81,6 +81,22 @@ else
         </QCard>
     </div>
 
+    @* Segregation of duties (lesson plans plan §3, 2026-09-26): the rules the product enforces, and the two it leaves to the
+       school — said here, where the school reviews who can do what, rather than discovered later. *@
+    <QCard Title="Somebody else has to" Icon="people" Class="access-sod"
+           Hint="Nobody decides on their own work or about themselves, and nobody takes two stages of one item. These are enforced everywhere they apply and cannot be switched off.">
+        <ChildContent>
+            <ul class="access-sod-list" id="access-sod">
+                <li>An appraisal is moderated and signed by neither the person appraised nor whoever wrote the review.</li>
+                <li>Nobody logs, annuls or re-scores a performance record about themselves.</li>
+                <li>A lesson plan or scheme is never reviewed or approved by its author, and whoever forwarded it does not also approve it.</li>
+                <li>The person who wrote the minutes does not adopt them; a report's author does not excuse their own report.</li>
+                <li>A colleague in a swap or cover agrees; somebody else decides. Nobody appoints themselves to lead a department.</li>
+                <li><strong>Left to the school:</strong> the Import inbox's second approver is a setting (Import inbox), and this access review is recorded by one person.</li>
+            </ul>
+        </ChildContent>
+    </QCard>
+
     <QCard Title="Access review" Icon="list-check" Class="access-review"
            Hint="Who can read restricted and confidential records, manage accounts, design roles and pay — with the posts each person holds. Read it once a term, change what is wrong, then record the review.">
         <ChildContent>
@@ -203,6 +219,7 @@ else
     .access-facts dd { margin: 0; }
     .access-muted { color: var(--qm-text-muted); margin: 0 0 var(--qm-field-gap); }
     .access-yes { color: var(--qm-danger); font-weight: 600; }
+    .access-sod-list { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 4px; }
 </style>
 
 @code {

@@ -48,5 +48,12 @@ public enum RosterImportKind
     /// calendar events, staff meetings (Session duties) and duty rotas (Rota duties) confirmed together in one batch.
     /// The job row is the batch's audit record and its undo handle; the rows it created carry its id.
     /// </summary>
-    Programme = 5
+    Programme = 5,
+
+    /// <summary>
+    /// A document waiting in the Import inbox (plan CALENDAR_AUDIENCES_AND_IMPORT_ROUTING E11, 2026-09-26): read once,
+    /// each table routed to the section that owns it, nothing written until that section's owner approves it. The
+    /// staged sections live in RowsJson; approving one runs that importer's own commit, which makes its own job.
+    /// </summary>
+    Inbox = 6
 }

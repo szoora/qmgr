@@ -78,6 +78,8 @@ public interface IStaffPerformancePolicyService
 
     /// <summary>The tenant's minutes template, or the default sections. The ONE reader of MinutesTemplate.</summary>
     IReadOnlyList<DutyReportSectionDto> MinutesTemplate(StaffPerformancePolicyDto policy);
+    /// <summary>The school's lesson-planning settings, clamped (2026-09-26). The ONE reader of TeachingPlans.</summary>
+    TeachingPlanSettingsDto PlanSettings(StaffPerformancePolicyDto policy);
 
     /// <summary>The Uganda lower-secondary subject set a school sees before configuring anything (plan §5.2).</summary>
     IReadOnlyList<SaveSubjectRequest> DefaultSubjects();
@@ -112,6 +114,8 @@ public class StaffPerformancePolicyService : IStaffPerformancePolicyService
                 policy.DutyReportTemplate ??= new();
                 policy.DutyReportDefaults ??= new DutyReportDefaultsDto();
                 policy.TeachingLoadNorms ??= new TeachingLoadNormsDto();
+                // Lesson plans (2026-09-26): a blob written before carries none.
+                policy.TeachingPlans ??= new TeachingPlanSettingsDto();
                 if (policy.LessonReminderMinutes is < 0 or > 120) policy.LessonReminderMinutes = 10;
                 if (string.IsNullOrWhiteSpace(policy.MyDayLocalTime)) policy.MyDayLocalTime = "06:30";
                 // Seeded on first read, the way StaffParameterDefaults seeds parameters: a blob
@@ -284,6 +288,9 @@ public class StaffPerformancePolicyService : IStaffPerformancePolicyService
     public IReadOnlyList<DutyReportSectionDto> MinutesTemplate(StaffPerformancePolicyDto policy)
         => policy.MinutesTemplate is { Count: > 0 } own ? own : MinutesTemplateDefaults.Sections;
 
+    public TeachingPlanSettingsDto PlanSettings(StaffPerformancePolicyDto policy)
+        => TeachingPlanRules.Clamp(policy.TeachingPlans ?? new TeachingPlanSettingsDto());
+
     public IReadOnlyList<SaveSubjectRequest> DefaultSubjects() => QMgr.API.Application.Services.SubjectDefaults.Catalogue;
 
     public IReadOnlyList<(string From, string To)> DefaultParameterOffsets() => new List<(string, string)>
@@ -311,5 +318,8 @@ public class StaffPerformancePolicyService : IStaffPerformancePolicyService
         new() { Name = StaffSystemAwards.CustomerServed, Kind = ParameterKind.Contribution, DefaultPoints = 1, MaxPointsPerEntry = 1, MaxPointsPerPeriod = 20, Weight = 1, IsSystemSource = true, Purpose = "Credited automatically when the staff member completes service for a queue ticket.", Color = "#3f8a80", SortOrder = 21 },
         new() { Name = StaffSystemAwards.VisitorHosted, Kind = ParameterKind.Contribution, DefaultPoints = 1, MaxPointsPerEntry = 1, MaxPointsPerPeriod = 10, Weight = 1, IsSystemSource = true, Purpose = "Credited automatically when a visitor the staff member hosts is checked in.", Color = "#a8783a", SortOrder = 22 },
         new() { Name = StaffSystemAwards.PositiveFeedback, Kind = ParameterKind.Contribution, DefaultPoints = 1, MaxPointsPerEntry = 1, MaxPointsPerPeriod = 20, Weight = 1, IsSystemSource = true, Purpose = "Credited automatically when a customer the staff member served rates the service 4 or 5.", Color = "#d1a35e", SortOrder = 23 },
+        // Lesson plans (2026-09-26). Its own automatic parameter rather than points on "Records & Schemes of Work", which
+        // stays a head of department's judgement: an automatic credit must never be mistaken for one.
+        new() { Name = StaffSystemAwards.PlanApprovedOnTime, Kind = ParameterKind.Contribution, AppliesToGroup = StaffGroups.Teaching, DefaultPoints = 1, MaxPointsPerEntry = 1, MaxPointsPerPeriod = 20, Weight = 1, IsSystemSource = true, Purpose = "Credited automatically when a lesson plan or scheme of work submitted by the school's deadline is approved.", Color = "#7a5a8c", SortOrder = 24 },
     };
 }

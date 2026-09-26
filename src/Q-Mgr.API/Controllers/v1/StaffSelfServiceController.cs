@@ -1093,6 +1093,7 @@ public class StaffSelfServiceController : StaffPerformanceControllerBase
                 // The self-approval rule reaches the CLIENT too, so a decider never sees a Decide
                 // button on their own request and then has it refused. The server still refuses it.
                 CanIDecide = canDecide && r.State == ConfigRequestState.Pending && r.RequestedByUserId != me
+                             && DutySeparation.Allows(me, null, r.CounterpartUserId, r.CoverUserId)
                              && (!StaffSelfService.NeedsCounterpart(r.Kind) || r.CounterpartAgreedAt != null)
                              && preview?.Blocked == null,
                 CanIWithdraw = r.State == ConfigRequestState.Pending && r.RequestedByUserId == me,

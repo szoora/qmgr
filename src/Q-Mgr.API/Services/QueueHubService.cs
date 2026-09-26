@@ -33,7 +33,10 @@ public class QueueHubService : IQueueHubService
             TokenId = token.Id,
             DisplayNumber = token.DisplayNumber,
             CounterNumber = counter.CounterNumber,
-            CustomerName = token.CustomerName,
+            // No name (2026-09-25). QueueHub is anonymous — every public board subscribes with the
+            // branch id alone — so a customer's name here went to anybody holding that id. No
+            // screen reads it; the number is what a board calls.
+            CustomerName = null,
             WaitTimeMinutes = token.ActualWaitMinutes ?? 0
         };
 
@@ -74,7 +77,7 @@ public class QueueHubService : IQueueHubService
             DisplayName = counter.DisplayName,
             Status = counter.Status.ToString(),
             CurrentTokenDisplay = counter.CurrentToken?.DisplayNumber,
-            ServingCustomerName = counter.CurrentToken?.CustomerName,
+            ServingCustomerName = null, // the anonymous hub carries numbers, never names (see TokenCalled)
             TokensServedToday = 0 // Would need to calculate this
         };
 

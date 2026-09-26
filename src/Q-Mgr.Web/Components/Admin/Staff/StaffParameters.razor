@@ -36,6 +36,7 @@
     <QTabs Tabs="@hubTabs" @bind-ActiveKey="@hubTab" IdPrefix="su" />
 
     @if (hubTab == "policy")        { <StaffPolicy Embedded="true" /> }
+    else if (hubTab == "plans")     { <QMgr.Web.Components.Admin.Staff.Plans.TeachingPlanSettings Embedded="true" /> }
     else if (hubTab == "notices")   { <StaffNotices Embedded="true" /> }
     else if (hubTab == "activity")  { <StaffActivity Embedded="true" /> }
     else
@@ -269,6 +270,7 @@
     {
         new(new QTab("parameters", "Parameters", "sliders2"), Permissions.StaffParametersManage),
         new(new QTab("policy", "Scoring Policy", "gear-wide-connected"), Permissions.StaffParametersManage),
+        new(new QTab("plans", "Lesson Plans", "journal-text"), Permissions.StaffParametersManage),
         new(new QTab("notices", "Notices", "megaphone"), Permissions.StaffNoticesManage),
         new(new QTab("activity", "Activity Log", "clock-history"), Permissions.StaffRecordsView),
     };

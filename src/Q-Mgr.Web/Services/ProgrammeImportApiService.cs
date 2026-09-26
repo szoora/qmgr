@@ -16,6 +16,8 @@ public interface IProgrammeImportApiService
     Task<ProgrammeImportResultDto> ImportAsync(Guid branchId, ProgrammeImportRequest request);
     Task<List<ProgrammeImportJobDto>> GetJobsAsync(Guid branchId);
     Task<ProgrammeUndoResultDto> UndoAsync(Guid branchId, Guid jobId);
+    /// <summary>What an import left without a register, without a recorder, or refused (E10).</summary>
+    Task<ProgrammeImportHealthDto> GetHealthAsync(Guid branchId, Guid jobId);
 }
 
 public class ProgrammeImportApiService : IProgrammeImportApiService
@@ -37,6 +39,8 @@ public class ProgrammeImportApiService : IProgrammeImportApiService
         => SendAsync<ProgrammeImportResultDto>(HttpMethod.Post, B(branchId), request);
 
     public Task<List<ProgrammeImportJobDto>> GetJobsAsync(Guid branchId) => GetAsync<List<ProgrammeImportJobDto>>($"{B(branchId)}/jobs");
+
+    public Task<ProgrammeImportHealthDto> GetHealthAsync(Guid branchId, Guid jobId) => GetAsync<ProgrammeImportHealthDto>($"{B(branchId)}/jobs/{jobId}/health");
 
     public Task<ProgrammeUndoResultDto> UndoAsync(Guid branchId, Guid jobId)
         => SendAsync<ProgrammeUndoResultDto>(HttpMethod.Post, $"{B(branchId)}/jobs/{jobId}/undo");

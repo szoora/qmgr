@@ -24,6 +24,11 @@ public sealed record ProgrammeImportContextDto
     public bool CanImportDuties { get; init; }
     /// <summary>Why duties cannot be imported, in words, when <see cref="CanImportDuties"/> is false.</summary>
     public string? DutiesRefusal { get; init; }
+    /// <summary>
+    /// Staff groups, roles, departments, people and the class teachers — what a meeting's attendance words are read
+    /// against (<see cref="AudienceTextResolver"/>) and what the audience picker offers (2026-09-26).
+    /// </summary>
+    public AudienceOptionsDto Audience { get; init; } = new();
 }
 
 /// <summary>What the Development-only read-document endpoint answers: every file read, and the checks across them.</summary>

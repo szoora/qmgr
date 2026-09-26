@@ -8,6 +8,9 @@
 @using QMgr.Web.Services
 @inherits BranchAwareComponentBase
 @inject IProgrammeImportApiService ImportApi
+@inject IImportInboxApiService InboxApi
+@inject IPermissionService PermissionService
+@inject IAuthService AuthService
 @inject IJSRuntime JS
 @inject IToastService Toast
 
@@ -26,10 +29,10 @@
 
 <QPageActions Embedded="@Embedded">
     <Title>
-        <h1>Import the term programme</h1>
+        <h1>@(ApprovalMode ? "Approve an imported document" : "Import the term programme")</h1>
     </Title>
     <Actions>
-        @if (stage != Stage.Choose && stage != Stage.Done)
+        @if (stage != Stage.Choose && stage != Stage.Done && !ApprovalMode)
         {
             <QButton Text="Start again" Icon="arrow-counterclockwise" Variant="ghost" OnClick="@Reset" id="pi-restart" />
         }
@@ -129,6 +132,20 @@ else
                                 </div>
                                 <p class="pi-muted">@TableSummary(file, table)</p>
                             }
+                            @if (IsRouted(table.Kind))
+                            {
+                                <p class="pi-routed" data-routed="@table.Kind"><QIcon Name="signpost-split" Size="sm" />
+                                    <span>Not a programme: this goes to <strong>@ImportSectionKinds.Label(RoutedSection(table.Kind))</strong>. Send the document for approval and its owner imports it there.</span></p>
+                            }
+                            @* B12: a meeting found in a NOTE under a table was offered and then could never be included — nothing
+                               on the page set it back. It is a switch here, off by default, because a note is not the table. *@
+                            @foreach (var note in file.Candidates.Where(c => c.TableIndex == table.TableIndex && c.FromNote))
+                            {
+                                <div class="pi-note-row" data-note="@note.Title">
+                                    <QCheckbox Value="@note.Include" ValueChanged="@(v => note.Include = v)"
+                                               Label="@($"Include \"{note.Title}\" ({When(note)}) — found in a note under the table")" />
+                                </div>
+                            }
                         </div>
                     }
                     @if (file.Notes.Count > 0)
@@ -149,7 +166,7 @@ else
     {
         <QStatRow>
             <QStatTile Label="Events" Value="@EventRows().Count().ToString(CultureInfo.InvariantCulture)" Icon="calendar-event" />
-            <QStatTile Label="Meetings" Value="@MeetingRows().Count().ToString(CultureInfo.InvariantCulture)" Icon="people" />
+            <QStatTile Label="Meetings with a register" Value="@MeetingRows().Count().ToString(CultureInfo.InvariantCulture)" Icon="clipboard-check" />
             <QStatTile Label="Rota slots" Value="@RotaRows().Count().ToString(CultureInfo.InvariantCulture)" Icon="shield-check" />
             <QStatTile Label="Must decide" Value="@OpenMustDecide.ToString(CultureInfo.InvariantCulture)" Icon="exclamation-diamond" Variant="@(OpenMustDecide > 0 ? "warning" : "default")" />
         </QStatRow>
@@ -233,15 +250,33 @@ else
 
         @if (MeetingRowsAll().Any())
         {
-            <QCard Title="Who each meeting expects" Icon="people" Class="pi-section" id="pi-meetings"
-                   Hint="A meeting with a register expects named people. One whose attendance cannot be read from its title is imported as a calendar event until you say who is expected.">
-                <table class="data-table q-stack">
-                    <thead><tr><th>Meeting</th><th>When</th><th>Expected</th></tr></thead>
+            @* THE REGISTERS PANEL (calendar-audiences plan E9, 2026-09-26). Until this, a meeting whose TITLE did not say who
+               attends went in as a calendar event with no register, and nothing on the page said so — which is how a
+               school's meetings failed to reach the registers. Now every meeting says which it will be, and why; the
+               attendance is READ from the document's own words; what cannot be read is a question on the row; and a
+               register must have somebody to take it (or the reader says the duty managers will). *@
+            <QCard Title="Registers" Icon="clipboard-check" Class="pi-section" id="pi-meetings"
+                   Hint="A meeting with a register expects named people and has somebody to take the register. The attendance is read from the document where it can be; say who is expected where it cannot.">
+                <p class="pi-sentence" id="pi-registers-summary">@RegistersSentence</p>
+                @if (!ctx.CanImportDuties && ctx.DutiesRefusal != null)
+                {
+                    <p class="pi-muted">@ctx.DutiesRefusal</p>
+                }
+                <table class="data-table q-stack pi-registers">
+                    <thead><tr><th>Meeting</th><th>When</th><th>Who is expected</th><th>Takes the register</th></tr></thead>
                     <tbody>
                         @foreach (var m in MeetingRowsAll())
                         {
-                            <tr>
-                                <td>@m.Title</td>
+                            var willRegister = MeetingRows().Contains(m);
+                            <tr data-meeting="@m.Title" data-register="@(willRegister ? "yes" : "no")">
+                                <td>
+                                    <strong>@m.Title</strong>
+                                    @if (!string.IsNullOrWhiteSpace(m.ResponsibleText)) { <div class="cell-sub">Written: @m.ResponsibleText</div> }
+                                    @if (!willRegister && m.Attendance != MeetingAttendance.Undecided)
+                                    {
+                                        <div class="cell-sub pi-no-register"><QIcon Name="calendar-event" Size="sm" /> @NoRegisterReason(m)</div>
+                                    }
+                                </td>
                                 <td>@When(m)</td>
                                 <td>
                                     <div class="pi-attendance">
@@ -251,18 +286,61 @@ else
                                         {
                                             <QSelect TValue="string" TItem="string" Items="@roles" Value="@m.AttendanceRole"
                                                      ValueChanged="@(r => { m.AttendanceRole = r; })" ValueSelector="@(r => r)" TextSelector="@(r => r)" />
-                                            <span class="pi-muted">@(ExpectedFor(m)?.Count ?? 0) people</span>
+                                        }
+                                        @if (willRegister)
+                                        {
+                                            <span class="pi-muted">@ExpectedLabel(m)</span>
                                         }
                                     </div>
-                                    @if (ExpectsNobody(m))
+                                    @if (m.Attendance == MeetingAttendance.Chosen)
                                     {
-                                        @* Refused at submit before 2026-09-23 while the page said every question was answered; it is a
-                                           question, so it is asked here and counts against "Check with the server". *@
+                                        <QAudiencePicker Value="@(m.StaffAudience ?? new StaffAudienceDto { AllStaff = false })" ValueChanged="@(a => SetChosenAudience(m, a))"
+                                                         Options="@ctx.Audience" Class="pi-audience" />
+                                    }
+                                    @if (m.AudienceReadings.Count > 0 && m.Attendance == MeetingAttendance.Chosen)
+                                    {
+                                        <div class="cell-sub">Read as: @string.Join("; ", m.AudienceReadings)</div>
+                                    }
+                                    @if (m.Attendance == MeetingAttendance.Undecided)
+                                    {
+                                        <div class="pi-attendance-empty" role="alert" data-question="attendance">
+                                            <span>@(m.AudienceUnresolved.Count > 0
+                                                ? $"\"{string.Join("\", \"", m.AudienceUnresolved)}\" is not on the staff list, so who is expected is not known."
+                                                : "The document does not say who attends.") Choose who is expected, or:</span>
+                                            <QButton Text="Calendar event only" Size="sm" Variant="secondary" OnClick="@(() => SetAttendance(m, MeetingAttendance.EventOnly))" />
+                                        </div>
+                                    }
+                                    else if (ExpectsNobody(m))
+                                    {
                                         <div class="pi-attendance-empty" role="alert">
                                             <span>Nobody on the staff list matches this. Choose who is expected, or:</span>
-                                            <QButton Text="Import as an event only" Size="sm" Variant="secondary"
+                                            <QButton Text="Calendar event only" Size="sm" Variant="secondary"
                                                      OnClick="@(() => SetAttendance(m, MeetingAttendance.EventOnly))" />
                                         </div>
+                                    }
+                                </td>
+                                <td>
+                                    @if (willRegister || (m.Attendance != MeetingAttendance.EventOnly && ctx.CanImportDuties))
+                                    {
+                                        <QMultiSelect TValue="Guid" TItem="AudienceMemberDto" Items="@ctx.Audience.People" SelectedValues="@m.RecorderUserIds"
+                                                      SelectedValuesChanged="@(v => { m.RecorderUserIds = v.ToList(); m.RecordersDecided = m.RecorderUserIds.Count > 0 || m.RecordersDecided; })"
+                                                      ValueSelector="@(p => p.UserId)" TextSelector="@(p => p.FullName)" Placeholder="Choose who takes it" />
+                                        @if (m.RecorderUserIds.Count == 0 && !m.RecordersDecided)
+                                        {
+                                            <div class="pi-attendance-empty" role="alert" data-question="recorder">
+                                                <span>Nobody is named to take this register.</span>
+                                                @if (SuggestedRecorders(m) is { Count: > 0 } suggested)
+                                                {
+                                                    <QButton Text="@($"Use {string.Join(", ", suggested.Select(PersonName).Take(2))}")" Size="sm" Variant="secondary"
+                                                             OnClick="@(() => { m.RecorderUserIds = suggested; m.RecordersDecided = true; })" />
+                                                }
+                                                <QButton Text="Duty managers take it" Size="sm" Variant="ghost" OnClick="@(() => m.RecordersDecided = true)" />
+                                            </div>
+                                        }
+                                        else if (m.RecorderUserIds.Count == 0)
+                                        {
+                                            <span class="pi-muted">Duty managers take it</span>
+                                        }
                                     }
                                 </td>
                             </tr>
@@ -370,9 +448,55 @@ else
                     @foreach (var r in preview.Rows.Where(r => r.Warnings.Count > 0).Take(80)) { <li>@RowLabel(r): @string.Join(" ", r.Warnings)</li> }
                 </ul>
             }
+            @if (!ApprovalMode && RoutedTables().Any())
+            {
+                <h3 class="pi-sub">Also in these documents</h3>
+                <ul class="pi-issues pi-issues--plain" id="pi-routed-list">
+                    @foreach (var group in RoutedTables().GroupBy(t => t.Table.Kind))
+                    {
+                        <li>@ImportSectionKinds.Label(RoutedSection(group.Key)): @Plural(group.Count(), "table", "tables") — imported by its owner once you send the documents for approval.</li>
+                    }
+                </ul>
+            }
+            @if (!ApprovalMode && WhyApproval is { } why)
+            {
+                <p class="pi-muted" id="pi-why-approval"><QIcon Name="info-circle" Size="sm" /> @why</p>
+            }
             <div class="form-actions">
-                <QButton Text="Back" Variant="ghost" OnClick="@(() => stage = Stage.Check)" Disabled="@working" />
-                <QButton Text="@ImportButtonText" Icon="check-lg" Variant="primary" Loading="@working" Disabled="@(working || NothingToWrite(preview))" OnClick="@CommitAsync" id="pi-commit" />
+                @if (!ApprovalMode)
+                {
+                    <QButton Text="Back" Variant="ghost" OnClick="@(() => stage = Stage.Check)" Disabled="@working" />
+                    <QButton Text="Send for approval" Icon="send" Variant="@(MayImportDirectly ? "secondary" : "primary")" Loading="@working" Disabled="@working"
+                             OnClick="@SendForApprovalAsync" id="pi-send-approval" />
+                }
+                @if (ApprovalMode || MayImportDirectly)
+                {
+                    <QButton Text="@(ApprovalMode ? "Approve and import" : ImportButtonText)" Icon="check-lg" Variant="primary" Loading="@working"
+                             Disabled="@(working || NothingToWrite(preview))" OnClick="@CommitAsync" id="pi-commit" />
+                }
+                @if (ApprovalMode && InboxJobId is { } rejectJob)
+                {
+                    <QButton Text="Reject" Icon="x-lg" Variant="outline-danger" Disabled="@working" OnClick="@(() => rejecting = true)" id="pi-reject" />
+                }
+            </div>
+            @if (rejecting)
+            {
+                <div class="pi-reject">
+                    <QInput TValue="string" @bind-Value="@rejectNote" Label="Why" MaxLength="500" Placeholder="The dates are last year's — ask for this term's copy" />
+                    <QButton Text="Reject this part" Variant="danger" Size="sm" Loading="@working" OnClick="@RejectAsync" id="pi-reject-confirm" />
+                </div>
+            }
+        </QCard>
+    }
+
+    @* ---------------- Sent for approval ---------------- *@
+    @if (stage == Stage.Sent)
+    {
+        <QCard Title="Sent for approval" Icon="send-check" Class="pi-section" id="pi-sent">
+            <p class="pi-sentence">Nothing has been added yet. Each part of the documents waits in the Import inbox for the people who approve it, and they have been told.</p>
+            <div class="form-actions">
+                <QButton Text="Open the Import inbox" Icon="inbox" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/imports"))" />
+                <QButton Text="Import more" Variant="ghost" OnClick="@Reset" />
             </div>
         </QCard>
     }
@@ -382,14 +506,40 @@ else
     {
         <QCard Title="Imported" Icon="check-circle" Class="pi-section" id="pi-done">
             <p class="pi-sentence">@DoneSentence(committed)</p>
+            @* B12: rows the server refused AT COMMIT (something changed since the preview) were never reported. *@
+            @if (committed.Rows.Any(r => r.Outcome == ProgrammeRowOutcome.Refused))
+            {
+                <h3 class="pi-sub">Not imported</h3>
+                <ul class="pi-issues pi-issues--plain" id="pi-done-refused">
+                    @foreach (var r in committed.Rows.Where(r => r.Outcome == ProgrammeRowOutcome.Refused)) { <li>@RowLabel(r): @r.Reason</li> }
+                </ul>
+            }
             <div class="form-actions">
                 <QButton Text="Open the calendar" Icon="calendar3" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/calendar?tab=calendar"))" />
-                <QButton Text="Open the rota" Icon="calendar-week" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/staff/duties?tab=rota"))" />
+                @if (committed.MeetingsCreated + committed.MeetingsUpdated > 0)
+                {
+                    <QButton Text="Open the registers" Icon="clipboard-check" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/staff/duties?tab=registers"))" id="pi-open-registers" />
+                }
+                @if (committed.RotaSlotsCreated > 0)
+                {
+                    <QButton Text="Open the rota" Icon="calendar-week" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/staff/duties?tab=rota"))" />
+                }
                 @if (committed.JobId is { } jobId)
                 {
-                    <QButton Text="Undo this import" Icon="arrow-counterclockwise" Variant="danger" OnClick="@(() => AskUndo(jobId))" id="pi-undo" />
+                    <QButton Text="What needs attention" Icon="clipboard-pulse" Variant="ghost" OnClick="@(() => OpenHealthAsync(jobId))" id="pi-health" />
+                    @if (!ApprovalMode)
+                    {
+                        <QButton Text="Undo this import" Icon="arrow-counterclockwise" Variant="danger" OnClick="@(() => AskUndo(jobId))" id="pi-undo" />
+                    }
                 }
-                <QButton Text="Import more" Variant="ghost" OnClick="@Reset" />
+                @if (ApprovalMode)
+                {
+                    <QButton Text="Back to the inbox" Icon="inbox" Variant="ghost" OnClick="@(() => Navigation.NavigateTo("/imports"))" />
+                }
+                else
+                {
+                    <QButton Text="Import more" Variant="ghost" OnClick="@Reset" />
+                }
             </div>
         </QCard>
     }
@@ -407,7 +557,7 @@ else
     else
     {
         <table class="data-table q-stack" id="pi-jobs">
-            <thead><tr><th>When</th><th>Files</th><th class="num">Events</th><th class="num">Meetings</th><th class="num">Rota</th><th></th></tr></thead>
+            <thead><tr><th>When</th><th>Files</th><th class="num">Events</th><th class="num">Meetings</th><th class="num">Rota</th><th class="num">Needs attention</th><th></th></tr></thead>
             <tbody>
                 @foreach (var j in jobs)
                 {
@@ -417,6 +567,13 @@ else
                         <td class="num">@j.EventsCreated</td>
                         <td class="num">@j.MeetingsCreated</td>
                         <td class="num">@j.RotaSlotsCreated</td>
+                        <td class="num">
+                            @if (j.NeedsAttention > 0)
+                            {
+                                <QButton Text="@j.NeedsAttention.ToString(CultureInfo.InvariantCulture)" Icon="clipboard-pulse" Size="sm" Variant="ghost" OnClick="@(() => OpenHealthAsync(j.Id))" />
+                            }
+                            else { <span class="pi-muted">—</span> }
+                        </td>
                         <td class="row-actions">
                             @if (j.Undone)
                             {
@@ -434,9 +591,73 @@ else
     }
 </QModal>
 
+@* ---- Import health (E10): what an import left for somebody to finish ---------------------------------------- *@
+<QModal Visible="@(health != null || healthLoading)" VisibleChanged="@(v => { if (!v) { health = null; healthLoading = false; } })" Title="What needs attention" Icon="clipboard-pulse" Size="lg">
+    <ChildContent>
+        @if (healthLoading)
+        {
+            <div class="pi-loading"><QSpinner Size="sm" /><span>Reading the import...</span></div>
+        }
+        else if (health != null)
+        {
+            <p class="pi-muted">@string.Join(", ", health.SourceFiles) · imported @QDateFormat.DT(health.CreatedAt.ToLocalTime())</p>
+            @if (!health.MeetingsWithoutRegister.Any() && !health.RegistersWithoutRecorder.Any() && !health.Refused.Any())
+            {
+                <QEmptyState Icon="check-circle" Title="Nothing needs attention" Text="Every meeting has a register and somebody to take it, and no row was refused." />
+            }
+            @if (health.MeetingsWithoutRegister.Any())
+            {
+                <h3 class="pi-sub">Meetings with no register</h3>
+                <p class="pi-muted">Open one and press <strong>Give it a register</strong> to add one — nothing needs importing again.</p>
+                <table class="data-table q-stack" id="pi-health-meetings">
+                    <thead><tr><th>Meeting</th><th>When</th><th>Why</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var item in health.MeetingsWithoutRegister)
+                        {
+                            <tr class="@(item.InPast ? "row-muted" : "")">
+                                <td>@item.Title @if (!string.IsNullOrWhiteSpace(item.ResponsibleText)) { <div class="cell-sub">@item.ResponsibleText</div> }</td>
+                                <td>@QDateFormat.D(item.Date)@(item.StartTime != null ? $", {item.StartTime}" : "")</td>
+                                <td>@item.Reason</td>
+                                <td class="row-actions">
+                                    <QButton Text="Open" Size="sm" Variant="ghost" OnClick="@(() => Navigation.NavigateTo($"/calendar?tab=calendar&view=month&scope=all&date={item.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}&event={item.EventId}"))" />
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            @if (health.RegistersWithoutRecorder.Any())
+            {
+                <h3 class="pi-sub">Registers nobody is named to take</h3>
+                <ul class="pi-issues pi-issues--plain" id="pi-health-recorders">
+                    @foreach (var item in health.RegistersWithoutRecorder)
+                    {
+                        <li>@item.Title, @QDateFormat.D(item.Date) @item.StartTime — @item.Reason
+                            <QButton Text="Open the register" Size="sm" Variant="ghost" OnClick="@(() => Navigation.NavigateTo($"/admin/staff/duties/{item.DutyId}/register"))" /></li>
+                    }
+                </ul>
+            }
+            @if (health.Refused.Any())
+            {
+                <h3 class="pi-sub">Refused</h3>
+                <ul class="pi-issues pi-issues--plain" id="pi-health-refused">
+                    @foreach (var item in health.Refused) { <li>@item.Title, @QDateFormat.D(item.Date): @item.Reason</li> }
+                </ul>
+            }
+            else if (!health.RefusalsRecorded)
+            {
+                <p class="pi-muted">Imports made before 26 Sep 2026 did not keep the rows they refused.</p>
+            }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Variant="ghost" OnClick="@(() => { health = null; healthLoading = false; })" />
+    </FooterContent>
+</QModal>
+
 <QModal Visible="@(undoJobId != null)" VisibleChanged="@(v => { if (!v) undoJobId = null; })" Title="Undo this import?" Icon="arrow-counterclockwise">
     <ChildContent>
-        <p>Its events are removed and its meetings and rota slots cancelled. A meeting or slot whose register has been taken is kept — a register is history.</p>
+        <p>Its events are removed and its meetings and rota slots cancelled. A meeting or slot whose register has been taken is kept — a register is history. So is anything a later import found already here and relies on.</p>
     </ChildContent>
     <FooterContent>
         <QButton Text="Keep it" Variant="ghost" OnClick="@(() => undoJobId = null)" />
@@ -483,16 +704,37 @@ else
     .pi-people li { padding: 3px 0; border-bottom: 1px solid var(--qm-border); }
     .pi-sentence { font-size: var(--qm-text-md); }
     .pi-sub { font-size: var(--qm-text-base); margin: var(--qm-block-gap) 0 4px; }
+    .pi-routed, .pi-note-row { display: flex; align-items: center; gap: 6px; margin: 6px 0 0; font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
+    .pi-no-register { display: flex; align-items: center; gap: 4px; }
+    .pi-registers td { vertical-align: top; }
+    .pi-audience { margin-top: 6px; }
+    .pi-reject { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--q-row-gap); margin-top: var(--qm-block-gap); }
 </style>
 
 @code {
     [Parameter] public bool Embedded { get; set; }
+    /// <summary>
+    /// Set by the Import inbox: this page then APPROVES one staged section of a document somebody else sent (E11) —
+    /// it checks the staged rows with the server and commits them through the one import path, which claims the
+    /// section in the same transaction. Nothing is re-read from a file.
+    /// </summary>
+    [Parameter] public Guid? InboxJobId { get; set; }
+    [Parameter] public string? InboxSection { get; set; }
     [Inject] private NavigationManager Navigation { get; set; } = default!;
+
+    private bool ApprovalMode => InboxJobId.HasValue && !string.IsNullOrWhiteSpace(InboxSection);
+    private ProgrammeImportRequest? stagedRequest;
+    private bool rejecting;
+    private string? rejectNote;
+    private ProgrammeImportHealthDto? health;
+    private bool healthLoading;
+    private ImportSettingsDto importSettings = new();
+    private bool canManageCalendar;
 
     private const string InputId = "pi-files";
     private const string MappingPrefix = "qmgr-programme-table:";
 
-    private enum Stage { Choose, Understand, Check, Confirm, Done }
+    private enum Stage { Choose, Understand, Check, Confirm, Done, Sent }
 
     /// <summary>Whether the commit tells each person their new duties (one message each). On by default.</summary>
     private bool notifyPeople = true;
@@ -550,6 +792,9 @@ else
         new(ProgrammeTableKind.MeetingSchedule, "Schedule of meetings"),
         new(ProgrammeTableKind.PersonRota, "Duty rota (by person)"),
         new(ProgrammeTableKind.PeriodRota, "Duty rota (by week)"),
+        new(ProgrammeTableKind.StaffList, "Staff list — for the staff import"),
+        new(ProgrammeTableKind.StudentList, "Student roll — for the roll's import"),
+        new(ProgrammeTableKind.TimetableGrid, "Timetable — for the timetable's import"),
         new(ProgrammeTableKind.Ignore, "Leave this table out"),
         new(ProgrammeTableKind.Unknown, "Not recognised")
     };
@@ -576,7 +821,30 @@ else
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
         TrackBranch();
+        canManageCalendar = await PermissionService.HasPermissionAsync(Permissions.CalendarManage);
+        try { importSettings = await InboxApi.GetSettingsAsync(); } catch { importSettings = new(); }
         await LoadContextAsync();
+        if (ApprovalMode) await LoadStagedAsync();
+    }
+
+    /// <summary>Approval mode: the staged section, checked with the server as it stands now.</summary>
+    private async Task LoadStagedAsync()
+    {
+        try
+        {
+            var staged = await InboxApi.GetStagedAsync(branchId, InboxJobId!.Value, InboxSection!);
+            if (staged.Programme == null) { loadError = "This part of the document is not one this page imports."; return; }
+            stagedRequest = staged.Programme;
+            notifyPeople = stagedRequest.NotifyPeople;
+            working = true;
+            preview = await ImportApi.ImportAsync(branchId, BuildRequest(previewOnly: true));
+            stage = Stage.Confirm;
+        }
+        catch (Exception ex)
+        {
+            loadError = ex.Message;
+        }
+        finally { working = false; }
     }
 
     protected override async Task OnBranchChangedAsync(Guid branchId)
@@ -765,11 +1033,12 @@ else
         ResolvePeople();
         ResolveOffices();
         roles = ProgrammeChecks.Roles(files);
-        foreach (var m in MeetingRowsAll().Where(m => m.Attendance == MeetingAttendance.EventOnly && m.AttendanceRole == null))
+        foreach (var m in MeetingRowsAll().Where(m => m.Attendance == MeetingAttendance.Undecided && m.AttendanceRole == null))
         {
             var role = ProgrammeChecks.RoleForMeeting(files, m.Title);
             if (role != null) { m.Attendance = MeetingAttendance.RoleHolders; m.AttendanceRole = role; }
         }
+        ResolveAttendance();
         termFromDocs = ProgrammeChecks.TermFrom(files);
         termTheme = files.Select(f => f.Theme).FirstOrDefault(t => !string.IsNullOrWhiteSpace(t));
         termName = TermNameFromDocs();
@@ -831,6 +1100,69 @@ else
         }
     }
 
+    /// <summary>
+    /// E9: a meeting whose attendance its title did not settle is READ from the document's own words — "Administration,
+    /// Senior Ladies &amp; Matrons", "All staff", "HODs", "Class teachers", a name — through AudienceTextResolver. Words it
+    /// cannot place leave the row Undecided, a question on the row; it never guesses and never silently gives up.
+    /// </summary>
+    private void ResolveAttendance()
+    {
+        foreach (var m in MeetingRowsAll().Where(m => m.Attendance == MeetingAttendance.Undecided))
+        {
+            var reading = AudienceTextResolver.Resolve(m.ResponsibleText, ctx!.Audience, ctx.People, ctx.Aliases);
+            m.AudienceReadings = reading.Readings;
+            m.AudienceUnresolved = reading.Unresolved;
+            if (reading.Audience.IsEmpty) continue;
+            m.StaffAudience = reading.Audience;
+            // A partial reading is kept as the starting point, but the row stays a question until the reader confirms it.
+            if (reading.Resolved) m.Attendance = reading.Audience.AllStaff ? MeetingAttendance.Everyone : MeetingAttendance.Chosen;
+        }
+    }
+
+    private void SetChosenAudience(ProgrammeCandidate m, StaffAudienceDto audience)
+    {
+        m.StaffAudience = audience;
+        m.AudienceUnresolved = new();
+        RunChecks();
+    }
+
+    private string RegistersSentence
+    {
+        get
+        {
+            var all = MeetingRowsAll().ToList();
+            var registers = MeetingRows().Count();
+            var undecided = all.Count(m => m.Attendance == MeetingAttendance.Undecided);
+            var events = all.Count - registers - undecided;
+            var text = $"{Plural(all.Count, "meeting", "meetings")} in these documents: {Plural(registers, "gets a register", "get a register")}";
+            if (events > 0) text += $", {Plural(events, "goes in as a calendar event only", "go in as calendar events only")}";
+            if (undecided > 0) text += $", and {Plural(undecided, "needs", "need")} you to say who is expected";
+            return text + ".";
+        }
+    }
+
+    /// <summary>Why a meeting will be a calendar event only — shown on its row, and kept on the import for Import health.</summary>
+    private string NoRegisterReason(ProgrammeCandidate m)
+    {
+        if (!ctx!.CanImportDuties) return ctx.DutiesRefusal ?? "Meetings cannot be imported with registers from this account.";
+        if (m.StartTime == null) return "No time is written, and a register needs one.";
+        if (m.Attendance == MeetingAttendance.EventOnly) return "A calendar event only — you chose it.";
+        if (m.Attendance == MeetingAttendance.Undecided) return "Who is expected was not decided.";
+        return "Calendar event only.";
+    }
+
+    private string ExpectedLabel(ProgrammeCandidate m) => ExpectedFor(m) is { } ids ? Plural(ids.Count, "person", "people") : "everyone";
+
+    /// <summary>Who could take a register when the document named nobody: the heads of the departments it is for.</summary>
+    private List<Guid> SuggestedRecorders(ProgrammeCandidate m)
+    {
+        var departments = (m.StaffAudience?.DepartmentIds ?? new()).Concat(m.ResponsibleDepartmentIds).ToHashSet();
+        return ctx!.Audience.Departments.Where(d => departments.Contains(d.Id) && d.HeadUserId.HasValue)
+            .Select(d => d.HeadUserId!.Value).Concat(m.ResponsibleUserIds).Distinct().Take(3).ToList();
+    }
+
+    private string PersonName(Guid id) => ctx?.Audience.People.FirstOrDefault(p => p.UserId == id)?.FullName ?? "them";
+
     private void RunChecks()
     {
         checks = ProgrammeChecks.Run(files, ctx!.Settings, ctx.National);
@@ -841,11 +1173,15 @@ else
         => $"{i.Kind}|{i.Date?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}|{string.Join(',', i.CandidateIds)}|{i.PersonText}";
 
     private int OpenMustDecide => (checks?.MustDecide.Count(i => !i.Resolved) ?? 0) + personQuestions.Count(q => !q.Answered)
-        + MeetingRows().Count(ExpectsNobody);
+        + MeetingRows().Count(ExpectsNobody)
+        // E9: a meeting nobody has said who attends, and a register nobody is named to take, are both questions.
+        + (ctx?.CanImportDuties == true ? MeetingRowsAll().Count(m => m.Attendance == MeetingAttendance.Undecided && m.StartsOn.HasValue) : 0)
+        + MeetingRows().Count(m => m.RecorderUserIds.Count == 0 && !m.RecordersDecided);
 
     /// <summary>A meeting with a register whose attendance resolves to nobody on the staff list — a question, not a submit-time refusal.</summary>
     private bool ExpectsNobody(ProgrammeCandidate m)
-        => ctx != null && ctx.CanImportDuties && m.Kind == ProgrammeRowKind.Meeting && m.Attendance != MeetingAttendance.EventOnly
+        => ctx != null && ctx.CanImportDuties && m.Kind == ProgrammeRowKind.Meeting
+           && m.Attendance is not (MeetingAttendance.EventOnly or MeetingAttendance.Undecided)
            && m.StartTime != null && ExpectedFor(m) is { Count: 0 };
 
     private IEnumerable<StaffCandidate> PeopleFor(PersonQuestion q)
@@ -979,18 +1315,19 @@ else
     {
         m.Attendance = a;
         if (a == MeetingAttendance.RoleHolders && m.AttendanceRole == null) m.AttendanceRole = roles.FirstOrDefault();
+        if (a == MeetingAttendance.Chosen && m.StaffAudience == null) m.StaffAudience = new StaffAudienceDto { AllStaff = false };
         RunChecks();
     }
 
     private List<AttendanceOption> AttendanceOptions(ProgrammeCandidate m)
     {
-        var list = new List<AttendanceOption>
-        {
-            new(MeetingAttendance.EventOnly, "Event only — no register"),
-            new(MeetingAttendance.Everyone, "Every member of staff"),
-            new(MeetingAttendance.DepartmentHeads, "Heads of department")
-        };
+        var list = new List<AttendanceOption>();
+        if (m.Attendance == MeetingAttendance.Undecided) list.Add(new(MeetingAttendance.Undecided, "Choose who is expected"));
+        list.Add(new(MeetingAttendance.Everyone, "Every member of staff"));
+        list.Add(new(MeetingAttendance.DepartmentHeads, "Heads of department"));
+        list.Add(new(MeetingAttendance.Chosen, "Groups, roles or people…"));
         if (roles.Count > 0) list.Add(new(MeetingAttendance.RoleHolders, "People the rota lists as…"));
+        list.Add(new(MeetingAttendance.EventOnly, "Calendar event only — no register"));
         return list;
     }
 
@@ -1001,8 +1338,19 @@ else
         MeetingAttendance.DepartmentHeads => ctx!.Departments.Where(d => d.HeadUserId.HasValue).Select(d => d.HeadUserId!.Value).Distinct().ToList(),
         MeetingAttendance.RoleHolders => m.AttendanceRole == null ? new List<Guid>()
             : ProgrammeChecks.RoleHolders(files, m.AttendanceRole).Where(n => n.UserId.HasValue).Select(n => n.UserId!.Value).Distinct().ToList(),
-        MeetingAttendance.Chosen => m.ExpectedUserIds.Distinct().ToList(),
+        // Chosen: the audience through the ONE membership rule, over people whose staff group the server resolved.
+        MeetingAttendance.Chosen when m.StaffAudience is { AllStaff: true } => null,
+        MeetingAttendance.Chosen => StaffAudienceRule.Members(m.StaffAudience ?? new StaffAudienceDto { AllStaff = false }, ctx!.Audience.People)
+            .Select(p => p.UserId).Concat(m.ExpectedUserIds).Distinct().ToList(),
         _ => new List<Guid>()
+    };
+
+    /// <summary>The staff audience a meeting's CALENDAR EVENT carries: the same people its register expects.</summary>
+    private StaffAudienceDto EventAudienceFor(ProgrammeCandidate m) => m.Attendance switch
+    {
+        MeetingAttendance.Chosen when m.StaffAudience != null => m.StaffAudience,
+        _ when ExpectedFor(m) is { } ids => new StaffAudienceDto { AllStaff = false, UserIds = ids },
+        _ => StaffAudienceDto.Everyone()
     };
 
     private string TermLabel()
@@ -1036,7 +1384,9 @@ else
 
     /// <summary>Meetings sent as meetings: a register, somebody expected, duties allowed.</summary>
     private IEnumerable<ProgrammeCandidate> MeetingRows()
-        => ctx!.CanImportDuties ? Live().Where(c => c.Kind == ProgrammeRowKind.Meeting && c.Attendance != MeetingAttendance.EventOnly && c.StartTime != null) : Enumerable.Empty<ProgrammeCandidate>();
+        => ctx!.CanImportDuties
+            ? Live().Where(c => c.Kind == ProgrammeRowKind.Meeting && c.Attendance is not (MeetingAttendance.EventOnly or MeetingAttendance.Undecided) && c.StartTime != null)
+            : Enumerable.Empty<ProgrammeCandidate>();
 
     /// <summary>Events — and meetings going in as events (event only, or duties not allowed).</summary>
     private IEnumerable<ProgrammeCandidate> EventRows()
@@ -1074,6 +1424,10 @@ else
 
     private ProgrammeImportRequest BuildRequest(bool previewOnly)
     {
+        // Approval mode: the staged request, exactly as it was sent — the page never re-reads a file it does not have.
+        if (stagedRequest != null)
+            return stagedRequest with { Preview = previewOnly, InboxJobId = InboxJobId, InboxSection = InboxSection, NotifyPeople = notifyPeople };
+
         var meetings = MeetingRows().ToList();
         var meetingKeys = meetings.ToDictionary(m => m.Id, m => m.SourceKey);
         var categories = ctx!.Settings.Categories;
@@ -1099,8 +1453,30 @@ else
                 ResponsibleUserIds = c.ResponsibleUserIds,
                 ResponsibleDepartmentIds = c.ResponsibleDepartmentIds,
                 SeriesName = TrimOrNull(c.SeriesName, 200),
-                SameAsMeetingKey = c.SameAsMeetingId != null && meetingKeys.TryGetValue(c.SameAsMeetingId, out var mk) ? mk : null
-            }).ToList(),
+                SameAsMeetingKey = c.SameAsMeetingId != null && meetingKeys.TryGetValue(c.SameAsMeetingId, out var mk) ? mk : null,
+                StaffAudience = c.SameAsMeetingId != null && meetings.FirstOrDefault(m => m.Id == c.SameAsMeetingId) is { } linked ? EventAudienceFor(linked) : null,
+                // A MEETING going in as an event says why, so Import health can say it later (E10).
+                NoRegisterReason = c.Kind == ProgrammeRowKind.Meeting ? NoRegisterReason(c) : null
+            })
+            // Every meeting with a register is on the calendar too, as ONE event linked to it (B1) — unless another line of
+            // the documents is already that event. Same source key as the meeting, so a re-import matches it.
+            .Concat(meetings.Where(m => !EventRows().Any(e => e.SameAsMeetingId == m.Id)).Select(m => new ProgrammeEventRow
+            {
+                SourceKey = Trim(m.SourceKey, 200),
+                Title = Trim(m.Title, 200),
+                StartsOn = m.StartsOn!.Value,
+                EndsOn = m.StartsOn!.Value,
+                StartTime = m.StartTime,
+                EndTime = m.EndTime,
+                Category = categories.FirstOrDefault(x => string.Equals(x, m.Category ?? "Meetings", StringComparison.OrdinalIgnoreCase)),
+                Audience = EventAudience.Staff,
+                Location = TrimOrNull(m.Location, 200),
+                ResponsibleText = TrimOrNull(m.ResponsibleText, 300),
+                ResponsibleUserIds = m.ResponsibleUserIds,
+                ResponsibleDepartmentIds = m.ResponsibleDepartmentIds,
+                SameAsMeetingKey = Trim(m.SourceKey, 200),
+                StaffAudience = EventAudienceFor(m)
+            })).ToList(),
             Meetings = meetings.Select(m => new ProgrammeMeetingRow
             {
                 SourceKey = Trim(m.SourceKey, 200),
@@ -1117,6 +1493,10 @@ else
                     MeetingAttendance.Everyone => "every member of staff",
                     MeetingAttendance.DepartmentHeads => "the heads of department",
                     MeetingAttendance.RoleHolders => $"the people the rota lists as {m.AttendanceRole}",
+                    MeetingAttendance.Chosen => TrimOrNull(StaffAudienceRule.Describe(m.StaffAudience ?? new StaffAudienceDto { AllStaff = false },
+                        code => ctx.Audience.Roles.FirstOrDefault(r => r.Code == code)?.Name ?? code,
+                        id => ctx.Audience.Departments.FirstOrDefault(d => d.Id == id)?.Name,
+                        id => ctx.Audience.People.FirstOrDefault(p => p.UserId == id)?.FullName), 300),
                     _ => null
                 }
             }).ToList(),
@@ -1146,7 +1526,24 @@ else
         var learned = new ImportAliasesDto();
         foreach (var answer in people.Values.Where(a => a.Confirmed && a.UserId.HasValue))
             learned.People[StaffNameResolver.AliasKey(answer.Written)] = answer.UserId!.Value;
-        if (learned.People.Count > 0) request.LearnedAliases = learned;
+        // E9: an attendance the reader settled is remembered BY ITS WORDS, so the next document that says "Administration,
+        // Senior Ladies & Matrons" is read without asking again.
+        foreach (var m in meetings.Where(m => m.Attendance == MeetingAttendance.Chosen && m.StaffAudience is { } a && !a.IsEmpty && !string.IsNullOrWhiteSpace(m.ResponsibleText)))
+            learned.Offices[OfficeResolver.AliasKey(m.ResponsibleText)] = new OfficeAliasDto
+            {
+                AllStaff = m.StaffAudience!.AllStaff, StaffGroups = m.StaffAudience.StaffGroups, RoleCodes = m.StaffAudience.RoleCodes,
+                DepartmentIds = m.StaffAudience.DepartmentIds, UserIds = m.StaffAudience.UserIds
+            };
+        // The people a rota lists BY ROLE ("Prep Supervisor") are remembered as that role's holders, so a meeting of
+        // "Prep supervisors" in a document uploaded ANOTHER day still knows who they are (cross-upload, E9).
+        foreach (var role in roles)
+        {
+            var holders = ProgrammeChecks.RoleHolders(files, role).Where(n => n.UserId.HasValue).Select(n => n.UserId!.Value).Distinct().ToList();
+            if (holders.Count == 0) continue;
+            learned.Offices[OfficeResolver.AliasKey(role)] = new OfficeAliasDto { UserIds = holders };
+            learned.Offices[OfficeResolver.AliasKey(role + "s")] = new OfficeAliasDto { UserIds = holders };
+        }
+        if (learned.People.Count > 0 || learned.Offices.Count > 0) request.LearnedAliases = learned;
         return request;
     }
 
@@ -1240,7 +1637,137 @@ else
     private string RowLabel(ProgrammeRowResultDto r)
     {
         var c = AllCandidates().FirstOrDefault(x => x.SourceKey == r.SourceKey);
-        return c == null ? r.SourceKey : c.Kind == ProgrammeRowKind.Rota ? $"{c.PersonText}, {When(c)}" : $"{c.Title} ({When(c)})";
+        if (c != null) return c.Kind == ProgrammeRowKind.Rota ? $"{c.PersonText}, {When(c)}" : $"{c.Title} ({When(c)})";
+        // Approval mode has no candidates — only the staged request — so the row is named from that.
+        if (stagedRequest != null)
+        {
+            if (stagedRequest.Events.FirstOrDefault(e => e.SourceKey == r.SourceKey) is { } e) return $"{e.Title} ({QDateFormat.D(e.StartsOn)})";
+            if (stagedRequest.Meetings.FirstOrDefault(m => m.SourceKey == r.SourceKey) is { } m) return $"{m.Title} ({QDateFormat.D(m.Date)})";
+            if (stagedRequest.RotaSlots.FirstOrDefault(s => s.SourceKey == r.SourceKey) is { } s) return $"{s.RotaName} ({QDateFormat.D(s.StartsOn)})";
+        }
+        return r.SourceKey;
+    }
+
+    // ---- Routing and approval (E11) ----------------------------------------------------------------------------
+
+    private static bool IsRouted(ProgrammeTableKind kind) => kind is ProgrammeTableKind.StaffList or ProgrammeTableKind.StudentList or ProgrammeTableKind.TimetableGrid;
+
+    private static string RoutedSection(ProgrammeTableKind kind) => kind switch
+    {
+        ProgrammeTableKind.StaffList => ImportSectionKinds.Staff,
+        ProgrammeTableKind.StudentList => ImportSectionKinds.Students,
+        _ => ImportSectionKinds.Timetable
+    };
+
+    private IEnumerable<(ProgrammeFileReading File, ProgrammeTableReading Table)> RoutedTables()
+        => files.Where(f => f.Refusal == null && f.Document != null).SelectMany(f => f.Tables.Where(t => IsRouted(t.Kind)).Select(t => (f, t)));
+
+    /// <summary>
+    /// Whether this person may import these documents straight away, as before: they keep the calendar, may make meetings
+    /// and rota slots when there are any, the school does not require a second approver, and nothing in the documents
+    /// belongs to another section. Otherwise the documents go to the Import inbox, and each part to its owner.
+    /// </summary>
+    private bool MayImportDirectly => WhyApproval == null;
+
+    private string? WhyApproval
+    {
+        get
+        {
+            if (importSettings.RequireSecondApprover) return "This school has a second person approve every import, so the documents go to the Import inbox.";
+            if (!canManageCalendar) return "Events are approved by the people who keep the calendar, so the documents go to them.";
+            if (RoutedTables().Any()) return "Part of these documents belongs to another section, so they go to the Import inbox — each part to the people who approve it.";
+            return null;
+        }
+    }
+
+    /// <summary>Splits the checked documents into their sections and stages them. Nothing is written until each is approved.</summary>
+    private async Task SendForApprovalAsync()
+    {
+        var request = BuildRequest(previewOnly: false);
+        var sections = new List<SubmitImportSectionDto>();
+        var meetingEvents = request.Events.Where(e => !string.IsNullOrWhiteSpace(e.SameAsMeetingKey) && request.Meetings.Any(m => m.SourceKey == e.SameAsMeetingKey)).ToList();
+        var plainEvents = request.Events.Except(meetingEvents).ToList();
+        if (plainEvents.Count > 0 || request.Term != null)
+            sections.Add(new SubmitImportSectionDto
+            {
+                Kind = ImportSectionKinds.Events, Title = "Calendar events", RowCount = plainEvents.Count,
+                RouteReason = "Activities and programme items read from the documents.",
+                Programme = request with { Events = plainEvents, Meetings = new(), RotaSlots = new() }
+            });
+        if (request.Meetings.Count > 0)
+            sections.Add(new SubmitImportSectionDto
+            {
+                Kind = ImportSectionKinds.Meetings, Title = "Meetings and registers", RowCount = request.Meetings.Count,
+                RouteReason = "Staff meetings with a register, and their places on the calendar.",
+                Programme = request with { Events = meetingEvents, Meetings = request.Meetings, RotaSlots = new(), Term = null }
+            });
+        if (request.RotaSlots.Count > 0)
+            sections.Add(new SubmitImportSectionDto
+            {
+                Kind = ImportSectionKinds.Rota, Title = "Duty rota", RowCount = request.RotaSlots.Count,
+                RouteReason = "People on duty, by date.",
+                Programme = request with { Events = new(), Meetings = new(), RotaSlots = request.RotaSlots, Term = null, LearnedAliases = null }
+            });
+        foreach (var (file, table) in RoutedTables())
+            sections.Add(new SubmitImportSectionDto
+            {
+                Kind = RoutedSection(table.Kind),
+                Title = $"{ImportSectionKinds.Label(RoutedSection(table.Kind))} — {file.FileName}, table {table.TableIndex + 1}",
+                RowCount = table.DataRows,
+                RouteReason = string.Join(" ", table.Reasons),
+                Csv = TableCsv(file, table),
+                FileName = $"{System.IO.Path.GetFileNameWithoutExtension(file.FileName)}-table{table.TableIndex + 1}.csv"
+            });
+        if (sections.Count == 0) { Toast.Notify(ToastSeverity.Warning, "Nothing to send", "Every row is left out or merged."); return; }
+
+        working = true;
+        try
+        {
+            await InboxApi.SubmitAsync(branchId, new SubmitImportRequest { SourceFiles = request.SourceFiles, Sections = sections });
+            stage = Stage.Sent;
+            Toast.Notify(ToastSeverity.Success, "Sent for approval", $"{Plural(sections.Count, "part", "parts")} waiting in the Import inbox.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not send the documents", ex.Message);
+        }
+        finally { working = false; }
+    }
+
+    /// <summary>A routed table as CSV for its own importer — RFC 4180 quoting, the cells exactly as read.</summary>
+    private static string TableCsv(ProgrammeFileReading file, ProgrammeTableReading table)
+    {
+        var grid = file.Document!.Tables[table.TableIndex].ToGrid();
+        var start = Math.Max(0, table.HeaderRow);
+        static string Q(string? v) => "\"" + (v ?? string.Empty).Replace("\"", "\"\"") + "\"";
+        return string.Join("\r\n", grid.Skip(start).Where(r => r.Any(c => !string.IsNullOrWhiteSpace(c))).Select(r => string.Join(",", r.Select(Q))));
+    }
+
+    private async Task RejectAsync()
+    {
+        if (InboxJobId is not { } job || InboxSection == null) return;
+        working = true;
+        try
+        {
+            await InboxApi.RejectAsync(branchId, job, InboxSection, string.IsNullOrWhiteSpace(rejectNote) ? null : rejectNote.Trim());
+            Toast.Notify(ToastSeverity.Success, "Rejected", "The person who sent it can see why.");
+            Navigation.NavigateTo("/imports");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not reject it", ex.Message);
+        }
+        finally { working = false; }
+    }
+
+    private async Task OpenHealthAsync(Guid jobId)
+    {
+        historyOpen = false;
+        healthLoading = true;
+        health = null;
+        try { health = await ImportApi.GetHealthAsync(branchId, jobId); }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not read the import", ex.Message); }
+        finally { healthLoading = false; }
     }
 
     // ---- History and undo ------------------------------------------------------------------------------------
@@ -1268,7 +1795,12 @@ else
             var result = await ImportApi.UndoAsync(branchId, jobId);
             var text = $"{Plural(result.EventsRemoved, "event", "events")} removed and {Plural(result.DutiesRemoved, "duty slot", "duty slots")} cancelled.";
             if (result.DutiesKept > 0) text += $" {Plural(result.DutiesKept, "was", "were")} kept because the register had been taken.";
+            if (result.UpdatesRestored > 0) text += $" {Plural(result.UpdatesRestored, "updated row", "updated rows")} put back as they were.";
             Toast.Notify(ToastSeverity.Success, "Import undone", text);
+            // Rows the import had UPDATED that somebody has changed since keep their change, and are named.
+            if (result.UpdatesLeft.Count > 0)
+                Toast.Notify(ToastSeverity.Warning, $"{Plural(result.UpdatesLeft.Count, "row", "rows")} left as they are",
+                    string.Join("; ", result.UpdatesLeft.Take(6)) + (result.UpdatesLeft.Count > 6 ? $"; and {result.UpdatesLeft.Count - 6} more" : "") + ".");
             undoJobId = null;
             if (committed?.JobId == jobId) Reset();
             if (historyOpen) jobs = await ImportApi.GetJobsAsync(branchId);

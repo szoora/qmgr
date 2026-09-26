@@ -54,6 +54,8 @@ public static class TenantDataManifest
         ["StaffAppraisal"] = TenantDataClass.TenantOwned,
         ["StaffDuty"] = TenantDataClass.TenantOwned,
         ["StaffDutyReport"] = TenantDataClass.TenantOwned,
+        // A teacher's lesson plans and schemes of work, and their review trail. Entirely the school's.
+        ["TeachingPlan"] = TenantDataClass.TenantOwned,
         ["StaffMinuteAction"] = TenantDataClass.TenantOwned,
         // A staff member's own request to teach a class or take a period. Entirely the tenant's, and
         // it carries a named member of staff and their words, so it goes when the tenant goes.

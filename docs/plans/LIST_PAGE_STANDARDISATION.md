@@ -1,6 +1,6 @@
 # List-page standardisation — the sweep after the register
 
-**Status:** planned, not started · **Written:** 2026-09-20 · **Owner:** next session
+**Status:** BUILT 2026-09-20 (`f1aed03`) — 58 list pages: 23 swept, 35 ruled out of scope, 0 outstanding; `list-page-audit.mjs` guards it · **Written:** 2026-09-20 (header corrected 2026-09-25)
 
 ## Why this exists
 

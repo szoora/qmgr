@@ -32,7 +32,18 @@ public enum ReminderSubject
     /// own named managers as well as the timetable masters — the point of appointing somebody is that the
     /// chase goes to them.
     /// </summary>
-    TimetableExpiring = 7
+    TimetableExpiring = 7,
+    /// <summary>
+    /// A school event is approaching (calendar-audiences plan E6, 2026-09-26): the day before at the morning hour, and an
+    /// hour before one with a start time. Sent to the event's own audience. NOT gated on Welfare &amp; Performance — the
+    /// calendar is base product — which is why its sweep carries no module check.
+    /// </summary>
+    SchoolEventStart = 8,
+    /// <summary>A lesson of mine has no submitted plan by the school's deadline (lesson plans plan §5.8). Anchored on the
+    /// deadline (the day before the lesson at the policy's hour).</summary>
+    PlanDue = 9,
+    /// <summary>A plan has waited on its reviewer or approver. Anchored on when it reached them.</summary>
+    PlanReview = 10
 }
 
 /// <summary>Where a stage goes. Flags: a stage may ring the bell AND send an email.</summary>
@@ -264,6 +275,30 @@ public static class ReminderLadderDefaults
             new() { Stage = 1, OffsetMinutes = -14 * Day, AtLocalHour = policy.QuietHours?.MorningHour ?? 7, Channels = ReminderChannels.Bell, Audience = ReminderAudience.TimetableManagers | ReminderAudience.TimetableMasters },
             new() { Stage = 2, OffsetMinutes = -3 * Day, AtLocalHour = policy.QuietHours?.MorningHour ?? 7, Channels = ReminderChannels.Bell | ReminderChannels.Email, Audience = ReminderAudience.TimetableManagers | ReminderAudience.TimetableMasters },
             new() { Stage = 3, OffsetMinutes = 0, Channels = ReminderChannels.Bell | ReminderChannels.Email, Audience = ReminderAudience.TimetableManagers | ReminderAudience.TimetableMasters | ReminderAudience.Heads },
+        } },
+        // A school event (E6): the day before at the morning hour, then an hour before a timed one. An all-day event has
+        // no "an hour before", so its second stage is skipped by the sweep. Never Interruptive: nothing on a school
+        // calendar is an emergency, and quiet hours hold the first stage until the morning.
+        new() { Subject = ReminderSubject.SchoolEventStart, Stages = new()
+        {
+            new() { Stage = 1, OffsetMinutes = -1 * Day, AtLocalHour = policy.QuietHours?.MorningHour ?? 7, Channels = ReminderChannels.Bell },
+            new() { Stage = 2, OffsetMinutes = -1 * Hour, Channels = ReminderChannels.Bell },
+        } },
+        // A lesson with no plan (lesson plans §5.8): a nudge in the afternoon before the deadline, then at it, then the
+        // morning of the lesson with the head of department told. Gentle: a missing plan is a conversation, not an alarm.
+        new() { Subject = ReminderSubject.PlanDue, Stages = new()
+        {
+            new() { Stage = 1, OffsetMinutes = -3 * Hour, Channels = ReminderChannels.Bell },
+            new() { Stage = 2, OffsetMinutes = 0, Channels = ReminderChannels.Bell },
+            new() { Stage = 3, OffsetMinutes = 12 * Hour, AtLocalHour = policy.QuietHours?.MorningHour ?? 7, Channels = ReminderChannels.Bell, Audience = ReminderAudience.Subject | ReminderAudience.Heads },
+        } },
+        // A plan waiting on a reviewer: two days, then four with an email, then a week with the heads told. The Ugandan
+        // evidence (plan §2) is that plans are reviewed late and rarely commented on; the chase is the fix for "late".
+        new() { Subject = ReminderSubject.PlanReview, Stages = new()
+        {
+            new() { Stage = 1, OffsetMinutes = 2 * Day, AtLocalHour = policy.QuietHours?.MorningHour ?? 7, Channels = ReminderChannels.Bell },
+            new() { Stage = 2, OffsetMinutes = 4 * Day, AtLocalHour = policy.QuietHours?.MorningHour ?? 7, Channels = ReminderChannels.Bell | ReminderChannels.Email },
+            new() { Stage = 3, OffsetMinutes = 7 * Day, AtLocalHour = policy.QuietHours?.MorningHour ?? 7, Channels = ReminderChannels.Bell | ReminderChannels.Email, Audience = ReminderAudience.Subject | ReminderAudience.Heads },
         } },
     };
 }

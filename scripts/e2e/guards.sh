@@ -26,6 +26,16 @@ GUARDS="$GUARDS json-options-check"
 GUARDS="$GUARDS razor-email-transition-check"
 # 2026-09-24: the product name has one home, ProductBrand; typed anywhere else it fails (rebrand).
 GUARDS="$GUARDS brand-literal-check"
+# 2026-09-25: a view permission never gates a write (the print/feedback-link/badge sweep).
+GUARDS="$GUARDS view-on-write-check"
+# 2026-09-25: a link into admin/billing/platform is drawn only behind a condition (the ungated Settings links).
+GUARDS="$GUARDS nav-gate-check"
+# 2026-09-26: a preference save copies the whole record (the push opt-out reset weekly, B4).
+GUARDS="$GUARDS preferences-roundtrip-check"
+# 2026-09-26: "is this person in this audience" has one home, StaffAudienceRule (calendar-audiences plan).
+GUARDS="$GUARDS audience-home-check"
+# 2026-09-26: every decision on somebody's work asks DutySeparation (lesson plans plan §3, gaps G1–G7).
+GUARDS="$GUARDS separation-check"
 
 # Advisory: refusal-audit prints a shortlist for a human to read and says so itself — "a page WITH a
 # check still needs a human to ask whether it covers the refusal that matters". It has no pass state

@@ -178,7 +178,10 @@ else if (loadError != null)
                 loadError = "Choose a branch in the app first; a programme belongs to a branch.";
                 return;
             }
-            range = await CalendarApi.GetRangeAsync(branchId, from, to);
+            // The printed term programme is the WHOLE school's, which is what goes on the staffroom wall — never one
+            // person's "My events" (the calendar page's default scope since 2026-09-26). An event marked "only its audience
+            // can see it" is still left off for anybody not in it: the server decides.
+            range = await CalendarApi.GetRangeAsync(branchId, from, to, QMgr.Application.DTOs.CalendarScopes.All);
         }
         catch (Exception ex)
         {

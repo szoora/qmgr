@@ -54,6 +54,10 @@ const call = async (token, method, path, body) => {
 
 const AD = await login(AD_USER, AD_PASS);
 if (!AD) { console.error("could not sign in"); process.exit(1); }
+// Adoption is somebody OTHER than whoever wrote the minutes (DutySeparation G4, 2026-09-26): the administrator writes,
+// the Director of Studies — who also manages duties — adopts. Section 14 creates the account.
+const DO = (await login(process.env.DOS_USER ?? "e2e.sp.dos@qmgr.local", "E2eTeacher!2026")) ?? (await login(process.env.DOS_USER ?? "e2e.sp.dos@qmgr.local", "Rwenzori#Peaks-2026"));
+if (!DO) { console.error("could not sign in as the Director of Studies (run section 14 first)"); process.exit(1); }
 const me = JSON.parse(Buffer.from(AD.split(".")[1], "base64").toString()).sub;
 const B = `/api/v1/branches/${BRANCH}/staff`;
 
@@ -161,10 +165,13 @@ ok("17.5c: it is still editable — circulation is for correction, not adoption"
 
 // ---------------------------------------------------------------- 17.6 adoption
 hdr("17.6 Adoption is the boundary");
-const selfAdopt = await call(AD, "POST", `${B}/duties/${dutyId}/minutes/approve`, { approvedAtDutyId: dutyId });
+const writerAdopts = await call(AD, "POST", `${B}/duties/${dutyId}/minutes/approve`, {});
+eq("17.6a0: whoever wrote the minutes cannot adopt them (403, G4)", writerAdopts.status, 403);
+
+const selfAdopt = await call(DO, "POST", `${B}/duties/${dutyId}/minutes/approve`, { approvedAtDutyId: dutyId });
 eq("17.6a: a meeting cannot adopt its own minutes (400)", selfAdopt.status, 400);
 
-const adopted = await call(AD, "POST", `${B}/duties/${dutyId}/minutes/approve`, {});
+const adopted = await call(DO, "POST", `${B}/duties/${dutyId}/minutes/approve`, {});
 eq("17.6b: adopted (200)", adopted.status, 200);
 eq("17.6c: …and the status is Approved", adopted.json?.status, "Approved");
 ok("17.6d: adoption records who and when", !!adopted.json?.approvedAt && !!adopted.json?.approvedByName,
@@ -174,7 +181,7 @@ eq("17.6e: an adopted record is no longer writable", adopted.json?.canWrite, fal
 const editAfter = await call(AD, "PUT", `${B}/duties/${dutyId}/minutes/content`, { sections: [{ key: "agenda", body: "Rewritten after adoption" }], decisions: [], actions: [] });
 eq("17.6f: editing an adopted record is REFUSED (409)", editAfter.status, 409);
 
-const twice = await call(AD, "POST", `${B}/duties/${dutyId}/minutes/approve`, {});
+const twice = await call(DO, "POST", `${B}/duties/${dutyId}/minutes/approve`, {});
 eq("17.6g: adopting twice is refused (409)", twice.status, 409);
 
 const stillThere = (await call(AD, "GET", `${B}/duties/${dutyId}/minutes`)).json;

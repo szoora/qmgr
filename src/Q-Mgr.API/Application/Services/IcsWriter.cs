@@ -39,9 +39,10 @@ public sealed class IcsWriter
 
     /// <summary>An all-day event: <paramref name="lastDay"/> is INCLUSIVE here and written exclusive.</summary>
     public void AllDayEvent(string uid, DateTime stampUtc, DateOnly firstDay, DateOnly lastDay,
-        string summary, string? location, string? description, string? category, DateTime? lastModifiedUtc = null)
+        string summary, string? location, string? description, string? category, DateTime? lastModifiedUtc = null,
+        int sequence = 0, bool cancelled = false)
     {
-        Begin(uid, stampUtc, lastModifiedUtc);
+        Begin(uid, stampUtc, lastModifiedUtc, sequence, cancelled);
         Line("DTSTART;VALUE=DATE:" + Date(firstDay));
         Line("DTEND;VALUE=DATE:" + Date((lastDay < firstDay ? firstDay : lastDay).AddDays(1)));
         Body(summary, location, description, category);
@@ -49,9 +50,10 @@ public sealed class IcsWriter
 
     /// <summary>A timed event. <paramref name="endUtc"/> null = no stated end ("onwards").</summary>
     public void TimedEvent(string uid, DateTime stampUtc, DateTime startUtc, DateTime? endUtc,
-        string summary, string? location, string? description, string? category, DateTime? lastModifiedUtc = null)
+        string summary, string? location, string? description, string? category, DateTime? lastModifiedUtc = null,
+        int sequence = 0, bool cancelled = false)
     {
-        Begin(uid, stampUtc, lastModifiedUtc);
+        Begin(uid, stampUtc, lastModifiedUtc, sequence, cancelled);
         Line("DTSTART:" + Utc(startUtc));
         if (endUtc is { } end && end > startUtc) Line("DTEND:" + Utc(end));
         Body(summary, location, description, category);
@@ -64,12 +66,20 @@ public sealed class IcsWriter
         return _sb.ToString();
     }
 
-    private void Begin(string uid, DateTime stampUtc, DateTime? lastModifiedUtc)
+    /// <summary>
+    /// SEQUENCE is the event's revision (RFC 5546 §2.1.4: bumped when the date, time or status changes), and a cancelled
+    /// event is sent as STATUS:CANCELLED rather than dropped (§3.2.5) — a calendar that already has it strikes it through
+    /// instead of silently keeping the old entry. DTSTAMP is the moment the event last changed, not the moment of the
+    /// fetch: a stamp that moved on every poll told every client the whole calendar had changed every five minutes.
+    /// </summary>
+    private void Begin(string uid, DateTime stampUtc, DateTime? lastModifiedUtc, int sequence, bool cancelled)
     {
         Line("BEGIN:VEVENT");
         Line("UID:" + Escape(uid));
         Line("DTSTAMP:" + Utc(stampUtc));
         if (lastModifiedUtc is { } lm) Line("LAST-MODIFIED:" + Utc(lm));
+        if (sequence > 0) Line("SEQUENCE:" + sequence.ToString(CultureInfo.InvariantCulture));
+        if (cancelled) Line("STATUS:CANCELLED");
     }
 
     private void Body(string summary, string? location, string? description, string? category)

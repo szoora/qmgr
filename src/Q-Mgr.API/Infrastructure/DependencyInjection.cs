@@ -108,6 +108,12 @@ public static class DependencyInjection
         services.AddScoped<INotificationService, NotificationService>();
         // Per-user channel preferences, applied before anything leaves the building.
         services.AddScoped<INotificationPreferenceResolver, NotificationPreferenceResolver>();
+        // The person's own view choices (calendar view and scope, sound) — the one reader of Users.UiPreferences.
+        services.AddScoped<IUserPreferencesService, UserPreferencesService>();
+        // Telling a school event's audience, once per change (calendar-audiences plan E5).
+        services.AddScoped<QMgr.API.Application.Services.ISchoolEventNotifier, QMgr.API.Application.Services.SchoolEventNotifier>();
+        // The Import inbox: staged documents, routed to the section that owns each part (E11).
+        services.AddScoped<QMgr.API.Application.Services.IImportInbox, QMgr.API.Application.Services.ImportInbox>();
         // Off-thread, retried, logged delivery. Resolved by Hangfire, not injected anywhere.
         services.AddScoped<QMgr.Infrastructure.Jobs.NotificationDispatchJob>();
         // The staff sweeps. Hangfire resolves these through the same container, and the

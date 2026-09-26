@@ -1,24 +1,36 @@
-@* No @page: a SECTION of the Calendar hub at /calendar. The hub owns ?tab=; this section reads its own
-   ?view= and ?date= once, on arrival, so a link can open a month or a term directly. *@
+@* No @page: a SECTION of the Calendar hub at /calendar. The hub owns ?tab=; this section reads and writes its own
+   ?view=, ?date=, ?scope= and ?event=, so a link opens the same view — and a notification opens the event. *@
 @using Microsoft.AspNetCore.WebUtilities
+@using QMgr.Application
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Web.Services
 @inherits BranchAwareComponentBase
 @inject ICalendarApiService CalendarApi
-@inject IStaffPerformanceApiService StaffApi
 @inject IStudentApiService StudentApi
+@inject IUiPreferencesService UiPreferences
+@inject IPermissionService PermissionService
+@inject IAuthService AuthService
 @inject IToastService Toast
+@inject IJSRuntime JS
 @inject NavigationManager Navigation
 
 @*
-    The school calendar (plan TERM_PROGRAMME_CALENDAR_AND_GATES §9). Three views of one range:
+    The school calendar (plan TERM_PROGRAMME_CALENDAR_AND_GATES §9; CALENDAR_AUDIENCES_AND_IMPORT_ROUTING, 2026-09-26).
+    Three views of one range:
       * Term   — the term's programme, week by week, the shape a school prints and pins up;
-      * Month  — a Monday-first 7-column grid; under 640px it stacks into a day list, because seven
-                 columns on a phone are 50px each and nothing fits in them;
+      * Month  — a Monday-first 7-column grid; under 640px it stacks into a day list;
       * Agenda — the month as a list of the days that have something on them.
-    Events are the school's; "My duties" are the caller's own Session and Rota duties (lessons are the
-    timetable's). National dates (D9) are muted markers — reference only, never a rule.
+
+    TWO SCOPES (E4): "My events" — the events I am in the audience of or run, and my duties — and "Whole school". My
+    events is the default, the way Arbor's "My Calendar" is: the whole school is one press away, never the first thing.
+
+    PAST EVENTS (E1): a LIST's job is what is coming, so Term and Agenda start at today and say how many earlier events
+    they are not showing; "Show past events" brings them back, dimmed. The Month grid is a map of the month, so past days
+    stay in it, dimmed. The choices follow the person (IUiPreferencesService), not the browser.
+
+    Every "today" on this page is the SCHOOL's today (CalendarRangeDto.Today, B9) — never DateTime.Today, which on
+    Blazor Server is the host's clock — and every duty instant is drawn on the branch's zone.
 *@
 
 <QPageActions Embedded="@Embedded">
@@ -43,7 +55,12 @@
             <QButton Icon="chevron-right" Variant="ghost" Size="sm" OnClick="@(() => MoveAsync(1))" aria-label="@($"Next {ViewNoun}")" id="cal-next" />
             <strong class="cal-nav__label" id="cal-range-label">@RangeLabel</strong>
         </div>
-        <QSwitch Value="@showDuties" ValueChanged="@(v => showDuties = v)" Label="My duties" aria-label="Show my duties" />
+        <QTabs Tabs="@ScopeTabs" ActiveKey="@scope" ActiveKeyChanged="@ChangeScopeAsync" IdPrefix="cals" AriaLabel="Whose events" Class="cal-scope" />
+        @if (view != MonthView)
+        {
+            <QSwitch Value="@showPast" ValueChanged="@SetShowPastAsync" Label="Show past events" aria-label="Show past events" id="cal-show-past" />
+        }
+        <QSwitch Value="@showDuties" ValueChanged="@SetShowDutiesAsync" Label="My duties" aria-label="Show my duties" id="cal-show-duties" />
     </QFilterBar>
 
     @if (branchId == Guid.Empty)
@@ -86,7 +103,7 @@
                         var items = ItemsOn(day);
                         var inMonth = day.Month == anchor.Month;
                         var national = NationalOn(day).ToList();
-                        <div class="cal-day @(inMonth ? "" : "cal-day--out") @(day == Today ? "cal-day--today" : "") @(items.Count == 0 && national.Count == 0 ? "cal-day--empty" : "")"
+                        <div class="cal-day @(inMonth ? "" : "cal-day--out") @(day == Today ? "cal-day--today" : "") @(day < Today ? "cal-day--past" : "") @(items.Count == 0 && national.Count == 0 ? "cal-day--empty" : "")"
                              role="gridcell" data-date="@CalendarDisplay.Iso(day)">
                             <div class="cal-day__head">
                                 <span class="cal-day__num">@day.Day</span>
@@ -112,7 +129,9 @@
                     }
                 </div>
             </div>
-            @if (!AnyVisibleIn(GridDays().Where(d => d.Month == anchor.Month)))
+            @* B20: "nothing this month" is about EVENTS; a month with only my duties in it is not empty of events, and the
+               grid shows those duties anyway. *@
+            @if (!GridDays().Where(d => d.Month == anchor.Month).Any(d => ItemsOn(d).Any(i => i.Event != null)))
             {
                 <QEmptyState Icon="calendar-x" Title="No events this month" Text="@EmptyText" Class="cal-empty" />
             }
@@ -120,10 +139,19 @@
         else
         {
             var days = ListDays().ToList();
-            var withItems = days.Where(d => ItemsOn(d).Count > 0 || NationalOn(d).Any()).ToList();
+            var withItems = days.Where(d => ListItemsOn(d).Count > 0 || NationalOn(d).Any()).ToList();
+            var anchorDay = withItems.FirstOrDefault(d => d >= Today);
+            @if (!showPast && EarlierCount > 0)
+            {
+                <p class="cal-earlier" id="cal-earlier">
+                    <QIcon Name="clock-history" Size="sm" />
+                    <span>Earlier @(view == TermView ? "this term" : "this month"): @EarlierCount @(EarlierCount == 1 ? "event" : "events").</span>
+                    <QButton Text="Show" Variant="ghost" Size="sm" OnClick="@(() => SetShowPastAsync(true))" id="cal-earlier-show" />
+                </p>
+            }
             @if (withItems.Count == 0)
             {
-                <QEmptyState Icon="calendar-x" Title="@(view == TermView ? "No events this term" : "No events this month")" Text="@EmptyText" Class="cal-empty" />
+                <QEmptyState Icon="calendar-x" Title="@(ListEmptyTitle)" Text="@EmptyText" Class="cal-empty" />
             }
             else
             {
@@ -132,12 +160,13 @@
                     {
                         @if (view == TermView)
                         {
-                            <h2 class="cal-week">@WeekHeading(week.Key)</h2>
+                            <h2 class="cal-week @(week.Key.AddDays(6) < Today ? "cal-week--past" : "")">@WeekHeading(week.Key)</h2>
                         }
                         @foreach (var day in week)
                         {
-                            var items = ItemsOn(day);
-                            <section class="cal-agenda__day @(day == Today ? "cal-agenda__day--today" : "")" data-date="@CalendarDisplay.Iso(day)">
+                            var items = ListItemsOn(day);
+                            <section class="cal-agenda__day @(day == Today ? "cal-agenda__day--today" : "") @(day < Today ? "cal-agenda__day--past" : "")"
+                                     data-date="@CalendarDisplay.Iso(day)" id="@(day == anchorDay ? TodayAnchor : null)">
                                 <div class="cal-agenda__date">
                                     <strong>@QDateFormat.Dy(day)</strong>
                                     <span>@QDateFormat.C(day)</span>
@@ -149,7 +178,7 @@
                                     }
                                     @foreach (var item in items)
                                     {
-                                        @ItemRow(item)
+                                        @ItemRow(item, day)
                                     }
                                 </div>
                             </section>
@@ -166,27 +195,63 @@
     <ChildContent>
         @if (detail != null)
         {
+            @if (detail.Status == SchoolEventStatus.Cancelled)
+            {
+                <p class="cal-cancelled-note" role="status"><QIcon Name="x-octagon" Size="sm" /> <span>Cancelled@(string.IsNullOrWhiteSpace(detail.CancelReason) ? "." : $": {detail.CancelReason}")</span></p>
+            }
             <dl class="cal-detail" id="cal-detail">
-                <dt>When</dt><dd>@CalendarDisplay.DatesAndTime(detail)</dd>
+                <dt>When</dt><dd>@CalendarDisplay.DatesAndTime(detail)@(detail.EndsOn > detail.StartsOn && detail.StartTime != null ? ", each day" : "")</dd>
+                @if (!string.IsNullOrWhiteSpace(detail.Recurrence)) { <dt>Repeats</dt><dd>@detail.Recurrence</dd> }
                 @if (!string.IsNullOrWhiteSpace(detail.Location)) { <dt>Venue</dt><dd>@detail.Location</dd> }
                 @if (!string.IsNullOrWhiteSpace(detail.Category)) { <dt>Category</dt><dd>@detail.Category</dd> }
                 <dt>For</dt><dd>@CalendarDisplay.Audience(detail.Audience)@(CalendarDisplay.Classes(detail) is { } cls ? $" · {cls}" : " · the whole school")</dd>
+                @if (!string.IsNullOrWhiteSpace(detail.StaffAudienceText)) { <dt>Staff</dt><dd>@detail.StaffAudienceText@(detail.AudienceOnly ? " · only they can see it" : "")</dd> }
+                @if (detail.AttendanceRequired) { <dt>Attendance</dt><dd>Required</dd> }
                 @if (CalendarDisplay.Responsible(detail) is { } who) { <dt>Responsible</dt><dd>@who</dd> }
                 @if (DepartmentNames(detail) is { } depts) { <dt>Departments</dt><dd>@depts</dd> }
                 @if (!string.IsNullOrWhiteSpace(detail.SeriesName)) { <dt>Programme</dt><dd>@detail.SeriesName</dd> }
+                @if (detail.LibraryDocumentId is { } docId)
+                {
+                    <dt>Document</dt>
+                    <dd><a href="@($"/content/library?tab=documents&document={docId}")">@(detail.LibraryDocumentTitle ?? "Open the document")</a></dd>
+                }
                 @if (!string.IsNullOrWhiteSpace(detail.Description)) { <dt>Notes</dt><dd class="cal-detail__notes">@detail.Description</dd> }
             </dl>
             @if (detail.DutyId.HasValue)
             {
                 <p class="cal-hint"><QIcon Name="clipboard-check" Size="sm" /> <span>This event is also a staff meeting with a register.</span></p>
             }
+            else if (CanGiveRegister(detail))
+            {
+                <p class="cal-hint"><QIcon Name="clipboard-plus" Size="sm" /> <span>No register is taken at this event. If it is a staff meeting, give it one.</span></p>
+            }
         }
     </ChildContent>
     <FooterContent>
-        @if (detail?.CanEdit == true)
+        @if (detail != null)
         {
-            <QButton Text="Delete" Icon="trash" Variant="outline-danger" OnClick="@AskDelete" id="cal-detail-delete" />
-            <QButton Text="Edit" Icon="pencil" Variant="secondary" OnClick="@(() => OpenEdit(detail!))" id="cal-detail-edit" />
+            <QButton Text="Add to my calendar" Icon="calendar-plus" Variant="ghost" OnClick="@DownloadIcsAsync" id="cal-detail-ics" />
+            @if (detail.CanOpenRegister && detail.DutyId is { } dutyId)
+            {
+                <QButton Text="Open the register" Icon="clipboard-check" Variant="secondary" OnClick="@(() => Navigation.NavigateTo($"/admin/staff/duties/{dutyId}/register"))" id="cal-detail-register" />
+            }
+            @if (CanGiveRegister(detail))
+            {
+                <QButton Text="Give it a register" Icon="clipboard-plus" Variant="secondary" OnClick="@OpenGiveRegister" id="cal-detail-give-register" />
+            }
+            @if (detail.CanEdit)
+            {
+                <QButton Text="Delete" Icon="trash" Variant="outline-danger" OnClick="@AskDelete" id="cal-detail-delete" />
+                @if (detail.Status == SchoolEventStatus.Cancelled)
+                {
+                    <QButton Text="Put it back on" Icon="arrow-counterclockwise" Variant="secondary" OnClick="@(() => OpenStatus(false))" id="cal-detail-reinstate" />
+                }
+                else
+                {
+                    <QButton Text="Cancel event" Icon="x-octagon" Variant="secondary" OnClick="@(() => OpenStatus(true))" id="cal-detail-cancel" />
+                }
+                <QButton Text="Edit" Icon="pencil" Variant="secondary" OnClick="@(() => OpenEdit(detail!))" id="cal-detail-edit" />
+            }
         }
         <QButton Text="Close" Icon="x-lg" Variant="ghost" OnClick="@(() => showDetail = false)" />
     </FooterContent>
@@ -198,7 +263,7 @@
         @if (dayOpen is { } open)
         {
             <div class="cal-agenda__items">
-                @foreach (var item in ItemsOn(open)) { @ItemRow(item) }
+                @foreach (var item in ItemsOn(open)) { @ItemRow(item, open) }
             </div>
         }
     </ChildContent>
@@ -211,6 +276,10 @@
 <QModal @bind-Visible="showEditor" Title="@(editingId.HasValue ? "Edit event" : "New event")" Icon="calendar-plus" Size="lg">
     <ChildContent>
         <p class="form-required-note">* Required</p>
+        @if (editingSeries)
+        {
+            <QRadioGroup TValue="string" Options="@EditScopeOptions" Value="@editScope" ValueChanged="@(v => editScope = v)" Legend="This event repeats. Change" Inline="true" Class="cal-edit-scope" />
+        }
         <div class="form-group">
             <QInput TValue="string" @bind-Value="@form.Title" Label="Title" Required="true" MaxLength="200" id="cal-ev-title"
                     Placeholder="Grand Mass, Visiting Day, S.4 mock examinations"
@@ -227,7 +296,7 @@
             </div>
         </div>
         <div class="form-group">
-            <QSwitch Value="@formAllDay" ValueChanged="@(v => formAllDay = v)" Label="All day" aria-label="All day" id="cal-ev-allday" />
+            <QCheckbox Value="@formAllDay" ValueChanged="@(v => formAllDay = v)" Label="All day" id="cal-ev-allday" />
         </div>
         @if (!formAllDay)
         {
@@ -240,6 +309,29 @@
                     <QDatePicker @bind-Value="@formEndTime" ShowTime="true" Label="Ends" Clearable="true" Placeholder="Onwards"
                                  HasError="@(Error("endTime") != null)" ErrorMessage="@Error("endTime")" />
                 </div>
+            </div>
+            @if (formStart is { } fs && formEnd is { } fe && fe.Date > fs.Date)
+            {
+                <p class="cal-hint">These times apply to each day of the event.</p>
+            }
+        }
+        @if (!editingId.HasValue)
+        {
+            <div class="form-row">
+                <div class="form-group">
+                    <QSelect TValue="string" TItem="RepeatOption" @bind-Value="@repeatFrequency" Items="@RepeatOptions"
+                             TextSelector="@(o => o.Label)" ValueSelector="@(o => o.Key)" Label="Repeats" />
+                </div>
+                @if (repeatFrequency != NoRepeat)
+                {
+                    <div class="form-group">
+                        <QDatePicker @bind-Value="@repeatUntil" Label="Until" Required="true" Min="@formStart"
+                                     HasError="@(Error("repeatUntil") != null)" ErrorMessage="@Error("repeatUntil")" />
+                    </div>
+                    <div class="form-group cal-repeat-term">
+                        <QCheckbox @bind-Value="@repeatTermTimeOnly" Label="Term time only" Hint="Weeks outside the term, and national holidays, are left out." />
+                    </div>
+                }
             </div>
         }
         <div class="form-row">
@@ -258,14 +350,31 @@
         </div>
 
         <fieldset class="cal-audience">
-            <legend>Who it is for <QInfo Text="Staff see it on their calendar, My School Day and their phone's calendar. Public puts it on the signage screens' Coming up list. Students and Guardians are kept with the event and shown to them once they have a way in — not yet." Label="the audience" /></legend>
+            <legend>Who it is for <QInfo Text="Staff see it on their calendar, My School Day and their phone's calendar. Public puts it on the signage screens' Coming up list. Students and Guardians are kept with the event for the day they have a way in." Label="the audience" /></legend>
             <div class="cal-audience__row">
-                <QCheckbox Value="@Has(EventAudience.Staff)" ValueChanged="@(v => SetAudience(EventAudience.Staff, v))" Label="Staff" />
+                <QCheckbox Value="@Has(EventAudience.Staff)" ValueChanged="@(v => SetAudience(EventAudience.Staff, v))" Label="Staff" id="cal-ev-for-staff" />
                 <QCheckbox Value="@Has(EventAudience.Students)" ValueChanged="@(v => SetAudience(EventAudience.Students, v))" Label="Students" />
                 <QCheckbox Value="@Has(EventAudience.Guardians)" ValueChanged="@(v => SetAudience(EventAudience.Guardians, v))" Label="Guardians" />
                 <QCheckbox Value="@Has(EventAudience.Public)" ValueChanged="@(v => SetAudience(EventAudience.Public, v))" Label="Public (signage)" />
             </div>
+            @if (!Has(EventAudience.Staff))
+            {
+                @* B21: an event for students or guardians only reaches no member of staff's own calendar. Said here,
+                   rather than discovered when nobody turns up. *@
+                <p class="cal-hint" id="cal-ev-no-staff">Students and guardians cannot see the calendar yet, so without Staff this event appears only on the whole-school view@(Has(EventAudience.Public) ? " and the signage screens" : "").</p>
+            }
             @if (Error("audience") is { } audienceError) { <p class="form-error" role="alert">@audienceError</p> }
+            @if (Has(EventAudience.Staff))
+            {
+                <QAudiencePicker Value="@form.StaffAudience" ValueChanged="@(a => form.StaffAudience = a)" Options="@options"
+                                 AlsoIncluded="@form.ResponsibleUserIds" Label="Which staff" ErrorMessage="@Error("staffAudience")"
+                                 Hint="They are told about it, reminded of it, and see it under My events. The people responsible are always included." />
+                <div class="cal-audience__row">
+                    <QCheckbox @bind-Value="@form.AudienceOnly" Label="Only they can see it" id="cal-ev-audience-only"
+                               Hint="For an interview or a disciplinary panel: it is left off the whole-school view for everybody else." />
+                    <QCheckbox @bind-Value="@form.AttendanceRequired" Label="Attendance is required" id="cal-ev-required" />
+                </div>
+            }
         </fieldset>
 
         <div class="form-row">
@@ -279,30 +388,56 @@
                         Placeholder="Senior Ladies &amp; Matrons" Hint="Words for the programme. Name people below to put it on their own calendar." />
             </div>
         </div>
-        @if (staff.Any() || departments.Any())
-        {
-            <div class="form-row">
-                @if (staff.Any())
-                {
-                    <div class="form-group">
-                        <QMultiSelect TValue="Guid" TItem="StaffMemberDto" SelectedValues="@form.ResponsibleUserIds" SelectedValuesChanged="@(v => form.ResponsibleUserIds = v.ToList())"
-                                      Items="@staff" ValueSelector="@(s => s.UserId)" TextSelector="@(s => s.FullName)" Sorted="true"
-                                      Label="Responsible people" Placeholder="Nobody named" />
-                    </div>
-                }
-                @if (departments.Any())
-                {
-                    <div class="form-group">
-                        <QMultiSelect TValue="Guid" TItem="DepartmentDto" SelectedValues="@form.ResponsibleDepartmentIds" SelectedValuesChanged="@(v => form.ResponsibleDepartmentIds = v.ToList())"
-                                      Items="@departments" ValueSelector="@(d => d.Id)" TextSelector="@(d => d.Name)" Sorted="true"
-                                      Label="Responsible departments" Placeholder="No department" />
-                    </div>
-                }
+        <div class="form-row">
+            <div class="form-group">
+                <QMultiSelect TValue="Guid" TItem="AudienceMemberDto" SelectedValues="@form.ResponsibleUserIds" SelectedValuesChanged="@(v => form.ResponsibleUserIds = v.ToList())"
+                              Items="@options.People" ValueSelector="@(s => s.UserId)" TextSelector="@(s => s.FullName)"
+                              Label="Responsible people" Placeholder="Nobody named" />
             </div>
-        }
+            @if (options.Departments.Any())
+            {
+                <div class="form-group">
+                    <QMultiSelect TValue="Guid" TItem="AudienceDepartmentDto" SelectedValues="@form.ResponsibleDepartmentIds" SelectedValuesChanged="@(v => form.ResponsibleDepartmentIds = v.ToList())"
+                                  Items="@options.Departments" ValueSelector="@(d => d.Id)" TextSelector="@(d => d.Name)" Sorted="true"
+                                  Label="Responsible departments" Placeholder="No department" />
+                </div>
+            }
+        </div>
         <div class="form-group">
             <QInput TValue="string" @bind-Value="@form.Description" Type="textarea" Rows="3" MaxLength="2000" Label="Notes" />
         </div>
+        @if (canViewLibrary && organizationId != Guid.Empty)
+        {
+            <div class="form-group cal-attachment">
+                <span class="cal-attachment__label">Document</span>
+                @if (form.LibraryDocumentId.HasValue)
+                {
+                    <span class="cal-attachment__name"><QIcon Name="file-earmark-pdf" Size="sm" /> @(attachmentName ?? "A Library document")</span>
+                    <QButton Text="Remove" Size="sm" Variant="ghost" OnClick="@(() => { form.LibraryDocumentId = null; attachmentName = null; })" />
+                }
+                else
+                {
+                    <QButton Text="Attach from the Library" Icon="paperclip" Size="sm" Variant="ghost" OnClick="@(() => showLibrary = true)" id="cal-ev-attach" />
+                }
+            </div>
+        }
+        <div class="cal-audience__row">
+            <QCheckbox @bind-Value="@form.RemindersOn" Label="Remind them" Hint="The day before, and an hour before an event with a start time." />
+            @if (NotifyApplies)
+            {
+                <QCheckbox @bind-Value="@form.NotifyAudience" Label="@NotifyLabel" id="cal-ev-notify" />
+            }
+        </div>
+        @if (clash is { } c && (c.Teaching + c.OnDuty) > 0)
+        {
+            <div class="cal-clash" role="alert" id="cal-ev-clash">
+                <QIcon Name="exclamation-triangle" Size="sm" />
+                <span>
+                    Of the @c.AudienceCount people, @ClashWords(c) then@(c.Examples.Count > 0 ? $" ({string.Join(", ", c.Examples)}{(c.Teaching + c.OnDuty > c.Examples.Count ? ", …" : "")})" : "").
+                    @(c.LessonsKnown ? "" : "Lessons are only known two weeks ahead.") Save again to keep it anyway.
+                </span>
+            </div>
+        }
         @if (formProblem != null)
         {
             <p class="form-error" role="alert">@formProblem</p>
@@ -314,14 +449,72 @@
     </FooterContent>
 </QModal>
 
+<QLibraryPicker @bind-Visible="showLibrary" OrganizationId="@organizationId" OnlyType="null" Title="Attach a document" ConfirmText="Attach"
+                OnPicked="@OnAttachmentPicked" />
+
+@* ---- Cancel / put back on --------------------------------------------------------------------- *@
+<QModal @bind-Visible="showStatus" Title="@(cancelling ? "Cancel this event?" : "Put this event back on?")" Icon="@(cancelling ? "x-octagon" : "arrow-counterclockwise")" Size="md">
+    <ChildContent>
+        <p>@(cancelling
+               ? "It stays on the calendar, struck through, so nobody wonders whether they missed it. Its reminders stop."
+               : "It goes back on the calendar and its reminders start again.")</p>
+        @if (detail?.Recurrence != null)
+        {
+            <QRadioGroup TValue="string" Options="@EditScopeOptions" Value="@statusScope" ValueChanged="@(v => statusScope = v)" Legend="This event repeats. Apply to" Inline="true" />
+        }
+        @if (cancelling)
+        {
+            <div class="form-group">
+                <QInput TValue="string" @bind-Value="@cancelReason" Label="Reason" MaxLength="300" Placeholder="Postponed to next week because of the exams" id="cal-cancel-reason" />
+            </div>
+        }
+        <QCheckbox @bind-Value="@statusNotify" Label="Tell the people it is for" id="cal-cancel-notify" />
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Keep it as it is" Variant="ghost" OnClick="@(() => showStatus = false)" />
+        <QButton Text="@(cancelling ? "Cancel event" : "Put it back on")" Icon="check-lg" Variant="@(cancelling ? "danger" : "primary")" Loading="@saving" OnClick="@ChangeStatusAsync" id="cal-cancel-confirm" />
+    </FooterContent>
+</QModal>
+
+@* ---- Give it a register (E10) ----------------------------------------------------------------- *@
+<QModal @bind-Visible="showRegister" Title="Give this event a register" Icon="clipboard-plus" Size="lg">
+    <ChildContent>
+        <p>It becomes a staff meeting whose attendance is taken, on the Duties page and on the day of everybody expected.</p>
+        <QAudiencePicker Value="@registerExpected" ValueChanged="@(a => registerExpected = a)" Options="@options" Label="Who is expected" />
+        <div class="form-group">
+            <QMultiSelect TValue="Guid" TItem="AudienceMemberDto" SelectedValues="@registerRecorders" SelectedValuesChanged="@(v => registerRecorders = v.ToList())"
+                          Items="@options.People" ValueSelector="@(s => s.UserId)" TextSelector="@(s => s.FullName)" Required="true"
+                          Label="Who takes the register" Placeholder="Choose at least one person"
+                          HasError="@(registerProblem != null && registerRecorders.Count == 0)" ErrorMessage="@(registerRecorders.Count == 0 ? registerProblem : null)" />
+        </div>
+        @if (string.IsNullOrWhiteSpace(detail?.StartTime))
+        {
+            <div class="form-row">
+                <div class="form-group">
+                    <QDatePicker @bind-Value="@registerStart" ShowTime="true" Label="Starts" Required="true" />
+                </div>
+                <div class="form-group">
+                    <QDatePicker @bind-Value="@registerEnd" ShowTime="true" Label="Ends" Clearable="true" Placeholder="An hour later" />
+                </div>
+            </div>
+        }
+        <QCheckbox @bind-Value="@registerNotify" Label="Tell the people expected" />
+        @if (registerProblem != null && registerRecorders.Count > 0) { <p class="form-error" role="alert">@registerProblem</p> }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showRegister = false)" />
+        <QButton Text="Give it a register" Icon="check-lg" Variant="primary" Loading="@saving" OnClick="@GiveRegisterAsync" id="cal-register-confirm" />
+    </FooterContent>
+</QModal>
+
 <ConfirmDialog @bind-IsVisible="showDelete" Title="Delete this event?"
-               Message="@($"\"{detail?.Title}\" leaves the calendar, the printed programme and everybody's phone calendar at their next refresh.")"
+               Message="@($"\"{detail?.Title}\" leaves the calendar, the printed programme and everybody's phone calendar at their next refresh. Nobody is told — for something people were expecting, cancel it instead.")"
                ConfirmText="Delete" ConfirmButtonClass="btn-danger" OnClose="@DeleteConfirmedAsync" />
 
 <style>
     .cal-page { display: flex; flex-direction: column; gap: var(--qm-block-gap, 10px); }
     .cal-toolbar { align-items: center; }
-    .cal-views { margin-bottom: 0; }
+    .cal-views, .cal-scope { margin-bottom: 0; }
     .cal-nav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0; }
     .cal-nav__label { margin-left: 6px; font-size: var(--qm-text-md); font-family: var(--qm-font-display); white-space: nowrap; }
     .cal-loading { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 48px 16px; color: var(--qm-text-muted); }
@@ -330,6 +523,7 @@
     .cal-term__text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; min-width: 0; font-size: var(--qm-text-base); }
     .cal-term__text span { color: var(--qm-text-secondary); }
     .cal-term__theme { flex-basis: 100%; color: var(--qm-text-secondary); }
+    .cal-earlier { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
 
     /* The month: a real 7-column grid, Monday first. */
     .cal-month { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); overflow: hidden; background: var(--qm-bg-card); }
@@ -339,6 +533,8 @@
     .cal-day:nth-child(7n) { border-right: 0; }
     .cal-day--out { background: var(--qm-bg-secondary); }
     .cal-day--out .cal-day__num { color: var(--qm-text-muted); }
+    /* E1: a past day stays on the map of the month, dimmed — Google Calendar's "reduce the brightness of past events". */
+    .cal-day--past .cal-pill, .cal-day--past .cal-national { opacity: var(--cal-past-opacity); }
     .cal-day--today .cal-day__num { background: var(--qm-primary); color: var(--qm-text-on-primary); border-radius: var(--qm-radius-md); padding: 0 6px; }
     .cal-day__head { display: flex; align-items: center; gap: 6px; min-height: 22px; }
     .cal-day__num { font-size: var(--qm-text-sm); font-weight: 600; }
@@ -346,20 +542,24 @@
     .cal-day__add { margin-left: auto; border: 0; background: none; color: var(--qm-text-muted); cursor: pointer; padding: 0 2px; opacity: 0; min-width: 24px; min-height: 24px; }
     .cal-day:hover .cal-day__add, .cal-day__add:focus-visible { opacity: 1; }
 
+    .cal-page { --cal-past-opacity: 0.55; }
     .cal-pill { display: flex; align-items: center; gap: 4px; width: 100%; min-width: 0; border: 0; text-align: left; cursor: pointer; padding: 2px 6px; border-radius: var(--qm-radius-sm); font: inherit; font-size: var(--qm-text-xs); line-height: 1.35; background: var(--qm-primary-light); color: var(--qm-text-primary); }
     .cal-pill__t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .cal-pill__time { flex: 0 0 auto; color: var(--qm-text-secondary); }
     .cal-pill--allday { background: var(--qm-primary); color: var(--qm-text-on-primary); }
     .cal-pill--allday .cal-pill__time { color: inherit; }
     .cal-pill--duty { background: none; border: 1px dashed var(--qm-border); cursor: default; }
+    .cal-pill--cancelled .cal-pill__t, .cal-row--cancelled strong { text-decoration: line-through; }
     .cal-national { display: block; font-size: var(--qm-text-xs); color: var(--qm-text-muted); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .cal-more { border: 0; background: none; padding: 0 6px; text-align: left; font: inherit; font-size: var(--qm-text-xs); color: var(--qm-primary); cursor: pointer; }
 
     /* The agenda and the term: one line per item under a day heading. */
     .cal-agenda { display: flex; flex-direction: column; gap: 6px; }
     .cal-week { margin: 8px 0 0; font-size: var(--qm-text-base); color: var(--qm-text-secondary); }
-    .cal-agenda__day { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 10px; padding: 8px 10px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); }
+    .cal-week--past { opacity: var(--cal-past-opacity); }
+    .cal-agenda__day { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 10px; padding: 8px 10px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); scroll-margin-top: 80px; }
     .cal-agenda__day--today { border-left: 3px solid var(--qm-primary); }
+    .cal-agenda__day--past { opacity: var(--cal-past-opacity); }
     .cal-agenda__date { display: flex; flex-direction: column; font-size: var(--qm-text-base); }
     .cal-agenda__date span { color: var(--qm-text-secondary); font-size: var(--qm-text-sm); }
     .cal-agenda__items { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
@@ -377,9 +577,16 @@
     .cal-detail dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
     .cal-detail__notes { white-space: pre-line; }
     .cal-hint { display: flex; align-items: center; gap: 6px; margin: 10px 0 0; font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
-    .cal-audience { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 8px 12px; margin: 0 0 var(--qm-field-gap, 12px); }
+    .cal-cancelled-note { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; color: var(--qm-danger); font-weight: 500; }
+    .cal-audience { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 8px 12px; margin: 0 0 var(--qm-field-gap, 12px); display: flex; flex-direction: column; gap: 8px; }
     .cal-audience legend { display: inline-flex; align-items: center; gap: 4px; padding: 0 4px; width: auto; float: none; margin: 0; font-size: var(--qm-text-base); font-weight: 500; color: var(--qm-text-secondary); }
     .cal-audience__row { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+    .cal-edit-scope { margin-bottom: var(--qm-field-gap, 12px); }
+    .cal-repeat-term { display: flex; align-items: flex-end; }
+    .cal-attachment { display: flex; flex-wrap: wrap; align-items: center; gap: var(--q-row-gap); }
+    .cal-attachment__label { font-size: var(--qm-text-base); font-weight: 500; color: var(--qm-text-secondary); }
+    .cal-attachment__name { display: inline-flex; align-items: center; gap: 4px; }
+    .cal-clash { display: flex; align-items: flex-start; gap: 6px; margin-top: 8px; padding: 8px 10px; border: 1px solid var(--qm-warning); border-radius: var(--qm-radius-md); font-size: var(--qm-text-sm); }
 
     /* A phone: the grid becomes the list of days that have something on them. */
     @@media (max-width: 640px) {
@@ -406,6 +613,8 @@
     private const string MonthView = "month";
     private const string AgendaView = "agenda";
     private const string AllCategories = "all";
+    private const string NoRepeat = "none";
+    private const string TodayAnchor = "cal-today-anchor";
     private const int MaxPerCell = 3;
 
     private static readonly IReadOnlyList<QTab> ViewTabs = new List<QTab>
@@ -415,41 +624,92 @@
         new(AgendaView, "Agenda", "list-ul"),
     };
 
+    private static readonly IReadOnlyList<QTab> ScopeTabs = new List<QTab>
+    {
+        new(CalendarScopes.Mine, "My events", "person"),
+        new(CalendarScopes.All, "Whole school", "buildings"),
+    };
+
+    private sealed record RepeatOption(string Key, string Label);
+    private static readonly List<RepeatOption> RepeatOptions = new()
+    {
+        new(NoRepeat, "Does not repeat"),
+        new("weekly", "Every week"),
+        new("fortnightly", "Every other week"),
+    };
+
+    private static readonly IReadOnlyList<QRadioOption<string>> EditScopeOptions = new List<QRadioOption<string>>
+    {
+        new(EventEditScopes.This, "This one"),
+        new(EventEditScopes.Following, "This and the following ones"),
+        new(EventEditScopes.All, "All of them"),
+    };
+
     private static readonly string[] WeekdayNames = { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
 
     private Guid branchId;
+    private Guid organizationId;
     private bool isLoading = true;
-    private string view = MonthView;
-    private DateOnly anchor = DateOnly.FromDateTime(DateTime.Today);
-    private CalendarRangeDto? range;
+    private string view = TermView;
+    private string scope = CalendarScopes.Mine;
+    private bool showPast;
     private bool showDuties = true;
+    private DateOnly anchor;
+    private bool anchorFromLink;
+    private Guid? eventFromLink;
+    private CalendarRangeDto? range;
+    private TimeZoneInfo zone = TimeZoneInfo.Utc;
     private string category = AllCategories;
     private string search = string.Empty;
+    private bool scrollPending;
+
+    /// <summary>B10: every load takes a number; an answer that is not the latest is dropped, not drawn.</summary>
+    private int loadSequence;
 
     /// <summary>The term the Term view is showing, when one covers the anchor. Null falls back to 13 weeks.</summary>
     private PerformancePeriodDto? loadedTerm;
 
-    private bool showDetail, showDay, showEditor, showDelete, saving;
+    private bool showDetail, showDay, showEditor, showDelete, showStatus, showRegister, showLibrary, saving;
     private SchoolEventDto? detail;
     private DateOnly? dayOpen;
 
     private Guid? editingId;
+    private bool editingSeries;
+    private string editScope = EventEditScopes.This;
     private SaveSchoolEventRequest form = new();
     private DateTime? formStart, formEnd, formStartTime, formEndTime;
     private bool formAllDay = true;
+    private string repeatFrequency = NoRepeat;
+    private DateTime? repeatUntil;
+    private bool repeatTermTimeOnly = true;
+    private string? attachmentName;
     private string? formProblem;
+    private EventClashDto? clash;
+    private string? clashCheckedFor;
     private readonly Dictionary<string, string> errors = new(StringComparer.OrdinalIgnoreCase);
+
+    private bool cancelling;
+    private string statusScope = EventEditScopes.This;
+    private string? cancelReason;
+    private bool statusNotify = true;
+
+    private StaffAudienceDto registerExpected = new();
+    private List<Guid> registerRecorders = new();
+    private DateTime? registerStart, registerEnd;
+    private bool registerNotify = true;
+    private string? registerProblem;
 
     private List<string> classes = new();
     private List<string> rooms = new();
-    private List<StaffMemberDto> staff = new();
-    private List<DepartmentDto> departments = new();
+    private AudienceOptionsDto options = new();
     private bool lookupsLoaded;
+    private bool canViewLibrary;
 
-    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+    /// <summary>The SCHOOL's today (B9): from the server, which reads the branch's zone. Never DateTime.Today.</summary>
+    private DateOnly Today => range?.Today is { } t && t != default ? t : BranchClock.Today(zone);
 
     /// <summary>One thing on a day: a school event, or one of my own duties.</summary>
-    private sealed record DayItem(SchoolEventDto? Event, StaffDutyDto? Duty, DateTime? DutyStart, DateTime? DutyEnd)
+    private sealed record DayItem(SchoolEventDto? Event, StaffDutyDto? Duty, DateTime? DutyStart, DateTime? DutyEnd, StaffDutyDto? LinkedDuty = null)
     {
         public bool AllDay => Event != null && string.IsNullOrWhiteSpace(Event.StartTime);
         /// <summary>"HH:mm" for ordering; all-day sorts first.</summary>
@@ -458,28 +718,64 @@
 
     protected override async Task OnInitializedAsync()
     {
-        ReadQuery();
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
+        var prefs = await UiPreferences.LoadAsync(branchId);
+        view = prefs.Calendar?.View ?? TermView;
+        scope = CalendarScopes.Normalize(prefs.Calendar?.Scope);
+        showPast = prefs.Calendar?.ShowPast ?? false;
+        showDuties = prefs.Calendar?.ShowDuties ?? true;
+        zone = BranchClock.Resolve(UiPreferences.TimeZone);
+        anchor = BranchClock.Today(zone);
+        ReadQuery();
         TrackBranch();
+        var me = await AuthService.GetCurrentUserAsync();
+        organizationId = me?.OrganizationId ?? Guid.Empty;
+        canViewLibrary = await PermissionService.HasPermissionAsync(Permissions.ContentView);
         await LoadAsync();
+        if (eventFromLink is { } id) await OpenLinkedEventAsync(id);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Term and Agenda arrive scrolled to this week when earlier weeks are shown (E1). With them hidden, today's week
+        // is already the first thing on the page.
+        if (!scrollPending || range == null) return;
+        scrollPending = false;
+        try { await JS.InvokeAsync<bool>("qmgrCalendar.scrollTo", TodayAnchor); }
+        catch (JSException) { /* nothing to scroll to */ }
     }
 
     protected override async Task OnBranchChangedAsync(Guid branchId)
     {
         this.branchId = branchId;
         lookupsLoaded = false;
-        classes = new(); rooms = new(); staff = new(); departments = new();
+        classes = new(); rooms = new(); options = new();
         range = null;
         await LoadAsync();
     }
 
-    /// <summary>?view= and ?date= on arrival only — the hub owns ?tab= and nothing here writes the URL.</summary>
+    /// <summary>?view=, ?date=, ?scope= and ?event= on arrival. The hub owns ?tab=.</summary>
     private void ReadQuery()
     {
         var query = QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query);
         if (query.TryGetValue("view", out var v) && v.ToString() is TermView or MonthView or AgendaView) view = v.ToString();
-        if (query.TryGetValue("date", out var d) && CalendarDisplay.ParseIso(d.ToString()) is { } parsed) anchor = parsed;
+        if (query.TryGetValue("scope", out var s)) scope = CalendarScopes.Normalize(s.ToString());
+        if (query.TryGetValue("date", out var d) && CalendarDisplay.ParseIso(d.ToString()) is { } parsed) { anchor = parsed; anchorFromLink = true; }
+        if (query.TryGetValue("event", out var e) && Guid.TryParse(e.ToString(), out var id)) eventFromLink = id;
+    }
+
+    /// <summary>The address carries the view, so a link opens the same thing. Replaced, never pushed: a view change is not a page.</summary>
+    private void SyncUrl()
+    {
+        var uri = new Uri(Navigation.Uri);
+        var query = QueryHelpers.ParseQuery(uri.Query).ToDictionary(k => k.Key, k => (string?)k.Value.ToString());
+        query["view"] = view;
+        query["scope"] = scope;
+        query["date"] = CalendarDisplay.Iso(anchor);
+        query.Remove("event");
+        var target = QueryHelpers.AddQueryString(uri.GetLeftPart(UriPartial.Path), query);
+        if (target != Navigation.Uri) Navigation.NavigateTo(target, replace: true);
     }
 
     // ---- The range ------------------------------------------------------------------------------
@@ -509,28 +805,35 @@
     private async Task LoadAsync()
     {
         if (branchId == Guid.Empty) { isLoading = false; range = null; return; }
+        var mine = ++loadSequence;
         isLoading = true;
         try
         {
             if (view == TermView)
             {
-                // The term is found from the range answer itself: ask for the anchor's own day, and
-                // widen to that term. A school with no terms set falls back to thirteen weeks.
-                var probe = await CalendarApi.GetRangeAsync(branchId, anchor, anchor);
+                // The term is found from the range answer itself: ask for the anchor's own day, and widen to that term.
+                var probe = await CalendarApi.GetRangeAsync(branchId, anchor, anchor, scope);
+                if (mine != loadSequence) return;
                 loadedTerm = probe.Terms.FirstOrDefault(t => t.Start <= anchor && t.End >= anchor);
+                if (!string.IsNullOrWhiteSpace(probe.TimeZone)) zone = BranchClock.Resolve(probe.TimeZone);
             }
             var (from, to) = LoadedSpan();
-            range = await CalendarApi.GetRangeAsync(branchId, from, to);
+            var answer = await CalendarApi.GetRangeAsync(branchId, from, to, scope);
+            if (mine != loadSequence) return; // a newer press has already asked for something else
+            range = answer;
+            if (!string.IsNullOrWhiteSpace(answer.TimeZone)) zone = BranchClock.Resolve(answer.TimeZone);
             if (!range.Categories.Contains(category) && category != AllCategories) category = AllCategories;
+            scrollPending = view != MonthView && showPast;
         }
         catch (Exception ex)
         {
+            if (mine != loadSequence) return;
             range ??= new CalendarRangeDto();
             Toast.Notify(ToastSeverity.Error, "Could not load the calendar", ex.Message);
         }
         finally
         {
-            isLoading = false;
+            if (mine == loadSequence) isLoading = false;
         }
     }
 
@@ -538,7 +841,41 @@
     {
         if (key == view) return;
         view = key;
+        await SavePreferencesAsync();
+        SyncUrl();
         await LoadAsync();
+    }
+
+    private async Task ChangeScopeAsync(string key)
+    {
+        if (key == scope) return;
+        scope = CalendarScopes.Normalize(key);
+        await SavePreferencesAsync();
+        SyncUrl();
+        await LoadAsync();
+    }
+
+    private async Task SetShowPastAsync(bool value)
+    {
+        showPast = value;
+        scrollPending = value && view != MonthView;
+        await SavePreferencesAsync();
+    }
+
+    private async Task SetShowDutiesAsync(bool value)
+    {
+        showDuties = value;
+        await SavePreferencesAsync();
+    }
+
+    /// <summary>A view choice follows the person; saved quietly — failing to remember a view is not worth a message.</summary>
+    private Task SavePreferencesAsync()
+    {
+        var current = UiPreferences.Current;
+        return UiPreferences.SaveAsync(current with
+        {
+            Calendar = (current.Calendar ?? new CalendarViewPreferencesDto()) with { View = view, Scope = scope, ShowPast = showPast, ShowDuties = showDuties }
+        }, quiet: true);
     }
 
     private async Task MoveAsync(int step)
@@ -549,19 +886,19 @@
                 anchor = step > 0 ? loadedTerm.End.AddDays(1) : loadedTerm.Start.AddDays(-1);
             else
                 anchor = anchor.AddDays(step * 13 * 7);
-            // Between terms (a holiday) the probe finds nothing; step to the NEXT term's first day on the
-            // next press, which the probe will then find.
         }
         else
         {
             anchor = new DateOnly(anchor.Year, anchor.Month, 1).AddMonths(step);
         }
+        SyncUrl();
         await LoadAsync();
     }
 
     private async Task TodayAsync()
     {
         anchor = Today;
+        SyncUrl();
         await LoadAsync();
     }
 
@@ -578,7 +915,7 @@
         ?? (view == TermView ? loadedTerm : null)
         ?? range?.Terms.FirstOrDefault();
 
-    private static (int Week, int Of)? TermWeek(PerformancePeriodDto term)
+    private (int Week, int Of)? TermWeek(PerformancePeriodDto term)
     {
         var today = Today;
         if (today < term.Start || today > term.End) return null;
@@ -604,11 +941,27 @@
         for (var d = from; d <= to; d = d.AddDays(1)) yield return d;
     }
 
+    /// <summary>The days a list shows: the whole loaded span, or — past events hidden — from today on (E1).</summary>
     private IEnumerable<DateOnly> ListDays()
     {
         var (from, to) = LoadedSpan();
+        if (!showPast && Today > from) from = Today;
         for (var d = from; d <= to; d = d.AddDays(1)) yield return d;
     }
+
+    /// <summary>Events in the loaded span that ended before today — what "Earlier this term" counts.</summary>
+    private int EarlierCount
+    {
+        get
+        {
+            var (from, _) = LoadedSpan();
+            return FilteredEvents().Count(e => e.EndsOn < Today && e.EndsOn >= from);
+        }
+    }
+
+    private string ListEmptyTitle => !showPast && EarlierCount > 0
+        ? (view == TermView ? "Nothing more this term" : "Nothing more this month")
+        : (view == TermView ? "No events this term" : "No events this month");
 
     // ---- What is on a day -----------------------------------------------------------------------
 
@@ -622,22 +975,32 @@
         {
             var q = search.Trim();
             bool Has(string? s) => (s ?? string.Empty).Contains(q, StringComparison.OrdinalIgnoreCase);
-            events = events.Where(e => Has(e.Title) || Has(e.Location) || Has(e.ResponsibleText) || Has(e.Description));
+            events = events.Where(e => Has(e.Title) || Has(e.Location) || Has(e.ResponsibleText) || Has(e.Description) || Has(e.StaffAudienceText));
         }
         return events;
     }
 
-    private static DateTime Local(DateTime value) => value.Kind == DateTimeKind.Utc ? value.ToLocalTime() : value;
+    /// <summary>A duty instant on the SCHOOL's clock (B9), not the server's.</summary>
+    private DateTime Local(DateTime value) => BranchClock.ToLocal(value, zone);
 
+    /// <summary>
+    /// Everything on a day. B1: a meeting that is ALSO an event is shown once — as the event, carrying the duty's badge —
+    /// never as an event and a duty side by side. B11: my duties follow the switch whatever category is chosen (a duty
+    /// has no category, and hiding it behind "Sports &amp; clubs" read as the duty having moved); a search narrows them by title.
+    /// </summary>
     private List<DayItem> ItemsOn(DateOnly day)
     {
-        var items = FilteredEvents().Where(e => CalendarDisplay.IsOn(e, day)).Select(e => new DayItem(e, null, null, null)).ToList();
-        // Duties follow the category filter only when it is off: a duty has no category, and hiding my
-        // own duty behind "Sports & clubs" would read as the duty having moved.
-        if (showDuties && range != null && category == AllCategories && string.IsNullOrWhiteSpace(search))
+        var events = FilteredEvents().Where(e => CalendarDisplay.IsOn(e, day)).ToList();
+        var duties = range?.MyDuties.Where(d => d.IsActive).ToList() ?? new();
+        var byId = duties.ToDictionary(d => d.Id);
+        var items = events.Select(e => new DayItem(e, null, null, null, e.DutyId is { } id && byId.TryGetValue(id, out var linked) ? linked : null)).ToList();
+        if (showDuties && range != null)
         {
-            foreach (var d in range.MyDuties.Where(d => d.IsActive))
+            var linkedIds = range.Events.Where(e => e.DutyId.HasValue).Select(e => e.DutyId!.Value).ToHashSet();
+            var q = search.Trim();
+            foreach (var d in duties.Where(d => !linkedIds.Contains(d.Id)))
             {
+                if (q.Length > 0 && !d.Title.Contains(q, StringComparison.OrdinalIgnoreCase)) continue;
                 var start = Local(d.StartsAt);
                 var end = Local(d.EndsAt);
                 if (DateOnly.FromDateTime(start) <= day && DateOnly.FromDateTime(end) >= day)
@@ -648,29 +1011,54 @@
             .ThenBy(i => i.Event?.Title ?? i.Duty?.Title, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
+    /// <summary>
+    /// B15: in the Term and Agenda LISTS an event over several days is shown once — on its first day, or on the first day
+    /// the list shows when it began earlier — with "until …". The Month grid still shows it on every day it touches.
+    /// </summary>
+    private List<DayItem> ListItemsOn(DateOnly day)
+    {
+        var firstShown = ListDays().FirstOrDefault();
+        return ItemsOn(day).Where(i => i.Event is not { } e || e.StartsOn == day || (e.StartsOn < firstShown && day == firstShown)).ToList();
+    }
+
     private IEnumerable<NationalCalendarEntryDto> NationalOn(DateOnly day)
         => range?.NationalDates.Where(n => n.StartsOn <= day && n.EndsOn >= day) ?? Enumerable.Empty<NationalCalendarEntryDto>();
 
-    private bool AnyVisibleIn(IEnumerable<DateOnly> days) => days.Any(d => ItemsOn(d).Count > 0);
+    private string EmptyText => scope == CalendarScopes.Mine
+        ? "Nothing here is for you. Switch to Whole school to see the school's programme."
+        : range?.CanManage == true
+            ? "Add one with New event, or bring a whole term's programme in on the Import tab."
+            : "Nothing has been put on the calendar for this period.";
 
-    private string EmptyText => range?.CanManage == true
-        ? "Add one with New event, or bring a whole term's programme in on the Import tab."
-        : "Nothing has been put on the calendar for this period.";
-
+    /// <summary>
+    /// B11: the counts are of what the view SHOWS — its own days (never the grid's out-of-month ones), past days only when
+    /// past events are shown, and the search applied — so the number on a chip is the number of rows it leaves.
+    /// </summary>
     private List<QBulkBar.Filter> CategoryChips
     {
         get
         {
-            var events = range?.Events ?? new List<SchoolEventDto>();
-            var chips = new List<QBulkBar.Filter> { new(AllCategories, "All", events.Count) };
+            var shown = ShownDays();
+            IEnumerable<SchoolEventDto> events = range?.Events ?? new List<SchoolEventDto>();
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var q = search.Trim();
+                events = events.Where(e => (e.Title + " " + e.Location + " " + e.ResponsibleText + " " + e.Description + " " + e.StaffAudienceText).Contains(q, StringComparison.OrdinalIgnoreCase));
+            }
+            var inView = events.Where(e => shown.Any(d => CalendarDisplay.IsOn(e, d))).ToList();
+            var chips = new List<QBulkBar.Filter> { new(AllCategories, "All", inView.Count) };
             foreach (var c in Categories)
             {
-                var n = events.Count(e => string.Equals(e.Category, c, StringComparison.OrdinalIgnoreCase));
+                var n = inView.Count(e => string.Equals(e.Category, c, StringComparison.OrdinalIgnoreCase));
                 if (n > 0 || string.Equals(category, c, StringComparison.OrdinalIgnoreCase)) chips.Add(new(c, c, n));
             }
             return chips;
         }
     }
+
+    private List<DateOnly> ShownDays() => view == MonthView
+        ? GridDays().Where(d => d.Month == anchor.Month).ToList()
+        : ListDays().ToList();
 
     private List<string> Categories => range?.Categories ?? new List<string>();
 
@@ -678,38 +1066,55 @@
     {
         if (item.Event is { } e)
         {
-            <button type="button" class="cal-pill @(item.AllDay ? "cal-pill--allday" : "")" title="@e.Title" @onclick="@(() => OpenDetail(e))" data-event-id="@e.Id">
+            var cancelled = e.Status == SchoolEventStatus.Cancelled;
+            <button type="button" class="cal-pill @(item.AllDay ? "cal-pill--allday" : "") @(cancelled ? "cal-pill--cancelled" : "")" title="@(cancelled ? $"Cancelled: {e.Title}" : e.Title)" @onclick="@(() => OpenDetail(e))" data-event-id="@e.Id">
                 @if (!item.AllDay) { <span class="cal-pill__time">@e.StartTime</span> }
                 <span class="cal-pill__t">@e.Title</span>
             </button>
         }
         else if (item.Duty is { } d)
         {
-            <span class="cal-pill cal-pill--duty" title="@($"{d.Title} — {DutyRole(d)}")">
+            <span class="cal-pill cal-pill--duty" title="@($"{d.Title} — {DutyRole(d)}")" data-duty-id="@d.Id">
                 <QIcon Name="@(d.Kind == DutyKind.Rota ? "shield-check" : "person-check")" Size="sm" />
                 <span class="cal-pill__t">@d.Title</span>
             </span>
         }
     };
 
-    private RenderFragment ItemRow(DayItem item) => __builder =>
+    private RenderFragment ItemRow(DayItem item, DateOnly day) => __builder =>
     {
         if (item.Event is { } e)
         {
-            <button type="button" class="cal-row" @onclick="@(() => OpenDetail(e))" data-event-id="@e.Id">
+            var cancelled = e.Status == SchoolEventStatus.Cancelled;
+            var past = e.EndsOn < Today;
+            <button type="button" class="cal-row @(cancelled ? "cal-row--cancelled" : "") @(past ? "cal-row--past" : "")" @onclick="@(() => OpenDetail(e))" data-event-id="@e.Id">
                 <span class="cal-row__time">@CalendarDisplay.When(e)</span>
                 <span class="cal-row__main">
                     <strong>@e.Title</strong>
+                    @if (cancelled) { <QChip Text="Cancelled" Size="sm" Variant="danger" /> }
                     @if (!string.IsNullOrWhiteSpace(e.Category)) { <QChip Text="@e.Category" Size="sm" Variant="muted" /> }
-                    @if (e.EndsOn > e.StartsOn) { <span class="cal-row__meta">until @QDateFormat.C(e.EndsOn)</span> }
+                    @if (item.LinkedDuty is { } linked)
+                    {
+                        <QChip Text="@DutyRole(linked)" Size="sm" Variant="info" Icon="person-check" />
+                    }
+                    else if (e.DutyId.HasValue)
+                    {
+                        <QChip Text="Register" Size="sm" Variant="muted" Icon="clipboard-check" />
+                    }
+                    @if (e.AttendanceRequired) { <QChip Text="Required" Size="sm" Variant="warning" /> }
+                    @if (e.EndsOn > e.StartsOn) { <span class="cal-row__meta">@(e.StartsOn < day ? "continues" : "") until @QDateFormat.C(e.EndsOn)</span> }
                     @if (!string.IsNullOrWhiteSpace(e.Location)) { <span class="cal-row__meta"><QIcon Name="geo-alt" Size="sm" /> @e.Location</span> }
                     @if (CalendarDisplay.Responsible(e) is { } who) { <span class="cal-row__meta"><QIcon Name="person" Size="sm" /> @who</span> }
+                    @if (scope == CalendarScopes.All && !string.IsNullOrWhiteSpace(e.StaffAudienceText) && !e.StaffAudience.AllStaff)
+                    {
+                        <span class="cal-row__meta"><QIcon Name="people" Size="sm" /> For @e.StaffAudienceText</span>
+                    }
                 </span>
             </button>
         }
         else if (item.Duty is { } d)
         {
-            <div class="cal-row cal-row--duty">
+            <div class="cal-row cal-row--duty @(DateOnly.FromDateTime(item.DutyEnd!.Value) < Today ? "cal-row--past" : "")" data-duty-id="@d.Id">
                 <span class="cal-row__time">@QDateFormat.T(item.DutyStart!.Value)–@QDateFormat.T(item.DutyEnd!.Value)</span>
                 <span class="cal-row__main">
                     <strong>@d.Title</strong>
@@ -720,15 +1125,28 @@
         }
     };
 
+    /// <summary>B3: "You take the register" only for a NAMED recorder; the server no longer passes the manager's permission as that.</summary>
     private static string DutyRole(StaffDutyDto d)
         => d.Kind == DutyKind.Rota ? (d.IsSupervisedByMe ? "Supervising" : "On duty")
          : d.CanIRecord ? "You take the register" : "My meeting";
 
     private string? DepartmentNames(SchoolEventDto e)
     {
-        if (e.ResponsibleDepartmentIds is not { Count: > 0 } ids || !departments.Any()) return null;
-        var names = ids.Select(id => departments.FirstOrDefault(d => d.Id == id)?.Name).Where(n => n != null).ToList();
+        if (e.ResponsibleDepartmentIds is not { Count: > 0 } ids || !options.Departments.Any()) return null;
+        var names = ids.Select(id => options.Departments.FirstOrDefault(d => d.Id == id)?.Name).Where(n => n != null).ToList();
         return names.Count == 0 ? null : string.Join(", ", names);
+    }
+
+    private async Task OpenLinkedEventAsync(Guid id)
+    {
+        eventFromLink = null;
+        var found = range?.Events.FirstOrDefault(e => e.Id == id);
+        if (found == null)
+        {
+            try { found = await CalendarApi.GetEventAsync(branchId, id); }
+            catch { Toast.Notify(ToastSeverity.Warning, "Event not found", "It may have been deleted, or it is not one you can open."); return; }
+        }
+        OpenDetail(found);
     }
 
     private void OpenDetail(SchoolEventDto e)
@@ -757,6 +1175,21 @@
         Navigation.NavigateTo($"/calendar/print?from={CalendarDisplay.Iso(from)}&to={CalendarDisplay.Iso(to)}");
     }
 
+    private async Task DownloadIcsAsync()
+    {
+        if (detail == null) return;
+        try
+        {
+            var bytes = await CalendarApi.GetEventIcsAsync(branchId, detail.Id);
+            var slug = new string(detail.Title.Select(c => char.IsLetterOrDigit(c) ? char.ToLowerInvariant(c) : '-').ToArray()).Trim('-');
+            await JS.InvokeAsync<bool>("qmgrExport.saveText", System.Text.Encoding.UTF8.GetString(bytes), "text/calendar", $"{(slug.Length == 0 ? "event" : slug)}.ics");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not make the calendar file", ex.Message);
+        }
+    }
+
     // ---- Create / edit --------------------------------------------------------------------------
 
     private async Task EnsureLookupsAsync()
@@ -770,26 +1203,32 @@
             rooms = vocab.Rooms.Where(r => r.IsActive).OrderBy(r => r.SortOrder).Select(r => r.Name).ToList();
         }
         catch { /* the fields stay free text */ }
-        // The staff directory and departments belong to Welfare & Performance and to staff.records.view.
-        // A school without either still writes "Responsible" in words; the pickers simply do not appear.
-        try { staff = (await StaffApi.GetDirectoryAsync(branchId)).Items.Where(s => s.IsActive).ToList(); }
-        catch { staff = new(); }
-        try { departments = (await StaffApi.GetDepartmentsAsync(branchId)).Where(d => d.IsActive).ToList(); }
-        catch { departments = new(); }
+        // The audience options come from the CALENDAR (base product), so a school without Welfare & Performance can still
+        // name staff groups, roles and people. A keeper only: the endpoint needs calendar.manage.
+        try { options = await CalendarApi.GetAudienceOptionsAsync(branchId); }
+        catch { options = new(); }
     }
 
     private async Task OpenCreate(DateOnly? day)
     {
         editingId = null;
+        editingSeries = false;
         var start = day ?? (anchor.Month == Today.Month && anchor.Year == Today.Year ? Today : anchor);
-        form = new SaveSchoolEventRequest { BranchId = branchId, Audience = EventAudience.Staff, Category = null };
+        form = new SaveSchoolEventRequest
+        {
+            BranchId = branchId, Audience = EventAudience.Staff, Category = null, StaffAudience = StaffAudienceDto.Everyone(),
+            NotifyAudience = true, RemindersOn = true, ClientRequestId = Guid.NewGuid()
+        };
         formStart = start.ToDateTime(TimeOnly.MinValue);
         formEnd = formStart;
         formAllDay = true;
         formStartTime = start.ToDateTime(new TimeOnly(8, 0));
         formEndTime = null;
-        formProblem = null;
-        errors.Clear();
+        repeatFrequency = NoRepeat;
+        repeatUntil = null;
+        repeatTermTimeOnly = true;
+        attachmentName = null;
+        ResetFormState();
         showDetail = false;
         showEditor = true;
         await EnsureLookupsAsync();
@@ -798,8 +1237,19 @@
     private async Task OpenEdit(SchoolEventDto e)
     {
         editingId = e.Id;
+        editingSeries = !string.IsNullOrWhiteSpace(e.Recurrence) && e.SeriesId.HasValue;
+        editScope = EventEditScopes.This;
+        FillForm(e);
+        showDetail = false;
+        showEditor = true;
+        await EnsureLookupsAsync();
+    }
+
+    private void FillForm(SchoolEventDto e)
+    {
         form = new SaveSchoolEventRequest
         {
+            // B19: an all-branch event (BranchId null) stays all-branch. The editor used to fill in this branch.
             BranchId = e.BranchId,
             Title = e.Title,
             Description = e.Description,
@@ -814,17 +1264,38 @@
             ResponsibleText = e.ResponsibleText,
             ResponsibleUserIds = e.ResponsibleUserIds.ToList(),
             ResponsibleDepartmentIds = e.ResponsibleDepartmentIds.ToList(),
+            StaffAudience = e.StaffAudience with { },
+            AudienceOnly = e.AudienceOnly,
+            AttendanceRequired = e.AttendanceRequired,
+            RemindersOn = e.RemindersOn,
+            LibraryDocumentId = e.LibraryDocumentId,
+            RowVersion = e.RowVersion,
+            NotifyAudience = e.EndsOn >= Today
         };
+        attachmentName = e.LibraryDocumentTitle;
         formStart = e.StartsOn.ToDateTime(TimeOnly.MinValue);
         formEnd = e.EndsOn.ToDateTime(TimeOnly.MinValue);
         formAllDay = string.IsNullOrWhiteSpace(e.StartTime);
         formStartTime = ParseTime(e.StartsOn, e.StartTime) ?? e.StartsOn.ToDateTime(new TimeOnly(8, 0));
         formEndTime = ParseTime(e.StartsOn, e.EndTime);
+        ResetFormState();
+    }
+
+    private void ResetFormState()
+    {
         formProblem = null;
+        clash = null;
+        clashCheckedFor = null;
         errors.Clear();
-        showDetail = false;
-        showEditor = true;
-        await EnsureLookupsAsync();
+    }
+
+    private void OnAttachmentPicked(IReadOnlyList<MediaContentDto> picked)
+    {
+        if (picked.FirstOrDefault() is { } doc)
+        {
+            form.LibraryDocumentId = doc.Id;
+            attachmentName = doc.Name;
+        }
     }
 
     private static DateTime? ParseTime(DateOnly day, string? hhmm)
@@ -840,9 +1311,22 @@
     private void SetAudience(EventAudience flag, bool on)
         => form.Audience = on ? form.Audience | flag : form.Audience & ~flag;
 
+    /// <summary>Only an event still to come tells anybody; the checkbox is not offered for one that has happened.</summary>
+    private bool NotifyApplies => Has(EventAudience.Staff) && formEnd is { } end && DateOnly.FromDateTime(end) >= Today;
+
+    private string NotifyLabel => editingId.HasValue ? "Tell them if the date, time, venue or audience changes" : "Tell the people it is for";
+
+    private static string ClashWords(EventClashDto c)
+    {
+        var parts = new List<string>();
+        if (c.Teaching > 0) parts.Add($"{c.Teaching} {(c.Teaching == 1 ? "is" : "are")} teaching");
+        if (c.OnDuty > 0) parts.Add($"{c.OnDuty} {(c.OnDuty == 1 ? "is" : "are")} on another duty");
+        return string.Join(" and ", parts);
+    }
+
     /// <summary>
-    /// The refusals the server makes, made first — a form that accepts anything and refuses afterwards is
-    /// how people learn to stop trying. The server checks every one again; this only saves the round trip.
+    /// The refusals the server makes, made first — a form that accepts anything and refuses afterwards is how people learn
+    /// to stop trying. The server checks every one again; this only saves the round trip.
     /// </summary>
     private bool Validate()
     {
@@ -857,46 +1341,96 @@
         }
         if (!formAllDay)
         {
-            if (formStartTime == null) errors["startTime"] = "Give a start time, or switch on All day.";
-            else if (formEndTime is { } et && formStart?.Date == formEnd?.Date
-                     && TimeOnly.FromDateTime(et) <= TimeOnly.FromDateTime(formStartTime.Value))
+            if (formStartTime == null) errors["startTime"] = "Give a start time, or tick All day.";
+            else if (formEndTime is { } et && TimeOnly.FromDateTime(et) <= TimeOnly.FromDateTime(formStartTime.Value))
                 errors["endTime"] = "The end time must be after the start time.";
         }
         if (form.Audience == EventAudience.None) errors["audience"] = "Choose who the event is for.";
+        if (Has(EventAudience.Staff) && form.StaffAudience.IsEmpty) errors["staffAudience"] = "Choose which staff it is for: everyone, or at least one group, role, department or person.";
+        if (!editingId.HasValue && repeatFrequency != NoRepeat)
+        {
+            if (repeatUntil == null) errors["repeatUntil"] = "Choose the last date it repeats until.";
+            else if (formStart is { } rs && repeatUntil.Value.Date <= rs.Date) errors["repeatUntil"] = "Repeat until a day after the first one.";
+        }
         return errors.Count == 0;
     }
 
-    private async Task SaveAsync()
+    private void Stamp()
     {
-        formProblem = null;
-        if (!Validate()) return;
-
         form.Title = form.Title.Trim();
-        form.BranchId ??= branchId;
+        // B19: only a NEW event takes this branch; an edit keeps what it had, all-branch included.
+        if (!editingId.HasValue) form.BranchId ??= branchId;
         form.StartsOn = DateOnly.FromDateTime(formStart!.Value);
         form.EndsOn = DateOnly.FromDateTime(formEnd!.Value);
         form.StartTime = formAllDay ? null : HHmm(formStartTime!.Value);
         form.EndTime = formAllDay || formEndTime == null ? null : HHmm(formEndTime.Value);
         form.Location = string.IsNullOrWhiteSpace(form.Location) ? null : form.Location.Trim();
         form.ResponsibleText = string.IsNullOrWhiteSpace(form.ResponsibleText) ? null : form.ResponsibleText.Trim();
+        form.EditScope = editingSeries ? editScope : EventEditScopes.This;
+        form.Repeat = !editingId.HasValue && repeatFrequency != NoRepeat && repeatUntil is { } until
+            ? new RepeatRuleDto { Frequency = repeatFrequency, Until = DateOnly.FromDateTime(until), TermTimeOnly = repeatTermTimeOnly }
+            : null;
+        if (!NotifyApplies) form.NotifyAudience = false;
+    }
+
+    /// <summary>
+    /// Who in the audience is already teaching or on duty then. Asked once per set of values: a clash WARNS, and a second
+    /// press of Save with nothing changed saves anyway (D6 of the calendar plan — never a refusal).
+    /// </summary>
+    private async Task<bool> ClashesAcknowledgedAsync()
+    {
+        var key = string.Join("|", form.StartsOn, form.EndsOn, form.StartTime, form.EndTime, form.StaffAudience.AllStaff,
+            string.Join(",", form.StaffAudience.StaffGroups), string.Join(",", form.StaffAudience.RoleCodes),
+            string.Join(",", form.StaffAudience.DepartmentIds), string.Join(",", form.StaffAudience.UserIds), string.Join(",", form.ResponsibleUserIds));
+        if (clashCheckedFor == key) return true;
+        clashCheckedFor = key;
+        clash = null;
+        if (!Has(EventAudience.Staff) || form.EndsOn < Today) return true;
+        try
+        {
+            clash = await CalendarApi.CheckClashesAsync(branchId, new EventClashRequest
+            {
+                StaffAudience = form.StaffAudience, ResponsibleUserIds = form.ResponsibleUserIds,
+                StartsOn = form.StartsOn, EndsOn = form.EndsOn, StartTime = form.StartTime, EndTime = form.EndTime
+            });
+        }
+        catch { return true; } // a check that could not run is not a reason to stop somebody saving
+        return clash.Teaching + clash.OnDuty == 0;
+    }
+
+    private async Task SaveAsync()
+    {
+        formProblem = null;
+        if (!Validate()) return;
+        Stamp();
 
         saving = true;
         try
         {
+            if (!await ClashesAcknowledgedAsync()) return;
+
+            SchoolEventDto saved;
             if (editingId.HasValue)
             {
-                await CalendarApi.UpdateEventAsync(branchId, editingId.Value, form);
+                saved = await CalendarApi.UpdateEventAsync(branchId, editingId.Value, form);
                 Toast.Notify(ToastSeverity.Success, "Event updated", form.Title);
             }
             else
             {
-                await CalendarApi.CreateEventAsync(branchId, form);
-                Toast.Notify(ToastSeverity.Success, "Event added", form.Title);
+                saved = await CalendarApi.CreateEventAsync(branchId, form);
+                Toast.Notify(ToastSeverity.Success, form.Repeat != null ? "Events added" : "Event added", form.Repeat != null ? $"{form.Title} — {RepeatOptions.First(o => o.Key == repeatFrequency).Label.ToLowerInvariant()}" : form.Title);
             }
             showEditor = false;
             // Show where it landed: the month of its first day.
-            if (view != TermView) anchor = form.StartsOn;
+            if (view != TermView) anchor = saved.StartsOn;
             await LoadAsync();
+        }
+        catch (ApiFieldException ex) when (ex.Code == "EVENT_CHANGED" && editingId is { } id)
+        {
+            // B5: somebody saved it first. Their version is put in front of the reader, not silently overwritten.
+            formProblem = ex.Message;
+            try { FillForm(await CalendarApi.GetEventAsync(branchId, id)); formProblem = ex.Message; }
+            catch { /* the message stands */ }
         }
         catch (ApiFieldException ex)
         {
@@ -911,6 +1445,91 @@
         {
             saving = false;
         }
+    }
+
+    // ---- Cancel / put back on -----------------------------------------------------------------------
+
+    private void OpenStatus(bool cancel)
+    {
+        cancelling = cancel;
+        statusScope = EventEditScopes.This;
+        cancelReason = null;
+        statusNotify = detail != null && detail.EndsOn >= Today;
+        showStatus = true;
+    }
+
+    private async Task ChangeStatusAsync()
+    {
+        if (detail == null) return;
+        saving = true;
+        try
+        {
+            var request = new CancelSchoolEventRequest
+            {
+                Reason = string.IsNullOrWhiteSpace(cancelReason) ? null : cancelReason.Trim(),
+                NotifyAudience = statusNotify,
+                EditScope = detail.Recurrence != null ? statusScope : EventEditScopes.This,
+                RowVersion = detail.RowVersion
+            };
+            detail = cancelling
+                ? await CalendarApi.CancelEventAsync(branchId, detail.Id, request)
+                : await CalendarApi.ReinstateEventAsync(branchId, detail.Id, request);
+            Toast.Notify(ToastSeverity.Success, cancelling ? "Event cancelled" : "Event back on", detail.Title);
+            showStatus = false;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, cancelling ? "Could not cancel the event" : "Could not put the event back on", ex.Message);
+        }
+        finally { saving = false; }
+    }
+
+    // ---- Give it a register (E10) ---------------------------------------------------------------------
+
+    private bool CanGiveRegister(SchoolEventDto e)
+        => range?.CanManageDuties == true && !e.DutyId.HasValue && e.Status == SchoolEventStatus.Scheduled && e.EndsOn == e.StartsOn;
+
+    private async Task OpenGiveRegister()
+    {
+        if (detail == null) return;
+        await EnsureLookupsAsync();
+        registerExpected = detail.Audience.HasFlag(EventAudience.Staff) ? detail.StaffAudience with { } : StaffAudienceDto.Everyone();
+        registerRecorders = detail.ResponsibleUserIds.ToList();
+        registerStart = detail.StartsOn.ToDateTime(new TimeOnly(9, 0));
+        registerEnd = null;
+        registerNotify = detail.StartsOn >= Today;
+        registerProblem = null;
+        showRegister = true;
+    }
+
+    private async Task GiveRegisterAsync()
+    {
+        if (detail == null) return;
+        registerProblem = null;
+        if (registerRecorders.Count == 0) { registerProblem = "Choose who takes the register."; return; }
+        if (registerExpected.IsEmpty) { registerProblem = "Choose who is expected."; return; }
+        saving = true;
+        try
+        {
+            var allDay = string.IsNullOrWhiteSpace(detail.StartTime);
+            detail = await CalendarApi.GiveRegisterAsync(branchId, detail.Id, new EventRegisterRequest
+            {
+                Expected = registerExpected,
+                RecorderUserIds = registerRecorders,
+                StartTime = allDay && registerStart is { } rs ? HHmm(rs) : null,
+                EndTime = allDay && registerEnd is { } re ? HHmm(re) : null,
+                NotifyPeople = registerNotify
+            });
+            Toast.Notify(ToastSeverity.Success, "Register added", $"{detail.Title} now has a register.");
+            showRegister = false;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            registerProblem = ex.Message;
+        }
+        finally { saving = false; }
     }
 
     // ---- Delete ---------------------------------------------------------------------------------

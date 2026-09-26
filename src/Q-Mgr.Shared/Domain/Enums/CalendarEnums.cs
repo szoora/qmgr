@@ -16,6 +16,13 @@ public enum EventAudience
     Public = 8
 }
 
+/// <summary>A school event's state. Cancelled stays on the calendar, struck through, with its reason.</summary>
+public enum SchoolEventStatus
+{
+    Scheduled = 0,
+    Cancelled = 1
+}
+
 /// <summary>What kind of table a document holds, as the programme import's classifier decided it (overridable).</summary>
 public enum ProgrammeTableKind
 {
@@ -32,7 +39,16 @@ public enum ProgrammeTableKind
     /// <summary>Period → person ("Administrative Weekly Duty Rota").</summary>
     PeriodRota = 5,
     /// <summary>The reader said to leave this table out.</summary>
-    Ignore = 6
+    Ignore = 6,
+    /// <summary>
+    /// A staff list (names with email, role, position or staff number, and no duty dates) — not a programme at all. The
+    /// Import inbox routes it to the staff import (plan CALENDAR_AUDIENCES_AND_IMPORT_ROUTING E11, 2026-09-26).
+    /// </summary>
+    StaffList = 7,
+    /// <summary>A class list or student roll — routed to the student roll's import.</summary>
+    StudentList = 8,
+    /// <summary>A timetable grid (days, periods, subjects, teachers) — routed to the timetable's import, into a draft.</summary>
+    TimetableGrid = 9
 }
 
 /// <summary>What the server found for one row of a programme import (preview and commit use the same answer).</summary>

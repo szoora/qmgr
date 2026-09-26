@@ -1,0 +1,117 @@
+@using QMgr.Application.DTOs
+@*
+    WHO AMONG STAFF SOMETHING IS FOR (plan CALENDAR_AUDIENCES_AND_IMPORT_ROUTING E2, 2026-09-26): everyone, or any
+    combination of staff groups, roles, departments and named people. The result is the UNION.
+
+    The live line under it ("42 people: Teaching staff, Head Teacher, Bursar") is counted with StaffAudienceRule — the
+    SAME test the API runs to decide who is told — over people whose staff group the server has already resolved (its
+    GroupFor, fallback included). So the number a keeper reads before saving is the number that is told; a picker that
+    counted one way and a server that sent another is how an audience stops meaning anything.
+
+    Used by the calendar's event editor and the programme import's "who is expected". A notice keeps its own single
+    choice (a notice has one audience clause by design), but its membership test is the same StaffAudience.
+*@
+
+<div class="qap @Class">
+    @if (!string.IsNullOrWhiteSpace(Label))
+    {
+        <div class="qap__label">@Label @if (!string.IsNullOrWhiteSpace(Hint)) { <QInfo Text="@Hint" Label="@Label" /> }</div>
+    }
+    <QRadioGroup TValue="bool" Options="@ModeOptions" Value="@Value.AllStaff" ValueChanged="@SetAllStaffAsync" Inline="true" Disabled="@Disabled" />
+
+    @if (!Value.AllStaff)
+    {
+        <div class="qap__grid">
+            @if (Options.StaffGroups.Count > 0)
+            {
+                <QMultiSelect TValue="string" TItem="string" Items="@Options.StaffGroups" SelectedValues="@Value.StaffGroups"
+                              SelectedValuesChanged="@(v => ChangeAsync(a => a with { StaffGroups = v.ToList() }))"
+                              ValueSelector="@(g => g)" TextSelector="@(g => g)" Label="Staff groups" Placeholder="No group" Disabled="@Disabled" />
+            }
+            <QMultiSelect TValue="string" TItem="AudienceRoleDto" Items="@Options.Roles" SelectedValues="@Value.RoleCodes"
+                          SelectedValuesChanged="@(v => ChangeAsync(a => a with { RoleCodes = v.ToList() }))"
+                          ValueSelector="@(r => r.Code)" TextSelector="@(r => r.Name)" Sorted="true"
+                          Label="Roles" Placeholder="No role" Hint="Everybody holding the role — how to say &quot;only the administrators&quot;." Disabled="@Disabled" />
+            @if (Options.Departments.Count > 0)
+            {
+                <QMultiSelect TValue="Guid" TItem="AudienceDepartmentDto" Items="@Options.Departments" SelectedValues="@Value.DepartmentIds"
+                              SelectedValuesChanged="@(v => ChangeAsync(a => a with { DepartmentIds = v.ToList() }))"
+                              ValueSelector="@(d => d.Id)" TextSelector="@(d => d.Name)" Sorted="true"
+                              Label="Departments" Placeholder="No department" Disabled="@Disabled" />
+            }
+            <QMultiSelect TValue="Guid" TItem="AudienceMemberDto" Items="@Options.People" SelectedValues="@Value.UserIds"
+                          SelectedValuesChanged="@(v => ChangeAsync(a => a with { UserIds = v.ToList() }))"
+                          ValueSelector="@(p => p.UserId)" TextSelector="@(p => p.FullName)"
+                          Label="People" Placeholder="Nobody by name" Disabled="@Disabled" />
+        </div>
+    }
+
+    <p class="qap__count @(Reached.Count == 0 && !Value.AllStaff ? "qap__count--none" : "")" role="status" aria-live="polite">
+        <QIcon Name="people" Size="sm" /> <span>@CountLine</span>
+    </p>
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <p class="form-error" role="alert">@ErrorMessage</p>
+    }
+</div>
+
+<style>
+    .qap { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+    .qap__label { display: inline-flex; align-items: center; gap: 4px; font-size: var(--qm-text-base); font-weight: 500; color: var(--qm-text-secondary); }
+    .qap__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--q-row-gap); }
+    .qap__count { display: flex; align-items: center; gap: 6px; margin: 0; font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
+    .qap__count--none { color: var(--qm-danger); }
+</style>
+
+@code {
+    [Parameter] public StaffAudienceDto Value { get; set; } = new();
+    [Parameter] public EventCallback<StaffAudienceDto> ValueChanged { get; set; }
+    [Parameter] public AudienceOptionsDto Options { get; set; } = new();
+    /// <summary>People who are in it whatever is chosen (an event's responsible people), counted in the line.</summary>
+    [Parameter] public IReadOnlyCollection<Guid>? AlsoIncluded { get; set; }
+    [Parameter] public string? Label { get; set; }
+    [Parameter] public string? Hint { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public string? ErrorMessage { get; set; }
+    [Parameter] public string? Class { get; set; }
+
+    private static readonly IReadOnlyList<QRadioOption<bool>> ModeOptions = new List<QRadioOption<bool>>
+    {
+        new(true, "Everyone on the staff"),
+        new(false, "Only some people")
+    };
+
+    private List<AudienceMemberDto> Reached
+    {
+        get
+        {
+            var reached = StaffAudienceRule.Members(Value, Options.People);
+            if (AlsoIncluded is { Count: > 0 } extra)
+                reached.AddRange(Options.People.Where(p => extra.Contains(p.UserId) && reached.All(r => r.UserId != p.UserId)));
+            return reached;
+        }
+    }
+
+    private string CountLine
+    {
+        get
+        {
+            var count = Reached.Count;
+            if (Value.AllStaff) return $"Everyone: {count} {(count == 1 ? "person" : "people")} at this branch.";
+            if (Value.IsEmpty && (AlsoIncluded?.Count ?? 0) == 0) return "Nobody yet — choose a group, role, department or person.";
+            var words = StaffAudienceRule.Describe(Value,
+                code => Options.Roles.FirstOrDefault(r => string.Equals(r.Code, code, StringComparison.OrdinalIgnoreCase))?.Name ?? code,
+                id => Options.Departments.FirstOrDefault(d => d.Id == id)?.Name,
+                id => Options.People.FirstOrDefault(p => p.UserId == id)?.FullName);
+            return $"{count} {(count == 1 ? "person" : "people")}: {words}.";
+        }
+    }
+
+    private Task SetAllStaffAsync(bool all) => ChangeAsync(a => a with { AllStaff = all });
+
+    private async Task ChangeAsync(Func<StaffAudienceDto, StaffAudienceDto> change)
+    {
+        Value = change(Value);
+        await ValueChanged.InvokeAsync(Value);
+    }
+}

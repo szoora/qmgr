@@ -1,0 +1,393 @@
+@using QMgr.Application.DTOs
+@inherits BranchAwareComponentBase
+@inject IStaffPerformanceApiService StaffApi
+@inject ITeachingPlanApiService PlanApi
+@inject IToastService Toast
+
+@*
+    LESSON PLANS in the Setup hub (lesson plans plan §5.2, §6). The school's own format — the lesson plan's sections, the
+    procedure's phases, the scheme's columns — and the rules: what is required, how many stages a lesson plan takes, the
+    deadline, sharing, and the file limits. Below, the curriculum list that fills schemes and plans.
+
+    An empty template means the defaults (NCDC-aligned, marked "confirm against NCDC"). A section the product fills (topic,
+    sub-topic, competency, outcomes, self-evaluation) keeps its key; its title and hint are the school's. A key that plans
+    were saved under is locked, because the answers are stored by key — the duty report's rule.
+*@
+
+<QPageActions Embedded="@Embedded">
+    <Title><h1>Lesson plans</h1></Title>
+    <Actions>
+        <QButton Text="Save" Icon="floppy" Variant="primary" Loading="@saving" Disabled="@(policy == null)" OnClick="@SaveAsync" id="tps-save" />
+    </Actions>
+</QPageActions>
+
+@if (policy == null) { <QEmptyState Icon="hourglass-split" Title="Loading" /> }
+else
+{
+    var s = policy.TeachingPlans;
+    <div class="tps-grid">
+        <QCard Title="Rules" Icon="sliders">
+            <QRadioGroup TValue="PlanRequirement" Value="@s.Requirement" ValueChanged="@(v => s.Requirement = v)" Legend="What the school requires" Options="@RequirementOptions" />
+            <QRadioGroup TValue="int" Value="@s.LessonPlanStages" ValueChanged="@(v => s.LessonPlanStages = v)" Legend="A lesson plan is approved by" Options="@StageOptions" />
+            <p class="cell-sub">A scheme of work always goes to the head of department and then the Director of Studies.</p>
+            <div class="form-row">
+                <QInput TValue="int" @bind-Value="@s.DeadlineHourDayBefore" Type="number" Min="0" Max="23" Label="A lesson's plan is due by (hour, the day before)" />
+                <QInput TValue="int" @bind-Value="@s.SchemeDueWeek" Type="number" Min="1" Max="6" Label="A term's scheme is due by the end of week" />
+            </div>
+            <QSwitch Value="@s.ShareApprovedWithDepartment" ValueChanged="@(v => s.ShareApprovedWithDepartment = v)" Label="Teachers may read their department's approved plans" />
+            <QSwitch Value="@s.UploadsEnabled" ValueChanged="@(v => s.UploadsEnabled = v)" Label="Teachers may attach a PDF instead of typing" />
+        </QCard>
+
+        <QCard Title="File limits" Icon="file-earmark-pdf">
+            <p class="cell-sub">A PDF is shrunk on the teacher's computer before it is sent; the server refuses anything over the limit.</p>
+            <div class="form-row">
+                <QInput TValue="int" @bind-Value="@s.LessonPlanTargetKb" Type="number" Min="8" Max="256" Label="Lesson plan: aim for (KB)" />
+                <QInput TValue="int" @bind-Value="@s.LessonPlanCapKb" Type="number" Min="8" Max="256" Label="Lesson plan: refuse above (KB)" />
+                <QInput TValue="int" @bind-Value="@s.LessonPlanMaxPages" Type="number" Min="1" Max="60" Label="Lesson plan: pages" />
+            </div>
+            <div class="form-row">
+                <QInput TValue="int" @bind-Value="@s.SchemeTargetKb" Type="number" Min="16" Max="1024" Label="Scheme: aim for (KB)" />
+                <QInput TValue="int" @bind-Value="@s.SchemeCapKb" Type="number" Min="16" Max="1024" Label="Scheme: refuse above (KB)" />
+                <QInput TValue="int" @bind-Value="@s.SchemeMaxPages" Type="number" Min="1" Max="60" Label="Scheme: pages" />
+            </div>
+        </QCard>
+    </div>
+
+    <QCard Title="@($"Lesson plan sections{(s.LessonPlanTemplate.Count == 0 ? " (default)" : "")}")" Icon="list-ul">
+        <HeaderActions>
+            @if (s.LessonPlanTemplate.Count == 0)
+            {
+                <QButton Text="Customise" Icon="pencil" Variant="secondary" Size="sm" OnClick="@CustomiseSections" id="tps-customise-sections" />
+            }
+            else
+            {
+                <QButton Text="Add section" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@(() => s.LessonPlanTemplate.Add(new PlanSectionDto { Key = NewKey("section", s.LessonPlanTemplate.Select(x => x.Key)) }))" Disabled="@(s.LessonPlanTemplate.Count >= 30)" />
+                <QButton Text="Use defaults" Icon="arrow-counterclockwise" Variant="ghost" Size="sm" OnClick="@(() => s.LessonPlanTemplate.Clear())" />
+            }
+        </HeaderActions>
+        <ChildContent>
+            <table class="data-table q-stack" id="tps-sections">
+                <thead><tr><th>Key</th><th>Title</th><th>Kind</th><th>Hint / choices</th><th>Required</th><th class="row-actions"></th></tr></thead>
+                <tbody>
+                    @foreach (var sec in Sections)
+                    {
+                        var x = sec;
+                        var editable = s.LessonPlanTemplate.Count > 0;
+                        <tr>
+                            <td><QInput TValue="string" @bind-Value="@x.Key" Disabled="@(!editable || x.System || usedKeys.Contains(x.Key))" MaxLength="40" /></td>
+                            <td><QInput TValue="string" @bind-Value="@x.Title" Disabled="@(!editable)" MaxLength="100" /></td>
+                            <td>
+                                <QSelect TValue="PlanSectionKind" TItem="PlanSectionKind" Value="@x.Kind" ValueChanged="@(v => x.Kind = v)" Items="@SectionKinds"
+                                         TextSelector="@KindText" Disabled="@(!editable || x.System || x.Kind == PlanSectionKind.Procedure)" />
+                            </td>
+                            <td>
+                                @if (x.Kind is PlanSectionKind.Choice or PlanSectionKind.MultiChoice)
+                                {
+                                    <QInput TValue="string" Value="@string.Join("; ", x.Choices)" ValueChanged="@(v => x.Choices = (v ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList())"
+                                            Disabled="@(!editable)" Placeholder="Choices, separated by ;" />
+                                }
+                                else
+                                {
+                                    <QInput TValue="string" @bind-Value="@x.Hint" Disabled="@(!editable)" MaxLength="300" />
+                                }
+                            </td>
+                            <td><QCheckbox Value="@x.Required" ValueChanged="@(v => x.Required = v)" Disabled="@(!editable || x.AfterLesson)" /></td>
+                            <td class="row-actions">
+                                @if (editable)
+                                {
+                                    <QButton Icon="arrow-up" Variant="ghost" Size="sm" OnClick="@(() => Move(s.LessonPlanTemplate, x, -1))" aria-label="Move up" />
+                                    @if (!x.System && x.Kind != PlanSectionKind.Procedure && !usedKeys.Contains(x.Key))
+                                    {
+                                        <QButton Icon="x-lg" Variant="ghost" Size="sm" OnClick="@(() => s.LessonPlanTemplate.Remove(x))" aria-label="Remove" />
+                                    }
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <h4>Procedure phases</h4>
+            <div class="tps-phases">
+                @for (var i = 0; i < Phases.Count; i++)
+                {
+                    var idx = i;
+                    <QInput TValue="string" Value="@Phases[idx]" ValueChanged="@(v => SetPhase(idx, v))" MaxLength="60" Disabled="@(s.ProcedurePhases.Count == 0)" />
+                }
+                @if (s.ProcedurePhases.Count == 0)
+                {
+                    <QButton Text="Customise" Variant="ghost" Size="sm" OnClick="@(() => s.ProcedurePhases = TeachingPlanDefaults.Phases.ToList())" />
+                }
+                else
+                {
+                    <QButton Text="Add phase" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@(() => s.ProcedurePhases.Add("New phase"))" Disabled="@(s.ProcedurePhases.Count >= 12)" />
+                }
+            </div>
+        </ChildContent>
+    </QCard>
+
+    <QCard Title="@($"Scheme of work columns{(s.SchemeColumns.Count == 0 ? " (default)" : "")}")" Icon="table">
+        <HeaderActions>
+            @if (s.SchemeColumns.Count == 0)
+            {
+                <QButton Text="Customise" Icon="pencil" Variant="secondary" Size="sm" OnClick="@(() => s.SchemeColumns = TeachingPlanDefaults.SchemeColumns.Select(c => c with { }).ToList())" id="tps-customise-columns" />
+            }
+            else
+            {
+                <QButton Text="Add column" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@(() => s.SchemeColumns.Add(new PlanColumnDto { Key = NewKey("column", s.SchemeColumns.Select(x => x.Key)) }))" Disabled="@(s.SchemeColumns.Count >= 16)" />
+                <QButton Text="Use defaults" Icon="arrow-counterclockwise" Variant="ghost" Size="sm" OnClick="@(() => s.SchemeColumns.Clear())" />
+            }
+        </HeaderActions>
+        <ChildContent>
+            <table class="data-table q-stack">
+                <thead><tr><th>Key</th><th>Title</th><th>Hint</th><th>Required</th><th class="row-actions"></th></tr></thead>
+                <tbody>
+                    @foreach (var col in Columns)
+                    {
+                        var c = col;
+                        var editable = s.SchemeColumns.Count > 0;
+                        <tr>
+                            <td><QInput TValue="string" @bind-Value="@c.Key" Disabled="@(!editable || c.System)" MaxLength="40" /></td>
+                            <td><QInput TValue="string" @bind-Value="@c.Title" Disabled="@(!editable)" MaxLength="100" /></td>
+                            <td><QInput TValue="string" @bind-Value="@c.Hint" Disabled="@(!editable)" MaxLength="300" /></td>
+                            <td><QCheckbox Value="@c.Required" ValueChanged="@(v => c.Required = v)" Disabled="@(!editable)" /></td>
+                            <td class="row-actions">
+                                @if (editable)
+                                {
+                                    <QButton Icon="arrow-up" Variant="ghost" Size="sm" OnClick="@(() => Move(s.SchemeColumns, c, -1))" aria-label="Move up" />
+                                    @if (!c.System) { <QButton Icon="x-lg" Variant="ghost" Size="sm" OnClick="@(() => s.SchemeColumns.Remove(c))" aria-label="Remove" /> }
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </ChildContent>
+    </QCard>
+
+    @if (problem is { } p) { <p class="form-error" id="tps-problem">@p</p> }
+
+    @* ---- The curriculum list (decision L9) ---- *@
+    <QCard Title="Curriculum list" Icon="book">
+        <HeaderActions>
+            <label class="q-btn q-btn--ghost q-btn--sm tps-file" for="tps-csv"><i class="bi bi-upload"></i> Import a CSV</label>
+            <InputFile id="tps-csv" accept=".csv,text/csv" OnChange="@ImportCsvAsync" class="visually-hidden" />
+            <QButton Text="Add topic" Icon="plus-lg" Variant="ghost" Size="sm" Disabled="@(curriculumSubject == null)" OnClick="@AddTopic" />
+            <QButton Text="Save list" Icon="floppy" Variant="secondary" Size="sm" Loading="@savingCurriculum" OnClick="@SaveCurriculumAsync" id="tps-save-curriculum" />
+        </HeaderActions>
+        <ChildContent>
+            <p class="cell-sub">
+                Each subject's topics by class level and term, with periods, competency and outcomes — the syllabus's programme planner.
+                A new scheme of work is filled from it. Optional: without it, teachers type the topics.
+            </p>
+            <QInfo Text="CSV columns (header row, any order): subject (name or code), level (for example S1), term, order, theme, topic, subtopics, periods, competency, outcomes, activities, assessment. A topic with the same subject, level, term and name is updated, not added twice." Label="About the CSV" />
+            <QSelect TValue="Guid?" TItem="SubjectDto" Value="@curriculumSubject" ValueChanged="@(v => curriculumSubject = v)" Items="@subjects"
+                     ValueSelector="@(x => (Guid?)x.Id)" TextSelector="@(x => x.Name)" Label="Subject" Sorted="true" Placeholder="Choose a subject" />
+            @if (curriculumSubject is { } sid)
+            {
+                var topics = curriculum.Topics.Where(t => t.SubjectId == sid).OrderBy(t => t.ClassLevel, Comparer<string>.Create((a, b) => NaturalOrder.Compare(a, b))).ThenBy(t => t.Term).ThenBy(t => t.Order).ToList();
+                @if (topics.Count == 0) { <p class="cell-sub">No topics for this subject yet.</p> }
+                else
+                {
+                    <table class="data-table q-stack" id="tps-topics">
+                        <thead><tr><th>Level</th><th>Term</th><th>Order</th><th>Topic</th><th>Periods</th><th>Competency</th><th>Outcomes</th><th class="row-actions"></th></tr></thead>
+                        <tbody>
+                            @foreach (var t in topics)
+                            {
+                                var topic = t;
+                                <tr>
+                                    <td class="tps-narrow"><QInput TValue="string" Value="@topic.ClassLevel" ValueChanged="@(v => Replace(topic, topic with { ClassLevel = v ?? "" }))" MaxLength="40" /></td>
+                                    <td class="tps-narrow"><QInput TValue="int" Value="@topic.Term" ValueChanged="@(v => Replace(topic, topic with { Term = v }))" Type="number" Min="0" Max="4" /></td>
+                                    <td class="tps-narrow"><QInput TValue="int" Value="@topic.Order" ValueChanged="@(v => Replace(topic, topic with { Order = v }))" Type="number" Min="0" Max="999" /></td>
+                                    <td><QInput TValue="string" Value="@topic.Topic" ValueChanged="@(v => Replace(topic, topic with { Topic = v ?? "" }))" MaxLength="200" /></td>
+                                    <td class="tps-narrow"><QInput TValue="int?" Value="@topic.Periods" ValueChanged="@(v => Replace(topic, topic with { Periods = v }))" Type="number" Min="0" Max="200" /></td>
+                                    <td><QInput TValue="string" Value="@topic.Competency" ValueChanged="@(v => Replace(topic, topic with { Competency = v }))" Type="textarea" Rows="2" MaxLength="2000" /></td>
+                                    <td><QInput TValue="string" Value="@topic.Outcomes" ValueChanged="@(v => Replace(topic, topic with { Outcomes = v }))" Type="textarea" Rows="2" MaxLength="4000" /></td>
+                                    <td class="row-actions"><QButton Icon="x-lg" Variant="ghost" Size="sm" OnClick="@(() => curriculum.Topics.Remove(topic))" aria-label="Remove topic" /></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
+        </ChildContent>
+    </QCard>
+}
+
+<style>
+    .tps-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: var(--qm-block-gap); }
+    .tps-phases { display: flex; flex-wrap: wrap; gap: var(--q-row-gap); align-items: center; }
+    .tps-phases .q-field { width: 180px; }
+    .tps-narrow { width: 90px; }
+    .tps-file { cursor: pointer; }
+</style>
+
+@code {
+    [Parameter] public bool Embedded { get; set; }
+
+    private static readonly IReadOnlyList<QRadioOption<PlanRequirement>> RequirementOptions = new[]
+    {
+        new QRadioOption<PlanRequirement>(PlanRequirement.EveryLesson, "A plan for every lesson", "Each lesson's plan is due by the evening before; teachers are reminded."),
+        new QRadioOption<PlanRequirement>(PlanRequirement.Weekly, "Plans are written weekly", "No reminder per lesson."),
+        new QRadioOption<PlanRequirement>(PlanRequirement.SchemesOnly, "Schemes of work only", "Lesson plans are optional."),
+    };
+    private static readonly IReadOnlyList<QRadioOption<int>> StageOptions = new[]
+    {
+        new QRadioOption<int>(1, "The head of department", "The Director of Studies hears in the Monday digest."),
+        new QRadioOption<int>(2, "The head of department, then the Director of Studies", "Every lesson plan takes both stages."),
+    };
+    private static readonly List<PlanSectionKind> SectionKinds = new() { PlanSectionKind.Text, PlanSectionKind.Choice, PlanSectionKind.MultiChoice };
+
+    private StaffPerformancePolicyDto? policy;
+    private CurriculumDto curriculum = new();
+    private List<SubjectDto> subjects = new();
+    private Guid? curriculumSubject;
+    private HashSet<string> usedKeys = new();
+    private bool saving, savingCurriculum;
+    private string? problem;
+    private Guid branchId;
+
+    private IReadOnlyList<PlanSectionDto> Sections => policy!.TeachingPlans.LessonPlanTemplate.Count > 0 ? policy.TeachingPlans.LessonPlanTemplate : TeachingPlanDefaults.LessonPlanSections;
+    private IReadOnlyList<PlanColumnDto> Columns => policy!.TeachingPlans.SchemeColumns.Count > 0 ? policy.TeachingPlans.SchemeColumns : TeachingPlanDefaults.SchemeColumns;
+    private List<string> Phases => policy!.TeachingPlans.ProcedurePhases.Count > 0 ? policy.TeachingPlans.ProcedurePhases : TeachingPlanDefaults.Phases.ToList();
+
+    private static string KindText(PlanSectionKind k) => k switch
+    {
+        PlanSectionKind.Choice => "One choice",
+        PlanSectionKind.MultiChoice => "Several choices",
+        PlanSectionKind.Procedure => "Procedure table",
+        _ => "Text"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        await LoadAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) TrackBranch();
+        await base.OnAfterRenderAsync(firstRender);
+    }
+
+    protected override async Task OnBranchChangedAsync(Guid newBranchId) { branchId = newBranchId; await LoadAsync(); }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            policy = await StaffApi.GetPolicyAsync();
+            policy.TeachingPlans ??= new TeachingPlanSettingsDto();
+            // A key the school has already used is locked: the keys of the sections as they stand when the page opens.
+            usedKeys = policy.TeachingPlans.LessonPlanTemplate.Select(x => x.Key).ToHashSet();
+            if (branchId != Guid.Empty)
+            {
+                subjects = await StaffApi.GetSubjectsAsync(branchId);
+                curriculum = await PlanApi.GetCurriculumAsync(branchId);
+            }
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not load the settings", ex.Message); }
+    }
+
+    private void CustomiseSections() => policy!.TeachingPlans.LessonPlanTemplate = TeachingPlanDefaults.LessonPlanSections.Select(x => x with { Choices = x.Choices.ToList() }).ToList();
+
+    private static string NewKey(string stem, IEnumerable<string> taken)
+    {
+        var set = taken.ToHashSet();
+        for (var i = 1; ; i++) if (!set.Contains($"{stem}{i}")) return $"{stem}{i}";
+    }
+
+    private static void Move<T>(List<T> list, T item, int by)
+    {
+        var i = list.IndexOf(item);
+        var j = i + by;
+        if (i < 0 || j < 0 || j >= list.Count) return;
+        (list[i], list[j]) = (list[j], list[i]);
+    }
+
+    private void SetPhase(int i, string? v)
+    {
+        var list = policy!.TeachingPlans.ProcedurePhases;
+        if (i < list.Count) list[i] = v ?? string.Empty;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (policy == null) return;
+        var s = policy.TeachingPlans;
+        // The page refuses first what the server refuses, in the same words (TeachingPlanRules.TemplateProblem).
+        problem = TeachingPlanRules.TemplateProblem(s.LessonPlanTemplate, s.SchemeColumns, s.ProcedurePhases);
+        if (problem != null) return;
+        saving = true;
+        try
+        {
+            policy = await StaffApi.UpdatePolicyAsync(policy);
+            policy.TeachingPlans ??= new TeachingPlanSettingsDto();
+            usedKeys = policy.TeachingPlans.LessonPlanTemplate.Select(x => x.Key).ToHashSet();
+            Toast.Notify(ToastSeverity.Success, "Saved", "Lesson plan settings");
+        }
+        catch (Exception ex) { problem = ex.Message; }
+        finally { saving = false; }
+    }
+
+    // ---- Curriculum ----
+
+    private void AddTopic()
+    {
+        if (curriculumSubject is not { } sid) return;
+        curriculum.Topics.Add(new CurriculumTopicDto { Id = Guid.NewGuid().ToString("N")[..12], SubjectId = sid, ClassLevel = "S1", Term = 1, Order = curriculum.Topics.Count(t => t.SubjectId == sid) + 1, Topic = "New topic" });
+    }
+
+    private void Replace(CurriculumTopicDto old, CurriculumTopicDto updated)
+    {
+        var i = curriculum.Topics.IndexOf(old);
+        if (i >= 0) curriculum.Topics[i] = updated;
+    }
+
+    private async Task SaveCurriculumAsync()
+    {
+        savingCurriculum = true;
+        try { curriculum = await PlanApi.SaveCurriculumAsync(branchId, curriculum); Toast.Notify(ToastSeverity.Success, "Curriculum saved", $"{curriculum.Topics.Count} topics"); }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not save the curriculum", ex.Message); }
+        finally { savingCurriculum = false; }
+    }
+
+    private async Task ImportCsvAsync(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            using var reader = new StreamReader(e.File.OpenReadStream(2 * 1024 * 1024));
+            var lines = CsvText.Lines(await reader.ReadToEndAsync());
+            if (lines.Count < 2) { Toast.Notify(ToastSeverity.Warning, "Nothing to import", "The file needs a header row and at least one topic."); return; }
+            var header = CsvText.ParseLine(lines[0]).Select(h => h.Trim().ToLowerInvariant()).ToList();
+            int Col(params string[] names) => header.FindIndex(h => names.Contains(h));
+            int cSubject = Col("subject"), cLevel = Col("level", "class", "class level"), cTerm = Col("term"), cOrder = Col("order"), cTheme = Col("theme"),
+                cTopic = Col("topic"), cSub = Col("subtopics", "sub-topics", "subtopic", "sub-topic"), cPeriods = Col("periods"), cComp = Col("competency", "competence"),
+                cOut = Col("outcomes", "learning outcomes"), cAct = Col("activities", "suggested activities"), cAss = Col("assessment");
+            if (cSubject < 0 || cTopic < 0 || cLevel < 0) { Toast.Notify(ToastSeverity.Warning, "Columns missing", "The header needs at least subject, level and topic."); return; }
+            var bySubject = subjects.SelectMany(x => new[] { (x.Name.Trim().ToLowerInvariant(), x.Id), (x.Code.Trim().ToLowerInvariant(), x.Id) }).GroupBy(p => p.Item1).ToDictionary(g => g.Key, g => g.First().Id);
+            var topics = new List<CurriculumTopicDto>();
+            var unknown = new HashSet<string>();
+            foreach (var line in lines.Skip(1))
+            {
+                var cells = CsvText.ParseLine(line);
+                string At(int i) => i >= 0 && i < cells.Count ? cells[i].Trim() : string.Empty;
+                if (!bySubject.TryGetValue(At(cSubject).ToLowerInvariant(), out var sid)) { if (At(cSubject).Length > 0) unknown.Add(At(cSubject)); continue; }
+                topics.Add(new CurriculumTopicDto
+                {
+                    SubjectId = sid, ClassLevel = At(cLevel), Term = int.TryParse(At(cTerm), out var t) ? t : 0, Order = int.TryParse(At(cOrder), out var o) ? o : topics.Count + 1,
+                    Theme = NullIfEmpty(At(cTheme)), Topic = At(cTopic), SubTopics = NullIfEmpty(At(cSub)), Periods = int.TryParse(At(cPeriods), out var p) ? p : null,
+                    Competency = NullIfEmpty(At(cComp)), Outcomes = NullIfEmpty(At(cOut)), Activities = NullIfEmpty(At(cAct)), Assessment = NullIfEmpty(At(cAss))
+                });
+            }
+            var result = await PlanApi.MergeCurriculumAsync(branchId, new CurriculumDto { Topics = topics });
+            curriculum = await PlanApi.GetCurriculumAsync(branchId);
+            var detail = $"{result.Added} added, {result.Updated} updated" + (result.Refused.Count > 0 ? $", {result.Refused.Count} refused" : "") + (unknown.Count > 0 ? $". Unknown subjects: {string.Join(", ", unknown.Take(5))}" : "");
+            Toast.Notify(result.Refused.Count + unknown.Count > 0 ? ToastSeverity.Warning : ToastSeverity.Success, "Curriculum imported", detail);
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not import the CSV", ex.Message); }
+    }
+
+    private static string? NullIfEmpty(string s) => s.Length == 0 ? null : s;
+}

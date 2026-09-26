@@ -464,6 +464,7 @@ public class StaffAppraisalsController : ControllerBase
         var me = CurrentUserId();
         if (a == null || !await MayReadAsync(a, me)) return NotFoundAppraisal();
         if (!await IsAppraiserOrApproverAsync(a, me)) return Forbidden("Only the appraiser (with staff.appraisals.conduct) or an approver reviews.");
+        if (DutySeparation.Refusal(me, a.SubjectUserId, "review your own appraisal") is { } selfReview) return DutySeparation.Problem(selfReview);
 
         if (a.Stage is AppraisalStage.Open or AppraisalStage.SelfAssessment)
         {
@@ -488,6 +489,7 @@ public class StaffAppraisalsController : ControllerBase
         a.NextTargetsJson = StaffPerformanceMapping.SerializeList(request.NextTargets?.Where(t => !string.IsNullOrWhiteSpace(t.Text)).ToList());
         if (request.Targets is { Count: > 0 }) a.TargetsJson = StaffPerformanceMapping.SerializeList(request.Targets.Where(t => !string.IsNullOrWhiteSpace(t.Text)).ToList());
         a.AppraiserSubmittedAt = DateTime.UtcNow;
+        a.ReviewedByUserId = me;
         a.Stage = AppraisalStage.Moderation;
         a.ReminderSentAt = null;
         Touch(a, me);
@@ -524,6 +526,7 @@ public class StaffAppraisalsController : ControllerBase
         var me = CurrentUserId();
         if (a == null) return NotFoundAppraisal();
         if (a.Stage is not (AppraisalStage.Moderation or AppraisalStage.Appealed)) return WrongStage(a, "Moderation or Appealed");
+        if (DutySeparation.AppraisalSignOff(a, me, "moderate this appraisal") is { } notYou) return DutySeparation.Problem(notYou);
         if (request.FinalRating is < 1 or > 5) return Problem400("The final rating is 1 to 5");
         if (a.AppraiserRating.HasValue && request.FinalRating != a.AppraiserRating.Value && string.IsNullOrWhiteSpace(request.Reason))
             return Problem400("A reason is required to change the appraiser's rating", $"The appraiser rated {a.AppraiserRating}; you are recording {request.FinalRating}. Say why, so the record carries it.");
@@ -581,6 +584,7 @@ public class StaffAppraisalsController : ControllerBase
         var me = CurrentUserId();
         if (a == null) return NotFoundAppraisal();
         if (a.Stage != AppraisalStage.Moderation) return WrongStage(a, "Moderation");
+        if (DutySeparation.AppraisalSignOff(a, me, "sign this appraisal") is { } notYou) return DutySeparation.Problem(notYou);
         if (a.AppraiserRating == null && a.FinalRating == null)
             return Problem400("Nothing to sign yet", "The appraiser has not recorded a rating.");
         var termlyProblem = await AnnualSignProblemAsync(a, organizationId);
@@ -664,6 +668,7 @@ public class StaffAppraisalsController : ControllerBase
     }
 
     // ---- Helpers ------------------------------------------------------------------------------------
+
 
     private async Task<bool> IsAppraiserOrApproverAsync(StaffAppraisal a, Guid me)
         => (a.AppraiserUserId == me && await CanConductAsync()) || await CanApproveAsync();

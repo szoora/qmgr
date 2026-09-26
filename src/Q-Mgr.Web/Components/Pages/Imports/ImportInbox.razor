@@ -1,0 +1,317 @@
+@page "/imports"
+@using Microsoft.AspNetCore.WebUtilities
+@using QMgr.Application.DTOs
+@using QMgr.Web.Services
+@inherits BranchAwareComponentBase
+@inject IImportInboxApiService InboxApi
+@inject IPermissionService PermissionService
+@inject IToastService Toast
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+@*
+    THE IMPORT INBOX (plan CALENDAR_AUDIENCES_AND_IMPORT_ROUTING E11, 2026-09-26). A document sent for approval waits
+    here, each of its parts routed to the section that owns it: calendar events, meetings with registers, the duty
+    rota, a staff list, a student roll, a timetable. NOTHING HAS BEEN ADDED: approving a part runs that part's own
+    importer, so every rule it enforces still holds, and a part nobody approves is never written.
+
+    Opened as ?job=…&section=… for an events, meetings or rota part, the page becomes the programme import in APPROVAL
+    MODE: the staged rows are checked with the server as they stand now, and "Approve and import" commits them.
+*@
+
+<QPageTitle Text="Import inbox" />
+
+@if (ApprovingProgramme)
+{
+    <div class="admin-page">
+        <QMgr.Web.Components.Admin.Calendar.ProgrammeImport InboxJobId="@jobParam" InboxSection="@sectionParam" />
+    </div>
+}
+else
+{
+    <div class="admin-page">
+        <QPageActions Embedded="false">
+            <Title><h1>Import inbox<QInfo Text="Documents sent for approval. Each part waits for the people who approve that kind of record; nothing is added until they do." Label="Import inbox" /></h1></Title>
+            <Actions>
+                @if (canUpload)
+                {
+                    <QButton Text="Send a document" Icon="file-earmark-arrow-up" Variant="primary" OnClick="@(() => Navigation.NavigateTo("/calendar?tab=import"))" id="imp-upload" />
+                }
+            </Actions>
+        </QPageActions>
+
+        <QFilterBar Wrap="true">
+            <QTabs Tabs="@FilterTabs" ActiveKey="@filter" ActiveKeyChanged="@ChangeFilterAsync" IdPrefix="impf" AriaLabel="Which documents" />
+            @if (canEditSettings)
+            {
+                <QSwitch Value="@settings.RequireSecondApprover" ValueChanged="@SetSecondApproverAsync" Label="A second person approves every import" id="imp-four-eyes"
+                         Hint="On, whoever sends a document cannot approve any part of it. They can still withdraw it." />
+            }
+        </QFilterBar>
+
+        @if (branchId == Guid.Empty)
+        {
+            <QEmptyState Icon="building" Title="Choose a branch" Text="Documents are sent to a branch. Pick one in the switcher above." />
+        }
+        else if (loading)
+        {
+            <div class="imp-loading"><QSpinner Size="lg" /><span>Loading the inbox...</span></div>
+        }
+        else if (!Visible.Any())
+        {
+            <QEmptyState Icon="inbox" Title="@(filter == WaitingTab ? "Nothing is waiting for you" : "No documents yet")"
+                         Text="@(filter == WaitingTab ? "Documents sent for your approval appear here." : "Send a term programme, a rota or a list from the calendar's Import tab.")" />
+        }
+        else
+        {
+            @foreach (var job in Visible)
+            {
+                <QCard Class="imp-job" Title="@string.Join(", ", job.SourceFiles.DefaultIfEmpty("A document"))" Icon="file-earmark-text"
+                       Subtitle="@($"Sent by {job.CreatedByName ?? "somebody"} · {QDateFormat.DT(job.CreatedAt.ToLocalTime())}{(job.Done ? " · decided" : "")}")">
+                    <table class="data-table q-stack" data-job="@job.Id">
+                        <thead><tr><th>Part</th><th class="num">Rows</th><th>State</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var s in job.Sections)
+                            {
+                                <tr data-section="@s.Key" data-kind="@s.Kind" data-state="@s.State">
+                                    <td>
+                                        <strong>@s.Title</strong>
+                                        <div class="cell-sub">@ImportSectionKinds.Label(s.Kind)@(string.IsNullOrWhiteSpace(s.RouteReason) ? "" : $" — {s.RouteReason}")</div>
+                                    </td>
+                                    <td class="num">@s.RowCount</td>
+                                    <td>
+                                        <QChip Text="@StateText(s)" Size="sm" Variant="@StateVariant(s)" />
+                                        @if (!string.IsNullOrWhiteSpace(s.Note)) { <div class="cell-sub">@s.Note</div> }
+                                        @if (s.State == ImportSectionStates.Awaiting && !s.CanDecide && s.WhyNot != null) { <div class="cell-sub">@s.WhyNot</div> }
+                                    </td>
+                                    <td class="row-actions">
+                                        @if (s.State == ImportSectionStates.Awaiting && s.CanDecide)
+                                        {
+                                            @if (ImportSectionKinds.IsProgramme(s.Kind))
+                                            {
+                                                <QButton Text="Review and approve" Icon="check2-square" Size="sm" Variant="primary"
+                                                         OnClick="@(() => Navigation.NavigateTo($"/imports?job={job.Id}&section={s.Key}"))" />
+                                            }
+                                            else if (ImportSectionKinds.OpensHandoff(s.Kind))
+                                            {
+                                                <QButton Text="Open in its import" Icon="box-arrow-up-right" Size="sm" Variant="primary"
+                                                         OnClick="@(() => OpenHandoff(job, s))" />
+                                            }
+                                            else
+                                            {
+                                                <QButton Text="Download the table" Icon="download" Size="sm" Variant="secondary" OnClick="@(() => DownloadAsync(job, s))" />
+                                                <QButton Text="Mark imported" Icon="check-lg" Size="sm" Variant="ghost" OnClick="@(() => CompleteAsync(job, s))" />
+                                            }
+                                        }
+                                        @if (s.State == ImportSectionStates.Awaiting && (s.CanDecide || job.CreatedByUserId == me))
+                                        {
+                                            <QButton Text="@(s.CanDecide ? "Reject" : "Withdraw")" Icon="x-lg" Size="sm" Variant="ghost" OnClick="@(() => AskReject(job, s))" />
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </QCard>
+            }
+        }
+    </div>
+
+    <QModal Visible="@(rejectTarget != null)" VisibleChanged="@(v => { if (!v) rejectTarget = null; })" Title="Reject this part?" Icon="x-octagon">
+        <ChildContent>
+            <p>Nothing of it is added. The person who sent it sees your reason.</p>
+            <QInput TValue="string" @bind-Value="@rejectNote" Label="Why" MaxLength="500" id="imp-reject-note" />
+        </ChildContent>
+        <FooterContent>
+            <QButton Text="Keep it" Variant="ghost" OnClick="@(() => rejectTarget = null)" />
+            <QButton Text="Reject" Variant="danger" Loading="@working" OnClick="@RejectAsync" id="imp-reject-confirm" />
+        </FooterContent>
+    </QModal>
+}
+
+<style>
+    .imp-loading { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 48px 16px; color: var(--qm-text-muted); }
+    .imp-job { margin-top: var(--qm-block-gap); }
+</style>
+
+@code {
+    private const string WaitingTab = "waiting";
+    private const string AllTab = "all";
+    private static readonly IReadOnlyList<QTab> FilterTabs = new List<QTab>
+    {
+        new(WaitingTab, "Waiting for me", "hourglass-split"),
+        new(AllTab, "All", "inbox"),
+    };
+
+    private Guid branchId;
+    private Guid me;
+    private bool loading = true, working, canUpload, canEditSettings;
+    private string filter = WaitingTab;
+    private List<ImportInboxJobDto> jobs = new();
+    private ImportSettingsDto settings = new();
+    private Guid? jobParam;
+    private string? sectionParam;
+    private (ImportInboxJobDto Job, ImportInboxSectionDto Section)? rejectTarget;
+    private string? rejectNote;
+
+    [Inject] private IAuthService AuthService { get; set; } = default!;
+
+    private bool ApprovingProgramme => jobParam.HasValue && !string.IsNullOrWhiteSpace(sectionParam);
+
+    private IEnumerable<ImportInboxJobDto> Visible => filter == WaitingTab
+        ? jobs.Where(j => j.Sections.Any(s => s.State == ImportSectionStates.Awaiting && (s.CanDecide || j.CreatedByUserId == me)))
+        : jobs;
+
+    // "Review and approve" and "Back to the inbox" are same-route navigations, which never re-run OnInitializedAsync. The
+    // router delivers a changed query only to parameters BOUND to it, so the two are bound here and followed in
+    // OnParametersSetAsync, compared against the values last acted on (the HubTabs.FollowQuery rule).
+    [SupplyParameterFromQuery(Name = "job")] public Guid? JobQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "section")] public string? SectionQuery { get; set; }
+    private bool initialized;
+
+    private bool ReadQuery()
+    {
+        var section = string.IsNullOrWhiteSpace(SectionQuery) ? null : SectionQuery;
+        if (JobQuery == jobParam && section == sectionParam) return false;
+        jobParam = JobQuery;
+        sectionParam = section;
+        return true;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!initialized || !ReadQuery()) return;
+        if (!ApprovingProgramme) await LoadAsync();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        ReadQuery();
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        TrackBranch();
+        me = (await AuthService.GetCurrentUserAsync())?.Id ?? Guid.Empty;
+        canEditSettings = await PermissionService.HasPermissionAsync(Permissions.SettingsEdit);
+        canUpload = await PermissionService.HasPermissionAsync(Permissions.CalendarManage)
+                    || await PermissionService.HasPermissionAsync(Permissions.StaffDutiesManage);
+        if (!ApprovingProgramme) await LoadAsync();
+        initialized = true;
+    }
+
+    protected override async Task OnBranchChangedAsync(Guid branchId)
+    {
+        this.branchId = branchId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        try
+        {
+            jobs = branchId == Guid.Empty ? new() : await InboxApi.ListAsync(branchId);
+            settings = await InboxApi.GetSettingsAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load the inbox", ex.Message);
+        }
+        finally { loading = false; }
+    }
+
+    private Task ChangeFilterAsync(string key)
+    {
+        filter = key;
+        return Task.CompletedTask;
+    }
+
+    private async Task SetSecondApproverAsync(bool on)
+    {
+        try
+        {
+            settings = await InboxApi.SaveSettingsAsync(settings with { RequireSecondApprover = on });
+            Toast.Notify(ToastSeverity.Success, on ? "A second person approves every import" : "Whoever sends a document may approve it",
+                on ? "Documents sent from now on wait for somebody else." : "The approval step stays; one person may do both.");
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not save the rule", ex.Message);
+        }
+    }
+
+    private static string StateText(ImportInboxSectionDto s) => s.State switch
+    {
+        ImportSectionStates.Approved => $"Approved{(s.DecidedByName != null ? $" by {s.DecidedByName}" : "")}",
+        ImportSectionStates.Rejected => $"Rejected{(s.DecidedByName != null ? $" by {s.DecidedByName}" : "")}",
+        _ => "Waiting"
+    };
+
+    private static string StateVariant(ImportInboxSectionDto s) => s.State switch
+    {
+        ImportSectionStates.Approved => "success",
+        ImportSectionStates.Rejected => "danger",
+        _ => "warning"
+    };
+
+    private void OpenHandoff(ImportInboxJobDto job, ImportInboxSectionDto s)
+    {
+        var page = ImportSectionKinds.HandoffPage(s.Kind) ?? "/";
+        var joiner = page.Contains('?') ? "&" : "?";
+        Navigation.NavigateTo($"{page}{joiner}inbox={job.Id}&section={Uri.EscapeDataString(s.Key)}");
+    }
+
+    private async Task DownloadAsync(ImportInboxJobDto job, ImportInboxSectionDto s)
+    {
+        try
+        {
+            var staged = await InboxApi.GetStagedAsync(branchId, job.Id, s.Key);
+            await JS.InvokeAsync<bool>("qmgrExport.saveText", staged.Csv ?? string.Empty, "text/csv", staged.FileName ?? "table.csv");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not download the table", ex.Message);
+        }
+    }
+
+    private async Task CompleteAsync(ImportInboxJobDto job, ImportInboxSectionDto s)
+    {
+        working = true;
+        try
+        {
+            await InboxApi.CompleteAsync(branchId, job.Id, s.Key, null, "Imported through the timetable's own import.");
+            Toast.Notify(ToastSeverity.Success, "Marked imported", s.Title);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not mark it", ex.Message);
+        }
+        finally { working = false; }
+    }
+
+    private void AskReject(ImportInboxJobDto job, ImportInboxSectionDto s)
+    {
+        rejectTarget = (job, s);
+        rejectNote = null;
+    }
+
+    private async Task RejectAsync()
+    {
+        if (rejectTarget is not { } target) return;
+        working = true;
+        try
+        {
+            await InboxApi.RejectAsync(branchId, target.Job.Id, target.Section.Key, string.IsNullOrWhiteSpace(rejectNote) ? null : rejectNote.Trim());
+            Toast.Notify(ToastSeverity.Success, "Rejected", target.Section.Title);
+            rejectTarget = null;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not reject it", ex.Message);
+        }
+        finally { working = false; }
+    }
+}

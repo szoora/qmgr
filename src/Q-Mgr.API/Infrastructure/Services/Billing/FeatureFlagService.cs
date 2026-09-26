@@ -141,19 +141,16 @@ public class FeatureFlagService : IFeatureFlagService
 
     /// <summary>
     /// Module → feature-flag mapping. Purely additive: a module can only turn a flag ON, never
-    /// off, so a legacy tier org keeps everything its tier already grants. The mapping follows
-    /// what each module actually sells (see <c>ModuleCodes</c> doc comments):
+    /// off. What the code below actually grants — and nothing else:
     ///
-    ///   core-queue (Live Queue Board, Counters, Tokens, Queue/Counter reports)
-    ///       → ExportReports, CustomServiceTypes, MultipleDisplays
-    ///   engagement-communications (Digital Signage, Campaign Marketing, Feedback &amp; Surveys)
-    ///       → CustomBranding, WhiteLabel, AdvancedAnalytics, MultipleDisplays,
-    ///         EmailNotifications, SmsNotifications, PushNotifications, ExportReports
-    ///   integrations-api (API Clients, webhooks, partner adapters)
-    ///       → ApiAccess, WebhookIntegration, ExportReports
-    ///   visitor-safeguarding (Visitor Management, Roster, Welfare Ledger)
-    ///       → ExportReports only (its own controllers are gated by [RequireModule], not flags;
-    ///         the visitor-log CSV export is a ReportsExport permission + this flag)
+    ///   integrations-api            → ApiAccess
+    ///   engagement-communications   → WhiteLabel
+    ///   white-label-plus            → RemoveAttribution
+    ///
+    /// (Rewritten 2026-09-25. This comment used to promise CustomBranding, AdvancedAnalytics,
+    /// MultipleDisplays, the notification channels, CustomServiceTypes and WebhookIntegration from
+    /// modules; the code granted none of them and nothing anywhere read the last two. A pricing
+    /// decision would be needed before any of them gated something.)
     ///
     /// Any active or trialing module → ExportReports (a paying tenant can always export what it
     /// can see). Any active module also turns ShowAds off — ads are what an organization holding no

@@ -1,861 +1,332 @@
 @page "/profile"
-@using System.Net.Http.Json
-@inject IAuthService AuthService
-@inject HttpClient Http
-@inject NavigationManager NavigationManager
-@inject IToastService NotificationService
-@inject JsonSerializerOptions JsonOptions
 @using Microsoft.AspNetCore.Components.Forms
+@using QMgr.Application.DTOs
+@inject IAuthService AuthService
+@inject IAccountApiService Account
 @inject IStaffOnboardingApiService Onboarding
 @inject IPasswordRulesService PasswordRules
-@using System.Text.Json
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@inject NavigationManager NavigationManager
+@inject IToastService Toast
 
-<QPageTitle Text="My Profile" />
+@*
+    MY ACCOUNT (rebuilt 2026-09-25). How you get IN, and what the app sends you — nothing else.
 
-<div class="profile-page">
-    <div class="page-header">
-        <div class="header-content">
-            <h1>My Profile</h1>
-            <p class="subtitle">View and manage your account information</p>
-        </div>
-    </div>
+    The test for every field: does it control how you sign in, or does it describe you to the school?
+      here        photo, username, email (sign-in and recovery), password, the devices holding a
+                  session, notification preferences, the private calendar feed, member since, last
+                  sign-in
+      My file     phone and contact detail (one writer: api/v1/profile/contact), and the school's
+                  employment record. A tenant without My Workspace has no My file, so for them the
+                  SAME card (MyDetailsCard) renders here, contact half only.
+      school      the name (decision D3): registers, MoES returns and printed slips carry it, so it
+                  changes through the staff directory. The API ignores a name sent here.
+
+    Removed from the old page: "System Settings" (not an account action, and ungated — every teacher
+    was offered the school's settings from here) and "Logout" (it is in the user menu). The nine
+    95px tiles became one-line rows; the whole page fits one 1080p screen.
+
+    The route did not move: /profile is carried by links and emails.
+*@
+
+<QPageTitle Text="My account" />
+
+<div class="admin-page acct-page">
+    <QPageActions>
+        <Title>
+            <h1>My account</h1>
+            <p class="subtitle">How you sign in, and what the app sends you</p>
+        </Title>
+        <Actions>
+            @if (profile is not null)
+            {
+                <QButton Text="Change password" Icon="key" Variant="secondary" OnClick="OpenPasswordModal" />
+            }
+        </Actions>
+    </QPageActions>
 
     @if (isLoading)
     {
-        <div class="loading-container">
-            <QSpinner Size="lg" />
-        </div>
+        <div class="acct-loading"><QSpinner Size="md" /></div>
     }
-    else if (profile == null)
+    else if (profile is null)
     {
-        <div class="not-found">
-            <i class="bi bi-person-x"></i>
-            <p>Unable to load user information</p>
-            <QButton Text="Go to Dashboard" Icon="speedometer2" OnClick="@(() => NavigationManager.NavigateTo("/"))" />
-        </div>
+        <QEmptyState Icon="person-x" Title="Account unavailable" Text="@(loadError ?? "Reload the page, or sign in again.")" />
     }
     else
     {
-        <div class="profile-container">
-            <!-- Profile Card -->
-            <div class="profile-card">
-                <div class="profile-header">
-                    @* The person's photograph, not hand-built initials: QAvatar already falls back
-                       to them when there is none, or when the signed link has expired. This is also
-                       the only place a photo can be CHANGED once onboarding is finished. *@
-                    <div class="avatar-large">
-                        <QAvatar Name="@(profile.FullName ?? profile.Username)" PhotoUrl="@profile.PhotoUrl" Size="lg" Class="avatar-large__img" />
-                        <label class="avatar-large__change" title="@(string.IsNullOrEmpty(profile.PhotoUrl) ? "Add a photo" : "Change your photo")">
-                            <QIcon Name="camera-fill" Size="14" />
-                            <InputFile OnChange="@UploadPhotoAsync" accept="image/*" disabled="@photoBusy" />
-                        </label>
+        <div class="acct-grid">
+            <QCard Title="You" Icon="person-circle" Class="acct-card">
+                <div class="acct-id">
+                    <label class="acct-photo" title="@(string.IsNullOrEmpty(profile.PhotoUrl) ? "Add a photo" : "Change your photo")">
+                        <QAvatar Name="@DisplayName" PhotoUrl="@profile.PhotoUrl" Size="lg" />
+                        <span class="acct-photo__badge" aria-hidden="true"><QIcon Name="camera-fill" Size="12" /></span>
+                        @* The native picker is hidden by a plain rule. It was hidden by a :deep()
+                           selector in a non-scoped <style>, which is invalid there and dropped the
+                           whole rule — "Choose File / No file chosen" sat over the avatar. *@
+                        <InputFile OnChange="@UploadPhotoAsync" accept="image/png,image/jpeg,image/webp" disabled="@photoBusy" aria-label="Choose a photo" />
+                    </label>
+                    <div class="acct-id__text">
+                        <div class="acct-name">
+                            @DisplayName
+                            <QInfo Label="Your name" Text="Your name is part of the school's record — registers, returns and printed slips carry it — so an administrator changes it. Tell them if it is wrong." />
+                        </div>
+                        <div class="acct-role">@profile.Role</div>
                     </div>
-                    <div class="profile-info">
-                        <h2>@(profile.FullName ?? profile.Username)</h2>
-                        <span class="role-badge @GetRoleClass(profile.Role)">@profile.Role</span>
-                    </div>
-                    <button class="btn-edit" @onclick="OpenEditModal" title="Edit Profile">
-                        <i class="bi bi-pencil"></i>
-                    </button>
                 </div>
 
-                <div class="profile-details">
-                    <div class="detail-item">
-                        <div class="detail-icon">
-                            <i class="bi bi-person"></i>
-                        </div>
-                        <div class="detail-content">
-                            <label>Username</label>
-                            <span>@profile.Username</span>
-                        </div>
+                <dl class="acct-list">
+                    <div><dt>Username</dt><dd>@profile.Username</dd></div>
+                    <div>
+                        <dt>Email</dt>
+                        <dd class="acct-row">
+                            <span>@(string.IsNullOrEmpty(profile.Email) ? "No email address" : profile.Email)</span>
+                            <QButton Text="Change" Variant="ghost" Size="sm" OnClick="OpenEmailModal" />
+                        </dd>
                     </div>
-
-                    <div class="detail-item">
-                        <div class="detail-icon">
-                            <i class="bi bi-envelope"></i>
-                        </div>
-                        <div class="detail-content">
-                            <label>Email</label>
-                            <span>@(string.IsNullOrEmpty(profile.Email) ? "Not set" : profile.Email)</span>
-                        </div>
-                    </div>
-
-                    <div class="detail-item">
-                        <div class="detail-icon">
-                            <i class="bi bi-telephone"></i>
-                        </div>
-                        <div class="detail-content">
-                            <label>Phone</label>
-                            <span>@(string.IsNullOrEmpty(profile.Phone) ? "Not set" : profile.Phone)</span>
-                        </div>
-                    </div>
-
-                    <div class="detail-item">
-                        <div class="detail-icon">
-                            <i class="bi bi-shield-check"></i>
-                        </div>
-                        <div class="detail-content">
-                            <label>Role</label>
-                            <span>@profile.Role</span>
-                        </div>
-                    </div>
-
-                    @if (profile.AssignedBranchName != null)
+                    <div><dt>Member since</dt><dd>@QDateFormat.D(profile.CreatedAt)</dd></div>
+                    @if (hasWorkspace)
                     {
-                        <div class="detail-item">
-                            <div class="detail-icon">
-                                <i class="bi bi-building"></i>
-                            </div>
-                            <div class="detail-content">
-                                <label>Assigned Branch</label>
-                                <span>@profile.AssignedBranchName</span>
-                            </div>
+                        <div>
+                            <dt>Phone and contact</dt>
+                            <dd><a href="/portal?tab=file#my-details">On My file</a></dd>
                         </div>
                     }
+                </dl>
+            </QCard>
 
-                    @if (profile.EmployeeNumber != null)
-                    {
-                        <div class="detail-item">
-                            <div class="detail-icon">
-                                <i class="bi bi-person-badge"></i>
-                            </div>
-                            <div class="detail-content">
-                                <label>Employee Number</label>
-                                <span>@profile.EmployeeNumber</span>
-                            </div>
-                        </div>
-                    }
-
-                    <div class="detail-item">
-                        <div class="detail-icon">
-                            <i class="bi bi-calendar-check"></i>
-                        </div>
-                        <div class="detail-content">
-                            <label>Member Since</label>
-                            <span>@QDateFormat.D(profile.CreatedAt)</span>
-                        </div>
+            <QCard Title="Sign-in and security" Icon="shield-lock" Class="acct-card">
+                <dl class="acct-list">
+                    <div>
+                        <dt>Password</dt>
+                        <dd class="acct-row"><span>••••••••</span><QButton Text="Change" Variant="ghost" Size="sm" OnClick="OpenPasswordModal" /></dd>
                     </div>
+                    <div><dt>Last sign-in</dt><dd>@(profile.LastLogin.HasValue ? QDateFormat.DT(profile.LastLogin.Value) : "—")</dd></div>
+                </dl>
 
-                    @if (profile.LastLogin.HasValue)
+                <div class="acct-devices">
+                    <div class="acct-devices__head">
+                        <span>Phones signed in</span>
+                        <QInfo Label="Phones signed in" Text="@($"The {ProductBrand.Name} app on a phone keeps its own session. If a phone is lost, sign out everywhere: every phone and this browser are signed out at once, and you sign in again here.")" />
+                    </div>
+                    @if (devices is null)
                     {
-                        <div class="detail-item">
-                            <div class="detail-icon">
-                                <i class="bi bi-clock-history"></i>
-                            </div>
-                            <div class="detail-content">
-                                <label>Last Login</label>
-                                <span>@QDateFormat.DT(profile.LastLogin.Value)</span>
-                            </div>
-                        </div>
+                        <p class="acct-muted">Could not read your devices.</p>
                     }
+                    else if (devices.Count == 0)
+                    {
+                        <p class="acct-muted">No phone is signed in to the app.</p>
+                    }
+                    else
+                    {
+                        <ul class="acct-device-list">
+                            @foreach (var d in devices)
+                            {
+                                <li>
+                                    <QIcon Name="phone" Size="14" />
+                                    <span class="acct-device-name">@d.DeviceName</span>
+                                    <span class="acct-muted">last used @QDateFormat.DT(d.LastUsedUtc.ToLocalTime())</span>
+                                </li>
+                            }
+                        </ul>
+                    }
+                    <QButton Text="Sign out everywhere" Icon="box-arrow-right" Variant="danger" Size="sm" OnClick="@(() => showSignOutAll = true)" />
                 </div>
-            </div>
+            </QCard>
 
-            <!-- Actions Card -->
-            <div class="actions-card">
-                <h3>Account Actions</h3>
-                <div class="actions-list">
-                    <button class="action-item" @onclick="OpenEditModal">
-                        <i class="bi bi-pencil-square"></i>
-                        <span>Edit Profile</span>
-                        <i class="bi bi-chevron-right"></i>
-                    </button>
-                    <button class="action-item" @onclick="OpenPasswordModal">
-                        <i class="bi bi-key"></i>
-                        <span>Change Password</span>
-                        <i class="bi bi-chevron-right"></i>
-                    </button>
-                    <hr />
-                    <a href="/profile/notifications" class="action-item">
-                        <i class="bi bi-bell"></i>
-                        <span>Notification Preferences</span>
-                        <i class="bi bi-chevron-right"></i>
-                    </a>
-                    <a href="/admin/settings" class="action-item">
-                        <i class="bi bi-gear"></i>
-                        <span>System Settings</span>
-                        <i class="bi bi-chevron-right"></i>
-                    </a>
-                    <button class="action-item logout" @onclick="Logout">
-                        <i class="bi bi-box-arrow-right"></i>
-                        <span>Logout</span>
-                        <i class="bi bi-chevron-right"></i>
-                    </button>
-                </div>
-            </div>
+            <QCard Title="Notifications" Icon="bell" Class="acct-card">
+                <p class="acct-muted">Choose what reaches you in the app, by email and by text.</p>
+                <QButton Text="Notification preferences" Icon="sliders" Variant="secondary" Size="sm" OnClick="@(() => NavigationManager.NavigateTo("/profile/notifications"))" />
+            </QCard>
 
-            @* The private calendar feed (TERM_PROGRAMME_CALENDAR_AND_GATES §9). Spans the grid. *@
             <QMgr.Web.Components.Pages.Calendar.CalendarFeedCard />
+
+            @if (!hasWorkspace)
+            {
+                @* No My Workspace on this tenant, so no My file: the one contact card lives here. *@
+                <div class="acct-wide"><QMgr.Web.Components.Pages.Portal.MyDetailsCard ShowEmployment="false" /></div>
+            }
         </div>
     }
 </div>
 
-<!-- Edit Profile Modal -->
-<QModal @bind-Visible="showEditModal" Title="Edit Profile" Size="md">
+<QModal @bind-Visible="showEmailModal" Title="Change email" Size="sm">
     <ChildContent>
-        <div class="form-group mb-3">
-            <label class="form-label">First Name</label>
-            <input type="text" class="form-control" @bind="editModel.FirstName" placeholder="Enter first name" />
-        </div>
-        <div class="form-group mb-3">
-            <label class="form-label">Last Name</label>
-            <input type="text" class="form-control" @bind="editModel.LastName" placeholder="Enter last name" />
-        </div>
-        <div class="form-group mb-3">
-            <label class="form-label">Email</label>
-            <input type="email" class="form-control" @bind="editModel.Email" placeholder="Enter email" />
-        </div>
-        <div class="form-group mb-3">
-            <label class="form-label">Phone</label>
-            <input type="tel" class="form-control" @bind="editModel.Phone" placeholder="Enter phone number" />
-        </div>
-    </ChildContent>
-    <FooterContent>
-        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@CloseEditModal" />
-        <QButton Text="Save Changes" Icon="check-lg" Variant="primary" OnClick="@SaveProfile" Disabled="@isSaving" Loading="@isSaving" />
-    </FooterContent>
-</QModal>
-
-<!-- Change Password Modal -->
-<QModal @bind-Visible="showPasswordModal" Title="Change Password" Size="md">
-    <ChildContent>
-        <div class="form-group mb-3">
-            <label class="form-label">Current Password</label>
-            <input type="password" class="form-control" @bind="passwordModel.CurrentPassword" placeholder="Enter current password" />
-        </div>
-        <div class="form-group mb-3">
-            <label class="form-label">New Password</label>
-            <input type="password" class="form-control" @bind="passwordModel.NewPassword" placeholder="@PasswordRules.Placeholder" />
-            @* This said "Minimum 6 characters" — typed into the markup, and the fifth different
-               number this product claimed while the server enforced a sixth. *@
-            <small class="qm-text-muted">@PasswordRules.Summary</small>
-        </div>
-        <div class="form-group mb-3">
-            <label class="form-label">Confirm New Password</label>
-            <input type="password" class="form-control" @bind="passwordModel.ConfirmPassword" placeholder="Confirm new password" />
-        </div>
-        @if (!string.IsNullOrEmpty(passwordError))
+        <QInput TValue="string" Label="Email" Type="email" @bind-Value="emailInput" Placeholder="name@example.com"
+                Hint="Your sign-in and recovery address. Password reset links go here." />
+        @if (!string.IsNullOrEmpty(emailError))
         {
-            <div class="qm-admin-alert error">
-                <i class="bi bi-exclamation-circle me-2"></i>@passwordError
-            </div>
+            <p class="form-error">@emailError</p>
         }
     </ChildContent>
     <FooterContent>
-        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@ClosePasswordModal" />
-        <QButton Text="Change Password" Icon="key-fill" Variant="primary" OnClick="@ChangePassword" Disabled="@isChangingPassword" Loading="@isChangingPassword" />
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showEmailModal = false)" />
+        <QButton Text="Save" Icon="check-lg" Variant="primary" OnClick="SaveEmailAsync" Loading="@isSaving" Disabled="@isSaving" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showPasswordModal" Title="Change password" Size="sm">
+    <ChildContent>
+        <div class="acct-form">
+            <QInput TValue="string" Label="Current password" Type="password" @bind-Value="currentPassword" />
+            <QInput TValue="string" Label="New password" Type="password" @bind-Value="newPassword" Placeholder="@PasswordRules.Placeholder" Hint="@PasswordRules.Summary" />
+            <QInput TValue="string" Label="Confirm new password" Type="password" @bind-Value="confirmPassword" />
+        </div>
+        @if (!string.IsNullOrEmpty(passwordError))
+        {
+            <p class="form-error">@passwordError</p>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showPasswordModal = false)" />
+        <QButton Text="Change password" Icon="key-fill" Variant="primary" OnClick="ChangePasswordAsync" Loading="@isSaving" Disabled="@isSaving" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showSignOutAll" Title="Sign out everywhere?" Size="sm">
+    <ChildContent>
+        <p>Every phone signed in to the app, and this browser, will be signed out now. You will sign in again here.</p>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showSignOutAll = false)" />
+        <QButton Text="Sign out everywhere" Icon="box-arrow-right" Variant="danger" OnClick="SignOutEverywhereAsync" Loading="@isSaving" Disabled="@isSaving" />
     </FooterContent>
 </QModal>
 
 <style>
-    .profile-page {
-        padding: 0;
+    .acct-loading { display: flex; justify-content: center; padding: 40px 0; }
+    .acct-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--qm-block-gap); align-items: start; }
+    .acct-wide { grid-column: 1 / -1; }
+    .acct-id { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+    .acct-photo { position: relative; display: inline-flex; cursor: pointer; border-radius: 50%; flex: 0 0 auto; }
+    .acct-photo input[type="file"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 0; }
+    .acct-photo:focus-within { outline: 2px solid var(--qm-primary); outline-offset: 2px; }
+    .acct-photo__badge {
+        position: absolute; right: -2px; bottom: -2px; width: 22px; height: 22px; border-radius: 50%;
+        display: inline-flex; align-items: center; justify-content: center;
+        background: var(--qm-bg-card); border: 1px solid var(--qm-border); color: var(--qm-text-secondary); pointer-events: none;
     }
-
-    .profile-container {
-        display: grid;
-        grid-template-columns: 1fr 320px;
-        gap: 24px;
-        max-width: 1000px;
-    }
-
-    .profile-card,
-    .actions-card {
-        background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-        padding: 24px;
-    }
-
-    .profile-header {
-        display: flex;
-        align-items: center;
-        gap: 20px;
-        padding-bottom: 24px;
-        border-bottom: 1px solid var(--qm-border);
-        margin-bottom: 24px;
-        position: relative;
-    }
-
-    .avatar-large {
-        position: relative;
-        width: 80px;
-        height: 80px;
-        flex-shrink: 0;
-    }
-
-    .avatar-large .avatar-large__img {
-        width: 100%;
-        height: 100%;
-        border-radius: 50%;
-        font-size: var(--qm-text-stat);
-    }
-
-    /* A label, not a button: it wraps the file input, so a click anywhere on it opens the picker.
-       The input itself is off-screen rather than display:none, which keyboards cannot reach. */
-    .avatar-large__change {
-        position: absolute;
-        right: -2px;
-        bottom: -2px;
-        width: 26px;
-        height: 26px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 50%;
-        background: var(--qm-bg-card);
-        color: var(--qm-text-secondary);
-        border: 1px solid var(--qm-border);
-        box-shadow: 0 1px 4px rgba(0, 0, 0, .12);
-        cursor: pointer;
-    }
-
-    .avatar-large__change:hover { color: var(--qm-primary); border-color: var(--qm-primary); }
-
-    .avatar-large__change :deep(input[type="file"]),
-    .avatar-large__change input[type="file"] {
-        position: absolute;
-        width: 1px;
-        height: 1px;
-        opacity: 0;
-        pointer-events: none;
-    }
-
-    .profile-info {
-        flex: 1;
-    }
-
-    .profile-info h2 {
-        margin: 0 0 8px;
-        font-size: var(--qm-text-stat);
-        font-weight: 600;
-        color: var(--qm-text-primary);
-    }
-
-    .btn-edit {
-        position: absolute;
-        top: 0;
-        right: 0;
-        width: 40px;
-        height: 40px;
-        border-radius: var(--qm-radius-lg);
-        border: 1px solid var(--qm-border);
-        background: var(--qm-bg-elevated);
-        color: var(--qm-text-muted);
-        cursor: pointer;
-        transition: all 0.2s ease;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .btn-edit:hover {
-        background: var(--qm-primary-light);
-        border-color: var(--qm-primary);
-        color: var(--qm-primary);
-    }
-
-    .role-badge {
-        display: inline-block;
-        padding: 4px 12px;
-        border-radius: var(--qm-radius-full);
-        font-size: var(--qm-text-sm);
-        font-weight: 600;
-        text-transform: uppercase;
-    }
-
-    .role-badge.admin,
-    .role-badge.superadmin {
-        background: var(--qm-primary-light);
-        color: var(--qm-primary);
-    }
-
-    .role-badge.manager {
-        background: color-mix(in srgb, var(--qm-info) 15%, transparent);
-        color: var(--qm-info);
-    }
-
-    .role-badge.staff {
-        background: color-mix(in srgb, var(--qm-success) 15%, transparent);
-        color: var(--qm-success);
-    }
-
-    .role-badge.viewer {
-        background: color-mix(in srgb, var(--qm-text-secondary) 15%, transparent);
-        color: var(--qm-text-secondary);
-    }
-
-    .profile-details {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-    }
-
-    .detail-item {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        padding: 12px;
-        background: var(--qm-bg-elevated);
-        border-radius: var(--qm-radius-lg);
-    }
-
-    .detail-icon {
-        width: 40px;
-        height: 40px;
-        background: var(--qm-primary-light);
-        border-radius: var(--qm-radius-lg);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-    }
-
-    .detail-icon i {
-        font-size: var(--qm-text-lg);
-        color: var(--qm-primary);
-    }
-
-    .detail-content {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-    }
-
-    .detail-content label {
-        font-size: var(--qm-text-sm);
-        color: var(--qm-text-muted);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-
-    .detail-content span {
-        font-size: var(--qm-text-md);
-        color: var(--qm-text-primary);
-    }
-
-    /* Actions Card */
-    .actions-card {
-        height: fit-content;
-        position: sticky;
-        top: 24px;
-    }
-
-    .actions-card h3 {
-        margin: 0 0 16px;
-        font-size: var(--qm-text-md);
-        font-weight: 600;
-        color: var(--qm-text-primary);
-    }
-
-    .actions-list {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-    }
-
-    .actions-list hr {
-        border: none;
-        border-top: 1px solid var(--qm-border);
-        margin: 8px 0;
-    }
-
-    /* A tappable row, sized off the shared control scale (--q-control-h-lg is the
-       44px touch target) rather than a height of its own. */
-    .action-item {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        min-height: var(--q-control-h-lg);
-        padding: 0 12px;
-        background: var(--qm-bg-elevated);
-        border: 1px solid transparent;
-        border-radius: var(--qm-radius-lg);
-        color: var(--qm-text-primary);
-        text-decoration: none;
-        cursor: pointer;
-        transition: all 0.2s ease;
-        width: 100%;
-        text-align: left;
-        font-size: var(--q-control-font);
-    }
-
-    .action-item:hover {
-        background: var(--qm-primary-light);
-        border-color: color-mix(in srgb, var(--qm-primary) 30%, transparent);
-    }
-
-    .action-item i:first-child {
-        font-size: var(--qm-text-md);
-        color: var(--qm-text-muted);
-    }
-
-    .action-item span {
-        flex: 1;
-    }
-
-    .action-item i:last-child {
-        font-size: var(--q-control-font);
-        color: var(--qm-text-muted);
-    }
-
-    .action-item.logout:hover {
-        background: color-mix(in srgb, var(--qm-danger) 10%, transparent);
-        border-color: color-mix(in srgb, var(--qm-danger) 30%, transparent);
-    }
-
-    .action-item.logout i:first-child {
-        color: var(--qm-danger);
-    }
-
-    /* Not Found State */
-    .not-found {
-        text-align: center;
-        padding: 60px 20px;
-    }
-
-    .not-found i {
-        font-size: var(--qm-empty-icon);
-        color: var(--qm-text-muted);
-        margin-bottom: 16px;
-    }
-
-    .not-found p {
-        color: var(--qm-text-muted);
-        margin-bottom: 24px;
-    }
-
-    /* Modal Styling */
-    .modal-content {
-        background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border);
-        color: var(--qm-text-primary);
-    }
-
-    .modal-header {
-        border-bottom-color: var(--qm-border);
-    }
-
-    .modal-footer {
-        border-top-color: var(--qm-border);
-    }
-
-    .form-label {
-        color: var(--qm-text-primary);
-        font-weight: 500;
-    }
-
-    .form-control {
-        background: var(--qm-bg-elevated);
-        border-color: var(--qm-border);
-        color: var(--qm-text-primary);
-    }
-
-    .form-control:focus {
-        background: var(--qm-bg-elevated);
-        border-color: var(--qm-primary);
-        color: var(--qm-text-primary);
-        box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--qm-primary) 25%, transparent);
-    }
-
-    .form-control::placeholder {
-        color: var(--qm-text-muted);
-    }
-
-    .btn-close {
-        filter: invert(1);
-    }
-
-    /* Responsive */
-    @@media (max-width: 768px) {
-        .profile-container {
-            grid-template-columns: 1fr;
-        }
-
-        .profile-header {
-            flex-direction: column;
-            text-align: center;
-        }
-
-        .btn-edit {
-            position: static;
-            margin-top: 16px;
-        }
-
-        .actions-card {
-            position: static;
-        }
+    .acct-id__text { min-width: 0; }
+    .acct-name { display: flex; align-items: center; gap: 6px; font-family: var(--qm-font-display); font-weight: 700; font-size: var(--qm-text-md); }
+    .acct-role { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
+    .acct-list { margin: 0; display: flex; flex-direction: column; }
+    .acct-list > div { display: grid; grid-template-columns: 130px 1fr; gap: 12px; align-items: center; padding: 6px 0; border-top: 1px solid var(--qm-border); min-height: var(--q-control-h); }
+    .acct-list dt { margin: 0; font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
+    .acct-list dd { margin: 0; font-size: var(--qm-text-base); min-width: 0; overflow-wrap: anywhere; }
+    .acct-row { display: flex; align-items: center; justify-content: space-between; gap: var(--q-row-gap); }
+    .acct-muted { margin: 0; color: var(--qm-text-muted); font-size: var(--qm-text-sm); }
+    .acct-card p.acct-muted + .q-btn, .acct-card p.acct-muted { margin-bottom: 8px; }
+    .acct-devices { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+    .acct-devices__head { display: flex; align-items: center; gap: 6px; font-size: var(--qm-text-sm); font-weight: 600; }
+    .acct-device-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; width: 100%; }
+    .acct-device-list li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--qm-text-base); }
+    .acct-device-name { font-weight: 500; }
+    .acct-form { display: flex; flex-direction: column; gap: var(--qm-field-gap); }
+    @@media (max-width: 640px) {
+        .acct-grid { grid-template-columns: 1fr; }
+        .acct-list > div { grid-template-columns: 1fr; gap: 2px; }
     }
 </style>
 
 @code {
-    /// <summary>
-    /// What the SERVER will judge a password by, fetched rather than retyped. Three pages used to
-    /// hardcode three different minimums (12, 8 and 6) while the server enforced a fourth, so a
-    /// form could promise what the API then refused. The defaults on the record only stand for the
-    /// moment before the fetch lands.
-    /// </summary>
-    // The rules come from IPasswordRulesService — the ONE home. See Register.razor.
-    private async Task LoadPasswordRulesAsync() => await PasswordRules.LoadAsync();
-
     private ProfileDto? profile;
-    private bool isLoading = true;
-    private bool isSaving = false;
-    private bool isChangingPassword = false;
+    private List<DeviceSessionDto>? devices = new();
+    private bool isLoading = true, isSaving, photoBusy, hasWorkspace;
+    private string? loadError;
 
-    // Edit Profile
-    private bool showEditModal = false;
-    private EditProfileModel editModel = new();
+    private bool showEmailModal, showPasswordModal, showSignOutAll;
+    private string? emailInput, emailError;
+    private string? currentPassword, newPassword, confirmPassword, passwordError;
 
-    // Change Password
-    private bool showPasswordModal = false;
-    private ChangePasswordModel passwordModel = new();
-    private string passwordError = "";
+    private string DisplayName => string.IsNullOrWhiteSpace(profile?.FullName) ? profile?.Username ?? "" : profile!.FullName;
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadPasswordRulesAsync();
-        await LoadProfile();
-    }
+        await PasswordRules.LoadAsync();
+        await ModuleState.LoadAsync(ModuleApi);
+        // My Workspace exists with Welfare & Performance. A failed module load is read as "has it",
+        // the fail-open every module check here uses; the link then explains itself.
+        hasWorkspace = !ModuleState.LoadSucceeded || ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare);
 
-    private async Task LoadProfile()
-    {
-        isLoading = true;
         try
         {
-            var user = await AuthService.GetCurrentUserAsync();
-            if (user != null)
-            {
-                // Load full profile from API
-                var response = await Http.GetAsync($"api/v1/profile?userId={user.Id}");
-                if (response.IsSuccessStatusCode)
-                {
-                    profile = await response.Content.ReadFromJsonAsync<ProfileDto>(JsonOptions);
-                }
-                else
-                {
-                    // Fallback to basic user info
-                    profile = new ProfileDto
-                    {
-                        Id = user.Id,
-                        Username = user.Username,
-                        Email = user.Email,
-                        FullName = user.FullName ?? "",
-                        Role = user.RoleName
-                    };
-                }
-            }
+            profile = await Account.GetProfileAsync();
         }
-        catch (Exception ex)
+        catch (InvalidOperationException ex)
         {
-            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load profile: {ex.Message}");
+            loadError = ex.Message;
         }
-        finally
+
+        try { devices = await Account.GetDevicesAsync(); }
+        catch (InvalidOperationException) { devices = null; }
+
+        isLoading = false;
+    }
+
+    private void OpenEmailModal()
+    {
+        emailInput = profile?.Email;
+        emailError = null;
+        showEmailModal = true;
+    }
+
+    private async Task SaveEmailAsync()
+    {
+        if (string.IsNullOrWhiteSpace(emailInput)) { emailError = "Enter an email address."; return; }
+        isSaving = true;
+        emailError = null;
+        try
         {
-            isLoading = false;
+            profile = await Account.UpdateEmailAsync(emailInput.Trim());
+            showEmailModal = false;
+            Toast.Notify(ToastSeverity.Success, "Email changed");
+            await AuthService.RefreshCurrentUserAsync();
         }
+        catch (InvalidOperationException ex) { emailError = ex.Message; }
+        finally { isSaving = false; }
     }
 
-    private string GetInitials(string name)
+    private void OpenPasswordModal()
     {
-        if (string.IsNullOrWhiteSpace(name)) return "U";
-
-        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length >= 2)
-            return $"{parts[0][0]}{parts[1][0]}".ToUpper();
-
-        return name.Substring(0, Math.Min(2, name.Length)).ToUpper();
+        currentPassword = newPassword = confirmPassword = passwordError = null;
+        showPasswordModal = true;
     }
 
-    private string GetRoleClass(string role)
+    private async Task ChangePasswordAsync()
     {
-        return role?.ToLower() switch
-        {
-            "admin" => "admin",
-            "superadmin" => "superadmin",
-            "manager" => "manager",
-            "staff" => "staff",
-            _ => "viewer"
-        };
-    }
-
-    // Edit Profile
-    private void OpenEditModal()
-    {
-        if (profile == null) return;
-
-        editModel = new EditProfileModel
-        {
-            FirstName = profile.FirstName,
-            LastName = profile.LastName,
-            Email = profile.Email,
-            Phone = profile.Phone
-        };
-        showEditModal = true;
-    }
-
-    private void CloseEditModal()
-    {
-        showEditModal = false;
-    }
-
-    private async Task SaveProfile()
-    {
-        if (profile == null) return;
+        passwordError = null;
+        if (string.IsNullOrWhiteSpace(currentPassword)) { passwordError = "Enter your current password."; return; }
+        if (string.IsNullOrWhiteSpace(newPassword)) { passwordError = "Enter a new password."; return; }
+        if (PasswordRules.LengthProblem(newPassword) is { } problem) { passwordError = $"New password must be {problem.ToLowerInvariant()}."; return; }
+        if (newPassword != confirmPassword) { passwordError = "The two new passwords do not match."; return; }
 
         isSaving = true;
         try
         {
-            var response = await Http.PutAsJsonAsync($"api/v1/profile?userId={profile.Id}", new
-            {
-                FirstName = editModel.FirstName,
-                LastName = editModel.LastName,
-                Email = editModel.Email,
-                Phone = editModel.Phone
-            }, JsonOptions);
-
-            if (response.IsSuccessStatusCode)
-            {
-                profile = await response.Content.ReadFromJsonAsync<ProfileDto>(JsonOptions);
-                showEditModal = false;
-                NotificationService.Notify(ToastSeverity.Success, "Success", "Profile updated successfully");
-
-                // Update local storage with new info
-                await UpdateLocalUserInfo();
-            }
-            else
-            {
-                var error = await response.Content.ReadAsStringAsync();
-                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to update profile");
-            }
+            await Account.ChangePasswordAsync(currentPassword, newPassword, confirmPassword!);
+            showPasswordModal = false;
+            Toast.Notify(ToastSeverity.Success, "Password changed", "Other devices have been signed out.");
         }
-        catch (Exception ex)
+        catch (InvalidOperationException ex) { passwordError = ex.Message; }
+        finally { isSaving = false; }
+    }
+
+    private async Task SignOutEverywhereAsync()
+    {
+        isSaving = true;
+        try
         {
-            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save: {ex.Message}");
+            await Account.SignOutEverywhereAsync();
+            await AuthService.LogoutAsync();
+            NavigationManager.NavigateTo("/login", forceLoad: true);
         }
-        finally
+        catch (InvalidOperationException ex)
         {
+            Toast.Notify(ToastSeverity.Error, "Could not sign out everywhere", ex.Message);
             isSaving = false;
         }
     }
-
-    private async Task UpdateLocalUserInfo()
-    {
-        if (profile == null) return;
-
-        // Re-fetch current user and update local storage
-        // The AuthService stores user info in local storage
-        // For now, we'll just reload the profile
-        await LoadProfile();
-    }
-
-    // Change Password
-    private void OpenPasswordModal()
-    {
-        passwordModel = new ChangePasswordModel();
-        passwordError = "";
-        showPasswordModal = true;
-    }
-
-    private void ClosePasswordModal()
-    {
-        showPasswordModal = false;
-        passwordError = "";
-    }
-
-    private async Task ChangePassword()
-    {
-        if (profile == null) return;
-
-        passwordError = "";
-
-        // Client-side validation
-        if (string.IsNullOrWhiteSpace(passwordModel.CurrentPassword))
-        {
-            passwordError = "Current password is required";
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(passwordModel.NewPassword))
-        {
-            passwordError = "New password is required";
-            return;
-        }
-
-        if (PasswordRules.LengthProblem(passwordModel.NewPassword) is not null)
-        {
-            passwordError = $"New password must be {PasswordRules.LengthProblem(passwordModel.NewPassword)!.ToLowerInvariant()}";
-            return;
-        }
-
-        if (passwordModel.NewPassword != passwordModel.ConfirmPassword)
-        {
-            passwordError = "Passwords do not match";
-            return;
-        }
-
-        isChangingPassword = true;
-        try
-        {
-            var response = await Http.PutAsJsonAsync($"api/v1/profile/password?userId={profile.Id}", new
-            {
-                CurrentPassword = passwordModel.CurrentPassword,
-                NewPassword = passwordModel.NewPassword,
-                ConfirmPassword = passwordModel.ConfirmPassword
-            }, JsonOptions);
-
-            if (response.IsSuccessStatusCode)
-            {
-                showPasswordModal = false;
-                NotificationService.Notify(ToastSeverity.Success, "Success", "Password changed successfully");
-            }
-            else
-            {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                try
-                {
-                    var problemDetails = JsonSerializer.Deserialize<ProblemDetails>(errorContent, JsonOptions);
-                    passwordError = problemDetails?.Detail ?? "Failed to change password";
-                }
-                catch
-                {
-                    passwordError = "Failed to change password";
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            passwordError = $"Error: {ex.Message}";
-        }
-        finally
-        {
-            isChangingPassword = false;
-        }
-    }
-
-    private async Task Logout()
-    {
-        await AuthService.LogoutAsync();
-        NavigationManager.NavigateTo("/login", forceLoad: true);
-    }
-
-    // Models
-    private class EditProfileModel
-    {
-        public string? FirstName { get; set; }
-        public string? LastName { get; set; }
-        public string? Email { get; set; }
-        public string? Phone { get; set; }
-    }
-
-    private class ChangePasswordModel
-    {
-        public string CurrentPassword { get; set; } = "";
-        public string NewPassword { get; set; } = "";
-        public string ConfirmPassword { get; set; } = "";
-    }
-
-    private bool photoBusy;
 
     /// <summary>
     /// The same endpoint the onboarding checklist posts to, and for the same reason it refreshes the
@@ -866,7 +337,7 @@
     {
         if (e.File.Size > 5 * 1024 * 1024)
         {
-            NotificationService.Notify(ToastSeverity.Warning, "That photo is too large", "Choose one under 5 MB.");
+            Toast.Notify(ToastSeverity.Warning, "That photo is too large", "Choose one under 5 MB.");
             return;
         }
 
@@ -879,38 +350,13 @@
             buffer.Position = 0;
             var url = await Onboarding.UploadPhotoAsync(buffer, e.File.Name, e.File.ContentType);
             if (profile != null) profile = profile with { PhotoUrl = url };
-            NotificationService.Notify(ToastSeverity.Success, "Photo updated");
+            Toast.Notify(ToastSeverity.Success, "Photo updated");
             await AuthService.RefreshCurrentUserAsync();
         }
         catch (InvalidOperationException ex)
         {
-            NotificationService.Notify(ToastSeverity.Error, "Could not add the photo", ex.Message);
+            Toast.Notify(ToastSeverity.Error, "Could not add the photo", ex.Message);
         }
         finally { photoBusy = false; }
-    }
-
-    private record ProfileDto
-    {
-        public Guid Id { get; init; }
-        public string Username { get; init; } = "";
-        public string Email { get; init; } = "";
-        public string? FirstName { get; init; }
-        public string? LastName { get; init; }
-        public string FullName { get; init; } = "";
-        public string? PhotoUrl { get; init; }
-        public string? Phone { get; init; }
-        public string? EmployeeNumber { get; init; }
-        public string Role { get; init; } = "";
-        public Guid? AssignedBranchId { get; init; }
-        public string? AssignedBranchName { get; init; }
-        public DateTime? LastLogin { get; init; }
-        public DateTime CreatedAt { get; init; }
-    }
-
-    private record ProblemDetails
-    {
-        public string? Title { get; init; }
-        public string? Detail { get; init; }
-        public int? Status { get; init; }
     }
 }

@@ -94,6 +94,17 @@ public static class HubTabs
     }
 
     /// <summary>
+    /// Whether ANY section would be visible, from two synchronous predicates — for the places that
+    /// link to a hub rather than render it (the sidebar, the user menu, the phone sheet; see
+    /// <see cref="NavGates"/>). The same rule <see cref="VisibleAsync(IPermissionService, IModuleStateService?, Section[])"/>
+    /// applies on the page, so a link is shown exactly when the hub would open.
+    /// </summary>
+    public static bool AnyVisible(IEnumerable<Section> sections, Func<string, bool> has, Func<string, bool> hasModule)
+        => sections.Any(s =>
+            (s.AnyModule is not { Count: > 0 } needed || needed.Any(hasModule))
+            && (s.AnyOf.Count == 0 || s.AnyOf.Any(has)));
+
+    /// <summary>
     /// The tab a hub should open on: the one <c>?tab=</c> asks for when the caller may see it,
     /// otherwise the first visible one. The HUB owns that query key and nothing inside it may bind
     /// the same one — <c>TeachingReports</c> had to move its own sub-view selector to <c>?view=</c>

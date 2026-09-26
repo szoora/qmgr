@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QMgr.API.Authorization;
+using QMgr.API.Application.Services;
 using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
 using QMgr.Application.Tenant;
@@ -375,7 +376,10 @@ public class NotificationsController : ControllerBase
     /// Get notification settings for an organization
     /// </summary>
     [HttpGet("settings/{organizationId}")]
-    [RequirePermission(Permissions.NotificationsView)]
+    // notifications.manage, not .view: nine seeded roles hold .view, every teacher among them, and
+    // this is the school's messaging configuration. Secrets come back masked whoever asks
+    // (SecretMask) — until 2026-09-25 they came back in clear to all of them.
+    [RequirePermission(Permissions.NotificationsManage)]
     public async Task<ActionResult<NotificationSettingsDto>> GetSettings(
         Guid organizationId,
         CancellationToken cancellationToken = default)
@@ -391,6 +395,27 @@ public class NotificationsController : ControllerBase
     }
 
     /// <summary>
+    /// Which messaging channels are switched on — four flags and nothing else, for the Integrations
+    /// tab's status badges. It used to read the whole settings payload, secrets included, to show
+    /// four on/off badges.
+    /// </summary>
+    [HttpGet("settings/{organizationId}/channels")]
+    [RequirePermission(Permissions.SettingsView)]
+    public async Task<ActionResult<NotificationChannelStateDto>> GetChannelState(
+        Guid organizationId,
+        CancellationToken cancellationToken = default)
+    {
+        var ownershipError = VerifyOrganizationOwnership(organizationId);
+        if (ownershipError != null) return ownershipError;
+
+        var state = await _dbContext.NotificationSettings.AsNoTracking()
+            .Where(s => s.OrganizationId == organizationId)
+            .Select(s => new NotificationChannelStateDto(s.SmsEnabled, s.EmailEnabled, s.TelegramEnabled, s.WhatsAppEnabled))
+            .FirstOrDefaultAsync(cancellationToken);
+        return Ok(state ?? new NotificationChannelStateDto(false, false, false, false));
+    }
+
+    /// <summary>
     /// Create or update notification settings
     /// </summary>
     [HttpPut("settings")]
@@ -401,6 +426,16 @@ public class NotificationsController : ControllerBase
     {
         var ownershipError = VerifyOrganizationOwnership(dto.OrganizationId);
         if (ownershipError != null) return ownershipError;
+
+        // The editor round-trips the mask for every secret it did not retype; put the stored value
+        // back wherever it does, or a save of the sender name blanks the SMTP password.
+        var stored = await _dbContext.NotificationSettings.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.OrganizationId == dto.OrganizationId, cancellationToken);
+        dto.SmsApiKey = SecretMask.Keep(dto.SmsApiKey, stored?.SmsApiKey);
+        dto.SmsPassword = SecretMask.Keep(dto.SmsPassword, stored?.SmsPassword);
+        dto.SmtpPassword = SecretMask.Keep(dto.SmtpPassword, stored?.SmtpPassword);
+        dto.TelegramBotToken = SecretMask.Keep(dto.TelegramBotToken, stored?.TelegramBotToken);
+        dto.WhatsAppAccessToken = SecretMask.Keep(dto.WhatsAppAccessToken, stored?.WhatsAppAccessToken);
 
         var settings = new NotificationSettings
         {
@@ -554,9 +589,9 @@ public class NotificationsController : ControllerBase
         OrganizationId = settings.OrganizationId,
         SmsEnabled = settings.SmsEnabled,
         SmsGatewayUrl = settings.SmsGatewayUrl,
-        SmsApiKey = settings.SmsApiKey,
+        SmsApiKey = SecretMask.Hide(settings.SmsApiKey),
         SmsUsername = settings.SmsUsername,
-        SmsPassword = settings.SmsPassword,
+        SmsPassword = SecretMask.Hide(settings.SmsPassword),
         SmsSenderId = settings.SmsSenderId,
         SmsCustomerId = settings.SmsCustomerId,
         SmsLeadTokens = settings.SmsLeadTokens,
@@ -565,14 +600,14 @@ public class NotificationsController : ControllerBase
         SmtpPort = settings.SmtpPort,
         SmtpUseSsl = settings.SmtpUseSsl,
         SmtpUsername = settings.SmtpUsername,
-        SmtpPassword = settings.SmtpPassword,
+        SmtpPassword = SecretMask.Hide(settings.SmtpPassword),
         EmailFromAddress = settings.EmailFromAddress,
         EmailFromName = settings.EmailFromName,
         TelegramEnabled = settings.TelegramEnabled,
-        TelegramBotToken = settings.TelegramBotToken,
+        TelegramBotToken = SecretMask.Hide(settings.TelegramBotToken),
         WhatsAppEnabled = settings.WhatsAppEnabled,
         WhatsAppPhoneNumberId = settings.WhatsAppPhoneNumberId,
-        WhatsAppAccessToken = settings.WhatsAppAccessToken,
+        WhatsAppAccessToken = SecretMask.Hide(settings.WhatsAppAccessToken),
         InAppEnabled = settings.InAppEnabled,
         InAppPlaySound = settings.InAppPlaySound,
         InAppRetentionDays = settings.InAppRetentionDays,
@@ -615,6 +650,8 @@ public class CreateNotificationRequestDto
     public string? Email { get; set; }
     public string? EmailSubject { get; set; }
 }
+
+public record NotificationChannelStateDto(bool SmsEnabled, bool EmailEnabled, bool TelegramEnabled, bool WhatsAppEnabled);
 
 public class NotificationSettingsDto
 {

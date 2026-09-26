@@ -95,6 +95,47 @@ public static class ProgrammeClassifier
         var heading = string.Join(' ', doc.Heading.Select(p => p.Text)) + " " + string.Join(' ', grid.Take(header).SelectMany(r => r).Distinct());
         var headingWords = ProgrammeText.Words(heading + " " + doc.FileName);
 
+        // ---- Tables that belong to ANOTHER importer (2026-09-26): recognised so the Import inbox can route them to the
+        // section that owns them, instead of calling them "not recognised" and dropping them. Checked BEFORE the rota:
+        // a staff list carries names and phone numbers too, and without this it read as a duty rota with no dates.
+        var headerWords = ProgrammeText.Words(string.Join(' ', reading.Headers));
+        bool HeaderHas(params string[] words) => words.Any(headerWords.Contains);
+        if (other(out var otherKind, out var why))
+        {
+            reading.Kind = otherKind;
+            reading.Reasons.Add(why);
+            reading.Confidence = 0.8;
+            return reading;
+        }
+
+        bool other(out ProgrammeTableKind kind, out string reason)
+        {
+            var weekdays = headerWords.Count(w => w is "MONDAY" or "TUESDAY" or "WEDNESDAY" or "THURSDAY" or "FRIDAY" or "MON" or "TUE" or "WED" or "THU" or "FRI");
+            if (weekdays >= 3 || (HeaderHas("PERIOD", "PERIODS") && HeaderHas("SUBJECT", "SUBJECTS", "TEACHER", "CLASS", "LESSON")))
+            {
+                kind = ProgrammeTableKind.TimetableGrid;
+                reason = weekdays >= 3 ? "Weekdays across the top: a timetable." : "PERIOD with SUBJECT, TEACHER or CLASS: a timetable.";
+                return true;
+            }
+            if (HeaderHas("STUDENT", "STUDENTS", "LEARNER", "LEARNERS", "PUPIL", "PUPILS")
+                && (HeaderHas("ADMISSION", "ADM", "LIN", "REG", "CODE", "INDEX") || (HeaderHas("CLASS", "STREAM") && HeaderHas("GUARDIAN", "PARENT", "SEX", "GENDER"))))
+            {
+                kind = ProgrammeTableKind.StudentList;
+                reason = "Students with admission numbers or classes: a student roll.";
+                return true;
+            }
+            if (HasRole(ProgrammeColumnRole.Person) && numericDateShare < 0.2
+                && HeaderHas("EMAIL", "DESIGNATION", "POSITION", "DEPARTMENT", "QUALIFICATION", "TSC", "EMPLOYEE", "ROLE", "SEX", "GENDER"))
+            {
+                kind = ProgrammeTableKind.StaffList;
+                reason = "Names with email, position, department or staff number, and no duty dates: a staff list.";
+                return true;
+            }
+            kind = ProgrammeTableKind.Unknown;
+            reason = string.Empty;
+            return false;
+        }
+
         var expected = new List<ProgrammeColumnRole>();
         if (HasRole(ProgrammeColumnRole.Person) && (HasRole(ProgrammeColumnRole.Phone) || numericDateShare >= 0.5) && !HasRole(ProgrammeColumnRole.PeriodLabel))
         {

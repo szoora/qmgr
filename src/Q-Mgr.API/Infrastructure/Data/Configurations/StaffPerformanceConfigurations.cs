@@ -72,6 +72,9 @@ public class StaffDutyConfiguration : IEntityTypeConfiguration<StaffDuty>
         b.HasIndex(d => d.SeriesId).HasFilter("\"SeriesId\" IS NOT NULL").HasDatabaseName("idx_staff_duties_series");
         // Programme import (2026-09-23): the undo finds a batch's duties by this.
         b.HasIndex(d => d.ImportJobId).HasFilter("\"ImportJobId\" IS NOT NULL").HasDatabaseName("idx_staff_duties_import_job");
+        // A re-import matches an imported meeting by the line it came from (calendar-audiences plan, B7).
+        b.Property(d => d.SourceKey).HasMaxLength(200);
+        b.HasIndex(d => new { d.OrganizationId, d.SourceKey }).HasFilter("\"SourceKey\" IS NOT NULL").HasDatabaseName("idx_staff_duties_source_key");
         // Lessons (plan §7.1): materialisation is idempotent on one duty per timetable lesson per start, so the nightly
         // run and the run a publish enqueues can overlap without doubling a teacher's day.
         b.Property(d => d.ClassName).HasMaxLength(100);
@@ -456,5 +459,59 @@ public class StaffConfigRequestConfiguration : IEntityTypeConfiguration<StaffCon
             .IsUnique()
             .HasFilter("\"State\" = 0")
             .HasDatabaseName("ux_staff_config_requests_open");
+    }
+}
+
+/// <summary>Lesson plans and schemes of work (2026-09-26). See <see cref="TeachingPlan"/>.</summary>
+public class TeachingPlanConfiguration : IEntityTypeConfiguration<TeachingPlan>
+{
+    public void Configure(EntityTypeBuilder<TeachingPlan> b)
+    {
+        b.ToTable("TeachingPlans");
+        b.HasKey(p => p.Id);
+        b.Property(p => p.Kind).HasConversion<int>();
+        b.Property(p => p.Status).HasConversion<int>();
+        b.PrimitiveCollection(p => p.ClassNames).HasColumnType("text[]");
+        b.Property(p => p.ClassKey).HasMaxLength(400).IsRequired();
+        b.Property(p => p.PeriodKey).HasMaxLength(40).IsRequired();
+        b.Property(p => p.SchemeRowKey).HasMaxLength(40);
+        b.Property(p => p.Title).HasMaxLength(200).IsRequired();
+        b.Property(p => p.SectionsJson).HasColumnType("jsonb").HasDefaultValueSql("'{}'::jsonb").IsRequired();
+        b.Property(p => p.RowsJson).HasColumnType("jsonb").HasDefaultValueSql("'[]'::jsonb").IsRequired();
+        b.Property(p => p.TrailJson).HasColumnType("jsonb").HasDefaultValueSql("'[]'::jsonb").IsRequired();
+        b.Property(p => p.StageSkippedReason).HasMaxLength(300);
+        b.Property(p => p.ReturnReason).HasMaxLength(2000);
+        b.Property(p => p.Reflection).HasMaxLength(4000);
+        b.Property(p => p.FileName).HasMaxLength(255);
+        b.Property(p => p.Stages).HasDefaultValue(2);
+        b.Property(p => p.Version).HasDefaultValue(1);
+        b.Property(p => p.IsCurrent).HasDefaultValue(true);
+        // xmin as the row version: Npgsql maps a uint row version to the system column, so nothing is added.
+        b.Property(p => p.RowVersion).IsRowVersion();
+
+        // One live lesson plan per author per lesson, and one live scheme per author, subject, classes and term. A
+        // revision in progress is not current, so it does not collide with the approved version it replaces.
+        b.HasIndex(p => new { p.AuthorUserId, p.DutyId }).IsUnique()
+            .HasFilter("\"DutyId\" IS NOT NULL AND \"IsCurrent\" AND \"Status\" <> 5")
+            .HasDatabaseName("ux_teaching_plans_lesson");
+        b.HasIndex(p => new { p.BranchId, p.AuthorUserId, p.SubjectId, p.ClassKey, p.PeriodKey }).IsUnique()
+            .HasFilter("\"Kind\" = 1 AND \"IsCurrent\" AND \"Status\" <> 5")
+            .HasDatabaseName("ux_teaching_plans_scheme");
+        // One open revision per approved plan.
+        b.HasIndex(p => p.SupersedesId).IsUnique()
+            .HasFilter("\"SupersedesId\" IS NOT NULL AND NOT \"IsCurrent\" AND \"Status\" <> 5")
+            .HasDatabaseName("ux_teaching_plans_open_revision");
+        b.HasIndex(p => new { p.OrganizationId, p.ClientRequestId }).IsUnique()
+            .HasFilter("\"ClientRequestId\" IS NOT NULL")
+            .HasDatabaseName("ux_teaching_plans_client_request");
+        // The review queues, the planbook and the reports.
+        b.HasIndex(p => new { p.BranchId, p.Status, p.SubjectId }).HasDatabaseName("idx_teaching_plans_queue");
+        b.HasIndex(p => new { p.AuthorUserId, p.LessonDate }).HasDatabaseName("idx_teaching_plans_author_date");
+        b.HasIndex(p => p.SchemeId).HasFilter("\"SchemeId\" IS NOT NULL").HasDatabaseName("idx_teaching_plans_scheme_ref");
+
+        b.HasOne<Subject>().WithMany().HasForeignKey(p => p.SubjectId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<StaffDuty>().WithMany().HasForeignKey(p => p.DutyId).OnDelete(DeleteBehavior.SetNull);
+        b.HasOne<TeachingPlan>().WithMany().HasForeignKey(p => p.SchemeId).OnDelete(DeleteBehavior.SetNull);
+        b.HasOne<TeachingPlan>().WithMany().HasForeignKey(p => p.SupersedesId).OnDelete(DeleteBehavior.SetNull);
     }
 }

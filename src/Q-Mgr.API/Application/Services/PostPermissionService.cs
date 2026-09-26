@@ -136,7 +136,10 @@ public static class PostPermissionService
         Permissions.StaffAppraisalsConduct,
         Permissions.StaffReportsView,
         Permissions.StaffDutyReportsView,
-        Permissions.TimetableLessonsFlag
+        Permissions.TimetableLessonsFlag,
+        // Lesson plans (2026-09-26): stage 1 of the chain IS the head of department. The permission names the act; which
+        // plans a holder may forward is still decided by the subject's department (TeachingPlanAccess), never the code alone.
+        Permissions.TeachingPlansReview
     };
 
     /// <summary>

@@ -27,6 +27,7 @@
 @inject IModuleStateService ModuleState
 @inject IAppInitializationService AppInit
 @inject IConfiguration Configuration
+@inject IUiPreferencesService UiPreferences
 
 @* Show loading state until authentication is determined *@
 @if (!authChecked)
@@ -144,7 +145,12 @@ else
                     <li><span class="dropdown-header">@(currentUser?.FullName ?? "User")</span></li>
                     <li><hr class="dropdown-divider"></li>
                     <li><a class="dropdown-item" href="profile"><i class="bi bi-person me-2"></i>My Profile</a></li>
-                    <li><a class="dropdown-item" href="admin/settings"><i class="bi bi-gear me-2"></i>Settings</a></li>
+                    @* Gated like the sidebar entry (NavGates). It had no gate at all until 2026-09-25, so every
+                       teacher was offered the school's settings from their own name. *@
+                    @if (ShowAdminSettingsHub)
+                    {
+                        <li><a class="dropdown-item" href="admin/settings"><i class="bi bi-gear me-2"></i>Settings</a></li>
+                    }
                     @* Platform-gated: the API reference is for platform operators, not tenant
                        users (user decision 2026-09-18). The server refuses it on the
                        platform.admin policy — this only stops advertising a door that 403s. *@
@@ -185,6 +191,15 @@ else
                         </a>
                     </li>
                 }
+                @if (NavGates.ImportInbox(HasCode) && (!isSuperAdmin || BranchState.CurrentBranchId != Guid.Empty))
+                {
+                    <li class="nav-item">
+                        <a href="imports" @onclick="CollapseSidebarOnMobile" class="nav-link @(IsActive("/imports") ? "active" : "")" id="nav-import-inbox">
+                            <i class="bi bi-inbox"></i>
+                            <span>Import inbox</span>
+                        </a>
+                    </li>
+                }
 
                 <!-- Queue Management -->
                 @if ((canViewQueue || canManageQueue) && HasModule(ModuleCodes.CoreQueue))
@@ -197,12 +212,18 @@ else
                         </a>
                         <ul class="submenu">
                             <li><a href="queue/board" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/queue/board") ? "active" : "")"><i class="bi bi-view-list"></i>Live Queue Board</a></li>
-                            <li><a href="admin/appointments" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/appointments") ? "active" : "")"><i class="bi bi-calendar-check"></i>Appointments</a></li>
-                            @if (canManageQueue)
+                            @if (NavGates.Appointments(HasCode, HasModule))
+                            {
+                                <li><a href="admin/appointments" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/appointments") ? "active" : "")"><i class="bi bi-calendar-check"></i>Appointments</a></li>
+                            }
+                            @if (NavGates.CounterTerminal(HasCode, HasModule))
                             {
                                 <li><a href="queue/counter" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/queue/counter") ? "active" : "")"><i class="bi bi-display"></i>Counter Terminal</a></li>
                             }
-                            <li><a href="@($"kiosk/branch/{BranchState.CurrentBranchId}")" @onclick="CollapseSidebarOnMobile" class="@(IsActive($"/kiosk/branch/{BranchState.CurrentBranchId}") ? "active" : "")"><i class="bi bi-hand-index-thumb"></i>Self-Service Kiosk</a></li>
+                            @if (NavGates.Kiosk(HasCode, HasModule))
+                            {
+                                <li><a href="@($"kiosk/branch/{BranchState.CurrentBranchId}")" @onclick="CollapseSidebarOnMobile" class="@(IsActive($"/kiosk/branch/{BranchState.CurrentBranchId}") ? "active" : "")"><i class="bi bi-hand-index-thumb"></i>Self-Service Kiosk</a></li>
+                            }
                             <li><a href="@($"queue/display/{BranchState.CurrentBranchId}")" @onclick="CollapseSidebarOnMobile" class="@(IsActive($"/queue/display/{BranchState.CurrentBranchId}") ? "active" : "")"><i class="bi bi-tv"></i>Customer Display</a></li>
                         </ul>
                     </li>
@@ -787,7 +808,6 @@ else
     private bool canApproveJoinRequests = false;
     private bool canViewRoles = false;
     private bool canViewSettings = false;
-    private bool canViewNotifications = false;
     private bool canViewApiClients = false;
     private bool canViewFeedback = false;
     private bool canViewVisitors = false;
@@ -836,16 +856,25 @@ else
         // The WHOLE set once, not one awaited call per candidate: MobileNav asks about a dozen
         // codes, and a predicate over the set is both cheaper and SYNCHRONOUS — which is what lets
         // MobileNav stay a pure decision with no service of its own to mock or drift from.
-        var codes = await PermissionService.GetPermissionsAsync();
-        var superAdmin = isSuperAdmin;
-        bool Has(string code) => superAdmin || codes.Contains(code);
+        permissionCodes = await PermissionService.GetPermissionsAsync();
 
-        mobileSlots = MobileNav.SlotsFor(Has, HasModule);
-        mobileMore = MobileNav.MoreFor(Has, HasModule, mobileSlots);
+        mobileSlots = MobileNav.SlotsFor(HasCode, HasModule);
+        mobileMore = MobileNav.MoreFor(HasCode, HasModule, mobileSlots);
     }
 
+    /// <summary>
+    /// The whole permission set, read once with the phone bar. <see cref="HasCode"/> over it is the
+    /// synchronous predicate every <see cref="NavGates"/> rule takes, so the sidebar, the user menu
+    /// and the phone sheet answer "may this person see X" from one rule rather than three.
+    /// </summary>
+    private HashSet<string> permissionCodes = new();
+    private bool HasCode(string code) => isSuperAdmin || permissionCodes.Contains(code);
+
+    // Fails OPEN only once a load has FAILED. `!LoadSucceeded` alone is also true before the first load has finished, so
+    // every sign-in briefly offered every module's pages to a school without them (found 2026-09-26 by rbac-links, on a
+    // tenant with Core Queue cancelled). Until the list arrives nothing module-gated is shown; OnChanged re-renders.
     private bool HasModule(string moduleCode) =>
-        isSuperAdmin || !ModuleState.LoadSucceeded || ModuleState.ActiveModuleCodes.Contains(moduleCode);
+        isSuperAdmin || (ModuleState.IsLoaded && !ModuleState.LoadSucceeded) || ModuleState.ActiveModuleCodes.Contains(moduleCode);
     private bool tokensInitialized = false;
     private string ApiDocsUrl = "/api/docs";
 
@@ -1120,7 +1149,6 @@ else
         canApproveJoinRequests = await PermissionService.HasPermissionAsync(Permissions.UsersApprove);
         canViewRoles = await PermissionService.HasPermissionAsync(Permissions.RolesView);
         canViewSettings = await PermissionService.HasPermissionAsync(Permissions.SettingsView);
-        canViewNotifications = await PermissionService.HasPermissionAsync(Permissions.NotificationsView);
         canViewApiClients = await PermissionService.HasPermissionAsync(Permissions.ApiClientsView);
         canViewFeedback = await PermissionService.HasPermissionAsync(Permissions.FeedbackView);
         canViewVisitors = await PermissionService.HasPermissionAsync(Permissions.VisitorsView);
@@ -1292,20 +1320,20 @@ else
     private bool ShowAdminJoinRequests => canApproveJoinRequests && HasModule(ModuleCodes.StudentWelfare);
     private bool ShowAdminOnboarding => canViewUsers && HasModule(ModuleCodes.StudentWelfare);
     private bool ShowAdminPrinterAndKiosk => canViewSettings && HasModule(ModuleCodes.CoreQueue);
-    private bool ShowAdminIndustry => canViewSettings && HasModule(ModuleCodes.CoreQueue);
     private bool ShowAdminBranding => canViewSettings;
-    private bool ShowAdminIntegrations => canViewSettings && HasModule(ModuleCodes.IntegrationsApi);
     private bool ShowAdminCustomerLinks => canViewSettings && HasModule(ModuleCodes.CoreQueue);
 
     private bool ShowAdminBranchesHub => canViewBranches || ShowAdminCounters || ShowAdminServiceTypes;
     private bool ShowAdminUsersHub => ShowAdminUsers || ShowAdminJoinRequests || ShowAdminOnboarding;
     private bool ShowAdminAppearanceHub => ShowAdminBranding || ShowAdminPrinterAndKiosk || ShowAdminCustomerLinks;
-    private bool ShowAdminSettingsHub => canViewSettings || canViewNotifications || ShowAdminIndustry || ShowAdminIntegrations;
+    // NavGates, not a local OR: every teacher saw Settings through notifications.view until
+    // 2026-09-25, and the user menu and the phone sheet each had their own idea of the rule.
+    private bool ShowAdminSettingsHub => NavGates.SettingsHub(HasCode, HasModule);
 
     private bool CanViewAdminSection =>
         ShowAdminBranchesHub || ShowAdminUsersHub || ShowAdminAppearanceHub || ShowAdminSettingsHub;
 
-    private bool ShowReportsOverview => canViewReports && ModuleAllows("/reports");
+    private bool ShowReportsOverview => NavGates.Reports(HasCode, HasModule);
     private bool ShowReportsQueue => canViewReports && ModuleAllows("/reports/queue");
     private bool ShowReportsVisitors => canViewReports && canViewVisitors && ModuleAllows("/reports/visitors");
     private bool CanViewReportsSection => ShowReportsOverview || ShowReportsQueue || ShowReportsVisitors;
@@ -1402,6 +1430,25 @@ else
             if (!notification.IsRead) notificationCount++;
             StateHasChanged();
         });
+
+        // The chime and the toast (calendar-audiences plan E7). The TOAST is not optional: sound is never the only cue
+        // (WCAG 2.2 SC 1.3.3), and a browser that has not been interacted with yet will not play it anyway. The chime
+        // follows the person's own switch, "mute on this device", "important only" and the school's quiet hours —
+        // IUiPreferencesService.ShouldChimeAsync is the one place that decides — and the script throttles a burst to one.
+        if (notification.IsRead) return;
+        try
+        {
+            await InvokeAsync(() => ToastService.Notify(
+                notification.Priority is "High" or "Urgent" ? ToastSeverity.Warning : ToastSeverity.Info,
+                notification.Title, notification.Message));
+            if (await UiPreferences.ShouldChimeAsync(notification.Priority))
+                await JSRuntime.InvokeVoidAsync("qmgrSound.play", notification.Priority is "High" or "Urgent");
+        }
+        catch (JSDisconnectedException) { /* the tab closed */ }
+        catch (Exception ex) when (ex is JSException or InvalidOperationException)
+        {
+            // A chime that could not play is nothing to report: the toast and the bell carry the notification.
+        }
     }
 
     private async Task HandleUnreadCountUpdate(int count)
