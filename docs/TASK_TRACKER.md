@@ -15,6 +15,11 @@ Status: `[ ]` open · `[!]` needs a person, not code · `[-]` decided, kept here
 
 ## ▶ HANDOVER — 2026-09-26 (read this first)
 
+**Superseded in part, late 2026-09-26:** everything this handover calls UNCOMMITTED below was committed as `4145db9` and
+pushed, and a package was built from it. Then the phone bar (Workspace and My Day for a teacher, Calendar before Home) and
+the school's own period types were built and committed on top. **Nothing of either is deployed yet** — the latest package
+in `scripts/deploy/dist` is the one to install, and the credential rotation below still applies after it.
+
 ### State in one paragraph
 
 The RBAC close-out (`docs/plans/CLOSE_OUT_RBAC_AND_ACCOUNT.md`, artifact
@@ -203,7 +208,9 @@ needs its own plan, or a path that has never run against the real thing.
 
 | Date | What | Commit |
 |---|---|---|
-| 2026-09-25 | RBAC close-out: messaging secrets masked, eleven leaks closed, one link rule, account vs My file, undo of import updates | **uncommitted** — see the handover |
+| 2026-09-26 | Period types are the school's own list; the phone bar follows the module list, Calendar before Home | see `git log` |
+| 2026-09-26 | Separation of duties, lesson plans and schemes of work, calendar audiences and the Import inbox | `4145db9` |
+| 2026-09-25 | RBAC close-out: messaging secrets masked, eleven leaks closed, one link rule, account vs My file, undo of import updates | `4145db9` |
 | 2026-09-24 | Rota cancel ends a slot under way; Firebase push wired; school day follows its times | `8e96aa0` `2487cb9` `e7e4eff` |
 | 2026-09-24 | Welfare alerts reach housemasters; governors count confidential cases; full runs pass | `c6b2e27` |
 | 2026-09-24 | SACC Dashboard rebrand, exam series, employment types, the school chain, the RBAC review | `f2762c4` |

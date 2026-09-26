@@ -1433,5 +1433,19 @@ if command -v node > /dev/null 2>&1; then
 else
   printf '  \033[33mSKIP\033[0m  node is not installed; section 45 did not run\n'
 fi
+
+hdr "46. The school's own period types (Node)"
+# 2026-09-26: Lesson / Break / Assembly became the school's own list of types, each with the two switches the code acts
+# on. Older documents are understood, the kind is derived, and a period with published lessons cannot stop taking them.
+if command -v node > /dev/null 2>&1; then
+  PT_OUT=$(API="$API" BRANCH="$BRANCH" node "$(dirname "$0")/period-types-e2e.mjs" 2>&1)
+  echo "$PT_OUT" | sed 's/^/  /'
+  PT_PASS=$(echo "$PT_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  PT_FAIL=$(echo "$PT_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$PT_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 46 did not report a summary\n'
+  else PASS=$((PASS+PT_PASS)); FAIL=$((FAIL+PT_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 46 did not run\n'
+fi
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 exit "$FAIL"

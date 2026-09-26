@@ -67,6 +67,45 @@
             <p class="tts-help">@CycleDayCount-day cycle over @(TeachingDaysText). Changing the cycle does not change an existing timetable version: start a new draft.</p>
         </QCard>
 
+        @* THE SCHOOL'S OWN PERIOD TYPES (2026-09-26). The name is the school's; the two switches are what the code acts on.
+           A type a period uses cannot be removed here (the server refuses it too): retire it and it stops being offered. *@
+        <QCard Title="Period types" Icon="tags" Class="tts-types">
+            <div class="table-wrap">
+                <table class="data-table q-stack tts-types-table">
+                    <thead><tr><th>Name</th><th>Lessons can be placed</th><th>On a teacher's own timetable</th><th>Periods</th><th>In use</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var (pt, pti) in settings.PeriodTypes.Select((t, i) => (t, i)))
+                        {
+                            var ty = pt;
+                            var tyIndex = pti;
+                            var used = PeriodsOfType(ty);
+                            <tr @key="ty" class="@(ty.IsRetired ? "tts-retired" : "")">
+                                <td><QInput TValue="string" @bind-Value="@ty.Name" MaxLength="40" Placeholder="Games" Disabled="@(!canManage)" /></td>
+                                <td><QCheckbox Value="@ty.Teaching" ValueChanged="@(on => SetTeaching(ty, on))" Label="@(ty.Teaching ? "Yes" : "No")" Disabled="@(!canManage)" /></td>
+                                <td><QCheckbox Value="@(ty.Teaching || ty.OnPersonalTimetable)" ValueChanged="@(on => SetPersonal(ty, on))" Label="@(ty.Teaching || ty.OnPersonalTimetable ? "Shown" : "Hidden")" Disabled="@(!canManage || ty.Teaching)" /></td>
+                                <td>@(used == 0 ? "—" : used.ToString())</td>
+                                <td><QCheckbox @bind-Value="@ty.IsRetired" Label="@(ty.IsRetired ? "Retired" : "In use")" Disabled="@(!canManage)" /></td>
+                                <td>
+                                    @if (canManage)
+                                    {
+                                        <QButton Icon="trash" Variant="ghost" Size="sm" OnClick="@(() => settings.PeriodTypes.RemoveAt(tyIndex))" Disabled="@(used > 0)"
+                                                 Title="@(used > 0 ? "Periods use this type: retire it instead" : "Remove type")" />
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            @if (canManage)
+            {
+                <div class="tts-actions">
+                    <QButton Text="Add a period type" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@AddPeriodType" Disabled="@(settings.PeriodTypes.Count >= TimetableCycle.MaxPeriodTypes)" />
+                </div>
+            }
+            <p class="tts-help">Name a type what your school calls it — Lunch, Games, Prep, Registration. Only a type that allows lessons can have lessons placed in it; the others show across the week on the timetable.</p>
+        </QCard>
+
         @foreach (var (type, index) in settings.DayTypes.Select((t, i) => (t, i)))
         {
             var t = type;
@@ -86,7 +125,7 @@
 
                 <div class="table-wrap">
                     <table class="data-table q-stack tts-periods">
-                        <thead><tr><th>Key</th><th>Label</th><th>Starts</th><th>Ends</th><th>Kind</th><th></th></tr></thead>
+                        <thead><tr><th>Key</th><th>Label</th><th>Starts</th><th>Ends</th><th>Type</th><th></th></tr></thead>
                         <tbody>
                             @foreach (var (period, pi) in t.Periods.Select((p, i) => (p, i)))
                             {
@@ -101,8 +140,8 @@
                                     <td><QInput TValue="string" @bind-Value="@p.Start" @bind-Value:after="@(() => SortByStart(dayType))" Type="time" Disabled="@(!canManage)" /></td>
                                     <td><QInput TValue="string" @bind-Value="@p.End" Type="time" Disabled="@(!canManage)" /></td>
                                     <td>
-                                        <QSelect TValue="BellPeriodKind" TItem="BellPeriodKind" Value="@p.Kind" ValueChanged="@(k => p.Kind = k)" Items="@Kinds"
-                                                 ValueSelector="@(k => k)" TextSelector="@KindLabel" Disabled="@(!canManage)" />
+                                        <QSelect TValue="string" TItem="PeriodTypeDto" Value="@p.Type" ValueChanged="@(k => SetPeriodType(p, k))" Items="@TypesFor(p)"
+                                                 ValueSelector="@(t => t.Key)" TextSelector="@(t => t.IsRetired ? $"{t.Name} (retired)" : t.Name)" Disabled="@(!canManage)" />
                                     </td>
                                     <td>
                                         @if (canManage)
@@ -246,6 +285,8 @@
     .tts-rooms td .q-input-wrapper { margin-bottom: 0; }
     .tts-retired td { color: var(--qm-text-muted); }
     .tts-periods td .q-input-wrapper, .tts-periods td .q-select { margin-bottom: 0; }
+    .tts-types-table td { vertical-align: middle; }
+    .tts-types-table td .q-input-wrapper { margin-bottom: 0; }
 </style>
 
 @code {
@@ -265,7 +306,6 @@
     private Dictionary<TimetableRoomDto, string> roomOriginalNames = new(ReferenceEqualityComparer.Instance);
 
     private static readonly DayOfWeek[] WeekOrder = { DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday };
-    private static readonly IReadOnlyList<BellPeriodKind> Kinds = Enum.GetValues<BellPeriodKind>();
 
     private int CycleDayCount => settings == null ? 0 : TimetableCycle.CycleDayCount(settings);
     private IReadOnlyList<int> CycleDays => Enumerable.Range(1, CycleDayCount).ToList();
@@ -338,8 +378,10 @@
         var n = type.Periods.Count(p => p.Kind == BellPeriodKind.Lesson) + 1;
         var key = $"P{n}";
         while (type.Periods.Any(p => string.Equals(p.Key, key, StringComparison.OrdinalIgnoreCase))) key = $"P{++n}";
-        type.Periods.Add(new BellPeriodDto { Key = key, Label = key, Start = last.ToString("HH:mm"), End = end.ToString("HH:mm"), Kind = BellPeriodKind.Lesson });
+        type.Periods.Add(new BellPeriodDto { Key = key, Label = key, Start = last.ToString("HH:mm"), End = end.ToString("HH:mm"), Kind = BellPeriodKind.Lesson, Type = TeachingTypeKey });
     }
+
+    private string? TeachingTypeKey => settings?.PeriodTypes.FirstOrDefault(t => t.Teaching && !t.IsRetired)?.Key;
 
     private void AddDayType()
     {
@@ -350,7 +392,7 @@
             Key = $"type{settings.DayTypes.Count + 1}",
             Name = free == DayOfWeek.Saturday ? "Saturday" : "Another day",
             Days = new() { free },
-            Periods = new() { new BellPeriodDto { Key = "P1", Label = "P1", Start = "08:00", End = "08:40" } }
+            Periods = new() { new BellPeriodDto { Key = "P1", Label = "P1", Start = "08:00", End = "08:40", Type = TeachingTypeKey } }
         });
     }
 
@@ -369,7 +411,35 @@
 
     private void AddRoom() => rooms.Add(new TimetableRoomDto { IsActive = true });
 
-    private static string KindLabel(BellPeriodKind k) => k switch { BellPeriodKind.Lesson => "Lesson", BellPeriodKind.Break => "Break", _ => "Assembly" };
+    // ---- Period types (2026-09-26) ----------------------------------------------------------------------------
+
+    /// <summary>What a period may be set to: every type still offered, plus the one it already has if that is retired.</summary>
+    private IReadOnlyList<PeriodTypeDto> TypesFor(BellPeriodDto p)
+        => settings!.PeriodTypes.Where(t => !t.IsRetired || string.Equals(t.Key, p.Type, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    private int PeriodsOfType(PeriodTypeDto type)
+        => settings!.DayTypes.SelectMany(d => d.Periods).Count(p => string.Equals(p.Type, type.Key, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>The kind follows the type at once, so the page reads as it will be stored; the server derives it again.</summary>
+    private void SetPeriodType(BellPeriodDto p, string? key)
+    {
+        p.Type = key;
+        if (settings!.PeriodTypes.FirstOrDefault(t => t.Key == key) is { } t) p.Kind = TimetableCycle.KindFor(t);
+    }
+
+    private void SetTeaching(PeriodTypeDto type, bool on) { type.Teaching = on; if (on) type.OnPersonalTimetable = true; Rederive(); }
+    private void SetPersonal(PeriodTypeDto type, bool on) { type.OnPersonalTimetable = on; Rederive(); }
+    private void Rederive() { if (settings != null) TimetableCycle.ApplyPeriodTypes(settings); }
+
+    private void AddPeriodType()
+    {
+        if (settings == null) return;
+        // The key is made now, not from the name, so a period can pick the new type before it is saved and a rename of the
+        // type later never has to move anything.
+        string key;
+        do { key = "t-" + Guid.NewGuid().ToString("N")[..8]; } while (settings.PeriodTypes.Any(t => t.Key == key));
+        settings.PeriodTypes.Add(new PeriodTypeDto { Key = key, Name = "", Teaching = false, OnPersonalTimetable = true });
+    }
 
     /// <summary>
     /// PHASE 3 OF THE LIST-PAGE SWEEP (2026-09-20): the client enforces what the server enforces.
@@ -409,7 +479,16 @@
             .FirstOrDefault(g => g.Count() > 1);
         if (dupe != null) return $"\"{dupe.Key}\" is listed twice. Two rooms of the same name cannot be told apart on a timetable.";
 
-        var blankDay = settings!.DayTypes.FirstOrDefault(t => string.IsNullOrWhiteSpace(t.Name));
+        var blankType = settings!.PeriodTypes.FindIndex(t => string.IsNullOrWhiteSpace(t.Name));
+        if (blankType >= 0) return $"Period type {blankType + 1} has no name. Name it or remove it.";
+        var dupeType = settings.PeriodTypes.GroupBy(t => t.Name.Trim(), StringComparer.OrdinalIgnoreCase).FirstOrDefault(g => g.Count() > 1);
+        if (dupeType != null) return $"Two period types are called \"{dupeType.Key}\".";
+        if (!settings.PeriodTypes.Any(t => t.Teaching && !t.IsRetired)) return "At least one period type must allow lessons.";
+        var untyped = settings.DayTypes.SelectMany(t => t.Periods.Select(p => (Day: t.Name, p)))
+            .FirstOrDefault(x => !settings.PeriodTypes.Any(t => string.Equals(t.Key, x.p.Type, StringComparison.OrdinalIgnoreCase)));
+        if (untyped.p != null) return $"{untyped.p.Label} in \"{untyped.Day}\" has no period type.";
+
+        var blankDay = settings.DayTypes.FirstOrDefault(t => string.IsNullOrWhiteSpace(t.Name));
         if (blankDay != null) return "A day type has no name.";
 
         var blankPeriod = settings.DayTypes

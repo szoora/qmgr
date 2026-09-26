@@ -584,7 +584,32 @@ public record BellPeriodDto
     /// <summary>Branch-local "HH:mm".</summary>
     public string Start { get; set; } = "08:00";
     public string End { get; set; } = "08:40";
+    /// <summary>
+    /// DERIVED from <see cref="Type"/> whenever settings are read or saved (TimetableCycle.ApplyPeriodTypes), never chosen
+    /// directly any more: the school picks a type from its own list and the type's switches decide this. Kept on the period
+    /// because every reader of "may a lesson go here" asks it, and a client that still sends only a kind is understood.
+    /// </summary>
     public BellPeriodKind Kind { get; set; } = BellPeriodKind.Lesson;
+    /// <summary>The key of one of <see cref="TimetableSettingsDto.PeriodTypes"/>. Null only on a document saved before 2026-09-26; filled from the kind on read.</summary>
+    [MaxLength(40)] public string? Type { get; set; }
+}
+
+/// <summary>
+/// A KIND OF PERIOD THE SCHOOL NAMES ITSELF (2026-09-26): Lesson, Break, Lunch, Assembly, Games, Prep… The name is the school's;
+/// what the period DOES is the two switches below, and those are the only things the code acts on — the CLAUDE.md rule that a
+/// value with no behaviour is data and a value with behaviour needs code. A new switch is a new behaviour and is added here.
+/// </summary>
+public record PeriodTypeDto
+{
+    /// <summary>Stable: what a period stores. Never shown, never changed once saved; renaming changes <see cref="Name"/>.</summary>
+    [MaxLength(40)] public string Key { get; set; } = string.Empty;
+    [MaxLength(40)] public string Name { get; set; } = string.Empty;
+    /// <summary>Lessons can be placed in it: the grid, the clash checker, free-period requests and lesson registers follow this.</summary>
+    public bool Teaching { get; set; }
+    /// <summary>Shown on a teacher's own timetable (the My Workspace card and a teacher's printed sheet). A teaching type always is.</summary>
+    public bool OnPersonalTimetable { get; set; } = true;
+    /// <summary>No longer offered for a new period. Periods already of this type keep it; a type in use is retired, never deleted.</summary>
+    public bool IsRetired { get; set; }
 }
 
 /// <summary>A set of teaching days sharing one bell schedule: "Monday to Friday", "Saturday morning".</summary>
@@ -635,6 +660,8 @@ public record TimetableSettingsDto
     public int CycleWeeks { get; set; } = 1;
     public int DefaultPeriodMinutes { get; set; } = 40;
     public List<BellDayTypeDto> DayTypes { get; set; } = new();
+    /// <summary>The school's own list of period types (2026-09-26). Empty on a document saved before then; filled with Lesson, Break and Assembly on read.</summary>
+    public List<PeriodTypeDto> PeriodTypes { get; set; } = new();
     public List<TeacherUnavailabilityDto> Unavailability { get; set; } = new();
 
     /// <summary>

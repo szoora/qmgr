@@ -1,6 +1,6 @@
 import { openTab } from './cdp.mjs';
 import { login } from './login.mjs';
-const BASE = 'http://127.0.0.1:5003';
+const BASE = process.env.WEB ?? 'http://127.0.0.1:5003';
 let pass = 0, fail = 0;
 const post = (line) => fetch('http://127.0.0.1:5010/append?key=ui', { method: 'POST', body: line + '\n' }).catch(() => {});
 const check = (name, ok, detail = '') => { ok ? pass++ : fail++; const l = `    ${ok ? 'PASS' : 'FAIL'}  ROOMS UI: ${name}${ok ? '' : '  — ' + detail}`; console.log(l); post(l); };

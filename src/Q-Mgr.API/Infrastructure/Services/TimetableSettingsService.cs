@@ -47,6 +47,7 @@ public class TimetableSettingsService : ITimetableSettingsService
                     {
                         stored.IsSaved = true;
                         stored.CycleWeeks = Math.Clamp(stored.CycleWeeks, 1, 2);
+                        TimetableCycle.ApplyPeriodTypes(stored); // a document from before period types reads as Lesson / Break / Assembly
                         return stored;
                     }
                 }

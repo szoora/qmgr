@@ -222,6 +222,12 @@ if (!teacherPass) {
   check('a teacher gets a bar of their own', teacherBar.length === 6, teacherBar.join(' | '));
   check('...different from the administrator\'s', teacherBar.join('|') !== adminBar.join('|'),
     `both are ${teacherBar.join(' | ')}`);
+  // Reported 2026-09-26: the bar was chosen before the module list arrived, so a teacher saw Home · Alerts · More while
+  // the sidebar offered My Workspace and My School Day. Whatever the sidebar shows first, the bar must carry.
+  check('...carrying My Day and Workspace, as the sidebar does', teacherBar.includes('My Day') && teacherBar.includes('Workspace'),
+    teacherBar.join(' | '));
+  // 2026-09-26: Home repeats My Workspace for anybody who holds it; the calendar is what a phone is opened to check.
+  check('...with Calendar and not Home', teacherBar.includes('Calendar') && !teacherBar.includes('Home'), teacherBar.join(' | '));
 
   // THE ASSERTION THAT MATTERS: a slot offered must not refuse. A bar that shows a destination the
   // server then 403s is worse than not showing it.

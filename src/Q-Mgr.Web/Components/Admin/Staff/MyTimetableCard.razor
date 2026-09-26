@@ -60,7 +60,7 @@
 
     /// <summary>Only the periods somebody could teach in, plus the breaks between them — the card is a glance, not the grid.</summary>
     private IReadOnlyList<QWeekGridRow> Rows => detail == null ? Array.Empty<QWeekGridRow>() :
-        TimetableCycle.Rows(detail.Settings).Where(p => p.Kind != BellPeriodKind.Assembly)
+        TimetableCycle.PersonalRows(detail.Settings)
             .Select(p => new QWeekGridRow(p.Key, p.Label, $"{p.Start}–{p.End}", p.Kind != BellPeriodKind.Lesson)).ToList();
 
     private QWeekGridCellState StateFor(QWeekGridSlot s)

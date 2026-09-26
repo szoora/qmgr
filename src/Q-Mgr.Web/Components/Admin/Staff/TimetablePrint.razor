@@ -86,7 +86,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            @foreach (var row in TimetableCycle.Rows(detail.Settings))
+                            @foreach (var row in (by == "teacher" ? TimetableCycle.PersonalRows(detail.Settings) : TimetableCycle.Rows(detail.Settings)))
                             {
                                 @if (row.Kind != BellPeriodKind.Lesson)
                                 {

@@ -857,7 +857,15 @@ else
         // codes, and a predicate over the set is both cheaper and SYNCHRONOUS — which is what lets
         // MobileNav stay a pure decision with no service of its own to mock or drift from.
         permissionCodes = await PermissionService.GetPermissionsAsync();
+        ChooseMobileSlots();
+    }
 
+    // THE BAR IS REBUILT WHEN THE MODULE LIST ARRIVES OR CHANGES, not only when permissions do (2026-09-26). HasModule
+    // stays closed until the list has loaded, and the first build runs before it has — so a teacher's bar lost My
+    // Workspace and My School Day for the life of the circuit while the sidebar, which reads HasModule on every render,
+    // showed both. Whatever re-renders the sidebar must re-choose the bar.
+    private void ChooseMobileSlots()
+    {
         mobileSlots = MobileNav.SlotsFor(HasCode, HasModule);
         mobileMore = MobileNav.MoreFor(HasCode, HasModule, mobileSlots);
     }
@@ -1206,6 +1214,7 @@ else
         // A module the tenant just removed should also close any page they are sitting on.
         InvokeAsync(() =>
         {
+            ChooseMobileSlots();
             EnforceModuleAccessForCurrentPage();
             StateHasChanged();
         });

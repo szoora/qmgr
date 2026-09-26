@@ -63,7 +63,7 @@ public static class MobileNav
     private static readonly Slot Timetable = new("timetable", "Timetable", "grid-3x3-gap", "/admin/timetable", Permissions.TimetableManage, ModuleCodes.StudentWelfare);
     private static readonly Slot Staff = new("staff", "Staff", "person-lines-fill", "/admin/staff", Permissions.StaffRecordsView, ModuleCodes.StudentWelfare);
     private static readonly Slot Dashboard = new("dashboard", "Home", "house", "/", Permissions.DashboardView);
-    /// <summary>The school calendar: base product, open to everybody signed in (TERM_PROGRAMME_CALENDAR_AND_GATES D8). In More, not a candidate, so no role's bar changed.</summary>
+    /// <summary>The school calendar: base product, open to everybody signed in (TERM_PROGRAMME_CALENDAR_AND_GATES D8). A candidate since 2026-09-26, ahead of Home.</summary>
     private static readonly Slot Calendar = new("calendar", "Calendar", "calendar3", "/calendar");
 
     /// <summary>Always slot four. See <see cref="SlotsFor"/> for why it is pinned.</summary>
@@ -77,6 +77,7 @@ public static class MobileNav
         // A person's own day comes before anything organisation-wide: a phone is opened to find out
         // what is on now, not to read a dashboard of figures.
         MySchoolDay,
+        Portal,         // the person's own hub sits beside their own day — the sidebar puts them side by side too
         Queue,          // the front desk's day IS the queue
         Students,
         Welfare,
@@ -84,8 +85,10 @@ public static class MobileNav
         Duties,
         Staff,
         Visitors,
-        Portal,
-        Dashboard,      // the fallback, and the only slot a viewer reaches
+        // The school calendar before Home (user, 2026-09-26): for anybody holding My Workspace, Home repeats it, and the
+        // calendar is what a phone is opened to check. Home stays the fallback for a role that reaches nothing above.
+        Calendar,
+        Dashboard,    // the fallback, and the only slot a viewer reaches
     };
 
     /// <summary>

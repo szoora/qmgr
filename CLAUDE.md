@@ -4497,6 +4497,31 @@ L1–L12 were taken as recommended, **the form is the main route**, and §11 lis
 - Verified by **sections 44 (25 checks) and 45 (99 checks)** and the browser suites `lesson-plan-ui`, `plan-pdf` and
   `plan-templates`, all 0 failed.
 
+## A period's type is the school's; what it DOES is two switches (2026-09-26)
+
+*"where is the ui to add a kind? we only have Assembly, Lesson, Break"*, then *"can this be a dynamic feature?"*. The three
+kinds were fixed because each is a behaviour; the answer was the "data vs behaviour" rule below, applied: the NAME is data,
+the behaviour is a small fixed set of switches.
+
+- **`TimetableSettingsDto.PeriodTypes`** (in `Branch.Settings["Timetable"]`, no new table) is the school's list; each
+  `PeriodTypeDto` carries **`Teaching`** (lessons can be placed) and **`OnPersonalTimetable`** (the My Workspace card and a
+  teacher's printed sheet). A period stores `Type` (the type's key). A new behaviour is a new switch AND the code that reads it.
+- **`BellPeriodDto.Kind` is DERIVED, never chosen**: `TimetableCycle.KindFor` (teaching → Lesson; else shown → Break; else
+  Assembly) is the one place a type becomes a kind, and `ApplyPeriodTypes` runs on every read and inside `Validate`. So every
+  older reader of `Kind` (the checker, materialisation, self-service, the grid, print) needed no change, a document saved
+  before today reads as Lesson / Break / Assembly, and a client that claims a kind is overruled.
+- **A type in use is retired, never removed** (the server refuses a period naming a type not on the list, naming the period).
+- **A period with PUBLISHED lessons cannot stop taking lessons** — by a type change or by switching the type off
+  (`TimetableController.StrandedLessonsProblemAsync`, versions still in force only). A draft is left to the diagnosis.
+- A new type's key is minted on the page (`t-xxxxxxxx`), not from its name, so a period can pick it before the first save
+  and renaming the type later moves nothing.
+- Verified by **section 46** (`period-types-e2e.mjs`, 23 checks) and **`browser/period-types-ui.mjs`** (10 checks).
+
+**The phone bar is re-chosen when the module list arrives** (`MainLayout.ChooseMobileSlots`, from `HandleModuleStateChanged`
+too). It was a snapshot taken before the list loaded, and since `HasModule` stays closed until it does, a teacher's bar lost
+My Day and Workspace for the life of the circuit while the sidebar showed both. Workspace is now second, and **Calendar comes
+before Home** (user, 2026-09-26: Home repeats My Workspace). `mobile-nav.mjs` asserts both for a teacher.
+
 ## Process note for future sessions
 
 Design/reference decisions like the one above must be written here (or somewhere durable) at the

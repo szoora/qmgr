@@ -28,7 +28,7 @@ try {
   check('the School Day editor opens with its periods', came);
 
   // The first day type's rows: [key, label, start] in the order the page shows them.
-  const rows = () => t.eval(`[...document.querySelector('table tbody').querySelectorAll('tr')].map(r => {
+  const rows = () => t.eval(`[...document.querySelector('table.tts-periods tbody').querySelectorAll('tr')].map(r => {
     const i = r.querySelectorAll('input'); return [i[0]?.value, i[1]?.value, i[2]?.value]; })`);
   const before = await rows();
   // Take the LAST row and give it the start time of the row above it minus a minute — earlier than its neighbour.
@@ -37,7 +37,7 @@ try {
   const earlier = `${String(Math.floor((h * 60 + m - 1) / 60)).padStart(2, '0')}:${String((h * 60 + m - 1) % 60).padStart(2, '0')}`;
   const moving = before[n];
   const set = await t.eval(`(() => {
-    const row = document.querySelector('table tbody').querySelectorAll('tr')[${n}];
+    const row = document.querySelector('table.tts-periods tbody').querySelectorAll('tr')[${n}];
     const input = row.querySelectorAll('input')[2];
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
     setter.call(input, ${JSON.stringify(earlier)});

@@ -107,6 +107,7 @@ public class TimetableController : StaffPerformanceControllerBase
 
         var error = TimetableCycle.Validate(request);
         if (error != null) return BadRequestProblem(error);
+        if (await StrandedLessonsProblemAsync(branchId, request) is { } stranded) return BadRequestProblem(stranded);
 
         var organizationId = await ResolveOrganizationIdAsync(branchId);
         var userIds = request.Unavailability.Select(u => u.UserId).Distinct().ToList();
@@ -138,6 +139,49 @@ public class TimetableController : StaffPerformanceControllerBase
         catch (Exception ex) { _logger.LogError(ex, "Could not enqueue lesson generation after the school day changed for branch {BranchId}; the nightly run will do it", branchId); }
 
         return await GetSettings(branchId);
+    }
+
+    /// <summary>
+    /// A PERIOD THAT STOPS TAKING LESSONS WHILE A PUBLISHED TIMETABLE HAS LESSONS IN IT (2026-09-26). Changing a period's type,
+    /// or switching "lessons can be placed" off on a type, would leave those lessons in a slot the bell schedule no longer
+    /// teaches in: they stop materialising, with nothing anywhere to say why. Refused, naming them, so the school moves the
+    /// lessons first (or re-publishes without them). A draft is left to the diagnosis, which already flags a lesson off the grid.
+    /// Only a period that still EXISTS and has changed kind is judged here — removing a period is the older, separate rule.
+    /// </summary>
+    private async Task<string?> StrandedLessonsProblemAsync(Guid branchId, TimetableSettingsDto next)
+    {
+        var current = await _settings.ReadAsync(branchId);
+        if (!current.IsSaved) return null;
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, await ZoneAsync(branchId)));
+
+        var published = await Db.Timetables.AsNoTracking()
+            // A version whose last day has passed teaches nothing more, so it cannot be stranded.
+            .Where(t => t.BranchId == branchId && t.Status == TimetableStatus.Published && t.EffectiveTo >= today)
+            .Select(t => new { t.Id, t.Name, t.CycleDays })
+            .ToListAsync();
+        if (published.Count == 0) return null;
+
+        var ids = published.Select(t => t.Id).ToList();
+        var lessons = await Db.TimetableLessons.AsNoTracking()
+            .Where(l => ids.Contains(l.TimetableId))
+            .Select(l => new { l.TimetableId, l.CycleDay, l.PeriodKey, l.ClassName })
+            .ToListAsync();
+
+        var stranded = new List<string>();
+        foreach (var l in lessons)
+        {
+            var t = published.First(p => p.Id == l.TimetableId);
+            if (TimetableCycle.LessonPeriodOn(current, t.CycleDays, l.CycleDay, l.PeriodKey) == null) continue; // already off the grid
+            var period = TimetableCycle.DayTypeOf(next, t.CycleDays, l.CycleDay)?.Periods
+                .FirstOrDefault(p => string.Equals(p.Key, l.PeriodKey, StringComparison.OrdinalIgnoreCase));
+            if (period == null || period.Kind == BellPeriodKind.Lesson) continue;
+            stranded.Add($"{l.ClassName} {TimetableCycle.CycleDayLabel(next, t.CycleDays, l.CycleDay)} {period.Label} ({t.Name})");
+        }
+        if (stranded.Count == 0) return null;
+
+        var named = string.Join("; ", stranded.Take(5)) + (stranded.Count > 5 ? $"; and {stranded.Count - 5} more" : "");
+        return $"{stranded.Count} published lesson{(stranded.Count == 1 ? " is" : "s are")} in a period that would no longer take lessons: {named}. "
+             + "Move them to another period in a new draft and publish it first, or leave this period's type as it is.";
     }
 
     // =====================================================================================================

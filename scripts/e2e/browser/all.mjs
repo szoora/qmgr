@@ -56,6 +56,7 @@ SUITES.push('access-ui');
 SUITES.push('product-name');
 // The School Day's rows follow their start times (2026-09-24); section 39 is the API half.
 SUITES.push('school-day-order');
+SUITES.push('period-types-ui');
 // 2026-09-25: every seeded role opens every link it is shown; the account page and My file (the RBAC close-out).
 SUITES.push('rbac-links', 'account-and-file');
 // The rota comes before the per-person load card, which says "Duty load" (2026-09-24).

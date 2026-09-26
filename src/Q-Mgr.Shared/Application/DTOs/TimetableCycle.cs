@@ -13,7 +13,7 @@ public static class TimetableCycle
     public const int MaxPeriodsPerDayType = 20;
 
     /// <summary>The Ugandan secondary default: Monday to Friday, ten 40-minute periods, a break and lunch (plan §15 decision 6).</summary>
-    public static TimetableSettingsDto Defaults() => new()
+    public static TimetableSettingsDto Defaults() => ApplyPeriodTypes(new()
     {
         CycleWeeks = 1,
         DefaultPeriodMinutes = 40,
@@ -36,7 +36,55 @@ public static class TimetableCycle
                 }
             }
         }
+    });
+
+    public const int MaxPeriodTypes = 20;
+
+    /// <summary>The three types every school starts with; each matches one of the kinds the code has always known.</summary>
+    public static List<PeriodTypeDto> DefaultPeriodTypes() => new()
+    {
+        new() { Key = "lesson", Name = "Lesson", Teaching = true, OnPersonalTimetable = true },
+        new() { Key = "break", Name = "Break", Teaching = false, OnPersonalTimetable = true },
+        new() { Key = "assembly", Name = "Assembly", Teaching = false, OnPersonalTimetable = false },
     };
+
+    /// <summary>
+    /// What a type's switches mean to every existing reader of <see cref="BellPeriodDto.Kind"/>: teaching → Lesson; otherwise
+    /// shown on a teacher's own timetable → Break; otherwise → Assembly. THE ONE PLACE a type becomes a kind.
+    /// </summary>
+    public static BellPeriodKind KindFor(PeriodTypeDto type)
+        => type.Teaching ? BellPeriodKind.Lesson : type.OnPersonalTimetable ? BellPeriodKind.Break : BellPeriodKind.Assembly;
+
+    public static PeriodTypeDto? TypeOf(TimetableSettingsDto settings, BellPeriodDto period)
+        => string.IsNullOrWhiteSpace(period.Type) ? null
+            : settings.PeriodTypes.FirstOrDefault(t => string.Equals(t.Key, period.Type.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Brings a settings document up to date with its period types, in place, and returns it. Run on every read and inside every
+    /// validation, so a document saved before types existed reads as Lesson / Break / Assembly, a client that sends only a kind
+    /// is understood, and every period's kind is what its type says — never what a client claimed.
+    /// </summary>
+    public static TimetableSettingsDto ApplyPeriodTypes(TimetableSettingsDto settings)
+    {
+        settings.PeriodTypes ??= new();
+        if (settings.PeriodTypes.Count == 0) settings.PeriodTypes = DefaultPeriodTypes();
+        foreach (var type in settings.PeriodTypes)
+            if (type.Teaching) type.OnPersonalTimetable = true;
+        foreach (var period in settings.DayTypes.SelectMany(d => d.Periods))
+        {
+            if (TypeOf(settings, period) is { } known) { period.Type = known.Key; period.Kind = KindFor(known); continue; }
+            if (!string.IsNullOrWhiteSpace(period.Type)) continue; // names a type that is not on the list: Validate says so
+            // No type yet (a document from before 2026-09-26, or an older client): the first type that behaves as the kind did.
+            var match = settings.PeriodTypes.Where(t => !t.IsRetired).FirstOrDefault(t => KindFor(t) == period.Kind)
+                        ?? settings.PeriodTypes.FirstOrDefault(t => KindFor(t) == period.Kind);
+            if (match != null) period.Type = match.Key;
+        }
+        return settings;
+    }
+
+    /// <summary>The rows a teacher's OWN timetable shows — the My Workspace card and a teacher's printed sheet: every period whose type is on it.</summary>
+    public static List<BellPeriodDto> PersonalRows(TimetableSettingsDto settings)
+        => Rows(settings).Where(p => p.Kind != BellPeriodKind.Assembly).ToList();
 
     private static BellPeriodDto P(string key, string label, string start, string end, BellPeriodKind kind = BellPeriodKind.Lesson)
         => new() { Key = key, Label = label, Start = start, End = end, Kind = kind };
@@ -115,6 +163,28 @@ public static class TimetableCycle
         return week * days.Count + index + 1;
     }
 
+    /// <summary>The list itself: names, keys, the cap. Each period is checked against it in <see cref="Validate"/>.</summary>
+    private static string? ValidatePeriodTypes(TimetableSettingsDto s)
+    {
+        s.PeriodTypes ??= new();
+        if (s.PeriodTypes.Count == 0) s.PeriodTypes = DefaultPeriodTypes();
+        if (s.PeriodTypes.Count > MaxPeriodTypes) return $"No more than {MaxPeriodTypes} period types.";
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var t in s.PeriodTypes)
+        {
+            t.Name = System.Text.RegularExpressions.Regex.Replace(t.Name ?? string.Empty, @"\s+", " ").Trim();
+            if (t.Name.Length is 0 or > 40) return "Every period type needs a name of up to 40 characters.";
+            if (!names.Add(t.Name)) return $"Two period types are called '{t.Name}'.";
+            t.Key = string.IsNullOrWhiteSpace(t.Key) ? Normalize(t.Name).Replace(' ', '-') : t.Key.Trim();
+            if (t.Key.Length > 40) t.Key = t.Key[..40];
+            if (!keys.Add(t.Key)) return $"Two period types share the key '{t.Key}'.";
+        }
+        if (!s.PeriodTypes.Any(t => t.Teaching && !t.IsRetired)) return "At least one period type must allow lessons.";
+        ApplyPeriodTypes(s);
+        return null;
+    }
+
     /// <summary>Checks a settings document; null when it is valid.</summary>
     public static string? Validate(TimetableSettingsDto s)
     {
@@ -122,6 +192,7 @@ public static class TimetableCycle
         if (s.DefaultPeriodMinutes is < 10 or > 180) return "The default period length must be between 10 and 180 minutes.";
         if (s.DayTypes.Count == 0) return "Add at least one day type with its periods.";
         if (s.DayTypes.Count > MaxDayTypes) return $"No more than {MaxDayTypes} day types.";
+        if (ValidatePeriodTypes(s) is { } typeProblem) return typeProblem;
         var claimed = new HashSet<DayOfWeek>();
         var typeKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var type in s.DayTypes)
@@ -146,6 +217,11 @@ public static class TimetableCycle
                 if (!keys.Add(period.Key)) return $"'{type.Name}' uses the period key '{period.Key}' twice.";
                 if (ParseTime(period.Start) is not { } start || ParseTime(period.End) is not { } end) return $"{period.Label} in '{type.Name}' needs a start and end time (HH:mm).";
                 if (end <= start) return $"{period.Label} in '{type.Name}' ends before it starts.";
+                if (TypeOf(s, period) is not { } periodType)
+                    return string.IsNullOrWhiteSpace(period.Type)
+                        ? $"{period.Label} in '{type.Name}' has no period type."
+                        : $"{period.Label} in '{type.Name}' is of a type that is not on the list. A type in use cannot be removed: retire it instead.";
+                period.Kind = KindFor(periodType);
                 if (lastEnd is { } le && start < le) return $"{period.Label} in '{type.Name}' overlaps the period before it.";
                 lastEnd = end;
             }
